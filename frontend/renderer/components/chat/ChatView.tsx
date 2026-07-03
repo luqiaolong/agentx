@@ -7,10 +7,16 @@ interface TodoItem {
   done: boolean;
 }
 
-/** 从 todo_update 事件的未知 data 中安全提取 todo 列表。 */
-function normalizeTodos(data: unknown): TodoItem[] {
-  if (!Array.isArray(data)) return [];
-  return data
+/**
+ * 从 todo_update 事件提取 todo 列表。
+ *
+ * SSE 契约: 后端发 `{"todos": [{"text": "...", "done": false}]}`，
+ * preload 解析后 payload 是对象，被展开到 ChatEvent 顶层，
+ * 因此读 `e.todos`（而非 `e.data`，e.data 在对象 payload 时不存在）。
+ */
+function normalizeTodos(todosField: unknown): TodoItem[] {
+  if (!Array.isArray(todosField)) return [];
+  return todosField
     .map((item): TodoItem | null => {
       if (typeof item !== "object" || item === null) return null;
       const obj = item as Record<string, unknown>;
@@ -51,7 +57,8 @@ export function ChatView() {
         const errData = e.data ?? e.error;
         setErrorMsg(typeof errData === "string" ? errData : "请求出错");
       } else if (e.type === "todo_update") {
-        setTodos(normalizeTodos(e.data));
+        // 后端发 {"todos": [...]} 对象，preload 展开后读 e.todos（非 e.data）
+        setTodos(normalizeTodos(e.todos));
       }
     });
 
@@ -78,8 +85,14 @@ export function ChatView() {
     const content = input.trim();
     if (!content || isStreaming) return;
 
-    // /reset 命令：清空会话
+    // /reset 命令：调后端清空 checkpointer + 沙箱，再清前端状态
     if (content === "/reset") {
+      const resetTid = threadId ?? "";
+      try {
+        await window.api.chat.send({ role: "user", content: "/reset" }, { threadId: resetTid });
+      } catch {
+        /* 后端不可用也允许前端清空 */
+      }
       clearMessages();
       setThreadId(null);
       setTodos([]);
