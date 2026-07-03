@@ -142,8 +142,14 @@ def _redact_args(tool_name: str, args: dict) -> dict:
     return redacted
 
 
-def _make_approval_event(tool_call: dict) -> dict[str, str]:
-    """构造 approval_request SSE 事件。"""
+def _make_approval_event(tool_call: dict, thread_id: str) -> dict[str, str]:
+    """构造 approval_request SSE 事件。
+
+    MUST 包含 ``thread_id``：前端 ApprovalDialog 据此调
+    ``POST /api/chat/approve {thread_id, approval}``，后端 ``_pending_approvals``
+    按 thread_id 索引。缺失 thread_id 会导致审批提交后无法被 DeepAgent 消费，
+    危险操作链路彻底断开。
+    """
     name = tool_call.get("name", "unknown")
     args = tool_call.get("args", {})
     redacted_args = _redact_args(name, args if isinstance(args, dict) else {})
@@ -164,6 +170,7 @@ def _make_approval_event(tool_call: dict) -> dict[str, str]:
         "event": "approval_request",
         "data": json.dumps(
             {
+                "thread_id": thread_id,
                 "tool_name": name,
                 "args": redacted_args,
                 "preview": preview,
@@ -279,7 +286,7 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
         if dangerous_calls:
             # 4a. 危险工具 → yield approval_request，等待审批
             tool_call = dangerous_calls[0]
-            yield _make_approval_event(tool_call)
+            yield _make_approval_event(tool_call, thread_id)
 
             approval = await _await_approval(
                 thread_id,
