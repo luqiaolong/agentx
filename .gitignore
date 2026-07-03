@@ -1,0 +1,62 @@
+# Node / Electron
+node_modules/
+dist/
+out/
+release/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Build artifacts
+build/
+*.exe
+*.app
+*.dmg
+*.deb
+*.snap
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Runtime data
+data/chroma/
+data/workspace/
+data/uploads/
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# LangSmith / traces
+langsmith_runs/
+.traces/
