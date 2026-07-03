@@ -65,6 +65,8 @@ export interface WindowAPI {
   settings: {
     setMilvusCredentials: (user: string, password: string) => Promise<unknown>;
     getMilvusCredentials: () => Promise<{ user: string | null; password: string | null }>;
+    getApiKey: (provider: string) => Promise<string | null>;
+    setApiKey: (provider: string, key: string) => Promise<unknown>;
   };
   app: {
     getVersion: () => Promise<string>;

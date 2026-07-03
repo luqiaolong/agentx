@@ -24,6 +24,8 @@ const mockApi = {
     getMilvusCredentials: vi
       .fn()
       .mockResolvedValue({ user: null, password: null }),
+    getApiKey: vi.fn().mockResolvedValue(null),
+    setApiKey: vi.fn().mockResolvedValue({ ok: true }),
   },
   app: {
     getVersion: vi.fn().mockResolvedValue("0.1.0"),

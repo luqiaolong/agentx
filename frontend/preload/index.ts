@@ -45,6 +45,8 @@ export interface ElectronAPI {
   settings: {
     setMilvusCredentials: (user: string, password: string) => Promise<unknown>;
     getMilvusCredentials: () => Promise<MilvusCredentialResult>;
+    getApiKey: (provider: string) => Promise<string | null>;
+    setApiKey: (provider: string, key: string) => Promise<unknown>;
   };
   app: {
     getVersion: () => Promise<string>;
@@ -188,6 +190,8 @@ const api: ElectronAPI = {
     setMilvusCredentials: (user, password) =>
       ipcRenderer.invoke("settings:setMilvusCredentials", user, password),
     getMilvusCredentials: () => ipcRenderer.invoke("settings:getMilvusCredentials"),
+    getApiKey: (provider) => ipcRenderer.invoke("settings:getApiKey", provider),
+    setApiKey: (provider, key) => ipcRenderer.invoke("settings:setApiKey", provider, key),
   },
   app: {
     getVersion: () => ipcRenderer.invoke("app:getVersion"),

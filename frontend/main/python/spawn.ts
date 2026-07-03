@@ -8,6 +8,8 @@ export interface PythonCredentials {
   milvusPassword?: string;
   langsmithApiKey?: string;
   embeddingUrl?: string;
+  deepseekApiKey?: string;
+  tavilyApiKey?: string;
 }
 
 export interface PythonSpawnOptions {
@@ -36,6 +38,8 @@ export function spawnPython(opts: PythonSpawnOptions): {
   if (c.milvusPassword) env.AGENT_PY_MILVUS_PASSWORD = c.milvusPassword;
   if (c.embeddingUrl) env.AGENT_PY_EMBEDDING_URL = c.embeddingUrl;
   if (c.langsmithApiKey) env.LANGSMITH_API_KEY = c.langsmithApiKey;
+  if (c.deepseekApiKey) env.AGENT_PY_DEEPSEEK_API_KEY = c.deepseekApiKey;
+  if (c.tavilyApiKey) env.AGENT_PY_TAVILY_API_KEY = c.tavilyApiKey;
 
   const holder: { current: ChildProcess | null } = { current: null };
 
