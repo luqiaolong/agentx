@@ -3,6 +3,8 @@ import { StatusIndicator } from "./components/StatusIndicator";
 import { MilvusCredentialsForm } from "./components/settings/MilvusCredentialsForm";
 import { SandboxSettings } from "./components/settings/SandboxSettings";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
+import { ChatView } from "./components/chat/ChatView";
+import { ApiKeySettings } from "./components/settings/ApiKeySettings";
 
 export default function App() {
   return (
@@ -31,7 +33,7 @@ export default function App() {
 
         <main className="flex-1 overflow-auto p-4">
           <Routes>
-            <Route path="/" element={<ChatPlaceholder />} />
+            <Route path="/" element={<ChatView />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>
@@ -47,13 +49,10 @@ export default function App() {
   );
 }
 
-function ChatPlaceholder() {
-  return <div className="text-sm text-neutral-500">选择会话开始对话</div>;
-}
-
 function SettingsPage() {
   return (
     <div className="space-y-6">
+      <ApiKeySettings />
       <MilvusCredentialsForm />
       <SandboxSettings />
     </div>
