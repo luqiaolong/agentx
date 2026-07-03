@@ -1,4 +1,6 @@
 # Node / Electron
+/frontend/node_modules/
+/frontend/dist/
 node_modules/
 dist/
 out/
@@ -10,6 +12,9 @@ yarn-debug.log*
 yarn-error.log*
 
 # Python
+/backend/__pycache__/
+/backend/.venv/
+/backend/dist/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -26,6 +31,7 @@ ENV/
 
 # Build artifacts
 build/
+*.tsbuildinfo
 *.exe
 *.app
 *.dmg
@@ -42,7 +48,7 @@ build/
 Thumbs.db
 
 # Runtime data
-data/chroma/
+/data/
 data/workspace/
 data/uploads/
 data/*.db
@@ -50,7 +56,7 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 
-# Env
+# Env (仅 .env.example 入仓)
 .env
 .env.local
 .env.*.local
@@ -60,3 +66,6 @@ data/*.db-shm
 # LangSmith / traces
 langsmith_runs/
 .traces/
+
+# Test secrets
+tests/python/.env.test.local
