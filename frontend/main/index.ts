@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } f
 import * as path from "path";
 import type { ChildProcess } from "child_process";
 import { spawnPython } from "./python/spawn";
-import { getMilvusCredentials, setMilvusCredentials, getApiKey } from "./store";
+import { getMilvusCredentials, setMilvusCredentials, getApiKey, setApiKey } from "./store";
 
 const PYTHON_PORT = 8123;
 
@@ -49,6 +49,8 @@ function startPython(): void {
       anthropicApiKey: getApiKey("anthropic") ?? undefined,
       milvusUser: milvus.user ?? undefined,
       milvusPassword: milvus.password ?? undefined,
+      deepseekApiKey: getApiKey("deepseek") ?? undefined,
+      tavilyApiKey: getApiKey("tavily") ?? undefined,
     },
   });
 
@@ -102,6 +104,11 @@ function registerIpc(): void {
     return { ok: true };
   });
   ipcMain.handle("settings:getMilvusCredentials", async () => getMilvusCredentials());
+  ipcMain.handle("settings:getApiKey", (_e, provider: string) => getApiKey(provider));
+  ipcMain.handle("settings:setApiKey", (_e, provider: string, key: string) => {
+    setApiKey(provider, key);
+    return { ok: true };
+  });
 }
 
 app.whenReady().then(() => {
