@@ -108,7 +108,7 @@ graph TB
 **判定方式**：
 - 首选：用 `gpt-4o-mini` / `qwen-turbo` 跑 1~2 token 的分类 prompt，输出 `CHAT | SINGLE_TOOL | DEEP_TASK` 三分类
 - 兜底：消息含"分析"/"总结"/"审计"/"处理 X 个"等关键词直接走 C
-- 用户指令：IM 内 `/reset` 重新派发，`/deep` 强制走 C，`/simple` 强制走 A
+- 用户指令：Chat 输入框内 `/reset` 重新派发，`/deep` 强制走 C，`/simple` 强制走 A
 
 ---
 
@@ -425,7 +425,7 @@ interface ElectronAPI {
 - **CSP 策略**：渲染层 `Content-Security-Policy` 禁止外联脚本
 - **路径白名单**：DeepAgent 沙箱仅可读写 `data/workspace/`、`data/uploads/`
 - **命令白名单**：受控 shell 命令列表（git status/diff/log/commit 等）
-- **API Key 管理**：存 OS keychain（`keytar`），不入 .env 明文
+- **API Key 管理**：通过 Electron 内置 `safeStorage` 加密后存 `electron-store`；不入 .env 明文、不入 git
 - **危险操作**：`edit_file` / `write_file` / 任何 shell 命令前 `interrupt_on` 暂停 5s，用户可取消
 
 ---
