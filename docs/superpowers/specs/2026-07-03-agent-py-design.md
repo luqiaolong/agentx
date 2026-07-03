@@ -1,6 +1,6 @@
 # 个人助理 Agent — 设计文档
 
-> **状态**：草案 v2 · 待用户 review
+> **状态**：草案 v3 · 已应用 adjust-m1-stack-and-structure
 > **创建日期**：2026-07-03
 > **最后更新**：2026-07-03
 
@@ -101,7 +101,7 @@ graph TB
 
 | 路径 | 判定信号 | 工具集 | 上下文 | 延迟预期 |
 |---|---|---|---|---|
-| **A · 闲聊/简单问答** | 问候、定义、简单事实、单句意图 | 0 工具，纯 chat() | 仅本轮 | < 1s |
+| **A · 闲聊/简单问答** | 问候、定义、简单事实、单句意图 | 0 工具，纯 chat() | 仅本轮 | TTFT < 1s / 总响应 < 2s |
 | **B · 中等任务** | 单步工具调用可完成（"查下今天天气" "读这个文件"） | 1~3 工具 | 会话历史 | 2~5s |
 | **C · 复杂任务** | 需多步规划、需派 sub-agent、需持久化中间产物 | DeepAgent 全套 + 虚拟文件系统 + sub-agent 派生 | 完整 + 自动 offload | 10s~数分钟 |
 
@@ -123,7 +123,7 @@ graph TB
 | UI 框架 | React + TypeScript | 18+ / 5+ | 主流 |
 | 样式 | Tailwind CSS | v4 | 原子化主流 |
 | 组件库 | shadcn/ui + Radix UI | latest | 可复制粘贴、风格现代 |
-| 状态管理 | Zustand | 4+ | 比 Redux 轻、TypeScript 友好 |
+| 状态管理 | Zustand | 5+ | 比 Redux 轻、TypeScript 友好 |
 | 异步数据 | TanStack Query | 5+ | SSE/重试/缓存一把梭 |
 | 路由 | React Router | 6+ | 主流 |
 | Markdown | react-markdown + shiki | latest | 代码高亮主流 |
@@ -154,8 +154,8 @@ graph TB
 |---|---|---|
 | Agent 框架 | deepagents + langgraph | 主体 |
 | LLM 抽象 | langchain.chat_models.init_chat_model | 多 provider |
-| 嵌入模型 | BAAI/bge-m3（sentence-transformers） | 中文强 |
-| 向量库 | Chroma | 嵌入式零依赖 |
+| 嵌入服务 | myserver TEI 8080 (bge-m3) | 远程 HTTP，零本地模型下载 |
+| 向量库 | myserver Milvus 19530 (pymilvus) | 远程，经典 API |
 | Checkpoint | langgraph-checkpoint-sqlite | 单机 |
 | Web 框架 | FastAPI + uvicorn | 高性能异步 |
 | 流式输出 | sse-starlette | SSE |
@@ -169,100 +169,73 @@ graph TB
 ```
 agent-py/
 ├── package.json                # Node/Electron 依赖
-├── pyproject.toml              # Python 依赖
-├── electron.vite.config.ts     # electron-vite 配置
+├── pyproject.toml              # Python 依赖（单一，根目录）
+├── electron.vite.config.ts     # electron-vite 配置（入口指 frontend/）
 ├── tailwind.config.ts
 ├── tsconfig.json
 ├── components.json             # shadcn/ui 配置
 ├── .env.example
 ├── .gitignore
 │
-├── src/                        # 前端（Electron + React）
+├── frontend/                   # 前端（Electron + React）
 │   ├── main/                   # Main 进程
 │   │   ├── index.ts
 │   │   ├── window/             # 窗口管理
-│   │   ├── python/             # Python 子进程
+│   │   ├── python/             # Python 子进程（spawn.ts 注入凭证 env）
 │   │   ├── ipc/                # IPC handlers
-│   │   ├── tray.ts
-│   │   ├── menu.ts
-│   │   ├── shortcut.ts
-│   │   ├── store.ts
-│   │   └── updater.ts
+│   │   ├── store.ts            # electron-store + safeStorage
+│   │   └── ...
 │   ├── preload/
-│   │   └── index.ts
+│   │   └── index.ts            # contextBridge (chat/sandbox/dialog/approve)
 │   └── renderer/
 │       ├── index.html
 │       ├── main.tsx
 │       ├── App.tsx
-│       ├── routes/             # React Router
+│       ├── routes/
 │       ├── components/
-│       │   ├── ui/             # shadcn/ui 基础组件
-│       │   ├── chat/           # ChatPanel, MessageList, InputBar
-│       │   ├── workspace/      # FileTree, Editor, Preview
-│       │   ├── timeline/       # TaskTimeline, SubagentGraph
-│       │   ├── skills/         # SkillsList, SkillEditor
-│       │   └── settings/       # ModelConfig, PathConfig
-│       ├── hooks/              # useChat, useTasks, useElectron
-│       ├── stores/             # Zustand: chat, tasks, settings
-│       ├── lib/                # API client, utils, ipc
-│       └── styles/             # Tailwind
+│       │   ├── ui/             # shadcn/ui
+│       │   ├── chat/           # ChatPanel, MessageList, InputBar, ApprovalDialog
+│       │   ├── workspace/
+│       │   ├── timeline/
+│       │   ├── skills/
+│       │   └── settings/       # MilvusCredentialsForm, SandboxSettings
+│       ├── hooks/
+│       ├── stores/             # Zustand v5: chat, tasks, settings
+│       ├── lib/
+│       └── styles/
 │
-├── app/                        # Python 后端
-│   ├── __init__.py
-│   ├── main.py                 # FastAPI 入口
-│   ├── config.py               # Pydantic Settings
-│   ├── router/
-│   │   ├── __init__.py
-│   │   ├── classifier.py       # 消息分类器
-│   │   ├── state.py            # RouterState TypedDict
-│   │   └── graph.py            # LangGraph Router 编排
-│   ├── paths/
-│   │   ├── __init__.py
-│   │   ├── chat_path.py        # 路径 A：直接 chat()
-│   │   ├── react_path.py       # 路径 B：ReAct Agent
-│   │   └── deep_path.py        # 路径 C：DeepAgent
-│   ├── tools/
-│   │   ├── __init__.py
-│   │   ├── filesystem.py       # 受限 read/write/glob/grep
-│   │   ├── git_ops.py
-│   │   ├── web_search.py       # Tavily / DuckDuckGo
-│   │   ├── web_fetch.py        # Jina Reader / httpx
-│   │   └── rag_retrieve.py     # Chroma 检索
-│   ├── subagents/
-│   │   ├── __init__.py
-│   │   ├── code_subagent.py    # 文件系统 + git
-│   │   ├── rag_subagent.py     # 文档检索
-│   │   └── web_subagent.py     # 联网搜索
-│   ├── memory/
-│   │   ├── __init__.py
-│   │   ├── checkpointer.py
-│   │   ├── long_term.py
-│   │   └── skills_loader.py
-│   ├── observability/
-│   │   ├── __init__.py
-│   │   ├── langsmith.py
-│   │   └── logger.py
-│   └── utils/
+├── backend/                    # Python 后端
+│   └── app/                    # Python 包（保留 app 命名空间）
 │       ├── __init__.py
-│       ├── security.py         # 路径/命令白名单
-│       └── chunks.py           # 长消息切片
+│       ├── main.py             # FastAPI 入口
+│       ├── config.py           # Pydantic Settings (AGENT_PY_ 前缀)
+│       ├── router/             # LangGraph Router
+│       ├── paths/              # 路径 A/B/C
+│       ├── tools/              # filesystem/rag_retrieve/...
+│       ├── subagents/
+│       ├── memory/
+│       ├── observability/      # langsmith + logger
+│       ├── embedding/          # TEI 客户端 (tei_client.py)
+│       ├── vectorstore/        # Milvus 客户端 (milvus_client.py)
+│       └── utils/              # security (SessionSandbox), chunks
 │
 ├── data/                       # 运行时（gitignored）
-│   ├── chroma/
-│   ├── workspace/              # agent 沙箱
-│   ├── uploads/                # 用户拖入文件
-│   └── agent-py.db
+│   ├── workspace/              # agent 沙箱（默认可写）
+│   ├── uploads/                # 用户拖入文件（默认可写）
+│   └── agent-py.db             # SQLite Checkpoint
 │
 ├── tests/
 │   ├── python/                 # pytest
-│   ├── renderer/               # vitest + testing-library
+│   │   ├── unit/
+│   │   └── integration/        # test_smoke.py, test_tei_contract.py, test_milvus_contract.py
+│   ├── renderer/               # vitest
 │   ├── e2e/                    # playwright（M2）
-│   └── evals/                  # LangSmith 评测
+│   └── evals/
 │
 └── docs/
     └── superpowers/
-        ├── specs/              # 设计文档
-        └── plans/              # 实施计划
+        ├── specs/
+        └── plans/
 ```
 
 ---
@@ -381,9 +354,9 @@ interface ElectronAPI {
 | D4 | 异步层 | TanStack Query | SWR | SSE/重试/缓存一把梭 |
 | D5 | Python↔Electron | localhost HTTP + SSE | stdio JSON-RPC | 易调试、易接入 LangGraph |
 | D6 | 窗口策略 | 多 BrowserWindow | 单窗口 + tabs | 模拟 workbuddy |
-| D7 | 嵌入模型 | BAAI/bge-m3 | OpenAI text-embedding-3 | 中文强、本地可跑 |
+| D7 | 嵌入服务 | myserver TEI (bge-m3) | OpenAI text-embedding-3 / 本地嵌入模型 | 远程 HTTP，零本地模型下载 |
 | D8 | Checkpointer | SQLite | Postgres | 起步零依赖，可平迁 |
-| D9 | 向量库 | Chroma | Qdrant / Pinecone | 嵌入式零依赖 |
+| D9 | 向量库 | myserver Milvus (pymilvus) | Qdrant / Pinecone / Chroma | 复用 myserver，远程经典 API |
 | D10 | 后端集成 | M1 子进程 / M2 PyInstaller | 远端服务器 | M1 快速开发 |
 | D11 | 安全 | contextIsolation=true + preload 桥 | nodeIntegration | Electron 最佳实践 |
 | D12 | 危险工具 | interrupt_on 暂停等批准 | 完全自动 | 安全 + 透明 |
@@ -423,10 +396,10 @@ interface ElectronAPI {
 
 - **Electron 安全三件套**：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`（preload 例外）
 - **CSP 策略**：渲染层 `Content-Security-Policy` 禁止外联脚本
-- **路径白名单**：DeepAgent 沙箱仅可读写 `data/workspace/`、`data/uploads/`
+- **路径白名单**：DeepAgent 沙箱白名单 = `data/workspace/` + `data/uploads/` + 用户会话级授权目录（通过 dialog 显式授权，默认只读）
 - **命令白名单**：受控 shell 命令列表（git status/diff/log/commit 等）
 - **API Key 管理**：通过 Electron 内置 `safeStorage` 加密后存 `electron-store`；不入 .env 明文、不入 git
-- **危险操作**：`edit_file` / `write_file` / 任何 shell 命令前 `interrupt_on` 暂停 5s，用户可取消
+- **危险操作**：`edit_file` / `write_file` / 任何 shell 命令前 `interrupt_on` 无限期暂停直至用户操作（可选 `AGENT_PY_AUTO_APPROVE_AFTER_SECONDS` 配置倒计时自动批准，默认 0=禁用）
 
 ---
 
@@ -469,6 +442,8 @@ interface ElectronAPI {
 - [ ] E2E playwright 测试
 - [ ] 飞书/钉钉入口（M2 末尾可选）
 
+**PyInstaller spec 约定**：spec 文件 `backend/agent-py.spec`，`pathex=['backend']` + `hiddenimports=['app.embedding.tei_client', 'app.vectorstore.milvus_client', 'app.utils.security']`，M2 阶段需验证打包后 `import app.*` 链路正常、TEI/Milvus 客户端与沙箱模块均被正确收集。
+
 ---
 
 ## 15. 开放问题（待用户决策）
@@ -500,8 +475,7 @@ dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.32.0",
   "sse-starlette>=2.1.0",
-  "chromadb>=0.5.0",
-  "sentence-transformers>=3.0.0",
+  "pymilvus>=2.4.0",
   "langgraph-checkpoint-sqlite>=2.0.0",
   "pydantic>=2.9.0",
   "pydantic-settings>=2.6.0",
@@ -554,7 +528,7 @@ dependencies = [
 ```bash
 # M1 开发
 # 终端 A：启动 Python 后端
-uv run python -m app.main
+cd backend && uv run python -m app.main
 
 # 终端 B：启动 Electron
 npm run dev
@@ -568,3 +542,12 @@ npm test
 - 实施计划：`docs/superpowers/plans/2026-07-03-agent-py.md`（由 `writing-plans` 技能生成）
 - API 契约：随实施过程产出
 - 用户手册：M2 末尾产出
+- myserver 基础设施依赖：`docs/superpowers/specs/2026-07-03-myserver-dependency.md`（TEI/Milvus 服务清单、端口要求、DB 预创建、离线降级、凭证注入、首次启动检查清单）
+
+### 16.4 本次 change 新增配置项
+
+adjust-m1-stack-and-structure 引入以下 `AGENT_PY_*` 环境变量（详见根目录 `.env.example`，运行时由 Electron Main 进程从 `electron-store` 解密后注入 Python 子进程，应用 MUST NOT 读取 `.env` 文件）：
+
+- **嵌入服务（TEI）**：`AGENT_PY_EMBEDDING_URL` / `AGENT_PY_EMBEDDING_MODEL` / `AGENT_PY_EMBEDDING_TIMEOUT` / `AGENT_PY_EMBEDDING_MAX_BATCH` / `AGENT_PY_EMBEDDING_MAX_CHARS`
+- **向量库（Milvus）**：`AGENT_PY_MILVUS_HOST` / `AGENT_PY_MILVUS_PORT` / `AGENT_PY_MILVUS_USER` / `AGENT_PY_MILVUS_PASSWORD` / `AGENT_PY_MILVUS_DB` / `AGENT_PY_MILVUS_COLLECTION`
+- **危险操作审批**：`AGENT_PY_AUTO_APPROVE_AFTER_SECONDS`（0=禁用，无限期暂停；>0 时倒计时归零自动批准）
