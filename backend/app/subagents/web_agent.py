@@ -1,0 +1,117 @@
+"""Web 子代理：联网搜索。
+
+工具集: web_search（Tavily Search API）
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any, AsyncIterator
+
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+from app.llm import get_chat_model
+
+# Tavily API Key 环境变量名（config.py 未声明该字段，从 env 读取）
+_TAVILY_KEY_ENV = "AGENT_PY_TAVILY_API_KEY"
+# 缺 key 时的统一错误提示
+_NO_KEY_MSG = "web_search 不可用：未配置 AGENT_PY_TAVILY_API_KEY"
+
+
+def _get_tavily_key() -> str | None:
+    """读取 Tavily API Key，缺失返回 None。"""
+    return os.environ.get(_TAVILY_KEY_ENV)
+
+
+def _format_tavily(result: dict) -> str:
+    """将 Tavily search 返回值格式化为带来源的字符串。"""
+    lines: list[str] = []
+    answer = result.get("answer")
+    if answer:
+        lines.append(f"摘要: {answer}")
+    for i, item in enumerate(result.get("results", []), start=1):
+        title = item.get("title", "")
+        url = item.get("url", "")
+        content = item.get("content", "")
+        lines.append(f"[{i}] {title}\n  链接: {url}\n  内容: {content}")
+    if not lines:
+        return "未检索到相关网页。"
+    return "\n\n".join(lines)
+
+
+def _make_web_tools(thread_id: str) -> list:
+    """构建 Web 搜索工具列表（``thread_id`` 保留以与其他子代理签名对齐）。"""
+
+    @tool
+    async def web_search(query: str, max_results: int = 5) -> str:
+        """联网搜索，返回带标题、链接与摘要的结果。"""
+        key = _get_tavily_key()
+        if not key:
+            return _NO_KEY_MSG
+        try:
+            from tavily import TavilyClient
+
+            client = TavilyClient(api_key=key)
+            # TavilyClient.search 是同步阻塞调用，放线程池避免阻塞事件循环
+            result = await asyncio.to_thread(
+                client.search, query, max_results=max_results
+            )
+        except Exception as exc:  # noqa: BLE001 — 工具层兜底，错误以字符串回流
+            return f"web_search 失败: {exc}"
+        return _format_tavily(result)
+
+    return [web_search]
+
+
+def build_web_agent(thread_id: str) -> Any:
+    """构建 Web 子代理 ReAct 子图，返回 CompiledStateGraph。"""
+    model = get_chat_model(temperature=0.2, streaming=True)
+    tools = _make_web_tools(thread_id)
+    return create_react_agent(model, tools, name="web_agent")
+
+
+async def run_web_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+    """运行 Web 子代理，yield 标准化事件流。
+
+    事件类型:
+    - ``{"type": "token", "content": str}``: 模型流式输出 token
+    - ``{"type": "tool_call", "name": str, "args": dict}``: 工具调用开始
+    - ``{"type": "tool_result", "name": str, "result": Any}``: 工具调用结束
+    """
+    agent = build_web_agent(thread_id)
+    inputs = {"messages": [{"role": "user", "content": message}]}
+    async for event in agent.astream_events(inputs, version="v2"):
+        kind = event["event"]
+        name = event.get("name", "")
+        data = event.get("data", {}) or {}
+        if kind == "on_chat_model_stream":
+            content = _extract_text(data.get("chunk"))
+            if content:
+                yield {"type": "token", "content": content}
+        elif kind == "on_tool_start":
+            yield {"type": "tool_call", "name": name, "args": data.get("input")}
+        elif kind == "on_tool_end":
+            yield {"type": "tool_result", "name": name, "result": data.get("output")}
+
+
+def _extract_text(chunk: Any) -> str:
+    """从流式 chunk 中提取纯文本内容（兼容 str / list 内容块）。"""
+    if chunk is None:
+        return ""
+    content = getattr(chunk, "content", chunk)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "".join(parts)
+    return ""
+
+
+__all__ = ["build_web_agent", "run_web_agent", "_make_web_tools"]
