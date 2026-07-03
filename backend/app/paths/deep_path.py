@@ -1,13 +1,12 @@
-"""DeepAgent 路径（路径 C）：复杂多步任务，带危险工具中断 + 人工审批。
+"""DeepAgent 路径（路径 C）：deepagents + LangGraph，带危险工具中断。
 
-设计要点（M1 骨架）：
-- ``DANGEROUS_TOOLS``：触发 ``interrupt_on`` 的工具集合，DeepAgent 调用这些工具时
-  LangGraph **无限期暂停**（``auto_approve_after_seconds=0`` 时不设超时）。
-- 审批通过 ``/api/chat/approve`` 写入 ``app.main._pending_approvals[thread_id]``，
-  SSE handler 轮询 ``wait_for_approval`` 后以 ``Command(resume=approval)`` 恢复图执行。
-- ``build_deep_agent`` 仅为骨架：声明 ``interrupt_on`` 契约 + 文档，未完整接入 LLM。
-- ``run_deep_path`` 为骨架 SSE 生成器：yield 占位 todo_update / approval_request，
-  真实 DeepAgent 在 M2 接入 LangGraph 后替换。
+- 用 ``langgraph.prebuilt.create_react_agent`` 构建 ReAct DeepAgent（与 subagents 一致）
+- 工具集: filesystem 全部 + rag_retrieve + web_search
+- ``interrupt_before=["tools"]``：调用任何工具前 LangGraph 暂停，SSE handler 检查待执行
+  工具是否属于 ``DANGEROUS_TOOLS``，是则 yield approval_request 等用户审批，否则自动放行
+- 审批恢复: ``_await_approval`` 轮询 ``_pending_approvals``，通过后以
+  ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_before`` 的标准恢复方式）
+- 使用 ``MemorySaver`` 作为 agent 内部 checkpointer，支持同一会话内 interrupt/resume 循环
 """
 
 from __future__ import annotations
@@ -15,91 +14,309 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent
+
+from app.llm import get_chat_model
 from app.observability.logger import logger
 from app.router.state import RouterState
+from app.subagents.code_agent import _make_fs_tools
+from app.subagents.rag_agent import _make_rag_tools
+from app.subagents.web_agent import _make_web_tools
 
 # 触发人工审批中断的工具集合：写操作与 shell 执行
 DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec"}
 
+# DeepAgent 系统提示
+_DEEP_SYSTEM_PROMPT = (
+    "你是一个强大的个人助理。你可以读写文件、搜索知识库、搜索网页。"
+    "执行危险操作（写文件、执行命令）前需要用户审批。"
+    "请根据用户任务规划步骤，调用合适的工具完成。"
+)
 
-def build_deep_agent() -> Any:
-    """构造 DeepAgent 图（M1 骨架，仅声明 interrupt_on 契约）。
+# 审批轮询参数
+_APPROVAL_POLL_INTERVAL = 0.3
+_APPROVAL_MAX_WAIT = 300.0  # 5 分钟上限，生产可配置更长
 
-    M2 完整实现要点：
-    - 使用 ``deepagents`` + ``langgraph`` 构建 ReAct 图，工具集 = filesystem + git +
-      web_search + rag_retrieve。
-    - ``interrupt_on=DANGEROUS_TOOLS``：调用危险工具时 LangGraph 暂停节点，
-      不设 ``interrupt_timeout``（``auto_approve_after_seconds=0`` → 无限期等待）。
-    - 审批恢复：SSE handler 读取 ``_pending_approvals[thread_id]`` 后调用
-      ``graph.invoke(None, config, command=Command(resume=approval))`` 续跑。
-    - 自动批准：若 ``settings.auto_approve_after_seconds > 0``，SSE handler 在
-      倒计时归零时写入 ``_pending_approvals[thread_id]=True`` 触发自动放行。
+__all__ = [
+    "DANGEROUS_TOOLS",
+    "build_deep_agent",
+    "run_deep_path",
+    "wait_for_approval",
+]
+
+
+def _make_deep_tools(thread_id: str) -> list:
+    """构建 DeepAgent 工具集：fs + rag + web。
+
+    复用 subagents 的工具构建函数，确保 thread_id 绑定与沙箱校验一致。
+    """
+    fs_tools = _make_fs_tools(thread_id)
+    rag_tools = _make_rag_tools(thread_id)
+    web_tools = _make_web_tools(thread_id)
+    return [*fs_tools, *rag_tools, *web_tools]
+
+
+def build_deep_agent(thread_id: str) -> Any:
+    """构造真实 DeepAgent 图。
+
+    用 ``create_react_agent`` 构建 ReAct 子图，``interrupt_before=["tools"]`` 使图在
+    执行任何工具前暂停。``MemorySaver`` 作为 agent 内部 checkpointer 支持
+    interrupt/resume 循环（每次 ``run_deep_path`` 调用构建新 agent + 新 saver）。
+
+    Args:
+        thread_id: 会话 ID（用于工具的沙箱授权绑定）。
 
     Returns:
-        构造的 DeepAgent 实例（M1 返回 None，由调用方判断是否进入骨架流程）。
+        编译后的 CompiledStateGraph 实例。
     """
-    logger.info("build_deep_agent skeleton: interrupt_on=DANGEROUS_TOOLS declared")
-    # M1 骨架：不构建真实图，返回 None 占位。SSE handler 调用 run_deep_path 走骨架。
-    return None
+    model = get_chat_model(temperature=0.3, streaming=True)
+    tools = _make_deep_tools(thread_id)
+    checkpointer = MemorySaver()
+    return create_react_agent(
+        model,
+        tools,
+        name="deep_agent",
+        prompt=_DEEP_SYSTEM_PROMPT,
+        interrupt_before=["tools"],
+        checkpointer=checkpointer,
+    )
 
 
-async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]:
-    """DeepAgent 路径 SSE 生成器（M1 骨架）。
+def _extract_text(chunk: Any) -> str:
+    """从流式 chunk 中提取纯文本内容（兼容 str / list 内容块）。"""
+    if chunk is None:
+        return ""
+    content = getattr(chunk, "content", chunk)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "".join(parts)
+    return ""
 
-    真实实现接入 LangGraph 后，此处将：
-    1. ``graph.astream(...)`` 驱动图执行。
-    2. 节点事件转 SSE：``token`` / ``todo_update`` / ``approval_request``。
-    3. 遇 ``interrupt`` 时 yield ``approval_request``，并 ``await wait_for_approval``。
-    4. 审批通过 → ``Command(resume=True)`` 续跑；拒绝 → yield error 并终止。
 
-    M1 骨架：yield 一个占位 todo_update，模拟一次危险工具审批，最后 yield done。
+def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
+    """从 agent 状态中提取待执行的工具调用列表。
+
+    当图在 ``interrupt_before=["tools"]`` 处暂停时，最后一条消息是 AIMessage，
+    其 ``tool_calls`` 属性包含待执行的工具调用。
     """
-    thread_id = state.get("thread_id", "")
+    state = agent.get_state(config)
+    if not state or not state.values:
+        return []
+    messages = state.values.get("messages", [])
+    if not messages:
+        return []
+    last_msg = messages[-1]
+    tool_calls = getattr(last_msg, "tool_calls", None) or []
+    return list(tool_calls)
 
-    # 1. 占位 todo_update：声明任务计划
-    yield {
-        "event": "todo_update",
-        "data": {
-            "todos": [
-                {"text": "分析任务需求", "done": True},
-                {"text": "执行危险操作（需审批）", "done": False},
-            ]
-        },
-    }
 
-    # 2. 模拟危险工具调用前的审批请求（M1 骨架，真实流程由 LangGraph interrupt 触发）
-    # SSE 契约：自定义载荷嵌套在 data 内（sse-starlette 仅接受 event/data/id/retry/comment）
-    yield {
+def _is_interrupted(agent: Any, config: dict) -> bool:
+    """检查 agent 是否在 interrupt 处暂停（next 含 "tools"）。"""
+    state = agent.get_state(config)
+    if not state or not state.next:
+        return False
+    return "tools" in state.next
+
+
+def _redact_args(tool_name: str, args: dict) -> dict:
+    """对危险工具的参数做 redaction（隐藏文件内容等敏感字段）。"""
+    if not isinstance(args, dict):
+        return {}
+    redacted = dict(args)
+    # 写文件 / 编辑文件：隐藏 content / new_text
+    if tool_name in ("write_file", "edit_file"):
+        if "content" in redacted:
+            redacted["content"] = "<redacted>"
+        if "new_text" in redacted:
+            redacted["new_text"] = "<redacted>"
+        if "old_text" in redacted:
+            redacted["old_text"] = "<redacted>"
+    return redacted
+
+
+def _make_approval_event(tool_call: dict) -> dict[str, str]:
+    """构造 approval_request SSE 事件。"""
+    name = tool_call.get("name", "unknown")
+    args = tool_call.get("args", {})
+    redacted_args = _redact_args(name, args if isinstance(args, dict) else {})
+
+    # 生成预览描述
+    if name == "write_file":
+        path = args.get("path", "?") if isinstance(args, dict) else "?"
+        preview = f"将写入文件: {path}"
+    elif name == "edit_file":
+        path = args.get("path", "?") if isinstance(args, dict) else "?"
+        preview = f"将编辑文件: {path}"
+    elif name == "shell_exec":
+        preview = "将执行系统命令"
+    else:
+        preview = f"将执行工具: {name}"
+
+    return {
         "event": "approval_request",
         "data": json.dumps(
             {
-                "tool_name": "write_file",
-                "args": {"path": "data/workspace/output.txt", "content": "<redacted>"},
-                "preview": "将写入 data/workspace/output.txt",
+                "tool_name": name,
+                "args": redacted_args,
+                "preview": preview,
             },
             ensure_ascii=False,
         ),
     }
 
-    # 3. 等待用户审批（轮询 _pending_approvals 直至收到真实决定）。
-    # 安全 spec：auto_approve_after_seconds=0（默认）时 MUST 无限期等待，不自动放行。
-    # 自动批准由 SSE handler 在倒计时归零时写入 _pending_approvals[thread_id]=True 实现，
-    # 此处只负责等待真实决定，不自行默认 True。
-    approval = await _await_approval(thread_id)
-    if approval is False:
-        yield {"event": "error", "data": "用户拒绝执行危险操作"}
+
+def _make_todo_event(text: str, done: bool = False) -> dict[str, str]:
+    """构造 todo_update SSE 事件。"""
+    return {
+        "event": "todo_update",
+        "data": json.dumps(
+            {"todos": [{"text": text, "done": done}]},
+            ensure_ascii=False,
+        ),
+    }
+
+
+async def _stream_agent_events(
+    agent: Any, inputs: Any, config: dict
+) -> AsyncIterator[dict[str, str]]:
+    """驱动 agent.astream_events，将事件转为 SSE 格式。
+
+    - ``on_chat_model_stream`` → token 事件
+    - ``on_tool_start`` → todo_update 事件（工具调用开始）
+    - ``on_tool_end`` → todo_update 事件（工具调用完成）
+    """
+    async for event in agent.astream_events(inputs, version="v2", config=config):
+        kind = event.get("event", "")
+        name = event.get("name", "")
+        data = event.get("data", {}) or {}
+
+        if kind == "on_chat_model_stream":
+            content = _extract_text(data.get("chunk"))
+            if content:
+                yield {"event": "token", "data": content}
+
+        elif kind == "on_tool_start":
+            yield _make_todo_event(f"调用工具: {name}", done=False)
+
+        elif kind == "on_tool_end":
+            yield _make_todo_event(f"工具 {name} 完成", done=True)
+
+
+async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]:
+    """DeepAgent 路径 SSE 生成器（真实实现）。
+
+    流程:
+    1. 构建 DeepAgent（含 ``interrupt_before=["tools"]``）
+    2. ``astream_events`` 驱动图执行，流式产出 token / todo_update 事件
+    3. 流结束后检查是否在 tools 前中断
+    4. 若中断：检查待执行工具是否危险
+       - 危险 → yield approval_request → ``_await_approval`` → 通过则恢复 / 拒绝则终止
+       - 安全 → 自动恢复
+    5. 恢复后继续流式，循环直至图完成（``state.next`` 为空）
+
+    Args:
+        state: Router 状态（含 thread_id）。
+        message: 用户消息。
+
+    Yields:
+        SSE 事件 dict: {event: str, data: str}
+    """
+    thread_id = state.get("thread_id", "")
+    config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
+    inputs = {"messages": [{"role": "user", "content": message}]}
+
+    # 1. 构建 agent
+    try:
+        agent = build_deep_agent(thread_id)
+    except ValueError as exc:
+        yield {"event": "error", "data": f"LLM 不可用: {exc}"}
         return
-    # approval is None：会话被中止或超时，安全失败而非放行
-    if approval is None:
-        yield {"event": "error", "data": "审批等待被中断，操作未执行"}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("build_deep_agent failed", thread_id=thread_id)
+        yield {"event": "error", "data": f"DeepAgent 初始化失败: {exc}"}
         return
 
-    # 4. 审批通过 → 占位 token 流
-    yield {"event": "token", "data": "[DeepAgent 骨架] "}
-    yield {"event": "token", "data": "任务执行完成（M1 占位响应）"}
+    # 2. 初始流式运行（可能中断在 tools 前）
+    try:
+        async for sse in _stream_agent_events(agent, inputs, config):
+            yield sse
+    except Exception as exc:  # noqa: BLE001 — SSE 兜底
+        logger.exception("deep agent stream failed", thread_id=thread_id)
+        yield {"event": "error", "data": f"DeepAgent 执行失败: {exc}"}
+        return
 
-    # 5. 完成
-    yield {"event": "done", "data": {}}
+    # 3. 中断/恢复循环
+    max_iterations = 50  # 安全上限，防止无限循环
+    iteration = 0
+
+    while iteration < max_iterations:
+        iteration += 1
+
+        if not _is_interrupted(agent, config):
+            # 图已完成，退出循环
+            break
+
+        # 获取待执行的工具调用
+        pending_calls = _get_pending_tool_calls(agent, config)
+        if not pending_calls:
+            # 无待执行工具调用，不应发生但安全退出
+            logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
+            break
+
+        # 检查是否有危险工具
+        dangerous_calls = [
+            tc for tc in pending_calls if tc.get("name") in DANGEROUS_TOOLS
+        ]
+
+        if dangerous_calls:
+            # 4a. 危险工具 → yield approval_request，等待审批
+            tool_call = dangerous_calls[0]
+            yield _make_approval_event(tool_call)
+
+            approval = await _await_approval(
+                thread_id,
+                poll_interval=_APPROVAL_POLL_INTERVAL,
+                max_wait=_APPROVAL_MAX_WAIT,
+            )
+
+            if approval is False:
+                yield {"event": "error", "data": "用户拒绝执行危险操作"}
+                return
+            if approval is None:
+                yield {"event": "error", "data": "审批等待被中断，操作未执行"}
+                return
+
+            # 审批通过，继续恢复执行
+            logger.info(
+                "deep agent approval granted",
+                thread_id=thread_id,
+                tool=tool_call.get("name"),
+            )
+        # 4b. 安全工具 → 自动放行，无需审批
+
+        # 5. 恢复执行：用 None 输入续跑（LangGraph interrupt_before 标准恢复方式）
+        try:
+            async for sse in _stream_agent_events(agent, None, config):
+                yield sse
+        except Exception as exc:  # noqa: BLE001 — SSE 兜底
+            logger.exception("deep agent resume failed", thread_id=thread_id)
+            yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
+            return
+
+    if iteration >= max_iterations:
+        logger.warning("deep agent hit max iterations", thread_id=thread_id)
+        yield {"event": "error", "data": "DeepAgent 达到最大迭代上限"}
+        return
+
+    # done 事件由 run_router 统一 yield，此处不再重复
 
 
 async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> bool | None:
@@ -107,7 +324,7 @@ async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> bool | None
 
     Args:
         thread_id: 会话 ID。
-        timeout: 保留参数（M1 骨架不阻塞，仅做一次查询）。
+        timeout: 保留参数（单次查询不阻塞）。
 
     Returns:
         - ``True``：用户批准。
@@ -128,11 +345,10 @@ async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> bool | None
 async def _await_approval(
     thread_id: str,
     poll_interval: float = 0.3,
-    max_wait: float = 30.0,
+    max_wait: float = 300.0,
 ) -> bool | None:
-    """阻塞轮询直至收到审批决定或达到 max_wait（防止单元测试/骨架永久挂起）。
+    """阻塞轮询直至收到审批决定或达到 max_wait。
 
-    生产 SSE handler 应使用更长的 max_wait 或无限等待；M1 骨架用 30s 上限：
     - 收到 True/False → 返回该值。
     - 达到 max_wait 仍未决定 → 返回 None（调用方按"中断"处理，安全失败不放行）。
     - 检测到 abort 标志（``app.main._abort_flags``）→ 返回 None。
@@ -153,11 +369,3 @@ async def _await_approval(
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
     return None
-
-
-__all__ = [
-    "DANGEROUS_TOOLS",
-    "build_deep_agent",
-    "run_deep_path",
-    "wait_for_approval",
-]

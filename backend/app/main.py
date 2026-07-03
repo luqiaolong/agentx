@@ -8,16 +8,15 @@
 - ``GET /api/sandbox/authorized/{thread_id}`` — 列出已授权目录。
 - ``POST /api/chat/approve``      — 提交危险操作审批决定（写入内存 dict）。
 - ``POST /api/chat/abort``        — 中止 SSE 流（写入内存 flag）。
-- ``POST /api/chat``              — SSE 流式响应（M1 骨架，三路径分类 + 占位流）。
+- ``POST /api/chat``              — SSE 流式响应（Router 三路径分发：CHAT / SINGLE_TOOL / DEEP_TASK）。
 
-跨进程状态（M1 内存态，M2 迁移到 checkpoint）：
+跨进程状态：
 - ``_pending_approvals: dict[str, bool]`` — thread_id → 审批决定，DeepAgent 轮询。
 - ``_abort_flags: dict[str, bool]``       — thread_id → 中止标志，SSE 循环检查。
 """
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -30,10 +29,10 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import get_settings
 from app.embedding import get_embedding_client
 from app.embedding.tei_client import healthcheck as embedding_healthcheck
+from app.memory import close_checkpointer, get_async_checkpointer, get_checkpointer
 from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
-from app.paths.deep_path import run_deep_path
-from app.router.state import RouterState
+from app.router import run_router
 from app.utils.security import PathNotAuthorized, get_sandbox
 from app.vectorstore import MilvusUnavailable, get_milvus_client
 
@@ -55,13 +54,21 @@ _CORS_ORIGINS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """应用生命周期：启动时初始化运行时目录 + 嵌入客户端 + Milvus（失败降级）。
+    """应用生命周期：启动时初始化运行时目录 + checkpointer + 嵌入客户端 + Milvus（失败降级）。
 
     Milvus 凭证未配置或不可达时，记 warning 并继续启动（降级模式：检索工具返回
     错误字符串，其余功能正常）。关闭时优雅断开。
     """
     settings = get_settings()
     settings.ensure_runtime_dirs()
+
+    # 0. Checkpointer 预热：同步 + 异步单例初始化
+    try:
+        get_checkpointer()
+        await get_async_checkpointer()
+        logger.info("checkpointer initialized on startup")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("checkpointer init failed on startup: {}", exc)
 
     # 1. 嵌入客户端：get_embedding_client() 懒构造，此处显式 warmup 记日志
     logger.info("embedding client initialized", url=settings.embedding_url)
@@ -81,7 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # 关闭：先 Milvus 后 embedding（逆序）
+        # 关闭：先 Milvus 后 embedding 后 checkpointer（逆序）
         if milvus._connected:  # noqa: SLF001 — 单例内部状态检查
             try:
                 await milvus.disconnect()
@@ -93,6 +100,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("embedding client closed on shutdown")
         except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
             logger.warning("embedding client close failed: {}", exc)
+        try:
+            close_checkpointer()
+            logger.info("checkpointer closed on shutdown")
+        except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
+            logger.warning("checkpointer close failed: {}", exc)
 
 
 app = FastAPI(
@@ -271,51 +283,56 @@ async def chat_abort(req: AbortRequest) -> dict[str, Any]:
 
 
 # ============================================================
-# SSE 聊天端点（M1 骨架）
+# SSE 聊天端点
 # ============================================================
 
 
-def _classify_message(message: str) -> str:
-    """消息分类（M1 占位实现）。
+async def _clear_thread_state(thread_id: str) -> None:
+    """清空指定会话的 checkpointer 状态（best-effort）。
 
-    - ``/reset`` 开头 → "RESET"
-    - 默认 → "DEEP_TASK"（M1 骨架统一走 deep 路径占位流）
-
-    M2 接入 LLM 分类器：返回 "CHAT" / "SINGLE_TOOL" / "DEEP_TASK"。
+    尝试用异步 checkpointer 的 ``adelete_thread`` 删除该 thread 的所有 checkpoint。
+    失败时仅记日志，不阻塞 /reset 流程。
     """
-    if message.startswith("/reset"):
-        return "RESET"
-    return "DEEP_TASK"
+    try:
+        checkpointer = await get_async_checkpointer()
+        if hasattr(checkpointer, "adelete_thread"):
+            await checkpointer.adelete_thread(thread_id)
+            logger.info("checkpoint cleared for thread", thread_id=thread_id)
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        logger.warning("clear checkpoint failed", thread_id=thread_id, error=str(exc))
 
 
 async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
-    """SSE 事件生成器（M1 骨架）。
+    """SSE 事件生成器：/reset 清空状态，其他消息走 Router 三路径分发。
 
-    M2 完整实现：按分类驱动 Router → 三路径图，将图事件转 SSE。
+    事件契约（与前端 preload 一致）：
+    - ``token``         — 增量 token。
+    - ``todo_update``   — DeepAgent 任务列表更新。
+    - ``approval_request`` — 危险工具审批请求（含 tool_name / args / preview）。
+    - ``done``          — 流结束。
+    - ``error``         — 错误（含消息）。
     """
     settings = get_settings()
-    classification = _classify_message(req.message)
     logger.info(
         "chat request",
         thread_id=req.thread_id,
-        classification=classification,
         message_len=len(req.message),
     )
 
     try:
-        if classification == "RESET":
-            # /reset：清空沙箱授权（仅当配置不持久化时）
+        # /reset：清空 checkpointer + 沙箱（当不持久化时）
+        if req.message.startswith("/reset"):
+            await _clear_thread_state(req.thread_id)
             if not settings.persist_authorized_dirs:
                 get_sandbox().clear(req.thread_id)
-                yield {"event": "token", "data": "已清空会话授权目录"}
+                yield {"event": "token", "data": "已清空会话状态与授权目录"}
             else:
-                yield {"event": "token", "data": "授权目录已持久化，未清空"}
+                yield {"event": "token", "data": "已清空会话状态（授权目录已持久化，未清空）"}
             yield {"event": "done", "data": "{}"}
             return
 
-        # M1 骨架：统一走 deep_path 占位流
-        state: RouterState = {"thread_id": req.thread_id, "messages": []}
-        async for event in run_deep_path(state, req.message):
+        # 其他消息：走 Router 三路径分发
+        async for event in run_router(req.message, req.thread_id):
             # 检查中止标志
             if _abort_flags.get(req.thread_id):
                 yield {"event": "error", "data": "用户已中止"}
