@@ -10,6 +10,7 @@ from typing import Any, AsyncIterator
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
+from app.config import get_settings
 from app.llm import get_chat_model
 
 
@@ -17,6 +18,8 @@ def _make_rag_tools(thread_id: str) -> list:
     """构建绑定 ``thread_id`` 的 RAG 检索工具列表。
 
     ``rag_retrieve`` 的 ``thread_id`` 用于 trace，不暴露给 LLM。
+
+    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``rag_retrieve``）。
     """
     from app.tools.rag_retrieve import rag_retrieve as _rag_retrieve
 
@@ -25,14 +28,21 @@ def _make_rag_tools(thread_id: str) -> list:
         """检索知识库，返回带来源与相似度的上下文。"""
         return await _rag_retrieve(query, thread_id=thread_id, top_k=top_k)
 
-    return [rag_retrieve]
+    tools = [rag_retrieve]
+    enabled = get_settings().tools_enabled
+    return [t for t in tools if enabled.get(t.name, True)]
 
 
 def build_rag_agent(thread_id: str) -> Any:
     """构建 RAG 子代理 ReAct 子图，返回 CompiledStateGraph。"""
-    model = get_chat_model(temperature=0.2, streaming=True)
+    settings = get_settings()
+    cfg = settings.subagents["rag"]
+    model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_rag_tools(thread_id)
-    return create_react_agent(model, tools, name="rag_agent")
+    kwargs: dict[str, Any] = {}
+    if cfg.system_prompt:
+        kwargs["prompt"] = cfg.system_prompt
+    return create_react_agent(model, tools, name="rag_agent", **kwargs)
 
 
 async def run_rag_agent(thread_id: str, message: str) -> AsyncIterator[dict]:

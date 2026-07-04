@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator
 from langgraph.graph import END, StateGraph
 
 from app.config import get_settings
+from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
@@ -120,28 +121,36 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 # ============================================================
 
 
-# 路径 B 子代理选择关键词
-_WEB_KEYWORDS: tuple[str, ...] = (
-    "搜索", "网页", "联网", "查一下", "search", "web", "google", "百度",
-)
-_RAG_KEYWORDS: tuple[str, ...] = (
-    "知识库", "文档库", "检索", "向量", "rag", "知识", "文档",
-)
-
-
-def _select_subagent(message: str) -> str:
+def _select_subagent(message: str) -> str | None:
     """根据消息内容选择路径 B 的子代理。
 
     Returns:
-        "code" / "rag" / "web"
+        "code" / "rag" / "web" / None
+        - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
     """
-    for kw in _WEB_KEYWORDS:
-        if kw in message:
-            return "web"
-    for kw in _RAG_KEYWORDS:
-        if kw in message:
-            return "rag"
-    return "code"
+    settings = get_settings()
+    subagents = settings.subagents
+    tools_enabled = settings.tools_enabled
+
+    # 按优先级检查 web → rag → code（与原逻辑一致）
+    for agent_name in ("web", "rag", "code"):
+        cfg = subagents[agent_name]
+        if not cfg.enabled:
+            continue
+        # 检查关键词命中（空 keywords 不匹配任何子代理，spec R6）
+        if not any(kw in message for kw in cfg.keywords):
+            continue
+        # 检查绑定的工具是否全部被禁用
+        if not any(tools_enabled.get(t, True) for t in cfg.tools):
+            logger.warning(f"subagent {agent_name} matched but all tools disabled, fallback to CHAT")
+            return None
+        return agent_name
+
+    # 无命中，默认 code（若 code 可用）
+    code_cfg = subagents["code"]
+    if code_cfg.enabled and any(tools_enabled.get(t, True) for t in code_cfg.tools):
+        return "code"
+    return None  # code 也禁用，退回路径 A
 
 
 def _sse(event: str, data: Any) -> dict[str, str]:
@@ -177,8 +186,8 @@ async def _run_chat_path(
 
     system_prompt = get_settings().default_system_prompt
     if system_prompt_extra:
-        # default 在前，skill 定制在后作为覆盖（LLM 更遵从靠后指令）
-        system_prompt = f"{system_prompt}\n{system_prompt_extra}"
+        # 画像/skill 在前，default 在后（spec R9：画像优先于默认 prompt，与路径 C 一致）
+        system_prompt = f"{system_prompt_extra}\n{system_prompt}"
     try:
         llm = get_chat_model(temperature=0.7, streaming=True)
     except ValueError as exc:
@@ -206,12 +215,26 @@ async def _run_chat_path(
 
 
 async def _run_tool_path(
-    message: str, thread_id: str
+    message: str, thread_id: str, profile_prompt: str | None = None
 ) -> AsyncIterator[dict[str, str]]:
-    """路径 B：选择子代理并透传事件流。"""
-    agent_type = _select_subagent(message)
-    logger.info("router.tool_path", agent=agent_type, thread_id=thread_id)
+    """路径 B：选择子代理并透传事件流。
 
+    Args:
+        message: 用户消息（已移除 @skill 标记）。
+        thread_id: 会话 ID。
+        profile_prompt: 用户画像，回退路径 A 时注入 system prompt。
+    """
+    agent_type = _select_subagent(message)
+    if agent_type is None:
+        # 子代理禁用或工具全禁用，退回路径 A（注入画像）
+        logger.info("router.tool_path fallback to CHAT", thread_id=thread_id)
+        async for sse in _run_chat_path(
+            message, thread_id, system_prompt_extra=profile_prompt
+        ):
+            yield sse
+        return
+
+    logger.info("router.tool_path", agent=agent_type, thread_id=thread_id)
     if agent_type == "web":
         runner = run_web_agent
     elif agent_type == "rag":
@@ -231,11 +254,21 @@ async def _run_tool_path(
 
 
 async def _run_deep_path(
-    message: str, thread_id: str, state: RouterState
+    message: str,
+    thread_id: str,
+    state: RouterState,
+    profile_prompt: str = "",
 ) -> AsyncIterator[dict[str, str]]:
-    """路径 C：DeepAgent + 危险工具中断审批。"""
+    """路径 C：DeepAgent + 危险工具中断审批。
+
+    Args:
+        message: 用户消息（已移除 @skill 标记）。
+        thread_id: 会话 ID。
+        state: Router 状态。
+        profile_prompt: 用户画像前缀，由 ``run_router`` 注入到 DeepAgent system prompt。
+    """
     try:
-        async for event in run_deep_path(state, message):
+        async for event in run_deep_path(state, message, profile_prompt=profile_prompt):
             yield event
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("deep path failed", error=str(exc))
@@ -355,6 +388,14 @@ async def run_router(
         # 解析 @skill 标记（在 classify 之前）
         cleaned_message, skill_content = _parse_skill_tag(message)
 
+        # T9：读取用户画像，拼到 system prompt 前（路径 A 与路径 C 都注入）
+        # build_profile_prompt 失败时返回空字符串，不影响主流程
+        try:
+            profile_prompt = build_profile_prompt()
+        except Exception as exc:  # noqa: BLE001 — 画像读取兜底
+            logger.warning("build_profile_prompt failed", error=str(exc))
+            profile_prompt = ""
+
         try:
             classification = await classify_message(cleaned_message)
         except Exception as exc:  # noqa: BLE001 — 分类器兜底
@@ -375,15 +416,26 @@ async def run_router(
         }
 
         if classification == "CHAT":
+            # 路径 A：画像 + skill content 拼到 system prompt
+            system_prompt_extra = ""
+            if profile_prompt:
+                system_prompt_extra += profile_prompt
+            if skill_content:
+                system_prompt_extra += skill_content
             async for sse in _run_chat_path(
-                cleaned_message, thread_id, system_prompt_extra=skill_content
+                cleaned_message, thread_id, system_prompt_extra=system_prompt_extra
             ):
                 yield sse
         elif classification == "SINGLE_TOOL":
-            async for sse in _run_tool_path(cleaned_message, thread_id):
+            async for sse in _run_tool_path(
+                cleaned_message, thread_id, profile_prompt=profile_prompt
+            ):
                 yield sse
         else:  # DEEP_TASK
-            async for sse in _run_deep_path(cleaned_message, thread_id, state):
+            # 路径 C：画像传给 _run_deep_path，由 deep_path 注入到 agent system prompt
+            async for sse in _run_deep_path(
+                cleaned_message, thread_id, state, profile_prompt=profile_prompt
+            ):
                 yield sse
 
         yield _sse("done", "{}")

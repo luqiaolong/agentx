@@ -8,6 +8,14 @@ import type {
   WorkspaceEntry,
   AuthorizedDir,
   HealthStatus,
+  SubagentConfig,
+  SubagentsConfig,
+  ToolsConfig,
+  SkillFileInfo,
+  ThreadInfo,
+  ProfileCategory,
+  ProfileEntry,
+  ProfileEntryRequest,
   ElectronAPI,
 } from "../shared/api-types";
 
@@ -17,6 +25,14 @@ export type {
   MilvusCredentialResult,
   SkillSummary,
   WorkspaceEntry,
+  SubagentConfig,
+  SubagentsConfig,
+  ToolsConfig,
+  SkillFileInfo,
+  ThreadInfo,
+  ProfileCategory,
+  ProfileEntry,
+  ProfileEntryRequest,
   ElectronAPI,
 };
 
@@ -205,6 +221,93 @@ const api: ElectronAPI = {
     setApprovalConfig: (cfg) => ipcRenderer.invoke("settings:setApprovalConfig", cfg),
     getKnowledgeConfig: () => ipcRenderer.invoke("settings:getKnowledgeConfig"),
     setKnowledgeConfig: (cfg) => ipcRenderer.invoke("settings:setKnowledgeConfig", cfg),
+    getSubagentsConfig: () => ipcRenderer.invoke("settings:getSubagentsConfig"),
+    setSubagentsConfig: (cfg) => ipcRenderer.invoke("settings:setSubagentsConfig", cfg),
+    getToolsConfig: () => ipcRenderer.invoke("settings:getToolsConfig"),
+    setToolsConfig: (cfg) => ipcRenderer.invoke("settings:setToolsConfig", cfg),
+    getProfileAutoExtract: () => ipcRenderer.invoke("settings:getProfileAutoExtract"),
+    setProfileAutoExtract: (v) => ipcRenderer.invoke("settings:setProfileAutoExtract", v),
+  },
+  memory: {
+    // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/memory/* 路由
+    listSkills: async () => {
+      const r = await fetch(`${API_BASE}/api/memory/skills`);
+      return (await r.json()) as { skills: SkillFileInfo[] };
+    },
+    getSkill: async (name) => {
+      const r = await fetch(
+        `${API_BASE}/api/memory/skills/${encodeURIComponent(name)}`,
+      );
+      return (await r.json()) as { content: string };
+    },
+    saveSkill: async (name, content) => {
+      const r = await fetch(`${API_BASE}/api/memory/skills`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, content }),
+      });
+      return r.json();
+    },
+    deleteSkill: async (name) => {
+      const r = await fetch(
+        `${API_BASE}/api/memory/skills/${encodeURIComponent(name)}`,
+        { method: "DELETE" },
+      );
+      return r.json();
+    },
+    getCheckpointer: async () => {
+      const r = await fetch(`${API_BASE}/api/memory/checkpointer`);
+      return (await r.json()) as { db_size: number; threads: ThreadInfo[] };
+    },
+    deleteThread: async (thread_id) => {
+      const r = await fetch(
+        `${API_BASE}/api/memory/checkpointer/${encodeURIComponent(thread_id)}`,
+        { method: "DELETE" },
+      );
+      return (await r.json()) as { deleted: number };
+    },
+    getProfile: async () => {
+      const r = await fetch(`${API_BASE}/api/memory/profile`);
+      return (await r.json()) as { entries: ProfileEntry[] };
+    },
+    saveProfile: async (entry) => {
+      const r = await fetch(`${API_BASE}/api/memory/profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(entry),
+      });
+      return r.json();
+    },
+    updateProfile: async (key, content, category) => {
+      const r = await fetch(
+        `${API_BASE}/api/memory/profile/${encodeURIComponent(key)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, category }),
+        },
+      );
+      return r.json();
+    },
+    deleteProfile: async (key) => {
+      const r = await fetch(
+        `${API_BASE}/api/memory/profile/${encodeURIComponent(key)}`,
+        { method: "DELETE" },
+      );
+      return r.json();
+    },
+    extractProfile: async (thread_id, message, reply) => {
+      const r = await fetch(`${API_BASE}/api/memory/profile/extract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          thread_id,
+          message,
+          assistant_reply: reply,
+        }),
+      });
+      return (await r.json()) as { extracted: number };
+    },
   },
   app: {
     getVersion: () => ipcRenderer.invoke("app:getVersion"),

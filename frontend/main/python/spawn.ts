@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import type { ChildProcess, SpawnOptions } from "child_process";
 import * as http from "http";
 import { appendLog } from "../logger";
+import type { SubagentsConfig, ToolsConfig } from "../store";
 
 /**
  * 杀掉指定进程及其全部子进程。
@@ -45,6 +46,10 @@ export interface PythonCredentials {
   milvusDb?: string;
   milvusCollection?: string;
   milvusAuthEnabled?: boolean;
+  // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取
+  subagentsConfig?: SubagentsConfig;
+  toolsConfig?: ToolsConfig;
+  profileAutoExtract?: boolean;
 }
 
 export type PythonStatus = "starting" | "ready" | "crashed" | "giving_up";
@@ -96,6 +101,11 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
   if (c.milvusDb) env.AGENT_PY_MILVUS_DB = c.milvusDb;
   if (c.milvusCollection) env.AGENT_PY_MILVUS_COLLECTION = c.milvusCollection;
   if (c.milvusAuthEnabled !== undefined) env.AGENT_PY_MILVUS_AUTH_ENABLED = String(c.milvusAuthEnabled);
+  // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取配置通过 JSON 字符串注入，
+  // 后端 pydantic-settings 会用 field_validator 反序列化并与默认值字段级合并
+  if (c.subagentsConfig) env.AGENT_PY_SUBAGENTS_CONFIG = JSON.stringify(c.subagentsConfig);
+  if (c.toolsConfig) env.AGENT_PY_TOOLS_CONFIG = JSON.stringify(c.toolsConfig);
+  if (c.profileAutoExtract !== undefined) env.AGENT_PY_PROFILE_AUTO_EXTRACT = String(c.profileAutoExtract);
   return env;
 }
 

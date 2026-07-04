@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录（pyproject.toml 所在目录）
@@ -18,6 +20,54 @@ BACKEND_ROOT = PROJECT_ROOT / "backend"
 DATA_DIR = PROJECT_ROOT / "data"
 WORKSPACE_DIR = DATA_DIR / "workspace"
 UPLOADS_DIR = DATA_DIR / "uploads"
+
+
+# ---- 子代理默认配置（与硬编码值一致，零配置行为不变）----
+_DEFAULT_CODE_TOOLS = ["read_file", "list_dir", "glob", "grep"]
+_DEFAULT_RAG_TOOLS = ["rag_retrieve"]
+_DEFAULT_WEB_TOOLS = ["web_search"]
+_DEFAULT_RAG_KEYWORDS = ["知识库", "文档库", "检索", "向量", "rag", "知识", "文档"]
+_DEFAULT_WEB_KEYWORDS = ["搜索", "网页", "联网", "查一下", "search", "web", "google", "百度"]
+
+# 全部工具清单（tools_enabled 默认值）
+_ALL_TOOLS = [
+    "read_file", "list_dir", "glob", "grep",
+    "write_file", "edit_file",
+    "web_search", "rag_retrieve",
+]
+
+
+class SubagentSettings(BaseModel):
+    """单个子代理的可配置项。"""
+
+    enabled: bool = True
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    system_prompt: str = ""
+    tools: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+
+
+def _default_subagents() -> dict[str, SubagentSettings]:
+    """默认子代理配置（与原硬编码一致）。"""
+    return {
+        "code": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt="",
+            tools=list(_DEFAULT_CODE_TOOLS), keywords=[],
+        ),
+        "rag": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt="",
+            tools=list(_DEFAULT_RAG_TOOLS), keywords=list(_DEFAULT_RAG_KEYWORDS),
+        ),
+        "web": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt="",
+            tools=list(_DEFAULT_WEB_TOOLS), keywords=list(_DEFAULT_WEB_KEYWORDS),
+        ),
+    }
+
+
+def _default_tools_enabled() -> dict[str, bool]:
+    """默认工具启用状态（全部 True）。"""
+    return {t: True for t in _ALL_TOOLS}
 
 
 class Settings(BaseSettings):
@@ -81,6 +131,44 @@ class Settings(BaseSettings):
     # ---- 沙箱 ----
     # 跨会话保留授权目录开关（默认开启：/reset 写 checkpoint 保留，删除会话才 clear）
     persist_authorized_dirs: bool = True
+
+    # ---- 子代理与工具配置（T1：从 electron-store 注入 env，重启生效）----
+    # AGENT_PY_SUBAGENTS_CONFIG: JSON 字符串，如 {"code":{"enabled":false,"temperature":0.5,...}}
+    subagents_config: dict[str, Any] = Field(default_factory=dict)
+    # AGENT_PY_TOOLS_CONFIG: JSON 字符串，如 {"web_search": false}
+    tools_config: dict[str, bool] = Field(default_factory=dict)
+    # AGENT_PY_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
+    profile_auto_extract: bool = True
+
+    @field_validator("subagents_config", "tools_config", mode="before")
+    @classmethod
+    def _parse_json_env(cls, v: Any) -> Any:
+        """pydantic-settings 对 dict 字段从 env 读取时可能传入字符串，需 JSON 解析。"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return v or {}
+
+    @property
+    def subagents(self) -> dict[str, SubagentSettings]:
+        """返回子代理配置（合并默认值，env 覆盖默认）。"""
+        defaults = _default_subagents()
+        for name, raw in self.subagents_config.items():
+            if name in defaults and isinstance(raw, dict):
+                # 用 env 值覆盖默认值（字段级覆盖）
+                merged = defaults[name].model_dump()
+                merged.update(raw)
+                defaults[name] = SubagentSettings(**merged)
+        return defaults
+
+    @property
+    def tools_enabled(self) -> dict[str, bool]:
+        """返回工具启用状态（合并默认值，env 覆盖默认）。"""
+        result = _default_tools_enabled()
+        result.update(self.tools_config)
+        return result
 
     @property
     def milvus_credentials_configured(self) -> bool:

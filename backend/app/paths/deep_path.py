@@ -11,8 +11,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
@@ -20,13 +21,25 @@ from langgraph.prebuilt import create_react_agent
 from app.config import get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
-from app.router.state import RouterState
 from app.subagents.code_agent import _make_fs_tools
 from app.subagents.rag_agent import _make_rag_tools
 from app.subagents.web_agent import _make_web_tools
 
+if TYPE_CHECKING:
+    # RouterState 仅用于类型注解（``from __future__ import annotations`` 使注解
+    # 在运行时为字符串），延迟到 TYPE_CHECKING 避免与 ``app.router.graph`` 形成循环导入：
+    # graph.py 顶部 ``from app.paths.deep_path import run_deep_path``，
+    # 而 deep_path.py 原本 ``from app.router.state import RouterState`` 触发
+    # ``app.router.__init__`` 加载 graph.py，此时 deep_path.py 仅部分初始化 → ImportError。
+    from app.router.state import RouterState
+
 # 触发人工审批中断的工具集合：写操作与 shell 执行
+# 模块级常量保持不变；运行时危险集合 = DANGEROUS_TOOLS ∩ 已启用工具名
 DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec"}
+
+# 工具名映射：将内部 tool 函数名映射到 settings.tools_enabled 的 key
+# （_make_fs_tools 中 glob_files/grep_files 与 config key glob/grep 不一致）
+_TOOL_NAME_MAP = {"glob_files": "glob", "grep_files": "grep"}
 
 # DeepAgent 系统提示
 _DEEP_SYSTEM_PROMPT = (
@@ -37,6 +50,9 @@ _DEEP_SYSTEM_PROMPT = (
 
 # 审批轮询参数
 _APPROVAL_POLL_INTERVAL = 0.3
+
+# T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
+_extract_tasks: set[asyncio.Task] = set()
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -53,6 +69,10 @@ def _make_deep_tools(thread_id: str) -> list:
     - 只读工具（read_file/list_dir/glob/grep）复用 ``_make_fs_tools``，与 subagent 一致。
     - 危险工具（write_file/edit_file）**仅** 在 DeepAgent 中暴露，由
       ``interrupt_before=["tools"]`` 触发审批，避免被 subagent 路径绕过。
+
+    T4: 根据 ``get_settings().tools_enabled`` 过滤工具集。若工具被禁用，
+    则不暴露给 LLM，且运行时 dangerous 集合也不含该工具（见 ``run_deep_path``）。
+    工具名映射：``glob_files``→``glob``、``grep_files``→``grep``（与 subagents 一致）。
     """
     from langchain_core.tools import tool
 
@@ -73,10 +93,21 @@ def _make_deep_tools(thread_id: str) -> list:
         """编辑文件：将 old_text 替换为 new_text（仅首次匹配）。"""
         return await fs.edit_file(thread_id, path, old_text, new_text)
 
-    return [*fs_tools, write_file, edit_file, *rag_tools, *web_tools]
+    all_tools = [*fs_tools, write_file, edit_file, *rag_tools, *web_tools]
+
+    # 根据 settings.tools_enabled 过滤；未配置的工具默认启用
+    enabled = get_settings().tools_enabled
+    return [
+        t for t in all_tools
+        if enabled.get(_TOOL_NAME_MAP.get(t.name, t.name), True)
+    ]
 
 
-def build_deep_agent(thread_id: str) -> Any:
+def build_deep_agent(
+    thread_id: str,
+    tools: list | None = None,
+    profile_prompt: str = "",
+) -> Any:
     """构造真实 DeepAgent 图。
 
     用 ``create_react_agent`` 构建 ReAct 子图，``interrupt_before=["tools"]`` 使图在
@@ -85,18 +116,26 @@ def build_deep_agent(thread_id: str) -> Any:
 
     Args:
         thread_id: 会话 ID（用于工具的沙箱授权绑定）。
+        tools: 可选，已构建的工具列表。若未传则内部调用 ``_make_deep_tools(thread_id)``。
+            ``run_deep_path`` 可先构建工具集，复用于 dangerous 判断。
+        profile_prompt: 可选，用户画像前缀，拼到 ``_DEEP_SYSTEM_PROMPT`` 前。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
     """
     model = get_chat_model(temperature=0.3, streaming=True)
-    tools = _make_deep_tools(thread_id)
+    if tools is None:
+        tools = _make_deep_tools(thread_id)
     checkpointer = MemorySaver()
+    # T9：画像前缀拼到默认 system prompt 前（遵循与路径 A 一致的"画像优先"约定）
+    system_prompt = _DEEP_SYSTEM_PROMPT
+    if profile_prompt:
+        system_prompt = f"{profile_prompt}\n{system_prompt}"
     return create_react_agent(
         model,
         tools,
         name="deep_agent",
-        prompt=_DEEP_SYSTEM_PROMPT,
+        prompt=system_prompt,
         interrupt_before=["tools"],
         checkpointer=checkpointer,
     )
@@ -244,7 +283,11 @@ async def _stream_agent_events(
                     yield {"event": "token", "data": text}
 
 
-async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]:
+async def run_deep_path(
+    state: RouterState,
+    message: str,
+    profile_prompt: str = "",
+) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器（真实实现）。
 
     流程:
@@ -255,10 +298,13 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
        - 危险 → yield approval_request → ``_await_approval`` → 通过则恢复 / 拒绝则终止
        - 安全 → 自动恢复
     5. 恢复后继续流式，循环直至图完成（``state.next`` 为空）
+    6. T10：若 ``profile_auto_extract`` 开启，异步调 LLM 抽取画像并写入 profile.json
+       （失败仅 warning，不阻塞 ``done`` 事件）
 
     Args:
         state: Router 状态（含 thread_id）。
         message: 用户消息。
+        profile_prompt: 用户画像前缀，拼到 DeepAgent system prompt 前。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -267,9 +313,10 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
     config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
     inputs = {"messages": [{"role": "user", "content": message}]}
 
-    # 1. 构建 agent
+    # 1. 构建 agent（先构建工具集，便于计算运行时 dangerous 集合）
     try:
-        agent = build_deep_agent(thread_id)
+        agent_tools = _make_deep_tools(thread_id)
+        agent = build_deep_agent(thread_id, tools=agent_tools, profile_prompt=profile_prompt)
     except ValueError as exc:
         yield {"event": "error", "data": f"LLM 不可用: {exc}"}
         return
@@ -277,6 +324,13 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
         logger.exception("build_deep_agent failed", thread_id=thread_id)
         yield {"event": "error", "data": f"DeepAgent 初始化失败: {exc}"}
         return
+
+    # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集
+    # 安全关键：若 edit_file 被禁用，此处不含 edit_file，审批流不会误触发
+    enabled_tool_names = {
+        _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
+    }
+    runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
 
     # 2. 初始流式运行（可能中断在 tools 前）
     try:
@@ -305,9 +359,9 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
 
-        # 检查是否有危险工具
+        # 检查是否有危险工具（运行时集合 = DANGEROUS_TOOLS ∩ 已启用工具）
         dangerous_calls = [
-            tc for tc in pending_calls if tc.get("name") in DANGEROUS_TOOLS
+            tc for tc in pending_calls if tc.get("name") in runtime_dangerous
         ]
 
         if dangerous_calls:
@@ -352,7 +406,85 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
         yield {"event": "error", "data": "DeepAgent 达到最大迭代上限"}
         return
 
+    # T10：路径 C 流式结束后，若开关开启则异步触发画像抽取（失败仅 warning，不报错）
+    # 不阻塞 done 事件：fire-and-forget（spec memory-management R10）
+    if get_settings().profile_auto_extract:
+        async def _do_extract() -> None:
+            try:
+                assistant_reply = _extract_last_assistant_reply(agent, config)
+                if assistant_reply:
+                    from app.memory.profile_store import upsert_from_llm
+
+                    entries = await _extract_profile_via_llm(message, assistant_reply)
+                    upsert_from_llm(entries)
+                    logger.info("profile auto extracted", count=len(entries))
+            except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
+                logger.warning("profile auto extract failed", error=str(exc))
+
+        task = asyncio.create_task(_do_extract())
+        _extract_tasks.add(task)
+        task.add_done_callback(_extract_tasks.discard)
+
     # done 事件由 run_router 统一 yield，此处不再重复
+
+
+def _extract_last_assistant_reply(agent: Any, config: dict) -> str:
+    """从 agent state 读取最后一条 AIMessage 的 content。
+
+    用于 T10 画像抽取：取最终回复作为 LLM 抽取输入。
+    跳过含 tool_calls 的 AIMessage（那些是工具调用而非最终回复）。
+    """
+    state = agent.get_state(config)
+    if not state or not state.values:
+        return ""
+    messages = state.values.get("messages", [])
+    if not messages:
+        return ""
+    from langchain_core.messages import AIMessage
+
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+            content = msg.content
+            if isinstance(content, list):
+                # 兼容 list 内容块（OpenAI vision 等多模态返回）
+                return "".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            return str(content)
+    return ""
+
+
+async def _extract_profile_via_llm(message: str, assistant_reply: str) -> list[dict]:
+    """调 LLM 抽取画像条目。
+
+    Prompt 引导 LLM 抽取「值得跨会话记住的事实」：用户偏好、项目约定、重要事实。
+    输出 JSON ``{"entries": [{"key", "category", "content"}]}``，无内容返回空列表。
+
+    失败时返回空列表（调用方按"无可抽取"处理，不报错）。
+    """
+    prompt = (
+        "你是一个用户画像抽取器。分析以下对话，抽取\"值得跨会话记住的事实\"：\n"
+        "- 用户偏好（如\"喜欢简洁回复\"、\"用 TypeScript\"）\n"
+        "- 项目约定（如\"项目用 FastAPI\"、\"测试用 pytest\"）\n"
+        "- 重要事实（如\"用户是前端工程师\"、\"工作日 9-18 点在线\"）\n\n"
+        f"对话：\n用户: {message}\n助手: {assistant_reply}\n\n"
+        '输出 JSON: {{"entries": [{{"key": "...", "category": "...", "content": "..."}}]}}\n'
+        '若无可抽取内容，返回 {{"entries": []}}。不要编造，只抽取明确的事实。'
+    )
+    llm = get_chat_model(temperature=0.0)
+    response = await llm.ainvoke(prompt)
+    text = response.content if hasattr(response, "content") else str(response)
+    import re
+
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group())
+        return data.get("entries", []) if isinstance(data, dict) else []
+    except json.JSONDecodeError:
+        return []
 
 
 async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> bool | None:

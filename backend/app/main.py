@@ -9,6 +9,17 @@
 - ``POST /api/chat/approve``      — 提交危险操作审批决定（写入内存 dict）。
 - ``POST /api/chat/abort``        — 中止 SSE 流（写入内存 flag）。
 - ``POST /api/chat``              — SSE 流式响应（Router 三路径分发：CHAT / SINGLE_TOOL / DEEP_TASK）。
+- ``GET /api/memory/skills``      — 技能文件列表（不含完整 content）。
+- ``GET /api/memory/skills/{name}`` — 读取单个技能文件完整内容。
+- ``POST /api/memory/skills``     — 新建/覆盖技能文件（触发 reload_skills）。
+- ``DELETE /api/memory/skills/{name}`` — 删除技能文件（触发 reload_skills）。
+- ``GET /api/memory/profile``     — 用户画像列表。
+- ``POST /api/memory/profile``    — 新建画像条目（key 重复 → 409）。
+- ``PUT /api/memory/profile/{key}`` — 更新画像条目（不存在 → 404）。
+- ``DELETE /api/memory/profile/{key}`` — 删除画像条目。
+- ``POST /api/memory/profile/extract`` — LLM 抽取画像条目并写入。
+- ``GET /api/memory/checkpointer`` — checkpointer 状态（db 大小 + thread 列表）。
+- ``DELETE /api/memory/checkpointer/{thread_id}`` — 删除指定 thread 的 checkpoint。
 
 跨进程状态：
 - ``_pending_approvals: dict[str, bool]`` — thread_id → 审批决定，DeepAgent 轮询。
@@ -29,8 +40,27 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import get_settings
 from app.embedding import get_embedding_client
 from app.embedding.tei_client import healthcheck as embedding_healthcheck
-from app.memory import close_checkpointer, get_async_checkpointer, get_checkpointer
+from app.memory import (
+    ProfileCategoryInvalid,
+    ProfileContentTooLong,
+    ProfileEntry,
+    ProfileKeyInvalid,
+    SkillNameInvalid,
+    SkillPathEscape,
+    ThreadIdInvalid,
+    build_profile_prompt,
+    close_checkpointer,
+    delete_skill_file,
+    delete_thread,
+    get_async_checkpointer,
+    get_checkpointer,
+    get_db_size,
+    get_skill_file,
+    list_skills_files,
+    list_threads,
+)
 from app.memory.skills_loader import get_skills, reload_skills
+from app.memory.skills_store import save_skill_file
 from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
 from app.router import run_router
@@ -152,6 +182,40 @@ class AbortRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="用户消息（/reset 触发会话重置）")
     thread_id: str = Field(..., description="会话 ID")
+
+
+class SkillSaveRequest(BaseModel):
+    """技能文件保存请求体。"""
+
+    name: str = Field(..., description="技能名（不含 .md 扩展名）")
+    content: str = Field(
+        ...,
+        max_length=65536,
+        description="文件完整内容（YAML frontmatter + Markdown body），上限 64KB",
+    )
+
+
+class ProfileEntryRequest(BaseModel):
+    """画像新建请求体。"""
+
+    key: str
+    category: str  # preference/project/fact/custom
+    content: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    """画像更新请求体。"""
+
+    content: str
+    category: str | None = None
+
+
+class ExtractRequest(BaseModel):
+    """LLM 抽取请求体。"""
+
+    thread_id: str
+    message: str
+    assistant_reply: str
 
 
 # ============================================================
@@ -413,6 +477,170 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
     - ``error``         — 错误（含消息）。
     """
     return EventSourceResponse(_event_generator(req))
+
+
+# ============================================================
+# 记忆：技能文件 CRUD
+# ============================================================
+
+
+@app.get("/api/memory/skills")
+async def memory_skills_list() -> dict[str, Any]:
+    """返回技能文件列表（不含完整 content）。
+
+    每项含 ``name`` / ``size`` / ``mtime`` / ``content_preview``。
+    """
+    files = list_skills_files()
+    return {
+        "skills": [
+            {
+                "name": f.name,
+                "size": f.size,
+                "mtime": f.mtime,
+                "content_preview": f.content_preview,
+            }
+            for f in files
+        ]
+    }
+
+
+@app.get("/api/memory/skills/{name}")
+async def memory_skills_get(name: str) -> dict[str, str]:
+    """返回单个技能文件完整内容。"""
+    try:
+        content = get_skill_file(name)
+    except (SkillNameInvalid, SkillPathEscape) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"name": name, "content": content}
+
+
+@app.post("/api/memory/skills")
+async def memory_skills_save(req: SkillSaveRequest) -> dict[str, Any]:
+    """新建/覆盖技能文件，触发 ``reload_skills``。"""
+    try:
+        save_skill_file(req.name, req.content)
+    except (SkillNameInvalid, SkillPathEscape) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "name": req.name}
+
+
+@app.delete("/api/memory/skills/{name}")
+async def memory_skills_delete(name: str) -> dict[str, Any]:
+    """删除技能文件，触发 ``reload_skills``。"""
+    try:
+        deleted = delete_skill_file(name)
+    except (SkillNameInvalid, SkillPathEscape) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"技能文件不存在: {name}")
+    return {"ok": True, "deleted": True}
+
+
+# ============================================================
+# 记忆：用户画像 CRUD
+# ============================================================
+
+
+@app.get("/api/memory/profile")
+async def memory_profile_list() -> dict[str, Any]:
+    """返回全部画像条目。"""
+    from app.memory.profile_store import get_all
+
+    entries = get_all()
+    return {"entries": [e.model_dump(mode="json") for e in entries]}
+
+
+@app.post("/api/memory/profile")
+async def memory_profile_add(req: ProfileEntryRequest) -> dict[str, Any]:
+    """新建画像条目；key 重复 → 409。"""
+    from app.memory.profile_store import add
+
+    entry = ProfileEntry(
+        key=req.key,
+        category=req.category,
+        content=req.content,
+        source="manual",
+        created_at="",
+        updated_at="",
+    )
+    try:
+        new_entry = add(entry)
+    except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ValueError as exc:
+        # key 已存在
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"ok": True, "entry": new_entry.model_dump(mode="json")}
+
+
+@app.put("/api/memory/profile/{key}")
+async def memory_profile_update(key: str, req: ProfileUpdateRequest) -> dict[str, Any]:
+    """更新画像条目；不存在 → 404。"""
+    from app.memory.profile_store import update
+
+    try:
+        updated = update(key, req.content, req.category)
+    except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"ok": True, "entry": updated.model_dump(mode="json")}
+
+
+@app.delete("/api/memory/profile/{key}")
+async def memory_profile_delete(key: str) -> dict[str, Any]:
+    """删除画像条目。"""
+    from app.memory.profile_store import delete as profile_delete
+
+    try:
+        deleted = profile_delete(key)
+    except ProfileKeyInvalid as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "deleted": deleted}
+
+
+@app.post("/api/memory/profile/extract")
+async def memory_profile_extract(req: ExtractRequest) -> dict[str, Any]:
+    """LLM 抽取画像条目并写入 profile.json。
+
+    调用 ``_extract_profile_via_llm`` 抽取，再 ``upsert_from_llm`` 写入。
+    失败不报错（仅 warning 日志），返回 ``{extracted: 0}``。
+    """
+    from app.memory.profile_store import upsert_from_llm
+    from app.paths.deep_path import _extract_profile_via_llm
+
+    try:
+        entries = await _extract_profile_via_llm(req.message, req.assistant_reply)
+        written = upsert_from_llm(entries)
+    except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
+        logger.warning("profile extract endpoint failed", error=str(exc))
+        return {"extracted": 0}
+    return {"extracted": written}
+
+
+# ============================================================
+# 记忆：Checkpointer 状态视图
+# ============================================================
+
+
+@app.get("/api/memory/checkpointer")
+async def memory_checkpointer_status() -> dict[str, Any]:
+    """返回 checkpointer 状态：db 文件大小 + thread 列表。"""
+    db_size = await get_db_size()
+    threads = await list_threads()
+    return {"db_size": db_size, "threads": threads}
+
+
+@app.delete("/api/memory/checkpointer/{thread_id}")
+async def memory_checkpointer_delete(thread_id: str) -> dict[str, Any]:
+    """删除指定 thread 的所有 checkpoint。"""
+    try:
+        deleted = await delete_thread(thread_id)
+    except ThreadIdInvalid as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "deleted": deleted}
 
 
 if __name__ == "__main__":
