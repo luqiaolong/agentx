@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { useSettingsStore } from "@/stores/settings";
@@ -15,6 +15,24 @@ export function MilvusCredentialsForm() {
   const setMilvusConfigured = useSettingsStore((s) => s.setMilvusConfigured);
   const [saved, setSaved] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [host, setHost] = useState("127.0.0.1");
+  const [port, setPort] = useState("19530");
+  const [db, setDb] = useState("agent_py");
+  const [collection, setCollection] = useState("agent_py_docs");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const cfg = await window.api.settings.getKnowledgeConfig();
+        setHost(cfg.milvusHost ?? "127.0.0.1");
+        setPort(String(cfg.milvusPort ?? 19530));
+        setDb(cfg.milvusDb ?? "agent_py");
+        setCollection(cfg.milvusCollection ?? "agent_py_docs");
+      } catch {
+        // ignore
+      }
+    })();
+  }, []);
 
   const {
     register,
@@ -24,6 +42,12 @@ export function MilvusCredentialsForm() {
 
   const onSubmit = async (values: FormValues) => {
     await window.api.settings.setMilvusCredentials(values.user, values.password);
+    await window.api.settings.setKnowledgeConfig({
+      milvusHost: host,
+      milvusPort: Number(port) || 19530,
+      milvusDb: db,
+      milvusCollection: collection,
+    });
     setMilvusConfigured(true);
     setSaved(true);
     setShowForm(false);
@@ -73,6 +97,42 @@ export function MilvusCredentialsForm() {
         {errors.password && (
           <span className="text-xs text-red-600">{errors.password.message}</span>
         )}
+      </div>
+      <div>
+        <label className="block text-xs text-neutral-500">Host</label>
+        <input
+          type="text"
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs text-neutral-500">Port</label>
+        <input
+          type="text"
+          value={port}
+          onChange={(e) => setPort(e.target.value)}
+          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs text-neutral-500">DB</label>
+        <input
+          type="text"
+          value={db}
+          onChange={(e) => setDb(e.target.value)}
+          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs text-neutral-500">Collection</label>
+        <input
+          type="text"
+          value={collection}
+          onChange={(e) => setCollection(e.target.value)}
+          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        />
       </div>
       <button
         type="submit"

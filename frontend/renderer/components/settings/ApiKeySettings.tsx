@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-type ProviderId = "openai" | "deepseek" | "tavily";
+type ProviderId = "openai" | "deepseek" | "tavily" | "minimax";
 
 interface ProviderConfig {
   id: ProviderId;
@@ -11,15 +11,26 @@ const PROVIDERS: ProviderConfig[] = [
   { id: "openai", label: "OpenAI" },
   { id: "deepseek", label: "DeepSeek" },
   { id: "tavily", label: "Tavily" },
+  { id: "minimax", label: "MiniMax" },
 ];
 
 type ProviderState = Record<ProviderId, string>;
 type ProviderFlags = Record<ProviderId, boolean>;
 
-const emptyFlags: ProviderFlags = { openai: false, deepseek: false, tavily: false };
+const emptyFlags: ProviderFlags = {
+  openai: false,
+  deepseek: false,
+  tavily: false,
+  minimax: false,
+};
 
 export function ApiKeySettings() {
-  const [values, setValues] = useState<ProviderState>({ openai: "", deepseek: "", tavily: "" });
+  const [values, setValues] = useState<ProviderState>({
+    openai: "",
+    deepseek: "",
+    tavily: "",
+    minimax: "",
+  });
   const [configured, setConfigured] = useState<ProviderFlags>(emptyFlags);
   const [show, setShow] = useState<ProviderFlags>(emptyFlags);
   const [saved, setSaved] = useState<ProviderFlags>(emptyFlags);
@@ -28,7 +39,12 @@ export function ApiKeySettings() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const next: ProviderFlags = { openai: false, deepseek: false, tavily: false };
+      const next: ProviderFlags = {
+        openai: false,
+        deepseek: false,
+        tavily: false,
+        minimax: false,
+      };
       for (const p of PROVIDERS) {
         try {
           const key = await window.api.settings.getApiKey(p.id);
