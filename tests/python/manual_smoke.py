@@ -1,4 +1,4 @@
-"""端到端冒烟：跑三条路径 + /reset，逐个断言事件序列。"""
+"""端到端冒烟（已扩展）：跑三条路径 + /reset + 沙箱授权 + 审批流。"""
 
 from __future__ import annotations
 
@@ -21,11 +21,9 @@ def collect_sse(body: dict, label: str, timeout: float = 120.0) -> tuple[list[st
             buf = b""
             for chunk in r.iter_bytes():
                 buf += chunk
-                # 累计直到含 done 事件
                 if b"event: done" in buf:
                     break
             text = buf.decode("utf-8", errors="replace").replace("\r\n", "\n")
-            # 解析 SSE（每个事件以空行分隔）
             for block in text.split("\n\n"):
                 lines = [ln for ln in block.split("\n") if ln.strip()]
                 if not lines:
@@ -54,30 +52,28 @@ def main() -> int:
 
     # Path A: CHAT
     try:
-        tokens, _, done = collect_sse(
-            {"message": "你好", "thread_id": "smoke-A"}, "A"
-        )
+        tokens, _, done = collect_sse({"message": "你好", "thread_id": "smoke-A"}, "A")
         joined = "".join(tokens)
-        assert tokens, f"A: 无 token (got {len(tokens)})"
-        assert "<think>" not in joined, f"A: 仍有 <think> 块: {joined!r}"
+        assert tokens, f"A: 无 token"
+        assert "<think>" not in joined, f"A: 仍有 <think> 块: {joined[:200]!r}"
         assert done == "{}", f"A: done 格式错: {done!r}"
-        print(f"[A] OK tokens={len(tokens)} content={joined!r}")
+        print(f"[A] OK tokens={len(tokens)} content={joined[:80]!r}")
     except AssertionError as e:
         failed.append(f"[A] {e}")
 
-    # Path B: SINGLE_TOOL
+    # Path B: SINGLE_TOOL (code → 列出目录)
     try:
         tokens, structured, done = collect_sse(
             {"message": "列出 data/workspace 目录的内容", "thread_id": "smoke-B"}, "B"
         )
-        assert tokens or structured, f"B: 无事件 (tokens={len(tokens)} struct={len(structured)})"
+        assert tokens or structured, f"B: 无事件"
         assert done == "{}", f"B: done 格式错: {done!r}"
         kinds = [s["event"] for s in structured]
         print(f"[B] OK tokens={len(tokens)} structured={kinds}")
     except AssertionError as e:
         failed.append(f"[B] {e}")
 
-    # Path C: DEEP_TASK
+    # Path C: DEEP_TASK（带分析语义）
     try:
         tokens, structured, done = collect_sse(
             {"message": "帮我分析这个项目结构并规划优化方案", "thread_id": "smoke-C"},
@@ -87,7 +83,7 @@ def main() -> int:
         assert tokens or structured, f"C: 无事件"
         assert "<think>" not in joined, f"C: 仍有 <think> 块: {joined[:200]!r}"
         assert done == "{}", f"C: done 格式错: {done!r}"
-        print(f"[C] OK tokens={len(tokens)} content[:80]={joined[:80]!r}")
+        print(f"[C] OK tokens={len(tokens)} structured={len(structured)} content[:80]={joined[:80]!r}")
     except AssertionError as e:
         failed.append(f"[C] {e}")
 
@@ -99,9 +95,50 @@ def main() -> int:
         joined = "".join(tokens)
         assert joined and ("已清空" in joined), f"R: 提示缺失: {joined!r}"
         assert done == "{}", f"R: done 格式错: {done!r}"
-        print(f"[R] OK content={joined!r}")
+        print(f"[R] OK content={joined[:80]!r}")
     except AssertionError as e:
         failed.append(f"[R] {e}")
+
+    # /api/sandbox/authorize
+    try:
+        with httpx.Client(timeout=10.0) as c:
+            r = c.post(
+                f"{BASE}/api/sandbox/authorize",
+                json={"thread_id": "sandbox-1", "path": "D:/java/agentprojects/agent-py/data/workspace", "writable": True},
+            )
+            assert r.status_code == 200, f"authorize status={r.status_code} body={r.text}"
+            data = r.json()
+            assert data.get("authorized") is True
+            print(f"[sandbox/authorize] OK path={data['path']}")
+
+            r2 = c.get(f"{BASE}/api/sandbox/authorized/sandbox-1")
+            assert r2.status_code == 200
+            dirs = r2.json()["dirs"]
+            assert any("workspace" in d["path"] for d in dirs), f"dirs={dirs}"
+            print(f"[sandbox/authorized] OK dirs={[d['path'] for d in dirs]}")
+    except AssertionError as e:
+        failed.append(f"[sandbox] {e}")
+
+    # /api/chat/approve（无 thread 测试）
+    try:
+        with httpx.Client(timeout=10.0) as c:
+            r = c.post(
+                f"{BASE}/api/chat/approve",
+                json={"thread_id": "approve-test", "approval": True},
+            )
+            assert r.status_code == 200
+            print(f"[chat/approve] OK")
+    except AssertionError as e:
+        failed.append(f"[chat/approve] {e}")
+
+    # /api/chat/abort
+    try:
+        with httpx.Client(timeout=10.0) as c:
+            r = c.post(f"{BASE}/api/chat/abort", json={"thread_id": "abort-test"})
+            assert r.status_code == 200
+            print(f"[chat/abort] OK")
+    except AssertionError as e:
+        failed.append(f"[chat/abort] {e}")
 
     # /api/health
     try:

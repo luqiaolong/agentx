@@ -1,11 +1,13 @@
 import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // electron-vite 配置：三入口均指向 frontend/（项目结构 spec 要求）
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // electron-store v10 是 ESM-only，不能被 CJS require()，必须打包进产物
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-store'] })],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'frontend/main/index.ts') }
@@ -33,6 +35,6 @@ export default defineConfig({
         '@main': resolve(__dirname, 'frontend/main')
       }
     },
-    plugins: [react()]
+    plugins: [react(), tailwindcss()]
   }
 })

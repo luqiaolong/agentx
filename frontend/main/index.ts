@@ -30,8 +30,10 @@ function createWindow(): void {
   mainWindow.on("ready-to-show", () => mainWindow?.show());
 
   // electron-vite 在 dev 注入 ELECTRON_RENDERER_URL，生产环境加载打包产物
+  // 注意: app.isPackaged 在某些 dev 场景下可能为 true（如 electron-vite 缓存），
+  // 故以 ELECTRON_RENDERER_URL 是否存在作为 dev 模式判据
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
-  if (!app.isPackaged && devUrl) {
+  if (devUrl) {
     void mainWindow.loadURL(devUrl);
   } else {
     void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
