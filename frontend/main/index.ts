@@ -1,13 +1,28 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
 import * as path from "path";
-import type { ChildProcess } from "child_process";
-import { spawnPython } from "./python/spawn";
-import { getMilvusCredentials, setMilvusCredentials, getApiKey, setApiKey } from "./store";
+import * as fs from "fs";
+import * as crypto from "crypto";
+import { spawnPython, type PythonHandle } from "./python/spawn";
+import {
+  getMilvusCredentials,
+  setMilvusCredentials,
+  getApiKey,
+  setApiKey,
+  getLLMConfig,
+  setLLMConfig,
+  getSystemPrompt,
+  setSystemPrompt,
+  getApprovalConfig,
+  setApprovalConfig,
+  getKnowledgeConfig,
+  setKnowledgeConfig,
+} from "./store";
+import { appendLog, readLogs, cleanOldLogs } from "./logger";
 
 const PYTHON_PORT = 8123;
 
 let mainWindow: BrowserWindow | null = null;
-let pythonHandle: { process: ChildProcess; stop: () => void } | null = null;
+let pythonHandle: PythonHandle | null = null;
 let quitting = false;
 
 function getBackendCwd(): string {
@@ -43,6 +58,12 @@ function createWindow(): void {
 function startPython(): void {
   if (quitting) return;
   const milvus = getMilvusCredentials();
+  const llm = getLLMConfig();
+  const approval = getApprovalConfig();
+  const knowledge = getKnowledgeConfig();
+  const systemPrompt = getSystemPrompt();
+
+  appendLog("[main] starting python backend");
   pythonHandle = spawnPython({
     cwd: getBackendCwd(),
     port: PYTHON_PORT,
@@ -53,18 +74,27 @@ function startPython(): void {
       milvusPassword: milvus.password ?? undefined,
       deepseekApiKey: getApiKey("deepseek") ?? undefined,
       tavilyApiKey: getApiKey("tavily") ?? undefined,
+      defaultModel: llm.defaultModel || undefined,
+      openaiBaseUrl: llm.openaiBaseUrl || undefined,
+      systemPrompt: systemPrompt || undefined,
+      approvalMaxWait: approval.approvalMaxWait,
+      maxUploadBytes: approval.maxUploadBytes,
+      embeddingUrl: knowledge.embeddingUrl || undefined,
+      milvusHost: knowledge.milvusHost || undefined,
+      milvusPort: knowledge.milvusPort,
+      milvusDb: knowledge.milvusDb || undefined,
+      milvusCollection: knowledge.milvusCollection || undefined,
+    },
+    onStatus: (status) => {
+      appendLog(`[main] python status: ${status}`);
+      mainWindow?.webContents.send("python:status", status);
     },
   });
 
-  // 崩溃自动重启（仅在进程确实运行后非零退出时）
-  pythonHandle.process.on("exit", (code) => {
-    if (quitting) return;
-    if (code !== null && code !== 0) {
-      new Notification({
-        title: "AgentPy",
-        body: `Python 进程异常退出 (code=${code})，正在重启...`,
-      }).show();
-      setTimeout(() => startPython(), 1000);
+  // 启动握手：轮询 /api/health；超时仅记录，由 onStatus("giving_up") 兜底
+  void pythonHandle.waitForReady().then((ok) => {
+    if (!ok) {
+      appendLog("[main] python waitForReady returned false (timeout or stopped)");
     }
   });
 }
@@ -83,9 +113,48 @@ function registerIpc(): void {
   ipcMain.handle("dialog:saveFile", async (_e, opts) => {
     return dialog.showSaveDialog(mainWindow!, (opts as Electron.SaveDialogOptions) ?? {});
   });
+  // T2 文件拖拽上传：复制源文件到 data/uploads/{uuid}_{fileName}，返回相对路径
+  ipcMain.handle(
+    "dialog:saveDroppedFile",
+    async (_e, filePath: string, fileName: string): Promise<string> => {
+      const maxBytes = getApprovalConfig().maxUploadBytes;
+      let size = 0;
+      try {
+        const stat = fs.statSync(filePath);
+        size = stat.size;
+      } catch (err) {
+        appendLog(`[main] saveDroppedFile stat failed: ${(err as Error).message}`);
+        throw new Error(`无法读取源文件: ${fileName}`);
+      }
+      if (size > maxBytes) {
+        appendLog(`[main] saveDroppedFile rejected: ${fileName} size=${size} > max=${maxBytes}`);
+        throw new Error(`文件大小 ${size} 超过上限 ${maxBytes} 字节`);
+      }
+      const uploadDir = path.join(getBackendCwd(), "data", "uploads");
+      // main 进程写文件前兜底创建目录（后端 ensure_runtime_dirs 也可能尚未运行）
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      // 安全：用 path.basename 清洗 fileName，防止路径穿越（如 ../foo 或绝对路径）
+      const safeName = path.basename(String(fileName));
+      if (!safeName || safeName === "." || safeName === "..") {
+        throw new Error("非法文件名");
+      }
+      const id = crypto.randomUUID();
+      const destName = `${id}_${safeName}`;
+      const destPath = path.join(uploadDir, destName);
+      await fs.promises.copyFile(filePath, destPath);
+      appendLog(`[main] saveDroppedFile saved ${safeName} -> data/uploads/${destName}`);
+      return `data/uploads/${destName}`;
+    },
+  );
 
   ipcMain.handle("shell:openInEditor", async (_e, p: string) => shell.openPath(p));
   ipcMain.handle("shell:openExternal", async (_e, url: string) => shell.openExternal(url));
+  // T4 workspace-panel：在文件管理器中显示文件
+  ipcMain.handle("shell:revealInFolder", (_e, p: string) => {
+    shell.showItemInFolder(p);
+  });
 
   ipcMain.handle("notify:show", async (_e, opts: { title: string; body: string }) => {
     new Notification(opts).show();
@@ -111,9 +180,37 @@ function registerIpc(): void {
     setApiKey(provider, key);
     return { ok: true };
   });
+
+  // T7 settings-completion：非凭证配置 IPC handler，renderer 通过 window.api.settings 读写
+  ipcMain.handle("settings:setLLMConfig", (_e, model: string, baseUrl: string) => {
+    setLLMConfig(model, baseUrl);
+    return { ok: true };
+  });
+  ipcMain.handle("settings:getLLMConfig", () => getLLMConfig());
+  ipcMain.handle("settings:setSystemPrompt", (_e, prompt: string) => {
+    setSystemPrompt(prompt);
+    return { ok: true };
+  });
+  ipcMain.handle("settings:getSystemPrompt", () => getSystemPrompt());
+  ipcMain.handle("settings:setApprovalConfig", (_e, cfg: Parameters<typeof setApprovalConfig>[0]) => {
+    setApprovalConfig(cfg);
+    return { ok: true };
+  });
+  ipcMain.handle("settings:getApprovalConfig", () => getApprovalConfig());
+  ipcMain.handle("settings:setKnowledgeConfig", (_e, cfg: Parameters<typeof setKnowledgeConfig>[0]) => {
+    setKnowledgeConfig(cfg);
+    return { ok: true };
+  });
+  ipcMain.handle("settings:getKnowledgeConfig", () => getKnowledgeConfig());
+
+  // T6 process-resilience：读取日志（默认当天，最后 200 行）
+  ipcMain.handle("logs:read", (_e, date?: string, maxLines?: number) => {
+    return readLogs(date, maxLines);
+  });
 }
 
 app.whenReady().then(() => {
+  cleanOldLogs(7);
   createWindow();
   startPython();
   registerIpc();

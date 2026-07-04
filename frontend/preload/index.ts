@@ -23,6 +23,21 @@ export interface MilvusCredentialResult {
   password: string | null;
 }
 
+export interface SkillSummary {
+  name: string;
+  description: string;
+  trigger: string;
+  tools: string[];
+  content_preview: string;
+}
+
+export interface WorkspaceEntry {
+  name: string;
+  type: "file" | "dir";
+  size: number;
+  mtime: number;
+}
+
 export interface ElectronAPI {
   chat: {
     send: (msg: { role: string; content: string }, opts?: { threadId?: string }) => Promise<void>;
@@ -35,10 +50,27 @@ export interface ElectronAPI {
     revoke: (threadId: string, p: string) => Promise<unknown>;
     listAuthorized: (threadId: string) => Promise<unknown>;
   };
+  skills: {
+    list: () => Promise<{ skills: SkillSummary[] }>;
+    reload: () => Promise<{ ok: boolean; count: number }>;
+  };
+  workspace: {
+    list: (path?: string) => Promise<{ entries: WorkspaceEntry[] }>;
+  };
+  python: {
+    onStatus: (handler: (status: string) => void) => () => void;
+  };
+  logs: {
+    read: (date?: string, maxLines?: number) => Promise<string[]>;
+  };
   dialog: {
     openFile: (opts?: unknown) => Promise<unknown>;
     openFolder: () => Promise<unknown>;
     saveFile: (opts?: unknown) => Promise<unknown>;
+    saveDroppedFile: (filePath: string, fileName: string) => Promise<string>;
+  };
+  shell: {
+    revealInFolder: (p: string) => Promise<void>;
   };
   approve: { submit: (threadId: string, approval: boolean) => Promise<void> };
   health: { check: () => Promise<unknown> };
@@ -47,6 +79,34 @@ export interface ElectronAPI {
     getMilvusCredentials: () => Promise<MilvusCredentialResult>;
     getApiKey: (provider: string) => Promise<string | null>;
     setApiKey: (provider: string, key: string) => Promise<unknown>;
+    getLLMConfig: () => Promise<{ defaultModel: string; openaiBaseUrl: string }>;
+    setLLMConfig: (model: string, baseUrl: string) => Promise<unknown>;
+    getSystemPrompt: () => Promise<string>;
+    setSystemPrompt: (prompt: string) => Promise<unknown>;
+    getApprovalConfig: () => Promise<{
+      autoApproveAfterSeconds: number;
+      approvalMaxWait: number;
+      maxUploadBytes: number;
+    }>;
+    setApprovalConfig: (cfg: {
+      autoApproveAfterSeconds?: number;
+      approvalMaxWait?: number;
+      maxUploadBytes?: number;
+    }) => Promise<unknown>;
+    getKnowledgeConfig: () => Promise<{
+      embeddingUrl: string;
+      milvusHost: string;
+      milvusPort: number;
+      milvusDb: string;
+      milvusCollection: string;
+    }>;
+    setKnowledgeConfig: (cfg: {
+      embeddingUrl?: string;
+      milvusHost?: string;
+      milvusPort?: number;
+      milvusDb?: string;
+      milvusCollection?: string;
+    }) => Promise<unknown>;
   };
   app: {
     getVersion: () => Promise<string>;
@@ -170,10 +230,47 @@ const api: ElectronAPI = {
       return data.dirs ?? [];
     },
   },
+  skills: {
+    list: async () => {
+      const r = await fetch(`${API_BASE}/api/skills`);
+      return (await r.json()) as { skills: SkillSummary[] };
+    },
+    reload: async () => {
+      const r = await fetch(`${API_BASE}/api/skills/reload`, { method: "POST" });
+      return (await r.json()) as { ok: boolean; count: number };
+    },
+  },
+  workspace: {
+    list: async (p) => {
+      const r = await fetch(
+        `${API_BASE}/api/workspace/list?path=${encodeURIComponent(p ?? "")}`,
+      );
+      return (await r.json()) as { entries: WorkspaceEntry[] };
+    },
+  },
+  python: {
+    onStatus: (handler) => {
+      const listener = (_e: Electron.IpcRendererEvent, status: string): void => {
+        handler(status);
+      };
+      ipcRenderer.on("python:status", listener);
+      return () => {
+        ipcRenderer.removeListener("python:status", listener);
+      };
+    },
+  },
+  logs: {
+    read: (date, maxLines) => ipcRenderer.invoke("logs:read", date, maxLines),
+  },
   dialog: {
     openFile: (opts) => ipcRenderer.invoke("dialog:openFile", opts),
     openFolder: () => ipcRenderer.invoke("dialog:openFolder"),
     saveFile: (opts) => ipcRenderer.invoke("dialog:saveFile", opts),
+    saveDroppedFile: (filePath, fileName) =>
+      ipcRenderer.invoke("dialog:saveDroppedFile", filePath, fileName),
+  },
+  shell: {
+    revealInFolder: (p) => ipcRenderer.invoke("shell:revealInFolder", p),
   },
   approve: {
     submit: (threadId, approval) =>
@@ -192,6 +289,15 @@ const api: ElectronAPI = {
     getMilvusCredentials: () => ipcRenderer.invoke("settings:getMilvusCredentials"),
     getApiKey: (provider) => ipcRenderer.invoke("settings:getApiKey", provider),
     setApiKey: (provider, key) => ipcRenderer.invoke("settings:setApiKey", provider, key),
+    getLLMConfig: () => ipcRenderer.invoke("settings:getLLMConfig"),
+    setLLMConfig: (model, baseUrl) =>
+      ipcRenderer.invoke("settings:setLLMConfig", model, baseUrl),
+    getSystemPrompt: () => ipcRenderer.invoke("settings:getSystemPrompt"),
+    setSystemPrompt: (prompt) => ipcRenderer.invoke("settings:setSystemPrompt", prompt),
+    getApprovalConfig: () => ipcRenderer.invoke("settings:getApprovalConfig"),
+    setApprovalConfig: (cfg) => ipcRenderer.invoke("settings:setApprovalConfig", cfg),
+    getKnowledgeConfig: () => ipcRenderer.invoke("settings:getKnowledgeConfig"),
+    setKnowledgeConfig: (cfg) => ipcRenderer.invoke("settings:setKnowledgeConfig", cfg),
   },
   app: {
     getVersion: () => ipcRenderer.invoke("app:getVersion"),

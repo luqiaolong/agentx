@@ -55,3 +55,94 @@ export function getApiKey(provider: string): string | null {
 export function setApiKey(provider: string, key: string): void {
   setEncrypted(`apikey.${provider}`, key);
 }
+
+// ---- T7 settings-completion ----
+// 非凭证配置（明文存储），用 electron-store 的 get/set，key 带前缀。
+
+function getString(key: string, def: string): string {
+  const v = store.get(key);
+  return typeof v === "string" ? v : def;
+}
+
+function getNumber(key: string, def: number): number {
+  const v = store.get(key);
+  return typeof v === "number" ? v : def;
+}
+
+export function getLLMConfig(): { defaultModel: string; openaiBaseUrl: string } {
+  return {
+    defaultModel: getString("llm.defaultModel", ""),
+    openaiBaseUrl: getString("llm.openaiBaseUrl", ""),
+  };
+}
+
+export function setLLMConfig(model: string, baseUrl: string): void {
+  store.set("llm.defaultModel", model);
+  store.set("llm.openaiBaseUrl", baseUrl);
+}
+
+export function getSystemPrompt(): string {
+  return getString("systemPrompt", "");
+}
+
+export function setSystemPrompt(prompt: string): void {
+  store.set("systemPrompt", prompt);
+}
+
+export function getApprovalConfig(): {
+  autoApproveAfterSeconds: number;
+  approvalMaxWait: number;
+  maxUploadBytes: number;
+} {
+  return {
+    autoApproveAfterSeconds: getNumber("approval.autoApproveAfterSeconds", 0),
+    approvalMaxWait: getNumber("approval.approvalMaxWait", 300),
+    maxUploadBytes: getNumber("approval.maxUploadBytes", 52428800),
+  };
+}
+
+export function setApprovalConfig(
+  cfg: Partial<{ autoApproveAfterSeconds: number; approvalMaxWait: number; maxUploadBytes: number }>,
+): void {
+  if (cfg.autoApproveAfterSeconds !== undefined) {
+    store.set("approval.autoApproveAfterSeconds", cfg.autoApproveAfterSeconds);
+  }
+  if (cfg.approvalMaxWait !== undefined) {
+    store.set("approval.approvalMaxWait", cfg.approvalMaxWait);
+  }
+  if (cfg.maxUploadBytes !== undefined) {
+    store.set("approval.maxUploadBytes", cfg.maxUploadBytes);
+  }
+}
+
+export function getKnowledgeConfig(): {
+  embeddingUrl: string;
+  milvusHost: string;
+  milvusPort: number;
+  milvusDb: string;
+  milvusCollection: string;
+} {
+  return {
+    embeddingUrl: getString("knowledge.embeddingUrl", ""),
+    milvusHost: getString("knowledge.milvusHost", "127.0.0.1"),
+    milvusPort: getNumber("knowledge.milvusPort", 19530),
+    milvusDb: getString("knowledge.milvusDb", "agent_py"),
+    milvusCollection: getString("knowledge.milvusCollection", "agent_py_docs"),
+  };
+}
+
+export function setKnowledgeConfig(
+  cfg: Partial<{
+    embeddingUrl: string;
+    milvusHost: string;
+    milvusPort: number;
+    milvusDb: string;
+    milvusCollection: string;
+  }>,
+): void {
+  if (cfg.embeddingUrl !== undefined) store.set("knowledge.embeddingUrl", cfg.embeddingUrl);
+  if (cfg.milvusHost !== undefined) store.set("knowledge.milvusHost", cfg.milvusHost);
+  if (cfg.milvusPort !== undefined) store.set("knowledge.milvusPort", cfg.milvusPort);
+  if (cfg.milvusDb !== undefined) store.set("knowledge.milvusDb", cfg.milvusDb);
+  if (cfg.milvusCollection !== undefined) store.set("knowledge.milvusCollection", cfg.milvusCollection);
+}
