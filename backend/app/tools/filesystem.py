@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from app.config import PROJECT_ROOT
 from app.observability.logger import logger
 from app.utils.security import PathNotAuthorized, get_sandbox
 
@@ -25,6 +26,18 @@ _UNAUTHORIZED_WRITE_READONLY = (
 )
 # 写权限缺失：路径完全未授权时的提示
 _UNAUTHORIZED_WRITE = "路径 {path} 未授权，请通过 dialog 选择目录后重试"
+
+
+def _resolve(path: str | Path) -> Path:
+    """规范化路径，相对路径基于 PROJECT_ROOT 解析。
+
+    与 ``SessionSandbox._normalize`` 一致：LLM 工具调用常生成相对路径，
+    若用 ``Path(path)`` 默认基于 CWD（可能是 ``backend/``）解析会找不到文件。
+    """
+    p = Path(path)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    return p.resolve()
 
 
 def _deny_read(path: str | Path) -> str:
@@ -46,7 +59,7 @@ async def read_file(thread_id: str, path: str) -> str:
         logger.warning("fs.read_file denied", thread_id=thread_id, path=str(path))
         return _deny_read(path)
     try:
-        return Path(path).read_text(encoding="utf-8")
+        return _resolve(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return f"文件不存在: {path}"
     except OSError as exc:
@@ -61,7 +74,7 @@ async def list_dir(thread_id: str, path: str) -> list[str]:
     except PathNotAuthorized:
         logger.warning("fs.list_dir denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
-    p = Path(path)
+    p = _resolve(path)
     if not p.is_dir():
         return [f"不是目录: {path}"]
     try:
@@ -90,9 +103,9 @@ async def glob(thread_id: str, pattern: str) -> list[str]:
         p = Path(pattern)
         if p.is_absolute():
             rel = pattern[len(str(base)):].lstrip("\\/")
-            matched = sorted(str(x) for x in Path(base).glob(rel))
+            matched = sorted(str(x) for x in _resolve(base).glob(rel))
         else:
-            matched = sorted(str(x) for x in Path(base).glob(pattern))
+            matched = sorted(str(x) for x in _resolve(base).glob(pattern))
         return matched
     except (OSError, ValueError) as exc:
         return [f"glob 失败: {pattern} ({exc})"]
@@ -109,7 +122,7 @@ async def grep(thread_id: str, pattern: str, path: str) -> list[str]:
     except PathNotAuthorized:
         logger.warning("fs.grep denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
-    p = Path(path)
+    p = _resolve(path)
     if not p.exists():
         return [f"路径不存在: {path}"]
     try:
@@ -152,7 +165,7 @@ async def write_file(thread_id: str, path: str, content: str) -> str:
         logger.warning("fs.write_file denied", thread_id=thread_id, path=str(path))
         return _deny_write(path, matched_readonly)
     try:
-        p = Path(path)
+        p = _resolve(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return f"已写入: {path} ({len(content)} 字符)"
@@ -171,7 +184,7 @@ async def edit_file(thread_id: str, path: str, old_text: str, new_text: str) -> 
         logger.warning("fs.edit_file denied", thread_id=thread_id, path=str(path))
         return _deny_write(path, matched_readonly)
     try:
-        p = Path(path)
+        p = _resolve(path)
         if not p.exists():
             return f"文件不存在: {path}"
         text = p.read_text(encoding="utf-8")

@@ -3,7 +3,11 @@
 支持：
 - ``gpt-*`` / ``o1-*`` / ``o3-*`` → OpenAI（``langchain-openai.ChatOpenAI``）
 - ``deepseek-*`` → DeepSeek（OpenAI 兼容，``base_url=https://api.deepseek.com``）
-- 其他前缀且 ``openai_api_key`` 可用 → 兜底走 OpenAI 兼容
+- 其他前缀且 ``openai_api_key`` 可用 → 兜底走 OpenAI 兼容（支持 ``openai_base_url`` 自定义端点）
+
+通过兜底分支 + ``AGENT_PY_OPENAI_BASE_URL`` 可接入 MiniMax Token Plan 等
+OpenAI 兼容服务：设置 ``default_model=MiniMax-Text-01`` +
+``openai_base_url=https://api.minimaxi.com/v1`` + ``openai_api_key=sk-cp-...``。
 
 不支持 Anthropic / 通义千问（需额外安装 ``langchain-anthropic`` / ``langchain-community``，
 M2 暂不引入）。配置了对应 key 但缺少依赖时抛 ``ValueError`` 提示。
@@ -54,15 +58,19 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             streaming=streaming,
         )
 
-    # 兜底：若有 openai_api_key 则按 OpenAI 兼容处理
+    # 兜底：若有 openai_api_key 则按 OpenAI 兼容处理（支持自定义 base_url）
+    # 适用场景：MiniMax Token Plan / 其他 OpenAI 兼容中转服务
     if settings.openai_api_key:
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=model,
-            api_key=settings.openai_api_key,
-            temperature=temperature,
-            streaming=streaming,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": settings.openai_api_key,
+            "temperature": temperature,
+            "streaming": streaming,
+        }
+        if settings.openai_base_url:
+            kwargs["base_url"] = settings.openai_base_url
+        return ChatOpenAI(**kwargs)
 
     raise ValueError(
         f"无法为 model={model!r} 找到可用的 API key，"

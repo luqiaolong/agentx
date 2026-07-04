@@ -35,10 +35,11 @@ class Settings(BaseSettings):
 
     # ---- LLM ----
     openai_api_key: str | None = None
+    openai_base_url: str | None = None  # OpenAI 兼容端点（中转服务、MiniMax Token Plan 等）
     anthropic_api_key: str | None = None
     dashscope_api_key: str | None = None
     deepseek_api_key: str | None = None
-    default_model: str = "gpt-4o-mini"
+    default_model: str = "minimax-m3"
 
     # ---- Embedding (TEI) ----
     embedding_url: str = "http://192.168.1.4:8080/embed"

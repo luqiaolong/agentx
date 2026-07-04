@@ -69,10 +69,17 @@ async def test_run_router_chat_path_yields_token_string_and_done():
     assert events[-1] == {"event": "done", "data": "{}"}, f"最后一个事件应为 done: {events[-1]}"
 
     # token 事件 data 必须是纯字符串（不是 JSON）
+    # 注意: ThinkFilter 跨 chunk 缓冲最多 6 字符以剥离 <think> 块，
+    # 2 个短 chunk 可能被合并为 1 个 token 事件。契约层面只需验证:
+    # (1) 至少 1 个 token 事件 (2) 每个 data 是纯字符串 (3) 拼接内容正确
     token_events = [e for e in events if e["event"] == "token"]
-    assert len(token_events) >= 2, f"应至少 2 个 token 事件，实际: {len(token_events)}"
-    assert token_events[0]["data"] == "你好"
-    assert token_events[1]["data"] == "！"
+    assert len(token_events) >= 1, f"应至少 1 个 token 事件，实际: {len(token_events)}"
+    combined = "".join(e["data"] for e in token_events)
+    assert combined == "你好！", f"token 拼接内容应等于原始输入，实际: {combined}"
+    for evt in token_events:
+        assert isinstance(evt["data"], str)
+        # 纯字符串不以 { 或 [ 开头（否则 preload 会误 JSON.parse）
+        assert not evt["data"].startswith(("{", "["))
 
 
 # ---- 2. approval_request 事件必须包含 thread_id ----

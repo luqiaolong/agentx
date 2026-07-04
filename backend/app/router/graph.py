@@ -27,10 +27,7 @@ from app.paths.deep_path import run_deep_path
 from app.router.classifier import classify_message
 from app.router.state import RouterState
 from app.subagents import run_code_agent, run_rag_agent, run_web_agent
-
-# 路径 B 子代理选择关键词
-_WEB_KEYWORDS: tuple[str, ...] = ("网页", "网络", "网上", "联网", "web", "Web", "WEB")
-_RAG_KEYWORDS: tuple[str, ...] = ("知识库", "检索", "文档库")
+from app.utils.text import ThinkFilter, extract_chunk_text as _extract_chunk_text
 
 __all__ = ["build_router_graph", "run_router"]
 
@@ -120,6 +117,15 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 # ============================================================
 
 
+# 路径 B 子代理选择关键词
+_WEB_KEYWORDS: tuple[str, ...] = (
+    "搜索", "网页", "联网", "查一下", "search", "web", "google", "百度",
+)
+_RAG_KEYWORDS: tuple[str, ...] = (
+    "知识库", "文档库", "检索", "向量", "rag", "知识", "文档",
+)
+
+
 def _select_subagent(message: str) -> str:
     """根据消息内容选择路径 B 的子代理。
 
@@ -171,11 +177,16 @@ async def _run_chat_path(
         SystemMessage(content=system_prompt),
         HumanMessage(content=message),
     ]
+    think_filter = ThinkFilter()
     try:
         async for chunk in llm.astream(messages):
-            content = _extract_chunk_text(chunk)
-            if content:
-                yield _sse("token", content)
+            raw = _extract_chunk_text(chunk)
+            cleaned = think_filter.feed(raw)
+            if cleaned:
+                yield _sse("token", cleaned)
+        tail = think_filter.flush()
+        if tail:
+            yield _sse("token", tail)
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("chat path LLM stream failed", error=str(exc))
         yield _sse("error", f"LLM 流式失败: {exc}")
@@ -260,22 +271,12 @@ def _convert_subagent_event(event: dict[str, Any]) -> dict[str, str] | None:
     return None
 
 
-def _extract_chunk_text(chunk: Any) -> str:
-    """从 LLM 流式 chunk 中提取纯文本（兼容 str / list 内容块）。"""
-    if chunk is None:
-        return ""
-    content = getattr(chunk, "content", chunk)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-        return "".join(parts)
-    return ""
+import re
+
+# 推理模型（如 MiniMax-M3）会输出 <think>...</think> 块，SSE 推送给用户前需剥离。
+# 见 app.utils.text.strip_think / extract_chunk_text（避免循环依赖）
+
+from app.utils.text import extract_chunk_text as _extract_chunk_text  # noqa: E402,F401
 
 
 async def run_router(

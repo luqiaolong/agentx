@@ -93,10 +93,13 @@ async def test_router_chat_path(
     events = await _collect_events(run_router("你好", "t1"))
 
     # 验证有 token 事件
+    # 注意: ThinkFilter 会跨 chunk 缓冲最多 len("<think>")-1=6 字符以剥离 <think> 块，
+    # 故 token 事件数可能少于 chunk 数（此处 4 chunk → 可能 1~2 token 事件）。
+    # 契约层面只需验证: (1) 有 token 事件 (2) 拼接内容正确 (3) done 事件 data="{}"
     token_events = [e for e in events if e["event"] == "token"]
-    assert len(token_events) == 4
-    assert token_events[0]["data"] == "你好"
-    assert token_events[1]["data"] == "！"
+    assert len(token_events) >= 1
+    combined = "".join(e["data"] for e in token_events)
+    assert combined == "你好！我是助理"
 
     # 验证有 done 事件
     done_events = [e for e in events if e["event"] == "done"]

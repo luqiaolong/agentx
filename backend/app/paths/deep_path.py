@@ -23,6 +23,7 @@ from app.router.state import RouterState
 from app.subagents.code_agent import _make_fs_tools
 from app.subagents.rag_agent import _make_rag_tools
 from app.subagents.web_agent import _make_web_tools
+from app.utils.text import ThinkFilter, extract_chunk_text as _extract_text  # noqa: F401
 
 # 触发人工审批中断的工具集合：写操作与 shell 执行
 DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec"}
@@ -81,24 +82,6 @@ def build_deep_agent(thread_id: str) -> Any:
         interrupt_before=["tools"],
         checkpointer=checkpointer,
     )
-
-
-def _extract_text(chunk: Any) -> str:
-    """从流式 chunk 中提取纯文本内容（兼容 str / list 内容块）。"""
-    if chunk is None:
-        return ""
-    content = getattr(chunk, "content", chunk)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-        return "".join(parts)
-    return ""
 
 
 def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
@@ -194,27 +177,53 @@ def _make_todo_event(text: str, done: bool = False) -> dict[str, str]:
 async def _stream_agent_events(
     agent: Any, inputs: Any, config: dict
 ) -> AsyncIterator[dict[str, str]]:
-    """驱动 agent.astream_events，将事件转为 SSE 格式。
+    """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_before``。
 
-    - ``on_chat_model_stream`` → token 事件
-    - ``on_tool_start`` → todo_update 事件（工具调用开始）
-    - ``on_tool_end`` → todo_update 事件（工具调用完成）
+    ``astream_events`` 不尊重 ``interrupt_before``（会直接执行工具），
+    MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
+
+    SSE 事件映射:
+    - AIMessage with tool_calls → todo_update（工具调用开始，done=False）
+    - AIMessage without tool_calls → token（最终回复，strip_think 后一次性 yield）
+    - ToolMessage → todo_update（工具完成，done=True）
+
+    在 ``interrupt_before=["tools"]`` 处暂停时，最后一个 state 的 messages[-1]
+    是 AIMessage（含 tool_calls），此处 yield todo_update 后流结束，
+    调用方 ``_is_interrupted`` 返回 True 进入审批流程。
     """
-    async for event in agent.astream_events(inputs, version="v2", config=config):
-        kind = event.get("event", "")
-        name = event.get("name", "")
-        data = event.get("data", {}) or {}
+    from langchain_core.messages import AIMessage, ToolMessage
+    from app.utils.text import strip_think
 
-        if kind == "on_chat_model_stream":
-            content = _extract_text(data.get("chunk"))
-            if content:
-                yield {"event": "token", "data": content}
+    async for state in agent.astream(inputs, config=config, stream_mode="values"):
+        messages = state.get("messages", []) if hasattr(state, "get") else []
+        if not messages:
+            continue
+        last_msg = messages[-1]
 
-        elif kind == "on_tool_start":
-            yield _make_todo_event(f"调用工具: {name}", done=False)
+        if isinstance(last_msg, ToolMessage):
+            # 工具执行完成
+            yield _make_todo_event(f"工具 {last_msg.name} 完成", done=True)
 
-        elif kind == "on_tool_end":
-            yield _make_todo_event(f"工具 {name} 完成", done=True)
+        elif isinstance(last_msg, AIMessage):
+            if getattr(last_msg, "tool_calls", None):
+                # AIMessage with tool_calls → 工具调用开始
+                for tc in last_msg.tool_calls:
+                    tc_name = tc.get("name", tc.get("tool", "unknown")) if isinstance(tc, dict) else "unknown"
+                    yield _make_todo_event(f"调用工具: {tc_name}", done=False)
+            elif getattr(last_msg, "content", ""):
+                # AIMessage without tool_calls → 最终回复
+                content = last_msg.content
+                if isinstance(content, list):
+                    # 兼容 list 内容块
+                    content = "".join(
+                        block if isinstance(block, str)
+                        else block.get("text", "") if isinstance(block, dict)
+                        else ""
+                        for block in content
+                    )
+                text = strip_think(content if isinstance(content, str) else str(content))
+                if text:
+                    yield {"event": "token", "data": text}
 
 
 async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]:

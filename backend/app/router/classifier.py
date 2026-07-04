@@ -121,7 +121,10 @@ async def _llm_classify(message: str) -> str:
 
     # 3. 解析输出：取首行非空文本，转大写，校验是否在合法标签集合
     content = getattr(result, "content", "") or ""
-    stripped = content.strip()
+    # 推理模型会带 <think>...</think>，剥离后再取标签
+    from app.utils.text import strip_think
+
+    stripped = strip_think(content) if isinstance(content, str) else ""
     if not stripped:
         logger.warning("LLM 分类输出为空，降级为 CHAT")
         return "CHAT"
