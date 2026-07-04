@@ -16,5 +16,5 @@
       "@main/*": ["frontend/main/*"]
     }
   },
-  "include": ["frontend/main/**/*", "frontend/preload/**/*", "electron.vite.config.ts"]
+  "include": ["frontend/main/**/*", "frontend/preload/**/*", "frontend/shared/**/*", "electron.vite.config.ts"]
 }

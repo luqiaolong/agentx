@@ -17,5 +17,5 @@
       "@/*": ["frontend/renderer/*"]
     }
   },
-  "include": ["frontend/renderer/**/*"]
+  "include": ["frontend/renderer/**/*", "frontend/shared/**/*"]
 }

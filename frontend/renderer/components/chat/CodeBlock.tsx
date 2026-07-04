@@ -23,7 +23,7 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      // 同时加载 light/dark 主题，运行时根据 html.dark 切换
+      // 同时加载 light/dark 主题，运行时通过 CSS 切换显示
       themes: ["github-light", "github-dark"],
       langs: SUPPORTED_LANGS,
     });
@@ -32,49 +32,52 @@ function getHighlighter(): Promise<Highlighter> {
 }
 
 /**
- * 代码块组件：使用 shiki 高亮代码，懒加载 highlighter，
+ * 代码块组件：使用 shiki 高亮代码，懒加载 highlighter。
+ * 主题切换采用「双 HTML + CSS display 切换」方案：
+ * code/language 变化时一次性产出 light 与 dark 两份高亮 HTML，
+ * 通过 Tailwind 的 dark: 变体控制显隐，主题切换时零 JS 重渲。
  * 高亮完成前以 <pre> 展示原始代码，右上角提供复制按钮。
  */
 export function CodeBlock({ code, language }: CodeBlockProps) {
-  const [html, setHtml] = useState<string | null>(null);
+  const [htmlLight, setHtmlLight] = useState<string | null>(null);
+  const [htmlDark, setHtmlDark] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [isDark, setIsDark] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 监听 html.dark 变化，切换 shiki 主题
-  useEffect(() => {
-    const root = document.documentElement;
-    setIsDark(root.classList.contains("dark"));
-    const observer = new MutationObserver(() => {
-      setIsDark(root.classList.contains("dark"));
-    });
-    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    setHtml(null);
+    setHtmlLight(null);
+    setHtmlDark(null);
     getHighlighter()
       .then((hl) => {
         if (cancelled) return;
         try {
-          const out = hl.codeToHtml(code, {
-            lang: (language || "text") as BundledLanguage,
-            theme: isDark ? "github-dark" : "github-light",
+          const lang = (language || "text") as BundledLanguage;
+          const light = hl.codeToHtml(code, {
+            lang,
+            theme: "github-light",
           });
-          setHtml(out);
+          const dark = hl.codeToHtml(code, {
+            lang,
+            theme: "github-dark",
+          });
+          setHtmlLight(light);
+          setHtmlDark(dark);
         } catch {
-          setHtml(null);
+          setHtmlLight(null);
+          setHtmlDark(null);
         }
       })
       .catch(() => {
-        if (!cancelled) setHtml(null);
+        if (!cancelled) {
+          setHtmlLight(null);
+          setHtmlDark(null);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [code, language, isDark]);
+  }, [code, language]);
 
   useEffect(() => {
     return () => {
@@ -119,11 +122,17 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
           )}
         </button>
       </div>
-      {html ? (
-        <div
-          className="shiki-wrap overflow-x-auto p-3 text-[13px] leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
+      {htmlLight && htmlDark ? (
+        <>
+          <div
+            className="shiki-wrap overflow-x-auto p-3 text-[13px] leading-relaxed dark:hidden"
+            dangerouslySetInnerHTML={{ __html: htmlLight }}
+          />
+          <div
+            className="shiki-wrap hidden overflow-x-auto p-3 text-[13px] leading-relaxed dark:block"
+            dangerouslySetInnerHTML={{ __html: htmlDark }}
+          />
+        </>
       ) : (
         <pre className="overflow-x-auto p-3 font-mono text-[13px] leading-relaxed text-secondary-c">
           <code>{code}</code>

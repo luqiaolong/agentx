@@ -5,7 +5,7 @@ import { useSettingsStore } from "@/stores/settings";
 import type { AuthorizedDir } from "@/lib/utils";
 
 export function SandboxSettings() {
-  const threadId = useChatStore((s) => s.threadId);
+  const threadId = useChatStore((s) => s.currentId);
   const persistAuthorizedDirs = useSettingsStore((s) => s.persistAuthorizedDirs);
   const setPersistAuthorizedDirs = useSettingsStore((s) => s.setPersistAuthorizedDirs);
   const [dirs, setDirs] = useState<AuthorizedDir[]>([]);

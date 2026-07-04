@@ -26,9 +26,6 @@ interface ChatState {
   // 多会话结构
   sessions: Record<string, Session>;
   currentId: string | null;
-  // 兼容字段（Wave 3 ChatView 重构后可移除）：始终与 currentId / 当前会话消息同步
-  messages: ChatMessage[];
-  threadId: string | null;
   // 通用状态
   isStreaming: boolean;
   approvalRequest: ApprovalRequest | null;
@@ -37,8 +34,6 @@ interface ChatState {
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   renameSession: (id: string, title: string) => void;
-  // 兼容方法（Wave 3 移除）：等价于 switchSession，若 session 不存在则创建
-  setThreadId: (id: string | null) => void;
   // 当前会话消息操作（作用于 sessions[currentId]）
   addMessage: (msg: ChatMessage) => void;
   appendMessageContent: (id: string, content: string) => void;
@@ -51,15 +46,6 @@ const DEFAULT_TITLE = "新会话";
 
 function createSessionRecord(id: string): Session {
   return { id, title: DEFAULT_TITLE, messages: [], createdAt: Date.now() };
-}
-
-// 根据当前 sessions + currentId 计算兼容字段
-function compatFields(
-  sessions: Record<string, Session>,
-  currentId: string | null,
-): { messages: ChatMessage[]; threadId: string | null } {
-  const cur = currentId ? sessions[currentId] : null;
-  return { messages: cur ? cur.messages : [], threadId: currentId };
 }
 
 // 迁移：v0（单会话 {messages, threadId}） -> v1（多会话 {sessions, currentId}）
@@ -90,8 +76,6 @@ export const useChatStore = create<ChatState>()(
       (set) => ({
         sessions: {},
         currentId: null,
-        messages: [],
-        threadId: null,
         isStreaming: false,
         approvalRequest: null,
 
@@ -100,7 +84,7 @@ export const useChatStore = create<ChatState>()(
           set((s) => {
             const sessions = { ...s.sessions, [id]: createSessionRecord(id) };
             const currentId = id;
-            return { sessions, currentId, ...compatFields(sessions, currentId) };
+            return { sessions, currentId };
           });
           return id;
         },
@@ -108,8 +92,7 @@ export const useChatStore = create<ChatState>()(
         switchSession: (id) => {
           set((s) => {
             if (!s.sessions[id]) return s;
-            const currentId = id;
-            return { currentId, ...compatFields(s.sessions, currentId) };
+            return { currentId: id };
           });
         },
 
@@ -126,7 +109,7 @@ export const useChatStore = create<ChatState>()(
               const remaining = Object.keys(sessions);
               currentId = remaining.length > 0 ? remaining[0] : null;
             }
-            return { sessions, currentId, ...compatFields(sessions, currentId) };
+            return { sessions, currentId };
           });
         },
 
@@ -135,24 +118,7 @@ export const useChatStore = create<ChatState>()(
             const sess = s.sessions[id];
             if (!sess) return s;
             const sessions = { ...s.sessions, [id]: { ...sess, title } };
-            return { sessions, ...compatFields(sessions, s.currentId) };
-          });
-        },
-
-        setThreadId: (id) => {
-          // 兼容：等价于 switchSession；若 id 对应 session 不存在则创建
-          if (id === null) {
-            set({ currentId: null, messages: [], threadId: null });
-            return;
-          }
-          set((s) => {
-            if (s.sessions[id]) {
-              const currentId = id;
-              return { currentId, ...compatFields(s.sessions, currentId) };
-            }
-            const sessions = { ...s.sessions, [id]: createSessionRecord(id) };
-            const currentId = id;
-            return { sessions, currentId, ...compatFields(sessions, currentId) };
+            return { sessions };
           });
         },
 
@@ -170,7 +136,7 @@ export const useChatStore = create<ChatState>()(
               ...s.sessions,
               [cid]: { ...sess, messages, title },
             };
-            return { sessions, ...compatFields(sessions, cid) };
+            return { sessions };
           });
         },
 
@@ -183,7 +149,7 @@ export const useChatStore = create<ChatState>()(
               m.id === id ? { ...m, content: m.content + content } : m,
             );
             const sessions = { ...s.sessions, [cid]: { ...sess, messages } };
-            return { sessions, ...compatFields(sessions, cid) };
+            return { sessions };
           });
         },
 
@@ -193,7 +159,7 @@ export const useChatStore = create<ChatState>()(
             if (!cid || !s.sessions[cid]) return s;
             const sess = s.sessions[cid];
             const sessions = { ...s.sessions, [cid]: { ...sess, messages: [] } };
-            return { sessions, ...compatFields(sessions, cid) };
+            return { sessions };
           });
         },
 
@@ -221,7 +187,6 @@ export const useChatStore = create<ChatState>()(
             ...p,
             sessions,
             currentId,
-            ...compatFields(sessions, currentId),
           };
         },
         partialize: (s) => ({ sessions: s.sessions, currentId: s.currentId }),
