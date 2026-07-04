@@ -270,7 +270,12 @@
     box-shadow: var(--shadow-soft);
   }
 
-  /* Input */
+  /* Input — Minimal & Direct (AI-Native UI)
+     设计要点:
+     - 极简: 1px 边框 + 零阴影, 默认不抢视线
+     - 焦点柔和: 2px 内侧 ring + 边框色切换, 无外发光 (避免光晕)
+     - 稳定 hover: 仅颜色过渡, 不使用 transform 防止布局抖动
+     - 可用性: 14px 字号保证紧凑, 行高 1.55 提升可读性 */
   .input-field {
     width: 100%;
     border-radius: 0.5rem;
@@ -278,16 +283,125 @@
     background-color: var(--bg-surface);
     padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
+    line-height: 1.55;
     color: var(--text-primary);
-    transition: border-color 200ms ease, box-shadow 200ms ease;
+    transition: border-color 180ms ease, background-color 180ms ease,
+      box-shadow 180ms ease;
   }
   .input-field::placeholder {
     color: var(--text-muted);
+    font-weight: 400;
+  }
+  .input-field:hover:not(:disabled):not(:focus) {
+    border-color: var(--border-strong);
   }
   .input-field:focus {
     outline: none;
     border-color: var(--color-brand-500);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 15%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 12%, transparent);
+    background-color: var(--bg-surface);
+  }
+  .input-field:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    background-color: var(--bg-subtle);
+  }
+
+  /* Borderless variant — 用于 chat 发送区
+     内部去边框, 仅在聚焦整个 composer 容器时显示 ring */
+  .input-borderless {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    padding: 0;
+    resize: none;
+  }
+  .input-borderless::placeholder {
+    color: var(--text-muted);
+  }
+  .input-borderless:focus {
+    outline: none;
+  }
+
+  /* Chat composer — 浮动容器
+     1px 边框 + 圆角, 内部由 textarea (无边框) 撑起.
+     focus-within 时整容器高亮, 视觉上更收敛 */
+  .chat-composer {
+    border: 1px solid var(--border-default);
+    background-color: var(--bg-surface);
+    border-radius: 0.875rem;
+    box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+    transition: border-color 180ms ease, box-shadow 180ms ease,
+      background-color 180ms ease;
+  }
+  .chat-composer:hover {
+    border-color: var(--border-strong);
+  }
+  .chat-composer:focus-within {
+    border-color: var(--color-brand-500);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 10%, transparent),
+      0 1px 2px 0 rgb(15 23 42 / 0.04);
+  }
+  .chat-composer.is-drop-target {
+    border-color: var(--color-brand-500);
+    background-color: color-mix(in srgb, var(--color-brand-500) 4%, var(--bg-surface));
+  }
+
+  /* Round icon button (chat composer 工具栏) */
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.875rem;
+    width: 1.875rem;
+    border-radius: 0.5rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+  .btn-icon:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+  }
+  .btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Send button — 圆形, 主色, 类似 Linear/Cursor */
+  .btn-send {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.875rem;
+    width: 1.875rem;
+    border-radius: 0.5rem;
+    background-color: var(--color-brand-600);
+    color: #ffffff;
+    cursor: pointer;
+    transition: background-color 180ms ease, transform 120ms ease,
+      box-shadow 180ms ease;
+    box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.08);
+  }
+  .btn-send:hover:not(:disabled) {
+    background-color: var(--color-brand-500);
+  }
+  .btn-send:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+  .btn-send:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .btn-send.is-stop {
+    background-color: rgb(225 29 72);
+  }
+  .btn-send.is-stop:hover {
+    background-color: rgb(244 63 94);
   }
 
   /* Shimmer loading bar */
