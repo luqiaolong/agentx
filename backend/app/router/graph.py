@@ -17,10 +17,13 @@ SSE 事件由 ``run_router`` 驱动：先分类，再按分类调用对应路径
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, AsyncIterator
 
 from langgraph.graph import END, StateGraph
 
+from app.config import get_settings
+from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.paths.deep_path import run_deep_path
@@ -29,7 +32,7 @@ from app.router.state import RouterState
 from app.subagents import run_code_agent, run_rag_agent, run_web_agent
 from app.utils.text import ThinkFilter, extract_chunk_text as _extract_chunk_text
 
-__all__ = ["build_router_graph", "run_router"]
+__all__ = ["build_router_graph", "run_router", "_parse_skill_tag"]
 
 
 # ============================================================
@@ -159,14 +162,23 @@ def _sse(event: str, data: Any) -> dict[str, str]:
 
 
 async def _run_chat_path(
-    message: str, thread_id: str
+    message: str, thread_id: str, system_prompt_extra: str | None = None
 ) -> AsyncIterator[dict[str, str]]:
-    """路径 A：LLM 直答 + 流式 token。"""
+    """路径 A：LLM 直答 + 流式 token。
+
+    Args:
+        message: 用户消息（已移除 @skill 标记）。
+        thread_id: 会话 ID。
+        system_prompt_extra: 可选的 skill content，拼到默认 system prompt 前。
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from app.llm import get_chat_model
 
-    system_prompt = "你是个人助理。简洁友好地回答用户问题。"
+    system_prompt = get_settings().default_system_prompt
+    if system_prompt_extra:
+        # default 在前，skill 定制在后作为覆盖（LLM 更遵从靠后指令）
+        system_prompt = f"{system_prompt}\n{system_prompt_extra}"
     try:
         llm = get_chat_model(temperature=0.7, streaming=True)
     except ValueError as exc:
@@ -177,7 +189,7 @@ async def _run_chat_path(
         SystemMessage(content=system_prompt),
         HumanMessage(content=message),
     ]
-    think_filter = ThinkFilter()
+    think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
     try:
         async for chunk in llm.astream(messages):
             raw = _extract_chunk_text(chunk)
@@ -271,12 +283,42 @@ def _convert_subagent_event(event: dict[str, Any]) -> dict[str, str] | None:
     return None
 
 
-import re
+# ============================================================
+# @skill 标记解析
+# ============================================================
 
-# 推理模型（如 MiniMax-M3）会输出 <think>...</think> 块，SSE 推送给用户前需剥离。
-# 见 app.utils.text.strip_think / extract_chunk_text（避免循环依赖）
+# 单 skill content 注入上限（超出截断）
+_SKILL_CONTENT_MAX = 4000
 
-from app.utils.text import extract_chunk_text as _extract_chunk_text  # noqa: E402,F401
+# @skill:<name> 标记正则
+_SKILL_TAG_RE = re.compile(r"@skill:(\S+)")
+
+
+def _parse_skill_tag(message: str) -> tuple[str, str | None]:
+    """解析用户消息中的 ``@skill:<name>`` 标记。
+
+    - 命中且技能存在：从 message 中移除标记，返回 ``(cleaned_message, skill_content)``。
+    - 未命中或技能不存在：返回 ``(原消息, None)``，保持原样。
+    - 单 skill content 超过 ``_SKILL_CONTENT_MAX`` 字符时截断并追加标记。
+    """
+    match = _SKILL_TAG_RE.search(message)
+    if not match:
+        return (message, None)
+
+    skill_name = match.group(1)
+    skills = get_skills()
+    skill = next((s for s in skills if s.name == skill_name), None)
+    if skill is None:
+        return (message, None)
+
+    # 移除首个 @skill:<name> 标记，剩余文本作为用户消息
+    cleaned = message.replace(match.group(0), "", 1).strip()
+
+    content = skill.content
+    if len(content) > _SKILL_CONTENT_MAX:
+        content = content[:_SKILL_CONTENT_MAX] + "\n[skill content truncated]"
+
+    return (cleaned, content)
 
 
 async def run_router(
@@ -285,9 +327,10 @@ async def run_router(
     """运行 Router，yield SSE 事件。
 
     流程:
-    1. 调 classify_message 获取分类
-    2. 按分类驱动对应路径的流式生成器
-    3. 将路径事件转为 SSE 格式（token / todo_update / approval_request / done / error）
+    1. 解析 ``@skill:<name>`` 标记，提取 skill content（注入路径 A system prompt）
+    2. 调 classify_message 获取分类
+    3. 按分类驱动对应路径的流式生成器
+    4. 将路径事件转为 SSE 格式（token / todo_update / approval_request / done / error）
 
     Args:
         message: 用户消息。
@@ -297,8 +340,11 @@ async def run_router(
         SSE 事件 dict: {event: str, data: str}
     """
     with trace_span("router.run", thread_id=thread_id, message_len=len(message)):
+        # 解析 @skill 标记（在 classify 之前）
+        cleaned_message, skill_content = _parse_skill_tag(message)
+
         try:
-            classification = await classify_message(message)
+            classification = await classify_message(cleaned_message)
         except Exception as exc:  # noqa: BLE001 — 分类器兜底
             logger.warning("classify_message failed, fallback to CHAT", error=str(exc))
             classification = "CHAT"
@@ -307,23 +353,25 @@ async def run_router(
             "router dispatch",
             thread_id=thread_id,
             classification=classification,
-            message_len=len(message),
+            message_len=len(cleaned_message),
         )
 
         state: RouterState = {
             "thread_id": thread_id,
-            "messages": [{"role": "user", "content": message}],
+            "messages": [{"role": "user", "content": cleaned_message}],
             "classification": classification,
         }
 
         if classification == "CHAT":
-            async for sse in _run_chat_path(message, thread_id):
+            async for sse in _run_chat_path(
+                cleaned_message, thread_id, system_prompt_extra=skill_content
+            ):
                 yield sse
         elif classification == "SINGLE_TOOL":
-            async for sse in _run_tool_path(message, thread_id):
+            async for sse in _run_tool_path(cleaned_message, thread_id):
                 yield sse
         else:  # DEEP_TASK
-            async for sse in _run_deep_path(message, thread_id, state):
+            async for sse in _run_deep_path(cleaned_message, thread_id, state):
                 yield sse
 
         yield _sse("done", "{}")

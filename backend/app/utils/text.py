@@ -42,9 +42,11 @@ class ThinkFilter:
 
     _OPEN = "<think>"
     _CLOSE = "</think>"
-    _MAX_HOLD = len(_OPEN) - 1  # 6：保留 6 字符以判断是否即将出现 <think>
+    _DEFAULT_MAX_HOLD = len(_OPEN) - 1  # 6：保留 6 字符以判断是否即将出现 <think>
 
-    def __init__(self) -> None:
+    def __init__(self, max_hold: int | None = None) -> None:
+        raw = max_hold if max_hold is not None else self._DEFAULT_MAX_HOLD
+        self._max_hold = max(1, raw)  # 下限 1，避免 0 导致 buf[:-0] 切片 bug
         self._buf = ""  # 累计待处理的 chunk
         self._emit = ""  # 本次 feed 可输出正文
         self._in_think = False
@@ -95,11 +97,11 @@ class ThinkFilter:
                 return
             self._buf = self._buf[close_idx + len(self._CLOSE):]
 
-        # 末尾可能是不完整的 <think> 前缀（最多 _MAX_HOLD 字符）
+        # 末尾可能是不完整的 <think> 前缀（最多 _max_hold 字符）
         # 保留在 buf，其余 emit
-        if len(self._buf) > self._MAX_HOLD:
-            self._emit += self._buf[: -self._MAX_HOLD]
-            self._buf = self._buf[-self._MAX_HOLD:]
+        if len(self._buf) > self._max_hold:
+            self._emit += self._buf[: -self._max_hold]
+            self._buf = self._buf[-self._max_hold:]
 
 
 def extract_chunk_text(chunk: Any) -> str:

@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # 0=禁用（无限期暂停等用户操作）；>0 时倒计时归零自动批准
     auto_approve_after_seconds: int = 0
 
+    # ---- 审批超时（T8）----
+    approval_max_wait: float = 300.0  # 0=无限等待
+
+    # ---- 系统提示词（T7）----
+    default_system_prompt: str = "你是个人助理。简洁友好地回答用户问题。"
+
+    # ---- 上传限制（T7）----
+    max_upload_bytes: int = 52428800  # 50MB
+
+    # ---- ThinkFilter 缓冲（T8）----
+    think_filter_max_hold: int = Field(default=6, ge=1)  # 最小 1，避免 0 切片 bug
+
     # ---- LangSmith ----
     langsmith_api_key: str | None = None
     langsmith_project: str = "agent-py"

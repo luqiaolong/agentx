@@ -14,6 +14,7 @@ import pytest
 
 from app.config import get_settings
 from app.router.classifier import (
+    _CHAT_KEYWORDS,
     _DEEP_TASK_KEYWORDS,
     _DANGEROUS_TOOL_KEYWORDS,
     _SINGLE_TOOL_KEYWORDS,
@@ -143,6 +144,60 @@ def test_rule_tool_priority_over_deep_keyword() -> None:
     """同时含工具和深度关键词时，工具优先 → SINGLE_TOOL。"""
     message = "请搜索并分析这个目录下的所有文件"
     assert _rule_classify(message) == "SINGLE_TOOL"
+
+
+# ============================================================
+# 扩展规则：CHAT 关键词 + 新增 SINGLE_TOOL 关键词（T8）
+# ============================================================
+
+
+# CHAT 关键词（翻译/解释/计算/对比）→ CHAT
+@pytest.mark.parametrize("keyword", list(_CHAT_KEYWORDS))
+def test_rule_chat_keywords_returns_chat(keyword: str) -> None:
+    """翻译/解释/计算/对比 → CHAT（在工具关键词之前匹配）。"""
+    message = f"请帮我{keyword}这段内容，谢谢"
+    assert len(message) >= 10  # 避免被规则 2（短消息）截断
+    assert _rule_classify(message) == "CHAT"
+
+
+def test_rule_chat_keyword_translate_concrete() -> None:
+    """任务要求的具体用例：翻译这段话：Hello World → CHAT。"""
+    assert _rule_classify("翻译这段话：Hello World") == "CHAT"
+
+
+def test_rule_chat_keyword_explain_concrete() -> None:
+    """解释概念 → CHAT。"""
+    assert _rule_classify("请解释一下什么是向量数据库") == "CHAT"
+
+
+def test_rule_chat_keyword_calculate_concrete() -> None:
+    """计算 → CHAT。"""
+    assert _rule_classify("请计算 123 + 456 的结果") == "CHAT"
+
+
+def test_rule_chat_keyword_compare_concrete() -> None:
+    """对比 → CHAT。"""
+    assert _rule_classify("请对比这两个方案的优缺点") == "CHAT"
+
+
+# 新增 SINGLE_TOOL 关键词（打开/查看/显示）→ SINGLE_TOOL
+@pytest.mark.parametrize("keyword", ["打开", "查看", "显示"])
+def test_rule_extended_tool_keywords_returns_single_tool(keyword: str) -> None:
+    """打开/查看/显示 → SINGLE_TOOL。"""
+    message = f"请帮我{keyword}这个文件的内容"
+    assert _rule_classify(message) == "SINGLE_TOOL"
+
+
+def test_rule_open_file_returns_single_tool() -> None:
+    """任务要求的具体用例：打开 data/workspace/out.txt → SINGLE_TOOL。"""
+    assert _rule_classify("打开 data/workspace/out.txt") == "SINGLE_TOOL"
+
+
+# 规则顺序：CHAT 关键词优先于 SINGLE_TOOL 关键词
+def test_rule_chat_priority_over_tool_keyword() -> None:
+    """同时含 CHAT 和工具关键词时，CHAT 优先（翻译 + 查看）。"""
+    message = "请翻译并查看这段英文内容"
+    assert _rule_classify(message) == "CHAT"
 
 
 # ============================================================

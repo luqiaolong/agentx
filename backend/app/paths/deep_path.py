@@ -17,13 +17,13 @@ from typing import Any, AsyncIterator
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
+from app.config import get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
 from app.router.state import RouterState
 from app.subagents.code_agent import _make_fs_tools
 from app.subagents.rag_agent import _make_rag_tools
 from app.subagents.web_agent import _make_web_tools
-from app.utils.text import ThinkFilter, extract_chunk_text as _extract_text  # noqa: F401
 
 # 触发人工审批中断的工具集合：写操作与 shell 执行
 DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec"}
@@ -37,7 +37,6 @@ _DEEP_SYSTEM_PROMPT = (
 
 # 审批轮询参数
 _APPROVAL_POLL_INTERVAL = 0.3
-_APPROVAL_MAX_WAIT = 300.0  # 5 分钟上限，生产可配置更长
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -300,7 +299,9 @@ async def run_deep_path(state: RouterState, message: str) -> AsyncIterator[dict]
             approval = await _await_approval(
                 thread_id,
                 poll_interval=_APPROVAL_POLL_INTERVAL,
-                max_wait=_APPROVAL_MAX_WAIT,
+                max_wait=float("inf")
+                if get_settings().approval_max_wait == 0
+                else get_settings().approval_max_wait,
             )
 
             if approval is False:

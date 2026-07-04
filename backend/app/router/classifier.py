@@ -14,12 +14,15 @@ from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 
-# 工具关键词：命中即 → SINGLE_TOOL（仅安全操作）
+# 工具关键词：命中即 → SINGLE_TOOL（仅安全只读操作）
 _SINGLE_TOOL_KEYWORDS: tuple[str, ...] = (
     "读文件",
     "搜索",
     "查找文件",
     "列出目录",
+    "打开",
+    "查看",
+    "显示",
 )
 
 # 危险工具关键词：命中即 → DEEP_TASK（需要人工审批）
@@ -41,6 +44,11 @@ _DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
     "删除目录",
     "覆盖",
 )
+
+# 闲聊关键词：命中即 → CHAT（在工具关键词之前匹配）
+# 注意：DANGEROUS_TOOL_KEYWORDS 优先级更高（安全第一），即便消息含 "翻译" 但若
+# 同时含 "写文件" 仍走 DEEP_TASK 审批，避免 "翻译并写文件" 类伪装绕过审批。
+_CHAT_KEYWORDS: tuple[str, ...] = ("翻译", "解释", "计算", "对比")
 
 # 深度任务关键词：命中即 → DEEP_TASK
 # 其中"帮我做"/"帮我写"语义较弱，需要消息长度 > 20 才命中，避免短消息被误分类
@@ -75,10 +83,11 @@ def _rule_classify(message: str) -> str | None:
 
     规则顺序（先命中先返回）：
     1. ``/`` 开头 → CHAT（命令类，main.py 特殊处理 /reset）
-    2. 含危险工具关键词 → DEEP_TASK（强制走 DeepAgent 审批流，**优先级高于长度**）
+    2. 含危险工具关键词 → DEEP_TASK（强制走 DeepAgent 审批流，**优先级高于长度与闲聊**）
     3. 长度 < 10 且不含问号 → CHAT（短问候/确认）
-    4. 含工具关键词 → SINGLE_TOOL
-    5. 含深度任务关键词 → DEEP_TASK
+    4. 含 CHAT 关键词 → CHAT（翻译/解释/计算/对比）
+    5. 含工具关键词 → SINGLE_TOOL
+    6. 含深度任务关键词 → DEEP_TASK
        - 强信号关键词（分析/规划/设计/实现/重构）：不限长度
        - 弱信号关键词（帮我做/帮我写）：需长度 > 20
     """
@@ -96,19 +105,24 @@ def _rule_classify(message: str) -> str | None:
     if len(message) < 10 and "?" not in message and "？" not in message:
         return "CHAT"
 
-    # 4. 安全工具关键词 → SINGLE_TOOL
+    # 4. CHAT 关键词 → CHAT
+    for kw in _CHAT_KEYWORDS:
+        if kw in message:
+            return "CHAT"
+
+    # 5. 安全工具关键词 → SINGLE_TOOL
     for kw in _SINGLE_TOOL_KEYWORDS:
         if kw in message:
             return "SINGLE_TOOL"
 
-    # 5a. 强信号深度关键词（不限长度）→ DEEP_TASK
+    # 6a. 强信号深度关键词（不限长度）→ DEEP_TASK
     for kw in _DEEP_TASK_KEYWORDS:
         if kw in _DEEP_TASK_WEAK_KEYWORDS:
             continue
         if kw in message:
             return "DEEP_TASK"
 
-    # 5b. 弱信号深度关键词（需长度 > 20）→ DEEP_TASK
+    # 6b. 弱信号深度关键词（需长度 > 20）→ DEEP_TASK
     if len(message) > 20:
         for kw in _DEEP_TASK_WEAK_KEYWORDS:
             if kw in message:
@@ -192,5 +206,6 @@ __all__ = [
     "_llm_classify",
     "_SINGLE_TOOL_KEYWORDS",
     "_DANGEROUS_TOOL_KEYWORDS",
+    "_CHAT_KEYWORDS",
     "_DEEP_TASK_KEYWORDS",
 ]
