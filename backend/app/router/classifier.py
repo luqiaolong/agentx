@@ -30,6 +30,7 @@ _SINGLE_TOOL_KEYWORDS: tuple[str, ...] = (
 # 不能由 subagent 单步直接执行（subagent 无审批流 = 安全漏洞）。
 # 关键词刻意偏宽（"创建"/"修改"/"删除" 单字即可触发），宁可误判到 DEEP_TASK
 # 让用户审批，也不要放行到 SINGLE_TOOL 跳过审批。
+# 含英文工具名：避免用户通过 "write_file"/"edit_file" 等英文工具名绕过审批。
 _DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
     "创建",     # 创建文件 / 创建一个文件 / 创建目录
     "写文件",
@@ -43,6 +44,10 @@ _DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
     "shell",
     "删除目录",
     "覆盖",
+    # 英文工具名（防止绕过审批）
+    "write_file",
+    "edit_file",
+    "shell_exec",
 )
 
 # 闲聊关键词：命中即 → CHAT（在工具关键词之前匹配）

@@ -2,7 +2,7 @@
 
 端点总览：
 - ``GET /``                       — 应用根健康检查。
-- ``GET /api/health``             — 聚合 TEI + Milvus 健康状态（200 兜底）。
+- ``GET /api/health``             — 聚合 BGE-M3 + Milvus 健康状态（200 兜底）。
 - ``POST /api/sandbox/authorize`` — 授权目录（拒绝系统关键目录 → 400）。
 - ``POST /api/sandbox/revoke``    — 撤销授权。
 - ``GET /api/sandbox/authorized/{thread_id}`` — 列出已授权目录。
@@ -167,7 +167,7 @@ async def root() -> dict[str, str]:
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    """聚合健康检查：TEI + Milvus 子项。整体 200 即使子项 unhealthy。"""
+    """聚合健康检查：BGE-M3 + Milvus 子项。整体 200 即使子项 unhealthy。"""
     # 嵌入服务健康：调 tei_client.healthcheck（嵌入 "healthcheck" 字符串）
     try:
         embedding_status = await embedding_healthcheck()

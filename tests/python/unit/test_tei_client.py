@@ -50,11 +50,11 @@ async def _reset_embedding_singleton():
 
 
 def _make_response(request: httpx.Request) -> httpx.Response:
-    """根据请求 body 中 inputs 数量返回对应维度的向量响应。"""
+    """根据请求 body 中 input 数量返回对应维度的向量响应。"""
     body = json.loads(request.content)
-    inputs = body["inputs"]
+    inputs = body["input"]
     n = len(inputs) if isinstance(inputs, list) else 1
-    return httpx.Response(200, json=[[0.1] * 1024 for _ in range(n)])
+    return httpx.Response(200, json={"embeddings": [[0.1] * 1024 for _ in range(n)]})
 
 
 # ---- 1. 单文本嵌入成功 + 请求体不含 model ----
@@ -74,7 +74,7 @@ async def test_embed_text_single_success():
     assert isinstance(vec, list)
     assert len(vec) == 1024
     assert vec[0] == pytest.approx(0.1)
-    assert captured == [{"inputs": "hello"}]
+    assert captured == [{"input": ["hello"], "task": "text-matching", "normalize": True}]
     assert "model" not in captured[0]
 
 
@@ -113,7 +113,7 @@ async def test_embed_texts_request_body_no_model():
     await embed_texts(["a", "b"])
 
     assert len(bodies) == 1
-    assert bodies[0] == {"inputs": ["a", "b"]}
+    assert bodies[0] == {"input": ["a", "b"], "task": "text-matching", "normalize": True}
     assert "model" not in bodies[0]
 
 
@@ -235,12 +235,12 @@ async def test_embed_texts_on_skip_callback():
     assert "分块器" in skipped[0][1]
 
 
-# ---- 7. 单文本响应 [[...]] 解包为 [...] ----
+# ---- 7. 单文本响应 {"embeddings": [[...]]} 解包为 [...] ----
 @respx.mock
 async def test_single_response_unwrapped():
     settings = get_settings()
     respx.post(settings.embedding_url).mock(
-        return_value=httpx.Response(200, json=[[0.1, 0.2, 0.3]])
+        return_value=httpx.Response(200, json={"embeddings": [[0.1, 0.2, 0.3]]})
     )
 
     vec = await embed_text("hello")
@@ -255,7 +255,7 @@ async def test_single_response_unwrapped():
 async def test_batch_response_not_unwrapped():
     settings = get_settings()
     respx.post(settings.embedding_url).mock(
-        return_value=httpx.Response(200, json=[[0.1, 0.2], [0.3, 0.4]])
+        return_value=httpx.Response(200, json={"embeddings": [[0.1, 0.2], [0.3, 0.4]]})
     )
 
     vecs = await embed_texts(["a", "b"])

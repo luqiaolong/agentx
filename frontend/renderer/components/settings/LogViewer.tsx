@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw, FileText } from "lucide-react";
 
 export function LogViewer() {
   const [lines, setLines] = useState<string[]>([]);
@@ -25,19 +26,27 @@ export function LogViewer() {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-medium">日志</div>
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-c">
+          <FileText className="h-3.5 w-3.5" />
+          最近 200 行
+        </span>
         <button
           type="button"
           onClick={() => void refresh()}
           disabled={loading}
-          className="rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40"
+          className="btn-ghost"
+          aria-label="刷新"
+          title="刷新"
         >
-          刷新
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
       </div>
-      <div className="text-xs text-neutral-500">最近 200 行</div>
-      {err && <div className="text-xs text-red-600">{err}</div>}
-      <pre className="max-h-96 overflow-auto rounded border border-neutral-200 bg-neutral-50 p-2 font-mono text-xs">
+      {err && (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          {err}
+        </div>
+      )}
+      <pre className="max-h-96 overflow-auto rounded-lg border border-default bg-[#0d1117] p-2.5 font-mono text-[11px] leading-relaxed text-slate-300">
         {lines.length === 0 ? "暂无日志" : lines.join("\n")}
       </pre>
     </div>

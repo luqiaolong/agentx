@@ -45,6 +45,7 @@ const mockApi = {
       milvusPort: 19530,
       milvusDb: "agent_py",
       milvusCollection: "agent_py_docs",
+      milvusAuthEnabled: false,
     }),
     setKnowledgeConfig: vi.fn().mockResolvedValue({ ok: true }),
   },

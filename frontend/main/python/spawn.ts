@@ -3,6 +3,26 @@ import type { ChildProcess, SpawnOptions } from "child_process";
 import * as http from "http";
 import { appendLog } from "../logger";
 
+/**
+ * 杀掉指定进程及其全部子进程。
+ *
+ * Windows 下 `child.kill()` 只杀直接子进程（uv），孙进程（python）会存活，
+ * 导致 python 继续占用 8123 端口，下次启动后端 bind 失败（Errno 10048）。
+ * 用 `taskkill /T /F` 递归杀整棵进程树。
+ * Unix 下 detached 进程组用负 PID 杀整组。
+ */
+function killTree(pid: number): void {
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    } else {
+      process.kill(-pid, "SIGTERM");
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export interface PythonCredentials {
   openaiApiKey?: string;
   anthropicApiKey?: string;
@@ -24,6 +44,7 @@ export interface PythonCredentials {
   milvusPort?: number;
   milvusDb?: string;
   milvusCollection?: string;
+  milvusAuthEnabled?: boolean;
 }
 
 export type PythonStatus = "starting" | "ready" | "crashed" | "giving_up";
@@ -74,6 +95,7 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
   if (c.milvusPort !== undefined) env.AGENT_PY_MILVUS_PORT = String(c.milvusPort);
   if (c.milvusDb) env.AGENT_PY_MILVUS_DB = c.milvusDb;
   if (c.milvusCollection) env.AGENT_PY_MILVUS_COLLECTION = c.milvusCollection;
+  if (c.milvusAuthEnabled !== undefined) env.AGENT_PY_MILVUS_AUTH_ENABLED = String(c.milvusAuthEnabled);
   return env;
 }
 
@@ -87,7 +109,17 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
 export function spawnPython(opts: PythonSpawnOptions): PythonHandle {
   const { onStatus } = opts;
   const env = buildEnv(opts);
-  const spawnOpts: SpawnOptions = { cwd: opts.cwd, env, stdio: ["ignore", "pipe", "pipe"] };
+  // TEMP DEBUG: 验证凭证是否从 electron-store 正确读取并注入
+  appendLog(`[python:debug] credentials: openaiApiKey=${opts.credentials.openaiApiKey ? "SET(" + opts.credentials.openaiApiKey.length + " chars)" : "MISSING"} defaultModel=${opts.credentials.defaultModel ?? "MISSING"} openaiBaseUrl=${opts.credentials.openaiBaseUrl ?? "MISSING"} milvusAuthEnabled=${opts.credentials.milvusAuthEnabled}`);
+  appendLog(`[python:debug] env.AGENT_PY_OPENAI_API_KEY=${env.AGENT_PY_OPENAI_API_KEY ? "SET" : "NOT SET"} env.AGENT_PY_OPENAI_BASE_URL=${env.AGENT_PY_OPENAI_BASE_URL ?? "NOT SET"} env.AGENT_PY_DEFAULT_MODEL=${env.AGENT_PY_DEFAULT_MODEL ?? "NOT SET"}`);
+  // Unix 下 detached 形成独立进程组，便于 stop() 用负 PID 杀整组；
+  // Windows 不设 detached（会弹新控制台窗口），改用 taskkill /T 杀进程树
+  const spawnOpts: SpawnOptions = {
+    cwd: opts.cwd,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  };
 
   const holder: { current: ChildProcess | null } = { current: null };
   let attempt = 0;
@@ -154,10 +186,15 @@ export function spawnPython(opts: PythonSpawnOptions): PythonHandle {
 
   const stop = (): void => {
     stopped = true;
-    try {
-      holder.current?.kill();
-    } catch {
-      /* ignore */
+    const child = holder.current;
+    if (child && child.pid) {
+      killTree(child.pid);
+    } else {
+      try {
+        child?.kill();
+      } catch {
+        /* ignore */
+      }
     }
   };
 

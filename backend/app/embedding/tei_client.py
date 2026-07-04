@@ -1,6 +1,6 @@
-"""TEI (HuggingFace Text Embeddings Inference) 客户端实现。
+"""BGE-M3 嵌入服务客户端实现。
 
-通过 HTTP 调用 myserver 上的 TEI 服务（默认 ``http://192.168.1.4:8080/embed``），
+通过 HTTP 调用 myserver 上的 BGE-M3 服务（默认 ``http://192.168.1.4:8093/v1/embeddings``），
 模型 ``bge-m3``，输出 1024 维向量。详见 spec embedding-service。
 """
 
@@ -22,7 +22,7 @@ from app.observability.logger import logger
 
 
 class EmbeddingUnavailable(RuntimeError):
-    """TEI 嵌入服务不可用（连接失败 / 超时重试耗尽 / 错误状态码）。"""
+    """BGE-M3 嵌入服务不可用（连接失败 / 超时重试耗尽 / 错误状态码）。"""
 
 
 class TextTooLongError(ValueError):
@@ -39,7 +39,7 @@ _RETRY_RETRY = retry_if_exception_type(
 
 
 class TeiClient:
-    """TEI HTTP 客户端。持有单个 ``httpx.AsyncClient``，由 ``get_embedding_client`` 缓存。"""
+    """BGE-M3 HTTP 客户端。持有单个 ``httpx.AsyncClient``，由 ``get_embedding_client`` 缓存。"""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -48,7 +48,8 @@ class TeiClient:
     async def embed_text(self, text: str) -> list[float]:
         """嵌入单段文本，返回 1024 维向量（已解包外层 list）。
 
-        请求体为 ``{"inputs": "<text>"}``（字符串），响应 ``[[float, ...]]`` 解包外层 list。
+        请求体为 ``{"input": ["<text>"], "task": "text-matching", "normalize": true}``，
+        响应 ``{"embeddings": [[float, ...]]}`` 解包外层 list。
         """
         settings = get_settings()
         if len(text) > settings.embedding_max_chars:
@@ -56,7 +57,10 @@ class TeiClient:
                 f"文本长度 {len(text)} 超过上限 {settings.embedding_max_chars}，"
                 "请通过分块器切短后重试"
             )
-        vectors = await self._do_embed({"inputs": text}, batch_size=1)
+        vectors = await self._do_embed(
+            {"input": [text], "task": "text-matching", "normalize": True},
+            batch_size=1,
+        )
         return vectors[0]
 
     async def embed_texts(
@@ -97,7 +101,8 @@ class TeiClient:
             indices = [idx for idx, _ in chunk]
             chunk_texts = [t for _, t in chunk]
             vectors = await self._do_embed(
-                {"inputs": chunk_texts}, batch_size=len(chunk_texts)
+                {"input": chunk_texts, "task": "text-matching", "normalize": True},
+                batch_size=len(chunk_texts),
             )
             for idx, vec in zip(indices, vectors):
                 results[idx] = vec
@@ -106,7 +111,8 @@ class TeiClient:
     async def _do_embed(self, payload: dict, batch_size: int) -> list[list[float]]:
         """发送一次嵌入请求（带重试与 tracing），返回 ``list[list[float]]``。
 
-        ``payload["inputs"]`` 由调用方决定是字符串（单文本）还是列表（批量）。
+        ``payload["input"]`` 由调用方决定是单元素列表（单文本）还是多元素列表（批量）。
+        响应格式为 ``{"embeddings": [[float, ...], ...]}``，提取 ``embeddings`` 字段。
         """
         settings = get_settings()
         with trace_span(
@@ -119,11 +125,20 @@ class TeiClient:
         ):
             response = await self._post_with_retry(payload)
             data = response.json()
-            if not isinstance(data, list):
-                raise EmbeddingUnavailable(
-                    f"TEI 返回非预期格式: {type(data).__name__}"
-                )
-            return data
+            # BGE-M3 服务返回 {"embeddings": [[float, ...], ...]}
+            if isinstance(data, dict) and "embeddings" in data:
+                embeddings = data["embeddings"]
+                if not isinstance(embeddings, list):
+                    raise EmbeddingUnavailable(
+                        f"BGE-M3 返回 embeddings 字段非 list: {type(embeddings).__name__}"
+                    )
+                return embeddings
+            # 兼容旧 TEI 格式 [[float, ...], ...]
+            if isinstance(data, list):
+                return data
+            raise EmbeddingUnavailable(
+                f"BGE-M3 返回非预期格式: {type(data).__name__}"
+            )
 
     async def _post_with_retry(self, payload: dict) -> httpx.Response:
         """带 tenacity 重试的 POST。重试耗尽或非重试错误转为 ``EmbeddingUnavailable``。"""
@@ -144,9 +159,9 @@ class TeiClient:
                     response.raise_for_status()
                     return response
         except httpx.HTTPError as exc:
-            raise EmbeddingUnavailable(f"TEI 嵌入服务不可用: {exc}") from exc
+            raise EmbeddingUnavailable(f"BGE-M3 嵌入服务不可用: {exc}") from exc
         # 理论不可达
-        raise EmbeddingUnavailable("TEI 嵌入服务不可用: 未知原因")
+        raise EmbeddingUnavailable("BGE-M3 嵌入服务不可用: 未知原因")
 
     async def aclose(self) -> None:
         """关闭底层 ``httpx.AsyncClient``。"""
@@ -180,7 +195,7 @@ async def embed_texts(
 
 
 async def healthcheck() -> dict:
-    """TEI 健康检查：嵌入 ``"healthcheck"`` 字符串，成功返回 ``healthy``。"""
+    """BGE-M3 健康检查：嵌入 ``"healthcheck"`` 字符串，成功返回 ``healthy``。"""
     try:
         await embed_text("healthcheck")
         return {"status": "healthy"}

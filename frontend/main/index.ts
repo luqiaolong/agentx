@@ -84,6 +84,7 @@ function startPython(): void {
       milvusPort: knowledge.milvusPort,
       milvusDb: knowledge.milvusDb || undefined,
       milvusCollection: knowledge.milvusCollection || undefined,
+      milvusAuthEnabled: knowledge.milvusAuthEnabled,
     },
     onStatus: (status) => {
       appendLog(`[main] python status: ${status}`);
@@ -224,6 +225,22 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   cleanOldLogs(7);
+  // TEMP DEBUG: 打印 electron-store 实际路径和内容
+  const userData = app.getPath("userData");
+  const configPath = path.join(userData, "config.json");
+  appendLog(`[main:debug] userData=${userData}`);
+  appendLog(`[main:debug] configPath=${configPath}`);
+  try {
+    const content = fs.readFileSync(configPath, "utf8");
+    appendLog(`[main:debug] config.json exists, size=${content.length}`);
+    appendLog(`[main:debug] config.json first 200 chars: ${content.slice(0, 200)}`);
+    // 测试 electron-store 读取
+    const { getApiKey, getLLMConfig } = require("./store");
+    appendLog(`[main:debug] getApiKey('openai')=${getApiKey("openai") ? "SET" : "NULL"}`);
+    appendLog(`[main:debug] getLLMConfig=${JSON.stringify(getLLMConfig())}`);
+  } catch (err) {
+    appendLog(`[main:debug] config.json read error: ${(err as Error).message}`);
+  }
   createWindow();
   startPython();
   registerIpc();

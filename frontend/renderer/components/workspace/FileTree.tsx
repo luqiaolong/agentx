@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw, Folder, FileText, ChevronRight, Home, FolderOpen } from "lucide-react";
 
 interface Entry {
   name: string;
@@ -9,7 +10,8 @@ interface Entry {
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function joinPath(base: string, name: string): string {
@@ -68,30 +70,33 @@ export function FileTree() {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      {/* 工具栏：刷新 + 面包屑 */}
+      <div className="flex items-center gap-1.5">
         <button
           type="button"
           onClick={() => void refresh()}
           disabled={loading}
-          className="rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40"
+          className="btn-ghost"
+          aria-label="刷新"
+          title="刷新"
         >
-          刷新
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
-        <div className="flex flex-wrap items-center text-xs text-neutral-500">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center text-xs">
           <button
             type="button"
             onClick={() => goTo(-1)}
-            className="rounded px-1 hover:bg-neutral-100"
+            className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
           >
-            root
+            <Home className="h-3 w-3" />
           </button>
           {breadcrumbParts.map((part, i) => (
             <span key={i} className="flex items-center">
-              <span className="mx-0.5">/</span>
+              <ChevronRight className="h-3 w-3 text-muted-c" />
               <button
                 type="button"
                 onClick={() => goTo(i)}
-                className="rounded px-1 hover:bg-neutral-100"
+                className="rounded px-1 py-0.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
               >
                 {part}
               </button>
@@ -99,11 +104,25 @@ export function FileTree() {
           ))}
         </div>
       </div>
-      {err && <div className="text-xs text-red-600">{err}</div>}
+
+      {/* 错误 */}
+      {err && (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          {err}
+        </div>
+      )}
+
+      {/* 列表 */}
       {loading ? (
-        <div className="text-xs text-neutral-400">加载中…</div>
+        <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-c">
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          加载中…
+        </div>
       ) : entries.length === 0 ? (
-        <div className="text-xs text-neutral-400">空目录</div>
+        <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+          <FolderOpen className="h-5 w-5 text-muted-c" />
+          <div className="text-xs text-muted-c">空目录</div>
+        </div>
       ) : (
         <ul className="space-y-0.5">
           {entries.map((e) => (
@@ -113,18 +132,21 @@ export function FileTree() {
                 onClick={() =>
                   e.type === "dir" ? enter(e.name) : void reveal(e.name)
                 }
-                className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-neutral-100"
+                className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-hover-soft"
               >
-                <span>{e.type === "dir" ? "📁" : "📄"}</span>
-                <span className="flex-1 truncate">{e.name}</span>
+                {e.type === "dir" ? (
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-brand-500" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-c" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-xs text-secondary-c group-hover:text-primary-c">
+                  {e.name}
+                </span>
                 {e.type === "file" && (
-                  <span className="text-xs text-neutral-400">
+                  <span className="shrink-0 text-[10px] text-muted-c">
                     {formatSize(e.size)}
                   </span>
                 )}
-                <span className="text-xs text-neutral-400">
-                  {new Date(e.mtime).toLocaleString()}
-                </span>
               </button>
             </li>
           ))}

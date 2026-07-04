@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Save, Check } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 
 const BYTES_PER_MB = 1024 * 1024;
@@ -10,28 +11,42 @@ export function ApprovalSettings() {
   );
   const maxUploadBytes = useSettingsStore((s) => s.maxUploadBytes);
   const setMaxUploadBytes = useSettingsStore((s) => s.setMaxUploadBytes);
-  const [approvalMaxWait, setApprovalMaxWait] = useState(0);
+  // 默认值 300 与 main/store.ts getApprovalConfig() 的 approvalMaxWait 默认值一致，
+  // 避免 IPC 失败时前端用 0 覆盖后端 300s 默认值
+  const [approvalMaxWait, setApprovalMaxWait] = useState(300);
   const [maxUploadMb, setMaxUploadMb] = useState(() =>
     Math.round(maxUploadBytes / BYTES_PER_MB),
   );
   const [saved, setSaved] = useState(false);
 
+  // 从后端加载持久化配置（electron-store 是后端读取的真正来源）。
+  // zustand 中的 autoApproveAfterSeconds / maxUploadBytes 仅作前端缓存，
+  // 真正生效需通过 setApprovalConfig IPC 写入 electron-store。
   useEffect(() => {
     void (async () => {
       try {
         const cfg = await window.api.settings.getApprovalConfig();
         setApprovalMaxWait(cfg.approvalMaxWait ?? 0);
+        // 用后端值同步前端缓存，避免两边漂移
+        if (typeof cfg.autoApproveAfterSeconds === "number") {
+          setAutoApproveAfterSeconds(cfg.autoApproveAfterSeconds);
+        }
+        if (typeof cfg.maxUploadBytes === "number") {
+          setMaxUploadBytes(cfg.maxUploadBytes);
+          setMaxUploadMb(Math.round(cfg.maxUploadBytes / BYTES_PER_MB));
+        }
       } catch {
-        // ignore
+        // ignore：后端未就绪时保留默认值
       }
     })();
-  }, []);
+  }, [setAutoApproveAfterSeconds, setMaxUploadBytes]);
 
   const save = async () => {
     const bytes = Math.max(0, Math.round(maxUploadMb * BYTES_PER_MB));
-    // maxUploadBytes 优先写入 useSettingsStore（zustand persist），同时同步到 main store
     setMaxUploadBytes(bytes);
+    // 三个字段全部写入 electron-store，后端从 getApprovalConfig() 读取
     await window.api.settings.setApprovalConfig({
+      autoApproveAfterSeconds,
       approvalMaxWait,
       maxUploadBytes: bytes,
     });
@@ -40,23 +55,28 @@ export function ApprovalSettings() {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="text-sm font-medium">审批与上传</div>
+    <div className="space-y-4">
       <div>
-        <label className="block text-xs text-neutral-500">
-          自动批准等待秒数（0=禁用）：{autoApproveAfterSeconds}
-        </label>
+        <div className="mb-1.5 flex items-center justify-between">
+          <label className="text-xs font-medium text-secondary-c">自动批准等待秒数</label>
+          <span className="rounded-full bg-subtle px-2 py-0.5 text-[11px] font-medium text-primary-c">
+            {autoApproveAfterSeconds}s（0=禁用）
+          </span>
+        </div>
         <input
           type="range"
           min={0}
           max={60}
           value={autoApproveAfterSeconds}
           onChange={(e) => setAutoApproveAfterSeconds(Number(e.target.value))}
-          className="w-full"
+          className="w-full accent-brand-500"
         />
+        <p className="mt-1 text-[11px] text-muted-c">
+          非零值时，危险操作等待指定秒数后自动批准。0 表示必须手动批准。
+        </p>
       </div>
       <div>
-        <label className="block text-xs text-neutral-500">
+        <label className="mb-1 block text-xs font-medium text-secondary-c">
           审批最大等待秒数（0=无限）
         </label>
         <input
@@ -64,28 +84,30 @@ export function ApprovalSettings() {
           min={0}
           value={approvalMaxWait}
           onChange={(e) => setApprovalMaxWait(Number(e.target.value) || 0)}
-          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+          className="input-field"
         />
       </div>
       <div>
-        <label className="block text-xs text-neutral-500">最大上传大小（MB）</label>
+        <label className="mb-1 block text-xs font-medium text-secondary-c">最大上传大小（MB）</label>
         <input
           type="number"
           min={0}
           value={maxUploadMb}
           onChange={(e) => setMaxUploadMb(Number(e.target.value) || 0)}
-          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+          className="input-field"
         />
       </div>
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={save}
-          className="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700"
-        >
+        <button type="button" onClick={save} className="btn-primary">
+          <Save className="h-3.5 w-3.5" />
           保存
         </button>
-        {saved && <span className="text-xs text-green-700">已保存</span>}
+        {saved && (
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+            <Check className="h-3 w-3" />
+            已保存
+          </span>
+        )}
       </div>
     </div>
   );

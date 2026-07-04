@@ -143,14 +143,17 @@ class MilvusClient:
             raise MilvusUnavailable("pymilvus not installed")
 
         # 1. 连接（鉴权失败 / 网络不可达在此分流）
+        # auth disabled 时 user/password 传空字符串（pymilvus 要求 str 类型）
+        connect_user = settings.milvus_user or ""
+        connect_password = settings.milvus_password or ""
         try:
             await asyncio.to_thread(
                 connections.connect,
                 alias=_ALIAS,
                 host=settings.milvus_host,
                 port=str(settings.milvus_port),
-                user=settings.milvus_user,
-                password=settings.milvus_password,
+                user=connect_user,
+                password=connect_password,
                 db_name=settings.milvus_db,
             )
         except MilvusUnavailable:
@@ -519,14 +522,17 @@ class MilvusClient:
 
         start = time.perf_counter()
         # 1. 连接（独立 alias 避免与 connect() 冲突；复用 _ALIAS 也行，因 connections.connect 幂等）
+        # auth disabled 时 user/password 传空字符串
+        connect_user = settings.milvus_user or ""
+        connect_password = settings.milvus_password or ""
         try:
             await asyncio.to_thread(
                 connections.connect,
                 alias=_ALIAS,
                 host=settings.milvus_host,
                 port=str(settings.milvus_port),
-                user=settings.milvus_user,
-                password=settings.milvus_password,
+                user=connect_user,
+                password=connect_password,
                 db_name=settings.milvus_db,
             )
         except Exception as exc:

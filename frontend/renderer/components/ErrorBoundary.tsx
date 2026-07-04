@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { AlertTriangle, RotateCcw, FileText } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -23,26 +24,23 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.hasError) {
       return (
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-          <div className="text-base font-medium text-red-700">渲染出错</div>
+        <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-500/10 text-rose-500 ring-1 ring-rose-500/20">
+            <AlertTriangle className="h-6 w-6" />
+          </div>
+          <div className="text-base font-semibold text-primary-c">渲染出错</div>
           {this.state.error && (
-            <div className="max-w-md break-words text-sm text-neutral-600">
+            <div className="max-w-md break-words rounded-lg border border-default bg-subtle/50 px-3 py-2 text-xs text-secondary-c">
               {this.state.error.message}
             </div>
           )}
           <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100"
-              onClick={() => void window.api.app.restart()}
-            >
+            <button type="button" className="btn-secondary" onClick={() => void window.api.app.restart()}>
+              <FileText className="h-3.5 w-3.5" />
               查看日志
             </button>
-            <button
-              type="button"
-              className="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700"
-              onClick={() => void window.api.app.restart()}
-            >
+            <button type="button" className="btn-primary" onClick={() => void window.api.app.restart()}>
+              <RotateCcw className="h-3.5 w-3.5" />
               重启应用
             </button>
           </div>

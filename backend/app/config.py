@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     default_model: str = "minimax-m3"
 
-    # ---- Embedding (TEI) ----
-    embedding_url: str = "http://192.168.1.4:8080/embed"
+    # ---- Embedding (BGE-M3 service on myserver:8093) ----
+    embedding_url: str = "http://192.168.1.4:8093/v1/embeddings"
     embedding_model: str = "bge-m3"  # 仅作 LangSmith metadata 标记，不放入请求体
     embedding_timeout: float = 10.0
     embedding_max_batch: int = 32
@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     milvus_password: str | None = None
     milvus_db: str = "agent_py"  # MUST 用户手动预创建
     milvus_collection: str = "agent_py_knowledge"
+    milvus_auth_enabled: bool = True  # False 时跳过凭证校验（myserver Milvus auth disabled）
 
     # ---- 危险操作审批 ----
     # 0=禁用（无限期暂停等用户操作）；>0 时倒计时归零自动批准
@@ -83,6 +84,9 @@ class Settings(BaseSettings):
 
     @property
     def milvus_credentials_configured(self) -> bool:
+        # auth disabled 时不需要凭证（myserver Milvus authorizationEnabled=false）
+        if not self.milvus_auth_enabled:
+            return True
         return bool(self.milvus_user) and bool(self.milvus_password)
 
     @property

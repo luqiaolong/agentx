@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { FolderLock, X } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
 import type { AuthorizedDir } from "@/lib/utils";
@@ -27,7 +28,12 @@ export function SandboxSettings() {
   }, [refresh]);
 
   if (!threadId) {
-    return <div className="text-sm text-neutral-500">请先选择会话</div>;
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/50 px-3 py-2.5 text-xs text-muted-c">
+        <FolderLock className="h-3.5 w-3.5" />
+        请先选择会话以查看授权目录
+      </div>
+    );
   }
 
   const revoke = async (p: string) => {
@@ -37,34 +43,39 @@ export function SandboxSettings() {
 
   return (
     <div className="space-y-3">
-      <div className="text-sm font-medium">沙箱授权目录</div>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-secondary-c">
         <input
           type="checkbox"
           checked={persistAuthorizedDirs}
           onChange={(e) => setPersistAuthorizedDirs(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-strong accent-brand-500"
         />
         跨会话保留授权目录
       </label>
       {dirs.length === 0 ? (
-        <p className="text-xs text-neutral-400">暂无授权目录</p>
+        <p className="text-xs text-muted-c">暂无授权目录</p>
       ) : (
         <ul className="space-y-1">
           {dirs.map((d) => (
             <li
               key={d.path}
-              className="flex items-center justify-between rounded border border-neutral-200 px-2 py-1 text-sm"
+              className="flex items-center justify-between gap-2 rounded-lg border border-default bg-subtle/40 px-2.5 py-1.5 text-xs"
             >
-              <span>
+              <span className="min-w-0 flex-1 truncate font-mono text-secondary-c">
                 {d.path}
-                {d.writable ? " (可写)" : ""}
+                {d.writable && (
+                  <span className="ml-1.5 rounded bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                    可写
+                  </span>
+                )}
               </span>
               <button
                 type="button"
-                className="text-xs text-red-600 hover:underline"
+                className="shrink-0 rounded p-0.5 text-muted-c transition-colors hover:bg-rose-500/10 hover:text-rose-500"
                 onClick={() => revoke(d.path)}
+                aria-label="撤销授权"
               >
-                撤销
+                <X className="h-3 w-3" />
               </button>
             </li>
           ))}

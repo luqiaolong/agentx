@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import { createHighlighter } from "shiki/bundle/web";
 import type { BundledLanguage, Highlighter } from "shiki/bundle/web";
 
@@ -22,7 +23,8 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
-      themes: ["github-light"],
+      // 同时加载 light/dark 主题，运行时根据 html.dark 切换
+      themes: ["github-light", "github-dark"],
       langs: SUPPORTED_LANGS,
     });
   }
@@ -36,7 +38,19 @@ function getHighlighter(): Promise<Highlighter> {
 export function CodeBlock({ code, language }: CodeBlockProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 监听 html.dark 变化，切换 shiki 主题
+  useEffect(() => {
+    const root = document.documentElement;
+    setIsDark(root.classList.contains("dark"));
+    const observer = new MutationObserver(() => {
+      setIsDark(root.classList.contains("dark"));
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,11 +61,10 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
         try {
           const out = hl.codeToHtml(code, {
             lang: (language || "text") as BundledLanguage,
-            theme: "github-light",
+            theme: isDark ? "github-dark" : "github-light",
           });
           setHtml(out);
         } catch {
-          // 未加载该语言语法时回退到纯文本
           setHtml(null);
         }
       })
@@ -61,7 +74,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [code, language, isDark]);
 
   useEffect(() => {
     return () => {
@@ -81,21 +94,38 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
   };
 
   return (
-    <div className="group relative my-2 overflow-hidden rounded border border-neutral-200 bg-neutral-50">
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="absolute right-2 top-2 z-10 rounded bg-white/80 px-2 py-0.5 text-xs text-neutral-600 opacity-0 backdrop-blur hover:bg-white group-hover:opacity-100"
-      >
-        {copied ? "已复制" : "复制"}
-      </button>
+    <div className="group relative my-2.5 overflow-hidden rounded-lg border border-default bg-[#f8fafc] dark:bg-[#0d1117]">
+      {/* 顶栏：语言标签 + 复制按钮 */}
+      <div className="flex items-center justify-between border-b border-default bg-subtle/60 px-3 py-1">
+        <span className="font-mono text-[10px] font-medium uppercase tracking-wide text-muted-c">
+          {language || "text"}
+        </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+          aria-label="复制代码"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-emerald-500" />
+              <span className="text-emerald-500">已复制</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              <span>复制</span>
+            </>
+          )}
+        </button>
+      </div>
       {html ? (
         <div
-          className="overflow-x-auto text-sm"
+          className="shiki-wrap overflow-x-auto p-3 text-[13px] leading-relaxed"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       ) : (
-        <pre className="overflow-x-auto p-3 text-sm text-neutral-800">
+        <pre className="overflow-x-auto p-3 font-mono text-[13px] leading-relaxed text-secondary-c">
           <code>{code}</code>
         </pre>
       )}

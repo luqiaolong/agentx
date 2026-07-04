@@ -188,9 +188,10 @@ async def test_delete_by_source_escapes_quotes_safely():
 
 @pytest.mark.asyncio
 async def test_healthcheck_no_credentials(monkeypatch):
-    # 清空凭证环境变量
+    # 清空凭证环境变量，auth 仍 enabled（默认）
     monkeypatch.delenv("AGENT_PY_MILVUS_USER", raising=False)
     monkeypatch.delenv("AGENT_PY_MILVUS_PASSWORD", raising=False)
+    monkeypatch.delenv("AGENT_PY_MILVUS_AUTH_ENABLED", raising=False)
     get_settings.cache_clear()
 
     client = MilvusClient()
@@ -199,6 +200,30 @@ async def test_healthcheck_no_credentials(monkeypatch):
     assert result["status"] == "unhealthy"
     assert result["error_code"] == "no_credentials"
     assert "not set" in result["error"].lower()
+
+
+# ---------------- 5b. healthcheck auth disabled 跳过凭证校验 ----------------
+
+@pytest.mark.asyncio
+async def test_healthcheck_auth_disabled_skips_credentials(monkeypatch):
+    # auth disabled 时不需要凭证
+    monkeypatch.delenv("AGENT_PY_MILVUS_USER", raising=False)
+    monkeypatch.delenv("AGENT_PY_MILVUS_PASSWORD", raising=False)
+    monkeypatch.setenv("AGENT_PY_MILVUS_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+
+    client = MilvusClient()
+    fake_connections = MagicMock()
+    fake_utility = MagicMock()
+    fake_utility.list_databases = MagicMock(return_value=["agent_py", "default"])
+
+    with patch("app.vectorstore.milvus_client.connections", new=fake_connections), \
+         patch("app.vectorstore.milvus_client.utility", new=fake_utility):
+        result = await client.healthcheck()
+
+    assert result["status"] == "healthy"
+    assert "latency_ms" in result
+    assert result["collection"] == "agent_py_knowledge"
 
 
 # ---------------- 6. healthcheck 鉴权失败 ----------------

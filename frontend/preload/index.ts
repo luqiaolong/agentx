@@ -101,6 +101,7 @@ export interface ElectronAPI {
       milvusPort: number;
       milvusDb: string;
       milvusCollection: string;
+      milvusAuthEnabled: boolean;
     }>;
     setKnowledgeConfig: (cfg: {
       embeddingUrl?: string;
@@ -108,6 +109,7 @@ export interface ElectronAPI {
       milvusPort?: number;
       milvusDb?: string;
       milvusCollection?: string;
+      milvusAuthEnabled?: boolean;
     }) => Promise<unknown>;
   };
   app: {
@@ -139,11 +141,11 @@ async function streamChat(
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    // SSE 事件以空行分隔；行内可为 event:/data:/id:/retry:/comment
-    const events = buffer.split("\n\n");
-    buffer = events.pop() ?? "";
-    for (const rawEvent of events) {
-      const lines = rawEvent.split("\n");
+      // SSE 事件以空行分隔（HTTP 标准 \r\n\r\n，部分实现用 \n\n，均需兼容）
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? "";
+      for (const rawEvent of events) {
+        const lines = rawEvent.split(/\r?\n/);
       let eventType = "message";
       const dataParts: string[] = [];
       for (const line of lines) {

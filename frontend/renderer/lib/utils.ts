@@ -105,6 +105,7 @@ export interface WindowAPI {
       milvusPort: number;
       milvusDb: string;
       milvusCollection: string;
+      milvusAuthEnabled: boolean;
     }>;
     setKnowledgeConfig: (cfg: {
       embeddingUrl?: string;
@@ -112,6 +113,7 @@ export interface WindowAPI {
       milvusPort?: number;
       milvusDb?: string;
       milvusCollection?: string;
+      milvusAuthEnabled?: boolean;
     }) => Promise<unknown>;
   };
   app: {

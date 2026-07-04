@@ -43,6 +43,8 @@ def test_build_web_agent_returns_agent(mock_chat_model: MagicMock) -> None:
 
 
 # 4. _make_fs_tools 绑定 thread_id：调用 read_file 工具时内部传入正确的 thread_id
+# 安全约束：subagent 工具列表仅含只读工具（read_file/list_dir/glob/grep），
+# 危险工具（write_file/edit_file）仅由 DeepAgent 暴露并经 interrupt_before 审批。
 async def test_fs_tools_bind_thread_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -53,7 +55,12 @@ async def test_fs_tools_bind_thread_id(
     )
 
     tools = code_agent_mod._make_fs_tools("t1")
-    assert len(tools) == 6
+    # 只读工具集：read_file, list_dir, glob_files, grep_files
+    assert len(tools) == 4
+    # 验证不包含危险工具
+    tool_names = {t.name for t in tools}
+    assert "write_file" not in tool_names
+    assert "edit_file" not in tool_names
 
     # 找到 read_file 工具（@tool 装饰后名为 read_file）
     read_tool = next(t for t in tools if t.name == "read_file")

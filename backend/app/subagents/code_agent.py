@@ -1,8 +1,13 @@
-"""Code 子代理：使用文件系统工具执行读写/搜索/执行任务。
+"""Code 子代理：使用文件系统工具执行只读/搜索任务。
 
 用 LangGraph create_react_agent 构建 ReAct 子图。
-工具集: read_file, list_dir, glob_files, grep_files, edit_file, write_file
-（均经 SessionSandbox 授权校验，thread_id 从 state 透传）
+工具集: read_file, list_dir, glob_files, grep_files（只读）
+
+设计说明（安全关键）：
+- subagent **无 interrupt_before 审批流**，禁止包含任何写/编辑/shell 工具。
+- 写文件 / 编辑文件 / shell_exec 等危险操作必须经 DeepAgent 路径走 interrupt_before
+  审批，避免被绕过（参考 classifier.py 的 DANGEROUS_TOOL_KEYWORDS 注释）。
+- 所有工具均经 SessionSandbox 授权校验，thread_id 从 state 透传。
 """
 
 from __future__ import annotations
@@ -16,10 +21,12 @@ from app.llm import get_chat_model
 
 
 def _make_fs_tools(thread_id: str) -> list:
-    """构建绑定 ``thread_id`` 的文件系统工具列表。
+    """构建绑定 ``thread_id`` 的文件系统工具列表（仅只读工具）。
 
     filesystem 工具的签名含 ``thread_id``（用于沙箱授权校验），该参数不应暴露给
     LLM。这里通过闭包绑定 ``thread_id``，对外只声明业务参数。
+
+    安全约束：subagent 不返回 write_file / edit_file，避免绕过 DeepAgent 审批流。
     """
     from app.tools import filesystem as fs
 
@@ -43,17 +50,7 @@ def _make_fs_tools(thread_id: str) -> list:
         """在 path 目录下递归搜索匹配 pattern（正则）的行。"""
         return await fs.grep(thread_id, pattern, path)
 
-    @tool
-    async def write_file(path: str, content: str) -> str:
-        """写入文本文件（覆盖）。"""
-        return await fs.write_file(thread_id, path, content)
-
-    @tool
-    async def edit_file(path: str, old_text: str, new_text: str) -> str:
-        """编辑文件：将 old_text 替换为 new_text（仅首次匹配）。"""
-        return await fs.edit_file(thread_id, path, old_text, new_text)
-
-    return [read_file, list_dir, glob_files, grep_files, write_file, edit_file]
+    return [read_file, list_dir, glob_files, grep_files]
 
 
 def build_code_agent(thread_id: str) -> Any:

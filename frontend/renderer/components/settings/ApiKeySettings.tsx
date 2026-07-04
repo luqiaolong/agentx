@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff, Save, Check, KeyRound } from "lucide-react";
 
 type ProviderId = "openai" | "deepseek" | "tavily" | "minimax";
 
@@ -74,40 +75,57 @@ export function ApiKeySettings() {
 
   return (
     <div className="space-y-3">
-      <div className="text-sm font-medium">API Key</div>
       {PROVIDERS.map((p) => (
-        <div key={p.id} className="space-y-1">
-          <label className="block text-xs text-neutral-500">
-            {p.label}
+        <div key={p.id} className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-secondary-c">
+              <KeyRound className="h-3 w-3 text-muted-c" />
+              {p.label}
+            </label>
             {configured[p.id] && (
-              <span className="ml-2 text-green-700">已配置</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <Check className="h-2.5 w-2.5" />
+                已配置
+              </span>
             )}
-          </label>
-          <div className="flex gap-2">
-            <input
-              type={show[p.id] ? "text" : "password"}
-              value={values[p.id]}
-              onChange={(e) => setValues((s) => ({ ...s, [p.id]: e.target.value }))}
-              placeholder={configured[p.id] ? "输入新 Key 以替换" : "输入 API Key"}
-              className="flex-1 rounded border border-neutral-300 px-2 py-1 text-sm"
-            />
+          </div>
+          <div className="flex gap-1.5">
+            <div className="relative flex-1">
+              <input
+                type={show[p.id] ? "text" : "password"}
+                value={values[p.id]}
+                onChange={(e) => setValues((s) => ({ ...s, [p.id]: e.target.value }))}
+                placeholder={configured[p.id] ? "输入新 Key 以替换" : "输入 API Key"}
+                className="input-field pr-8"
+              />
+              <button
+                type="button"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-c transition-colors hover:text-primary-c"
+                onClick={() => setShow((s) => ({ ...s, [p.id]: !s[p.id] }))}
+                aria-label={show[p.id] ? "隐藏" : "显示"}
+              >
+                {show[p.id] ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
             <button
               type="button"
-              className="rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100"
-              onClick={() => setShow((s) => ({ ...s, [p.id]: !s[p.id] }))}
-            >
-              {show[p.id] ? "隐藏" : "显示"}
-            </button>
-            <button
-              type="button"
+              className="btn-primary px-3"
               disabled={!values[p.id].trim()}
               onClick={() => save(p)}
-              className="rounded bg-neutral-800 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              保存
+              <Save className="h-3.5 w-3.5" />
             </button>
           </div>
-          {saved[p.id] && <span className="text-xs text-green-700">已保存</span>}
+          {saved[p.id] && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+              <Check className="h-3 w-3" />
+              已保存
+            </span>
+          )}
         </div>
       ))}
     </div>

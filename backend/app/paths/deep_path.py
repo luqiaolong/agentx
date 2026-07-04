@@ -47,14 +47,33 @@ __all__ = [
 
 
 def _make_deep_tools(thread_id: str) -> list:
-    """构建 DeepAgent 工具集：fs + rag + web。
+    """构建 DeepAgent 工具集：只读 fs + 危险 fs + rag + web。
 
-    复用 subagents 的工具构建函数，确保 thread_id 绑定与沙箱校验一致。
+    安全设计：
+    - 只读工具（read_file/list_dir/glob/grep）复用 ``_make_fs_tools``，与 subagent 一致。
+    - 危险工具（write_file/edit_file）**仅** 在 DeepAgent 中暴露，由
+      ``interrupt_before=["tools"]`` 触发审批，避免被 subagent 路径绕过。
     """
-    fs_tools = _make_fs_tools(thread_id)
+    from langchain_core.tools import tool
+
+    from app.tools import filesystem as fs
+
+    fs_tools = _make_fs_tools(thread_id)  # 只读工具集
     rag_tools = _make_rag_tools(thread_id)
     web_tools = _make_web_tools(thread_id)
-    return [*fs_tools, *rag_tools, *web_tools]
+
+    # 危险工具：仅在 DeepAgent 暴露，配合 interrupt_before 审批
+    @tool
+    async def write_file(path: str, content: str) -> str:
+        """写入文本文件（覆盖）。"""
+        return await fs.write_file(thread_id, path, content)
+
+    @tool
+    async def edit_file(path: str, old_text: str, new_text: str) -> str:
+        """编辑文件：将 old_text 替换为 new_text（仅首次匹配）。"""
+        return await fs.edit_file(thread_id, path, old_text, new_text)
+
+    return [*fs_tools, write_file, edit_file, *rag_tools, *web_tools]
 
 
 def build_deep_agent(thread_id: str) -> Any:

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { ArrowUp, Square, Sparkles, AlertCircle, Paperclip } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent } from "@/lib/utils";
@@ -63,6 +64,7 @@ export function ChatView() {
   const currentTaskIdRef = useRef<string | null>(null);
   const skillAnchorRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // 订阅 SSE 事件与审批请求（仅在挂载时绑定一次）
   useEffect(() => {
@@ -76,10 +78,8 @@ export function ChatView() {
         const errData = e.data ?? e.error;
         setErrorMsg(typeof errData === "string" ? errData : "请求出错");
       } else if (e.type === "todo_update") {
-        // 后端发 {"todos": [...]} 对象，preload 展开后读 e.todos（非 e.data）
         const next = normalizeTodos(e.todos);
         setTodos(next);
-        // 同步到 tasks store，让 WorkspacePanel 的 TaskTimeline 可展示
         const tid = currentTaskIdRef.current;
         if (tid) {
           updateTask(tid, { todos: next });
@@ -167,7 +167,7 @@ export function ChatView() {
     }
   };
 
-  // T5: 输入末尾为 `@` 时触发技能选择浮层，并记录锚点位置用于回填
+  // 输入末尾为 `@` 时触发技能选择浮层，并记录锚点位置用于回填
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
@@ -186,9 +186,10 @@ export function ChatView() {
     }
     skillAnchorRef.current = null;
     setSkillPickerOpen(false);
+    textareaRef.current?.focus();
   };
 
-  // T2: 文件拖拽 —— 把拖入的文件交给主进程保存，返回相对路径后以 <file> 标记追加
+  // 文件拖拽 —— 把拖入的文件交给主进程保存，返回相对路径后以 <file> 标记追加
   const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
     setDragOver(true);
@@ -204,7 +205,6 @@ export function ChatView() {
     setDropError(null);
     for (const file of files) {
       try {
-        // Electron 在 File 上扩展了 path 字段（标准 DOM 类型不含），这里断言取用
         const filePath = (file as File & { path: string }).path;
         const relPath = await window.api.dialog.saveDroppedFile(filePath, file.name);
         setInput((s) => `${s}<file>${relPath}</file> `);
@@ -217,17 +217,16 @@ export function ChatView() {
   };
 
   const canSend = input.trim().length > 0 && !isStreaming;
+  const completedTodos = todos.filter((t) => t.done).length;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-app">
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-neutral-400">
-            输入消息开始对话（输入 /reset 清空会话）
-          </div>
+          <EmptyState />
         ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-3">
+          <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
             {messages.map((m, i) => {
               const isLast = i === messages.length - 1;
               const thinking =
@@ -248,15 +247,43 @@ export function ChatView() {
 
       {/* 任务进度 */}
       {todos.length > 0 && (
-        <div className="mx-auto w-full max-w-3xl border-t border-neutral-200 px-4 py-2">
-          <div className="mb-1 text-xs font-medium text-neutral-500">任务进度</div>
-          <ul className="space-y-0.5 text-xs">
+        <div className="mx-auto w-full max-w-3xl border-t border-default px-4 py-2.5">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-c">
+              任务进度
+            </span>
+            <span className="text-xs text-muted-c">
+              {completedTodos}/{todos.length}
+            </span>
+          </div>
+          <ul className="space-y-1">
             {todos.map((t, i) => (
               <li
                 key={i}
-                className={t.done ? "text-neutral-400 line-through" : "text-neutral-700"}
+                className="flex items-start gap-2 text-xs"
               >
-                {t.done ? "[x]" : "[ ]"} {t.text}
+                <span
+                  className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
+                    t.done
+                      ? "border-brand-500 bg-brand-500 text-white"
+                      : "border-strong"
+                  }`}
+                >
+                  {t.done && (
+                    <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
+                      <path
+                        d="M2.5 6L5 8.5L9.5 3.5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </span>
+                <span className={t.done ? "text-muted-c line-through" : "text-secondary-c"}>
+                  {t.text}
+                </span>
               </li>
             ))}
           </ul>
@@ -264,23 +291,17 @@ export function ChatView() {
       )}
 
       {/* 错误提示 */}
-      {errorMsg && (
+      {(errorMsg || dropError) && (
         <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-          <div className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700">
-            {errorMsg}
-          </div>
-        </div>
-      )}
-      {dropError && (
-        <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-          <div className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700">
-            {dropError}
+          <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{errorMsg ?? dropError}</span>
           </div>
         </div>
       )}
 
       {/* 输入区 */}
-      <div className="border-t border-neutral-200 px-4 py-3">
+      <div className="border-t border-default bg-surface px-4 py-3">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <div className="relative flex-1">
             {skillPickerOpen && (
@@ -290,6 +311,7 @@ export function ChatView() {
               />
             )}
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
@@ -298,17 +320,26 @@ export function ChatView() {
               onDragLeave={handleDragLeave}
               rows={2}
               placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 触发技能，拖拽文件附加引用。"
-              className={`flex-1 resize-none rounded border px-3 py-2 text-sm outline-none ${
-                dragOver ? "border-blue-500" : "border-neutral-300 focus:border-neutral-500"
+              className={`input-field resize-none px-3 py-2.5 leading-relaxed transition-colors ${
+                dragOver
+                  ? "border-brand-500 ring-2 ring-brand-500/20"
+                  : ""
               }`}
             />
+            {dragOver && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-brand-500">
+                <Paperclip className="mr-1 h-3.5 w-3.5" />
+                释放以附加文件
+              </div>
+            )}
           </div>
           {isStreaming ? (
             <button
               type="button"
               onClick={handleAbort}
-              className="shrink-0 rounded bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-500"
+              className="inline-flex h-[42px] shrink-0 items-center gap-1.5 rounded-lg bg-rose-600 px-4 text-sm font-medium text-white transition-colors hover:bg-rose-500"
             >
+              <Square className="h-3.5 w-3.5 fill-current" />
               中止
             </button>
           ) : (
@@ -316,13 +347,55 @@ export function ChatView() {
               type="button"
               onClick={handleSend}
               disabled={!canSend}
-              className="shrink-0 rounded bg-neutral-800 px-4 py-2 text-sm text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
+              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
               发送
             </button>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-600/10 ring-1 ring-brand-500/20">
+        <Sparkles className="h-7 w-7 text-brand-500" />
+      </div>
+      <h2 className="mb-1.5 text-lg font-semibold text-primary-c">开始与 Agent 对话</h2>
+      <p className="mb-5 max-w-sm text-sm text-muted-c">
+        输入消息开始对话，输入 <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/reset</code> 清空会话。支持 @ 调用技能、拖拽文件附加引用。
+      </p>
+      <div className="grid grid-cols-1 gap-2 text-left sm:grid-cols-2">
+        <ExampleCard
+          title="问答对话"
+          desc="解释 LangGraph 的 checkpointer 机制"
+        />
+        <ExampleCard
+          title="工具调用"
+          desc="列出工作区中的所有 Python 文件"
+        />
+        <ExampleCard
+          title="深度任务"
+          desc="读取并总结 workspace 下的代码结构"
+        />
+        <ExampleCard
+          title="技能调用"
+          desc="输入 @ 选择可用技能"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ExampleCard({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div className="card cursor-pointer p-3 transition-colors hover:bg-hover-soft">
+      <div className="mb-0.5 text-xs font-semibold text-primary-c">{title}</div>
+      <div className="text-xs text-muted-c">{desc}</div>
     </div>
   );
 }
@@ -339,7 +412,7 @@ function MessageBubble({
   if (role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] whitespace-pre-wrap rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">
+        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-brand-600 px-3.5 py-2 text-sm leading-relaxed text-white shadow-soft">
           {content}
         </div>
       </div>
@@ -348,41 +421,53 @@ function MessageBubble({
   if (role === "tool") {
     return (
       <div className="flex justify-start">
-        <pre className="max-w-[80%] overflow-auto rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-neutral-800">
-          {content}
-        </pre>
+        <div className="max-w-[80%] overflow-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <pre className="whitespace-pre-wrap font-mono">{content}</pre>
+        </div>
       </div>
     );
   }
-  // assistant：T8 thinking 状态优先；T1 Markdown 渲染
+  // assistant
   return (
     <div className="flex justify-start">
-      <div className="max-w-[80%] rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-900">
-        {thinking ? (
-          <span className="animate-pulse text-neutral-400">思考中...</span>
-        ) : content.length === 0 ? (
-          <span className="text-neutral-400">…</span>
-        ) : (
-          <div className="prose prose-sm max-w-none">
-            <ReactMarkdown
-              components={{
-                code({ className, children }) {
-                  const text = String(children ?? "").replace(/\n$/, "");
-                  const lang = extractLang(className);
-                  if (lang || text.includes("\n")) {
-                    return <CodeBlock code={text} language={lang} />;
-                  }
-                  return <code className={className}>{children}</code>;
-                },
-                pre({ children }) {
-                  return <>{children}</>;
-                },
-              }}
-            >
-              {content}
-            </ReactMarkdown>
-          </div>
-        )}
+      <div className="flex max-w-[85%] gap-2.5">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand-500 to-accent-500 text-white">
+          <Sparkles className="h-3.5 w-3.5" />
+        </div>
+        <div className="rounded-2xl rounded-tl-md border border-default bg-surface px-3.5 py-2 shadow-soft">
+          {thinking ? (
+            <span className="flex items-center gap-1.5 text-sm text-muted-c">
+              <span className="flex gap-0.5">
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500" />
+              </span>
+              思考中
+            </span>
+          ) : content.length === 0 ? (
+            <span className="text-muted-c">…</span>
+          ) : (
+            <div className="prose-chat">
+              <ReactMarkdown
+                components={{
+                  code({ className, children }) {
+                    const text = String(children ?? "").replace(/\n$/, "");
+                    const lang = extractLang(className);
+                    if (lang || text.includes("\n")) {
+                      return <CodeBlock code={text} language={lang} />;
+                    }
+                    return <code className={className}>{children}</code>;
+                  },
+                  pre({ children }) {
+                    return <>{children}</>;
+                  },
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

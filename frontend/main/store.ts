@@ -69,6 +69,11 @@ function getNumber(key: string, def: number): number {
   return typeof v === "number" ? v : def;
 }
 
+function getBoolean(key: string, def: boolean): boolean {
+  const v = store.get(key);
+  return typeof v === "boolean" ? v : def;
+}
+
 export function getLLMConfig(): { defaultModel: string; openaiBaseUrl: string } {
   return {
     defaultModel: getString("llm.defaultModel", ""),
@@ -124,13 +129,17 @@ export function getKnowledgeConfig(): {
   milvusPort: number;
   milvusDb: string;
   milvusCollection: string;
+  milvusAuthEnabled: boolean;
 } {
   return {
     embeddingUrl: getString("knowledge.embeddingUrl", ""),
-    milvusHost: getString("knowledge.milvusHost", "127.0.0.1"),
+    // myserver Milvus 部署在 192.168.1.4:19530（authorizationEnabled=false）
+    milvusHost: getString("knowledge.milvusHost", "192.168.1.4"),
     milvusPort: getNumber("knowledge.milvusPort", 19530),
     milvusDb: getString("knowledge.milvusDb", "agent_py"),
-    milvusCollection: getString("knowledge.milvusCollection", "agent_py_docs"),
+    milvusCollection: getString("knowledge.milvusCollection", "agent_py_knowledge"),
+    // myserver auth disabled，默认 false 跳过凭证校验
+    milvusAuthEnabled: getBoolean("knowledge.milvusAuthEnabled", false),
   };
 }
 
@@ -141,6 +150,7 @@ export function setKnowledgeConfig(
     milvusPort: number;
     milvusDb: string;
     milvusCollection: string;
+    milvusAuthEnabled: boolean;
   }>,
 ): void {
   if (cfg.embeddingUrl !== undefined) store.set("knowledge.embeddingUrl", cfg.embeddingUrl);
@@ -148,4 +158,5 @@ export function setKnowledgeConfig(
   if (cfg.milvusPort !== undefined) store.set("knowledge.milvusPort", cfg.milvusPort);
   if (cfg.milvusDb !== undefined) store.set("knowledge.milvusDb", cfg.milvusDb);
   if (cfg.milvusCollection !== undefined) store.set("knowledge.milvusCollection", cfg.milvusCollection);
+  if (cfg.milvusAuthEnabled !== undefined) store.set("knowledge.milvusAuthEnabled", cfg.milvusAuthEnabled);
 }
