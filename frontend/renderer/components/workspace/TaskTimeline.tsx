@@ -1,96 +1,213 @@
-import { CheckCircle2, CircleDot, Loader2, CircleX, ListChecks } from "lucide-react";
+import { useState } from "react";
+import {
+  CheckCircle2,
+  CircleDot,
+  Loader2,
+  CircleX,
+  ListChecks,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  X,
+} from "lucide-react";
 import { useTasksStore, type Task } from "@/stores/tasks";
 
 const STATUS_CONFIG: Record<
   Task["status"],
-  { Icon: typeof Loader2; color: string; label: string; spin?: boolean }
+  { Icon: typeof Loader2; color: string; bg: string; label: string; spin?: boolean }
 > = {
-  pending: { Icon: CircleDot, color: "text-muted-c", label: "待处理" },
-  running: { Icon: Loader2, color: "text-brand-500", label: "进行中", spin: true },
-  done: { Icon: CheckCircle2, color: "text-emerald-500", label: "已完成" },
-  failed: { Icon: CircleX, color: "text-rose-500", label: "失败" },
+  pending: {
+    Icon: CircleDot,
+    color: "text-muted-c",
+    bg: "bg-subtle",
+    label: "待处理",
+  },
+  running: {
+    Icon: Loader2,
+    color: "text-brand-500",
+    bg: "bg-brand-500/10",
+    label: "进行中",
+    spin: true,
+  },
+  done: {
+    Icon: CheckCircle2,
+    color: "text-emerald-500",
+    bg: "bg-emerald-500/10",
+    label: "已完成",
+  },
+  failed: {
+    Icon: CircleX,
+    color: "text-rose-500",
+    bg: "bg-rose-500/10",
+    label: "失败",
+  },
 };
+
+function formatTime(ts: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function TaskCard({ task }: { task: Task }) {
+  const [expanded, setExpanded] = useState(task.status === "running");
+  const removeTask = useTasksStore((s) => s.removeTask);
+
+  const cfg = STATUS_CONFIG[task.status];
+  const completedTodos = task.todos?.filter((x) => x.done).length ?? 0;
+  const totalTodos = task.todos?.length ?? 0;
+  const progress = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
+  const hasTodos = totalTodos > 0;
+
+  return (
+    <li
+      className="group card overflow-hidden p-2.5 transition-colors hover:border-strong"
+    >
+      {/* 头部行 */}
+      <div className="flex items-center gap-2">
+        <cfg.Icon
+          className={`h-3.5 w-3.5 shrink-0 ${cfg.color} ${cfg.spin ? "animate-spin" : ""}`}
+        />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-primary-c">
+          {task.title}
+        </span>
+        {/* 状态标签 */}
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cfg.bg} ${cfg.color}`}
+        >
+          {cfg.label}
+        </span>
+        {/* 删除按钮（hover 显示） */}
+        <button
+          type="button"
+          onClick={() => removeTask(task.id)}
+          className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-hover-soft hover:text-rose-500 group-hover:opacity-100"
+          title="删除任务"
+          aria-label="删除任务"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+
+      {/* 元信息行：时间 + 进度 */}
+      <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-c">
+        {task.createdAt > 0 && (
+          <span className="inline-flex items-center gap-0.5">
+            <Clock className="h-2.5 w-2.5" />
+            {formatTime(task.createdAt)}
+          </span>
+        )}
+        {hasTodos && (
+          <span className="inline-flex items-center gap-1">
+            <span>
+              {completedTodos}/{totalTodos}
+            </span>
+            {task.status === "running" && (
+              <span className="text-brand-500">· 进行中</span>
+            )}
+          </span>
+        )}
+        {hasTodos && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="ml-auto inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-secondary-c"
+            title={expanded ? "收起" : "展开"}
+            aria-label={expanded ? "收起" : "展开"}
+          >
+            {expanded ? (
+              <ChevronDown className="h-2.5 w-2.5" />
+            ) : (
+              <ChevronRight className="h-2.5 w-2.5" />
+            )}
+          </button>
+        )}
+      </div>
+
+      {/* 进度条 */}
+      {hasTodos && (
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-subtle">
+          <div
+            className={`h-full rounded-full transition-all ${
+              task.status === "failed"
+                ? "bg-rose-500"
+                : task.status === "done"
+                  ? "bg-emerald-500"
+                  : "bg-brand-500"
+            }`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      )}
+
+      {/* Todo 列表（可折叠） */}
+      {hasTodos && expanded && (
+        <ul className="mt-2 space-y-1 border-t border-default pt-2">
+          {task.todos?.map((todo, i) => (
+            <li key={i} className="flex items-start gap-1.5 text-[11px]">
+              <span
+                className={`mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border ${
+                  todo.done
+                    ? "border-brand-500 bg-brand-500 text-white"
+                    : "border-strong"
+                }`}
+              >
+                {todo.done && (
+                  <svg viewBox="0 0 12 12" className="h-2 w-2" fill="none">
+                    <path
+                      d="M2.5 6L5 8.5L9.5 3.5"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </span>
+              <span
+                className={
+                  todo.done ? "text-muted-c line-through" : "text-secondary-c"
+                }
+              >
+                {todo.text}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
 
 export function TaskTimeline() {
   const tasks = useTasksStore((s) => s.tasks);
 
   if (tasks.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-1.5 py-8 text-center">
-        <ListChecks className="h-5 w-5 text-muted-c" />
-        <div className="text-xs text-muted-c">暂无任务</div>
-        <div className="text-[10px] text-muted-c">发起深度任务后将在此显示</div>
+      <div className="flex flex-col items-center gap-1.5 px-4 py-10 text-center">
+        <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-subtle">
+          <ListChecks className="h-5 w-5 text-muted-c" />
+        </div>
+        <div className="text-xs font-medium text-secondary-c">暂无任务</div>
+        <div className="text-[10px] text-muted-c">
+          发起深度任务后将在此显示进度
+        </div>
       </div>
     );
   }
 
+  // 按 createdAt 降序：最新任务在最上面
+  const sorted = [...tasks].sort(
+    (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+  );
+
   return (
     <ul className="space-y-2">
-      {tasks.map((t) => {
-        const cfg = STATUS_CONFIG[t.status];
-        const completedTodos = t.todos?.filter((x) => x.done).length ?? 0;
-        const totalTodos = t.todos?.length ?? 0;
-        const progress = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
-        return (
-          <li
-            key={t.id}
-            className="card overflow-hidden p-2.5"
-          >
-            <div className="flex items-center gap-2">
-              <cfg.Icon
-                className={`h-3.5 w-3.5 shrink-0 ${cfg.color} ${cfg.spin ? "animate-spin" : ""}`}
-              />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium text-primary-c">
-                {t.title}
-              </span>
-              <span className="shrink-0 rounded-full bg-subtle px-1.5 py-0.5 text-[10px] font-medium text-secondary-c">
-                {cfg.label}
-              </span>
-            </div>
-            {totalTodos > 0 && (
-              <>
-                <div className="mt-2 h-1 overflow-hidden rounded-full bg-subtle">
-                  <div
-                    className="h-full rounded-full bg-brand-500 transition-all"
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-                <ul className="mt-1.5 space-y-0.5">
-                  {t.todos?.map((todo, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center gap-1.5 text-[11px]"
-                    >
-                      <span
-                        className={`mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border ${
-                          todo.done
-                            ? "border-brand-500 bg-brand-500 text-white"
-                            : "border-strong"
-                        }`}
-                      >
-                        {todo.done && (
-                          <svg viewBox="0 0 12 12" className="h-2 w-2" fill="none">
-                            <path
-                              d="M2.5 6L5 8.5L9.5 3.5"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        )}
-                      </span>
-                      <span className={todo.done ? "text-muted-c line-through" : "text-secondary-c"}>
-                        {todo.text}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </li>
-        );
-      })}
+      {sorted.map((t) => (
+        <TaskCard key={t.id} task={t} />
+      ))}
     </ul>
   );
 }

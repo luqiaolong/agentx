@@ -117,6 +117,13 @@ export interface ElectronAPI {
     quit: () => Promise<void>;
     restart: () => Promise<void>;
   };
+  window: {
+    minimize: () => Promise<void>;
+    maximize: () => Promise<void>;
+    close: () => Promise<void>;
+    isMaximized: () => Promise<boolean>;
+    onMaximizedChange: (handler: (maximized: boolean) => void) => () => void;
+  };
 }
 
 const eventHandlers = new Set<(e: ChatEvent) => void>();
@@ -307,6 +314,21 @@ const api: ElectronAPI = {
     getVersion: () => ipcRenderer.invoke("app:getVersion"),
     quit: () => ipcRenderer.invoke("app:quit"),
     restart: () => ipcRenderer.invoke("app:restart"),
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    maximize: () => ipcRenderer.invoke("window:maximize"),
+    close: () => ipcRenderer.invoke("window:close"),
+    isMaximized: () => ipcRenderer.invoke("window:isMaximized"),
+    onMaximizedChange: (handler) => {
+      const listener = (_e: Electron.IpcRendererEvent, maximized: boolean): void => {
+        handler(maximized);
+      };
+      ipcRenderer.on("window:maximized-change", listener);
+      return () => {
+        ipcRenderer.removeListener("window:maximized-change", listener);
+      };
+    },
   },
 };
 

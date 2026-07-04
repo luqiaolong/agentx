@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { X, KeyRound, Cpu, MessageSquare, Database, ShieldCheck, FolderLock, ScrollText } from "lucide-react";
+import { X, Cpu, MessageSquare, Database, ShieldCheck, FolderLock, ScrollText } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
-import { ApiKeySettings } from "./ApiKeySettings";
-import { LLMSettings } from "./LLMSettings";
+import { ModelProviderSettings } from "./ModelProviderSettings";
 import { SystemPromptSettings } from "./SystemPromptSettings";
 import { ApprovalSettings } from "./ApprovalSettings";
 import { LogViewer } from "./LogViewer";
@@ -10,8 +9,7 @@ import { MilvusCredentialsForm } from "./MilvusCredentialsForm";
 import { SandboxSettings } from "./SandboxSettings";
 
 type TabId =
-  | "apikeys"
-  | "llm"
+  | "models"
   | "prompt"
   | "knowledge"
   | "approval"
@@ -22,12 +20,11 @@ interface TabDef {
   id: TabId;
   label: string;
   desc: string;
-  Icon: typeof KeyRound;
+  Icon: typeof Cpu;
 }
 
 const TABS: TabDef[] = [
-  { id: "apikeys", label: "API 密钥", desc: "OpenAI / DeepSeek / Tavily / MiniMax", Icon: KeyRound },
-  { id: "llm", label: "模型", desc: "默认模型与 OpenAI 兼容端点", Icon: Cpu },
+  { id: "models", label: "模型与密钥", desc: "LLM 服务商、API Key 与激活模型", Icon: Cpu },
   { id: "prompt", label: "系统提示词", desc: "agent 的全局系统提示", Icon: MessageSquare },
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
@@ -40,7 +37,7 @@ const PANEL_ID = "settings-tabpanel";
 export function SettingsModal() {
   const isOpen = useSettingsStore((s) => s.isSettingsOpen);
   const setOpen = useSettingsStore((s) => s.setSettingsOpen);
-  const [active, setActive] = useState<TabId>("apikeys");
+  const [active, setActive] = useState<TabId>("models");
 
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -50,7 +47,7 @@ export function SettingsModal() {
   // 打开时：重置 tab 到首个、记录触发元素、初始聚焦关闭按钮
   useEffect(() => {
     if (!isOpen) return;
-    setActive("apikeys");
+    setActive("models");
     triggerRef.current = document.activeElement as HTMLElement | null;
     // 下一帧聚焦，确保 dialog 已渲染
     const t = window.setTimeout(() => {
@@ -197,8 +194,7 @@ export function SettingsModal() {
             tabIndex={0}
             className="flex-1 overflow-y-auto px-5 py-4"
           >
-            {active === "apikeys" && <ApiKeySettings />}
-            {active === "llm" && <LLMSettings />}
+            {active === "models" && <ModelProviderSettings />}
             {active === "prompt" && <SystemPromptSettings />}
             {active === "knowledge" && <MilvusCredentialsForm />}
             {active === "approval" && <ApprovalSettings />}

@@ -62,6 +62,7 @@ export function ChatView() {
 
   const pendingIdRef = useRef<string>("pending");
   const currentTaskIdRef = useRef<string | null>(null);
+  const lastUserQueryRef = useRef<string>("");
   const skillAnchorRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -73,10 +74,22 @@ export function ChatView() {
         appendMessageContent(pendingIdRef.current, String(e.data ?? ""));
       } else if (e.type === "done") {
         setStreaming(false);
+        // 标记当前任务完成
+        const tid = currentTaskIdRef.current;
+        if (tid) {
+          updateTask(tid, { status: "done" });
+          currentTaskIdRef.current = null;
+        }
       } else if (e.type === "error") {
         setStreaming(false);
         const errData = e.data ?? e.error;
         setErrorMsg(typeof errData === "string" ? errData : "请求出错");
+        // 标记当前任务失败
+        const tid = currentTaskIdRef.current;
+        if (tid) {
+          updateTask(tid, { status: "failed" });
+          currentTaskIdRef.current = null;
+        }
       } else if (e.type === "todo_update") {
         const next = normalizeTodos(e.todos);
         setTodos(next);
@@ -86,7 +99,15 @@ export function ChatView() {
         } else {
           const newId = `task-${crypto.randomUUID()}`;
           currentTaskIdRef.current = newId;
-          addTask({ id: newId, title: "当前任务", status: "running", todos: next });
+          const title =
+            lastUserQueryRef.current.trim().slice(0, 40) || "深度任务";
+          addTask({
+            id: newId,
+            title,
+            status: "running",
+            todos: next,
+            createdAt: Date.now(),
+          });
         }
       }
     });
@@ -125,6 +146,7 @@ export function ChatView() {
       clearMessages();
       setTodos([]);
       currentTaskIdRef.current = null;
+      lastUserQueryRef.current = "";
       setErrorMsg(null);
       setInput("");
       return;
@@ -138,6 +160,10 @@ export function ChatView() {
     pendingIdRef.current = pendingId;
     addMessage({ id: pendingId, role: "assistant", content: "", ts: Date.now() });
 
+    // 新一轮发送：重置任务追踪状态，让 todo_update 创建新任务而非更新旧任务
+    currentTaskIdRef.current = null;
+    lastUserQueryRef.current = content;
+    setTodos([]);
     setStreaming(true);
     setErrorMsg(null);
     setInput("");
@@ -147,6 +173,12 @@ export function ChatView() {
     } catch {
       setStreaming(false);
       setErrorMsg("发送失败，请检查后端是否运行");
+      // 失败时也标记当前任务为 failed
+      const failTid = currentTaskIdRef.current;
+      if (failTid) {
+        updateTask(failTid, { status: "failed" });
+        currentTaskIdRef.current = null;
+      }
     }
   };
 
@@ -158,6 +190,12 @@ export function ChatView() {
       /* ignore */
     }
     setStreaming(false);
+    // 用户中止：标记当前任务为 failed
+    const tid = currentTaskIdRef.current;
+    if (tid) {
+      updateTask(tid, { status: "failed" });
+      currentTaskIdRef.current = null;
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

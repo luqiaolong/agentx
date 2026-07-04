@@ -1,4 +1,14 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Notification, clipboard } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  Notification,
+  clipboard,
+  Menu,
+  nativeImage,
+} from "electron";
 import * as path from "path";
 import * as fs from "fs";
 import * as crypto from "crypto";
@@ -29,11 +39,27 @@ function getBackendCwd(): string {
   return path.resolve(app.getAppPath(), "backend");
 }
 
+function getAppIcon(): Electron.NativeImage | undefined {
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, "build", "icon.png")
+    : path.join(__dirname, "../../build", "icon.png");
+  if (fs.existsSync(iconPath)) {
+    return nativeImage.createFromPath(iconPath);
+  }
+  return undefined;
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     show: false,
+    frame: false,
+    autoHideMenuBar: true,
+    titleBarStyle: "hidden",
+    titleBarOverlay: false,
+    icon: getAppIcon(),
+    backgroundColor: "#020617",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -42,7 +68,18 @@ function createWindow(): void {
     },
   });
 
+  // 移除默认菜单栏（Windows/Linux）
+  Menu.setApplicationMenu(null);
+
   mainWindow.on("ready-to-show", () => mainWindow?.show());
+
+  // 窗口最大化状态变化时通知 renderer，以便更新最大化按钮图标
+  mainWindow.on("maximize", () => {
+    mainWindow?.webContents.send("window:maximized-change", true);
+  });
+  mainWindow.on("unmaximize", () => {
+    mainWindow?.webContents.send("window:maximized-change", false);
+  });
 
   // electron-vite 在 dev 注入 ELECTRON_RENDERER_URL，生产环境加载打包产物
   // 注意: app.isPackaged 在某些 dev 场景下可能为 true（如 electron-vite 缓存），
@@ -221,26 +258,26 @@ function registerIpc(): void {
   ipcMain.handle("logs:read", (_e, date?: string, maxLines?: number) => {
     return readLogs(date, maxLines);
   });
+
+  // 窗口控制：无边框窗口需要 renderer 自己实现标题栏按钮
+  ipcMain.handle("window:minimize", () => {
+    mainWindow?.minimize();
+  });
+  ipcMain.handle("window:maximize", () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow?.maximize();
+    }
+  });
+  ipcMain.handle("window:close", () => {
+    mainWindow?.close();
+  });
+  ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 }
 
 app.whenReady().then(() => {
   cleanOldLogs(7);
-  // TEMP DEBUG: 打印 electron-store 实际路径和内容
-  const userData = app.getPath("userData");
-  const configPath = path.join(userData, "config.json");
-  appendLog(`[main:debug] userData=${userData}`);
-  appendLog(`[main:debug] configPath=${configPath}`);
-  try {
-    const content = fs.readFileSync(configPath, "utf8");
-    appendLog(`[main:debug] config.json exists, size=${content.length}`);
-    appendLog(`[main:debug] config.json first 200 chars: ${content.slice(0, 200)}`);
-    // 测试 electron-store 读取
-    const { getApiKey, getLLMConfig } = require("./store");
-    appendLog(`[main:debug] getApiKey('openai')=${getApiKey("openai") ? "SET" : "NULL"}`);
-    appendLog(`[main:debug] getLLMConfig=${JSON.stringify(getLLMConfig())}`);
-  } catch (err) {
-    appendLog(`[main:debug] config.json read error: ${(err as Error).message}`);
-  }
   createWindow();
   startPython();
   registerIpc();

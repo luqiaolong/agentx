@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
-import { Sun, Moon, Settings, Github } from "lucide-react";
+import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2 } from "lucide-react";
 import { StatusIndicator } from "./components/StatusIndicator";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
 import { ChatView } from "./components/chat/ChatView";
@@ -14,6 +14,7 @@ type PythonStatus = "starting" | "ready" | "crashed" | "giving_up" | null;
 
 export default function App() {
   const [pythonStatus, setPythonStatus] = useState<PythonStatus>(null);
+  const [isMaximized, setIsMaximized] = useState(false);
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
 
@@ -37,16 +38,32 @@ export default function App() {
     }
   }, [theme]);
 
+  // 订阅窗口最大化状态
+  useEffect(() => {
+    let mounted = true;
+    void window.api.window.isMaximized().then((v) => {
+      if (mounted) setIsMaximized(v);
+    });
+    const unsub = window.api.window.onMaximizedChange((v) => setIsMaximized(v));
+    return () => {
+      mounted = false;
+      unsub();
+    };
+  }, []);
+
   const showStartingMask = pythonStatus === "starting";
   const showGiveUpMask = pythonStatus === "giving_up";
 
   return (
     <div className="flex h-screen w-screen flex-col bg-app text-primary-c">
-      {/* 顶部导航 —— 悬浮玻璃质感 */}
-      <header className="glass-card z-30 flex h-12 shrink-0 items-center justify-between border-b border-default px-4">
+      {/* 顶部导航 —— 自定义标题栏（无边框窗口下替代原生标题栏） */}
+      <header
+        className="glass-card z-30 flex h-12 shrink-0 select-none items-center justify-between border-b border-default px-4 app-drag-region"
+        onDoubleClick={() => void window.api.window.maximize()}
+      >
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white shadow-soft">
-            <Github className="h-4 w-4" strokeWidth={2.5} />
+            <Bot className="h-4 w-4" strokeWidth={2.5} />
           </div>
           <span className="text-sm font-semibold tracking-tight">AgentPy</span>
           <span className="ml-1 rounded-full bg-subtle px-2 py-0.5 text-[10px] font-medium text-secondary-c">
@@ -54,7 +71,7 @@ export default function App() {
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="app-no-drag flex items-center gap-2">
           <StatusIndicator />
           <div className="mx-1 h-4 w-px" style={{ backgroundColor: "var(--border-default)" }} />
           <button
@@ -70,6 +87,35 @@ export default function App() {
               <Moon className="h-4 w-4" />
             )}
           </button>
+          {/* 窗口控制按钮 */}
+          <div className="ml-1 flex items-center">
+            <WindowControlButton
+              onClick={() => void window.api.window.minimize()}
+              aria-label="最小化"
+              title="最小化"
+            >
+              <Minus className="h-3.5 w-3.5" strokeWidth={2} />
+            </WindowControlButton>
+            <WindowControlButton
+              onClick={() => void window.api.window.maximize()}
+              aria-label={isMaximized ? "还原" : "最大化"}
+              title={isMaximized ? "还原" : "最大化"}
+            >
+              {isMaximized ? (
+                <Square className="h-3 w-3.5" strokeWidth={2} />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
+              )}
+            </WindowControlButton>
+            <WindowControlButton
+              onClick={() => void window.api.window.close()}
+              aria-label="关闭"
+              title="关闭"
+              hoverColor="hover:bg-rose-500 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={2} />
+            </WindowControlButton>
+          </div>
         </div>
       </header>
 
@@ -131,5 +177,27 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+function WindowControlButton({
+  children,
+  onClick,
+  hoverColor = "hover:bg-hover-soft hover:text-primary-c",
+  ...rest
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  hoverColor?: string;
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-c transition-colors ${hoverColor}`}
+      {...rest}
+    >
+      {children}
+    </button>
   );
 }

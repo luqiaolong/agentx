@@ -121,6 +121,13 @@ export interface WindowAPI {
     quit: () => Promise<void>;
     restart: () => Promise<void>;
   };
+  window: {
+    minimize: () => Promise<void>;
+    maximize: () => Promise<void>;
+    close: () => Promise<void>;
+    isMaximized: () => Promise<boolean>;
+    onMaximizedChange: (handler: (maximized: boolean) => void) => () => void;
+  };
   skills: {
     list: () => Promise<{ skills: SkillSummary[] }>;
     reload: () => Promise<{ ok: boolean; count: number }>;

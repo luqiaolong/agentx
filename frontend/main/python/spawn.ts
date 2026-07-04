@@ -109,9 +109,6 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
 export function spawnPython(opts: PythonSpawnOptions): PythonHandle {
   const { onStatus } = opts;
   const env = buildEnv(opts);
-  // TEMP DEBUG: 验证凭证是否从 electron-store 正确读取并注入
-  appendLog(`[python:debug] credentials: openaiApiKey=${opts.credentials.openaiApiKey ? "SET(" + opts.credentials.openaiApiKey.length + " chars)" : "MISSING"} defaultModel=${opts.credentials.defaultModel ?? "MISSING"} openaiBaseUrl=${opts.credentials.openaiBaseUrl ?? "MISSING"} milvusAuthEnabled=${opts.credentials.milvusAuthEnabled}`);
-  appendLog(`[python:debug] env.AGENT_PY_OPENAI_API_KEY=${env.AGENT_PY_OPENAI_API_KEY ? "SET" : "NOT SET"} env.AGENT_PY_OPENAI_BASE_URL=${env.AGENT_PY_OPENAI_BASE_URL ?? "NOT SET"} env.AGENT_PY_DEFAULT_MODEL=${env.AGENT_PY_DEFAULT_MODEL ?? "NOT SET"}`);
   // Unix 下 detached 形成独立进程组，便于 stop() 用负 PID 杀整组；
   // Windows 不设 detached（会弹新控制台窗口），改用 taskkill /T 杀进程树
   const spawnOpts: SpawnOptions = {

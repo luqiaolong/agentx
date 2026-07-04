@@ -102,6 +102,14 @@
     transition: background-color 200ms ease, color 200ms ease;
   }
 
+  /* 无边框窗口：自定义标题栏可拖拽，按钮区域通过 app-no-drag 取消拖拽 */
+  .app-drag-region {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   /* Focus ring */
   :focus-visible {
     outline: 2px solid var(--color-brand-500);

@@ -70,6 +70,13 @@ const mockApi = {
     quit: vi.fn().mockResolvedValue(undefined),
     restart: vi.fn().mockResolvedValue(undefined),
   },
+  window: {
+    minimize: vi.fn().mockResolvedValue(undefined),
+    maximize: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onMaximizedChange: vi.fn().mockReturnValue(() => {}),
+  },
 };
 
 beforeAll(() => {
