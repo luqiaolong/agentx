@@ -49,6 +49,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: "prompt", label: "系统提示词", desc: "agent 的全局系统提示", Icon: MessageSquare },
   { id: "models", label: "模型", desc: "LLM 服务商、API Key 与激活模型", Icon: Cpu },
+  { id: "memory", label: "记忆", desc: "会话状态与用户画像", Icon: Brain },
   { id: "skills", label: "技能", desc: "data/skills/*.md 技能文件管理", Icon: FileText },
   { id: "mcp", label: "MCP", desc: "外部 MCP server 配置与连接", Icon: Plug },
   { id: "subagents", label: "子代理", desc: "code/rag/web 子代理配置", Icon: Bot },
@@ -56,7 +57,6 @@ const TABS: TabDef[] = [
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
   { id: "sandbox", label: "沙箱目录", desc: "持久化授权目录", Icon: FolderLock },
-  { id: "memory", label: "记忆", desc: "会话状态与用户画像", Icon: Brain },
   { id: "logs", label: "日志", desc: "运行时日志查看", Icon: ScrollText },
 ];
 
