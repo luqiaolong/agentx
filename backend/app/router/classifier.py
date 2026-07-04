@@ -14,14 +14,32 @@ from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 
-# 工具关键词：命中即 → SINGLE_TOOL
+# 工具关键词：命中即 → SINGLE_TOOL（仅安全操作）
 _SINGLE_TOOL_KEYWORDS: tuple[str, ...] = (
     "读文件",
-    "写文件",
     "搜索",
     "查找文件",
     "列出目录",
+)
+
+# 危险工具关键词：命中即 → DEEP_TASK（需要人工审批）
+# 写文件 / 编辑文件 / shell 执行 必须在 DeepAgent 中走 interrupt_before 审批，
+# 不能由 subagent 单步直接执行（subagent 无审批流 = 安全漏洞）。
+# 关键词刻意偏宽（"创建"/"修改"/"删除" 单字即可触发），宁可误判到 DEEP_TASK
+# 让用户审批，也不要放行到 SINGLE_TOOL 跳过审批。
+_DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
+    "创建",     # 创建文件 / 创建一个文件 / 创建目录
+    "写文件",
+    "写入",
+    "编辑文件",
+    "修改",
+    "删除",
+    "删除文件",
     "执行命令",
+    "运行命令",
+    "shell",
+    "删除目录",
+    "覆盖",
 )
 
 # 深度任务关键词：命中即 → DEEP_TASK
@@ -57,9 +75,10 @@ def _rule_classify(message: str) -> str | None:
 
     规则顺序（先命中先返回）：
     1. ``/`` 开头 → CHAT（命令类，main.py 特殊处理 /reset）
-    2. 长度 < 10 且不含问号 → CHAT（短问候/确认）
-    3. 含工具关键词 → SINGLE_TOOL
-    4. 含深度任务关键词 → DEEP_TASK
+    2. 含危险工具关键词 → DEEP_TASK（强制走 DeepAgent 审批流，**优先级高于长度**）
+    3. 长度 < 10 且不含问号 → CHAT（短问候/确认）
+    4. 含工具关键词 → SINGLE_TOOL
+    5. 含深度任务关键词 → DEEP_TASK
        - 强信号关键词（分析/规划/设计/实现/重构）：不限长度
        - 弱信号关键词（帮我做/帮我写）：需长度 > 20
     """
@@ -67,23 +86,29 @@ def _rule_classify(message: str) -> str | None:
     if message.startswith("/"):
         return "CHAT"
 
-    # 2. 短消息且不含问号 → 闲聊（半角/全角问号均排除）
+    # 2. 危险工具关键词 → DEEP_TASK（必须走审批流，优先级高于短消息规则）
+    # 安全关键：即便用户发短消息如"删除"，也不能误判为 CHAT 而跳过审批。
+    for kw in _DANGEROUS_TOOL_KEYWORDS:
+        if kw in message:
+            return "DEEP_TASK"
+
+    # 3. 短消息且不含问号 → 闲聊（半角/全角问号均排除）
     if len(message) < 10 and "?" not in message and "？" not in message:
         return "CHAT"
 
-    # 3. 工具关键词 → SINGLE_TOOL
+    # 4. 安全工具关键词 → SINGLE_TOOL
     for kw in _SINGLE_TOOL_KEYWORDS:
         if kw in message:
             return "SINGLE_TOOL"
 
-    # 4a. 强信号深度关键词（不限长度）→ DEEP_TASK
+    # 5a. 强信号深度关键词（不限长度）→ DEEP_TASK
     for kw in _DEEP_TASK_KEYWORDS:
         if kw in _DEEP_TASK_WEAK_KEYWORDS:
             continue
         if kw in message:
             return "DEEP_TASK"
 
-    # 4b. 弱信号深度关键词（需长度 > 20）→ DEEP_TASK
+    # 5b. 弱信号深度关键词（需长度 > 20）→ DEEP_TASK
     if len(message) > 20:
         for kw in _DEEP_TASK_WEAK_KEYWORDS:
             if kw in message:
@@ -166,5 +191,6 @@ __all__ = [
     "_rule_classify",
     "_llm_classify",
     "_SINGLE_TOOL_KEYWORDS",
+    "_DANGEROUS_TOOL_KEYWORDS",
     "_DEEP_TASK_KEYWORDS",
 ]

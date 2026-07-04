@@ -15,6 +15,7 @@ import pytest
 from app.config import get_settings
 from app.router.classifier import (
     _DEEP_TASK_KEYWORDS,
+    _DANGEROUS_TOOL_KEYWORDS,
     _SINGLE_TOOL_KEYWORDS,
     _llm_classify,
     _rule_classify,
@@ -73,6 +74,26 @@ def test_rule_tool_keywords_returns_single_tool(keyword: str) -> None:
 def test_rule_tool_keywords_returns_single_tool_concrete() -> None:
     """任务要求的具体用例：读文件 /tmp/a.txt → SINGLE_TOOL。"""
     assert _rule_classify("读文件 /tmp/a.txt") == "SINGLE_TOOL"
+
+
+# 3b. 危险工具关键词 → DEEP_TASK（强制走 DeepAgent 审批流，不能走 SINGLE_TOOL）
+@pytest.mark.parametrize("keyword", list(_DANGEROUS_TOOL_KEYWORDS))
+def test_rule_dangerous_keywords_returns_deep_task(keyword: str) -> None:
+    """危险工具消息（写/改/删/shell）必须路由到 DEEP_TASK，不能走 SINGLE_TOOL。
+
+    安全关键：subagent 路径无审批流，若危险消息被路由到 SINGLE_TOOL，写文件/编辑/删除
+    等操作会直接执行，破坏 interrupt_before 的安全契约。
+    """
+    message = f"请帮我{keyword}这个文件"
+    assert _rule_classify(message) == "DEEP_TASK"
+
+
+def test_rule_dangerous_keywords_realistic_messages() -> None:
+    """真实场景：用户自然语言写文件 → DEEP_TASK。"""
+    assert _rule_classify("在 data/workspace/ 目录下创建一个文件 foo.txt") == "DEEP_TASK"
+    assert _rule_classify("请帮我把 README.md 修改一下") == "DEEP_TASK"
+    assert _rule_classify("删除这个临时文件") == "DEEP_TASK"
+    assert _rule_classify("运行命令 ls -la") == "DEEP_TASK"
 
 
 # 4. 深度任务关键词 → DEEP_TASK
