@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
+from app.config import get_settings
 from app.llm import get_chat_model
 
 
@@ -27,6 +28,9 @@ def _make_fs_tools(thread_id: str) -> list:
     LLM。这里通过闭包绑定 ``thread_id``，对外只声明业务参数。
 
     安全约束：subagent 不返回 write_file / edit_file，避免绕过 DeepAgent 审批流。
+
+    工具启用由 ``get_settings().tools_enabled`` 过滤；工具内部名与配置 key 的
+    映射：``glob_files``→``glob``、``grep_files``→``grep``。
     """
     from app.tools import filesystem as fs
 
@@ -50,14 +54,28 @@ def _make_fs_tools(thread_id: str) -> list:
         """在 path 目录下递归搜索匹配 pattern（正则）的行。"""
         return await fs.grep(thread_id, pattern, path)
 
-    return [read_file, list_dir, glob_files, grep_files]
+    tools = [read_file, list_dir, glob_files, grep_files]
+    # 工具内部函数名 → tools_enabled 配置 key 的映射
+    tool_name_map = {
+        "read_file": "read_file",
+        "list_dir": "list_dir",
+        "glob_files": "glob",
+        "grep_files": "grep",
+    }
+    enabled = get_settings().tools_enabled
+    return [t for t in tools if enabled.get(tool_name_map.get(t.name, t.name), True)]
 
 
 def build_code_agent(thread_id: str) -> Any:
     """构建 Code 子代理 ReAct 子图，返回 CompiledStateGraph。"""
-    model = get_chat_model(temperature=0.2, streaming=True)
+    settings = get_settings()
+    cfg = settings.subagents["code"]
+    model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_fs_tools(thread_id)
-    return create_react_agent(model, tools, name="code_agent")
+    kwargs: dict[str, Any] = {}
+    if cfg.system_prompt:
+        kwargs["prompt"] = cfg.system_prompt
+    return create_react_agent(model, tools, name="code_agent", **kwargs)
 
 
 async def run_code_agent(thread_id: str, message: str) -> AsyncIterator[dict]:

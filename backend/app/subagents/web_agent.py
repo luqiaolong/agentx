@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
+from app.config import get_settings
 from app.llm import get_chat_model
 
 # Tavily API Key 环境变量名（config.py 未声明该字段，从 env 读取）
@@ -42,7 +43,10 @@ def _format_tavily(result: dict) -> str:
 
 
 def _make_web_tools(thread_id: str) -> list:
-    """构建 Web 搜索工具列表（``thread_id`` 保留以与其他子代理签名对齐）。"""
+    """构建 Web 搜索工具列表（``thread_id`` 保留以与其他子代理签名对齐）。
+
+    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``web_search``）。
+    """
 
     @tool
     async def web_search(query: str, max_results: int = 5) -> str:
@@ -62,14 +66,21 @@ def _make_web_tools(thread_id: str) -> list:
             return f"web_search 失败: {exc}"
         return _format_tavily(result)
 
-    return [web_search]
+    tools = [web_search]
+    enabled = get_settings().tools_enabled
+    return [t for t in tools if enabled.get(t.name, True)]
 
 
 def build_web_agent(thread_id: str) -> Any:
     """构建 Web 子代理 ReAct 子图，返回 CompiledStateGraph。"""
-    model = get_chat_model(temperature=0.2, streaming=True)
+    settings = get_settings()
+    cfg = settings.subagents["web"]
+    model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_web_tools(thread_id)
-    return create_react_agent(model, tools, name="web_agent")
+    kwargs: dict[str, Any] = {}
+    if cfg.system_prompt:
+        kwargs["prompt"] = cfg.system_prompt
+    return create_react_agent(model, tools, name="web_agent", **kwargs)
 
 
 async def run_web_agent(thread_id: str, message: str) -> AsyncIterator[dict]:

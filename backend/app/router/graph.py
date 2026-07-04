@@ -120,28 +120,36 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 # ============================================================
 
 
-# 路径 B 子代理选择关键词
-_WEB_KEYWORDS: tuple[str, ...] = (
-    "搜索", "网页", "联网", "查一下", "search", "web", "google", "百度",
-)
-_RAG_KEYWORDS: tuple[str, ...] = (
-    "知识库", "文档库", "检索", "向量", "rag", "知识", "文档",
-)
-
-
-def _select_subagent(message: str) -> str:
+def _select_subagent(message: str) -> str | None:
     """根据消息内容选择路径 B 的子代理。
 
     Returns:
-        "code" / "rag" / "web"
+        "code" / "rag" / "web" / None
+        - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
     """
-    for kw in _WEB_KEYWORDS:
-        if kw in message:
-            return "web"
-    for kw in _RAG_KEYWORDS:
-        if kw in message:
-            return "rag"
-    return "code"
+    settings = get_settings()
+    subagents = settings.subagents
+    tools_enabled = settings.tools_enabled
+
+    # 按优先级检查 web → rag → code（与原逻辑一致）
+    for agent_name in ("web", "rag", "code"):
+        cfg = subagents[agent_name]
+        if not cfg.enabled:
+            continue
+        # 检查关键词命中（code 的 keywords 默认为空，跳过关键词匹配直接 fallback）
+        if cfg.keywords and not any(kw in message for kw in cfg.keywords):
+            continue
+        # 检查绑定的工具是否全部被禁用
+        if not any(tools_enabled.get(t, True) for t in cfg.tools):
+            logger.warning(f"subagent {agent_name} matched but all tools disabled, fallback to CHAT")
+            return None
+        return agent_name
+
+    # 无命中，默认 code（若 code 可用）
+    code_cfg = subagents["code"]
+    if code_cfg.enabled and any(tools_enabled.get(t, True) for t in code_cfg.tools):
+        return "code"
+    return None  # code 也禁用，退回路径 A
 
 
 def _sse(event: str, data: Any) -> dict[str, str]:
@@ -210,8 +218,14 @@ async def _run_tool_path(
 ) -> AsyncIterator[dict[str, str]]:
     """路径 B：选择子代理并透传事件流。"""
     agent_type = _select_subagent(message)
-    logger.info("router.tool_path", agent=agent_type, thread_id=thread_id)
+    if agent_type is None:
+        # 子代理禁用或工具全禁用，退回路径 A
+        logger.info("router.tool_path fallback to CHAT", thread_id=thread_id)
+        async for sse in _run_chat_path(message, thread_id):
+            yield sse
+        return
 
+    logger.info("router.tool_path", agent=agent_type, thread_id=thread_id)
     if agent_type == "web":
         runner = run_web_agent
     elif agent_type == "rag":
