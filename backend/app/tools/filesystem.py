@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.config import PROJECT_ROOT
+from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR
 from app.observability.logger import logger
 from app.utils.security import PathNotAuthorized, get_sandbox
 
@@ -197,6 +197,59 @@ async def edit_file(thread_id: str, path: str, old_text: str, new_text: str) -> 
         return f"编辑文件失败: {path} ({exc})"
 
 
+async def list_workspace(path: str) -> list[dict]:
+    """列出沙箱白名单内目录的条目（含 type/size/mtime）。
+
+    仅允许 ``data/workspace`` 和 ``data/uploads``（白名单），其他路径返回 ValueError。
+    ``path`` 相对路径基于 ``PROJECT_ROOT`` 解析（与 ``_resolve`` 一致）；
+    空或 ``"."`` 表示 ``WORKSPACE_DIR`` 根。
+
+    Returns:
+        ``[{"name": str, "type": "file"|"dir", "size": int, "mtime": float}]``。
+
+    Raises:
+        ValueError: 路径不在白名单内。
+        FileNotFoundError: 路径不存在。
+    """
+    # 解析路径
+    if not path or path == ".":
+        target = WORKSPACE_DIR
+    else:
+        p = Path(path)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        target = p.resolve()
+
+    # 白名单校验
+    whitelist = [WORKSPACE_DIR.resolve(), UPLOADS_DIR.resolve()]
+    in_whitelist = any(target == w or w in target.parents for w in whitelist)
+    if not in_whitelist:
+        raise ValueError(f"路径不在白名单内: {path}")
+
+    if not target.exists():
+        raise FileNotFoundError(f"路径不存在: {path}")
+
+    entries: list[dict] = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda e: e.name):
+            try:
+                stat = entry.stat()
+                entries.append(
+                    {
+                        "name": entry.name,
+                        "type": "dir" if entry.is_dir() else "file",
+                        "size": stat.st_size,
+                        "mtime": stat.st_mtime,
+                    }
+                )
+            except OSError as exc:
+                logger.warning("list_workspace stat failed", path=str(entry), error=str(exc))
+                continue
+    except OSError as exc:
+        raise FileNotFoundError(f"路径不存在: {path}") from exc
+    return entries
+
+
 def _glob_base(pattern: str) -> str:
     """从 glob pattern 中提取最顶层的非通配前缀目录，用于权限校验。
 
@@ -222,6 +275,7 @@ def _glob_base(pattern: str) -> str:
 __all__ = [
     "read_file",
     "list_dir",
+    "list_workspace",
     "glob",
     "grep",
     "write_file",

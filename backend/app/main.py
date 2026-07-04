@@ -30,9 +30,11 @@ from app.config import get_settings
 from app.embedding import get_embedding_client
 from app.embedding.tei_client import healthcheck as embedding_healthcheck
 from app.memory import close_checkpointer, get_async_checkpointer, get_checkpointer
+from app.memory.skills_loader import get_skills, reload_skills
 from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
 from app.router import run_router
+from app.tools.filesystem import list_workspace
 from app.utils.security import PathNotAuthorized, get_sandbox
 from app.vectorstore import MilvusUnavailable, get_milvus_client
 
@@ -179,6 +181,60 @@ async def health() -> dict[str, Any]:
         milvus_status = {"status": "unhealthy", "error": str(exc)}
 
     return {"status": "ok", "embedding": embedding_status, "milvus": milvus_status}
+
+
+# ============================================================
+# 技能 API
+# ============================================================
+
+
+@app.get("/api/skills")
+async def list_skills() -> dict[str, Any]:
+    """返回已加载技能列表。
+
+    每项含 ``name`` / ``description`` / ``trigger`` / ``tools`` / ``content_preview``（前 200 字符）。
+    ``data/skills/`` 不存在时返回空列表。
+    """
+    skills = get_skills()
+    return {
+        "skills": [
+            {
+                "name": s.name,
+                "description": s.description,
+                "trigger": s.trigger,
+                "tools": s.tools,
+                "content_preview": s.content[:200],
+            }
+            for s in skills
+        ]
+    }
+
+
+@app.post("/api/skills/reload")
+async def skills_reload() -> dict[str, Any]:
+    """强制重载技能列表（清缓存重新扫描 ``data/skills/``）。"""
+    skills = reload_skills()
+    return {"ok": True, "count": len(skills)}
+
+
+# ============================================================
+# Workspace API
+# ============================================================
+
+
+@app.get("/api/workspace/list")
+async def workspace_list(path: str = "data/workspace") -> dict[str, Any]:
+    """列出沙箱白名单内目录的条目（含 type/size/mtime）。
+
+    仅允许 ``data/workspace`` 和 ``data/uploads``，其他路径 → 400。
+    """
+    try:
+        entries = await list_workspace(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"entries": entries}
 
 
 # ============================================================
