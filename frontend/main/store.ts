@@ -160,3 +160,127 @@ export function setKnowledgeConfig(
   if (cfg.milvusCollection !== undefined) store.set("knowledge.milvusCollection", cfg.milvusCollection);
   if (cfg.milvusAuthEnabled !== undefined) store.set("knowledge.milvusAuthEnabled", cfg.milvusAuthEnabled);
 }
+
+// ---- T11/T12/T13 子代理 + 工具 + 用户画像自动抽取 ----
+// 默认值与 backend/app/config.py _default_subagents() / _default_tools_enabled() 保持一致，
+// env 注入后后端 pydantic-settings 仍会做字段级覆盖合并。
+
+export interface SubagentConfig {
+  enabled: boolean;
+  temperature: number;
+  systemPrompt: string;
+  tools: string[];
+  keywords: string[];
+}
+
+export interface SubagentsConfig {
+  code: SubagentConfig;
+  rag: SubagentConfig;
+  web: SubagentConfig;
+}
+
+export interface ToolsConfig {
+  read_file: boolean;
+  list_dir: boolean;
+  glob: boolean;
+  grep: boolean;
+  write_file: boolean;
+  edit_file: boolean;
+  web_search: boolean;
+  rag_retrieve: boolean;
+}
+
+const DEFAULT_SUBAGENTS: SubagentsConfig = {
+  code: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt: "",
+    tools: ["read_file", "list_dir", "glob", "grep"],
+    keywords: [],
+  },
+  rag: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt: "",
+    tools: ["rag_retrieve"],
+    keywords: ["知识库", "文档库", "检索", "向量", "rag", "知识", "文档"],
+  },
+  web: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt: "",
+    tools: ["web_search"],
+    keywords: ["搜索", "网页", "联网", "查一下", "search", "web", "google", "百度"],
+  },
+};
+
+const DEFAULT_TOOLS: ToolsConfig = {
+  read_file: true,
+  list_dir: true,
+  glob: true,
+  grep: true,
+  write_file: true,
+  edit_file: true,
+  web_search: true,
+  rag_retrieve: true,
+};
+
+function sanitizeSubagent(raw: unknown, def: SubagentConfig): SubagentConfig {
+  // 防御性：electron-store 中的旧数据可能字段缺失或类型错误，逐字段做安全合并
+  if (!raw || typeof raw !== "object") return { ...def };
+  const r = raw as Partial<SubagentConfig> & Record<string, unknown>;
+  const clampTemp = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v)
+      ? Math.min(Math.max(v, 0), 2)
+      : def.temperature;
+  const strArr = (v: unknown, fallback: string[]): string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string")
+      ? v
+      : fallback;
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : def.enabled,
+    temperature: clampTemp(r.temperature),
+    systemPrompt:
+      typeof r.systemPrompt === "string" ? r.systemPrompt : def.systemPrompt,
+    tools: strArr(r.tools, def.tools),
+    keywords: strArr(r.keywords, def.keywords),
+  };
+}
+
+export function getSubagentsConfig(): SubagentsConfig {
+  const raw = store.get("subagents") as
+    | Partial<Record<"code" | "rag" | "web", unknown>>
+    | undefined;
+  if (!raw) return DEFAULT_SUBAGENTS;
+  return {
+    code: sanitizeSubagent(raw.code, DEFAULT_SUBAGENTS.code),
+    rag: sanitizeSubagent(raw.rag, DEFAULT_SUBAGENTS.rag),
+    web: sanitizeSubagent(raw.web, DEFAULT_SUBAGENTS.web),
+  };
+}
+
+export function setSubagentsConfig(cfg: SubagentsConfig): void {
+  store.set("subagents", cfg);
+}
+
+export function getToolsConfig(): ToolsConfig {
+  const raw = store.get("tools") as Partial<ToolsConfig> | undefined;
+  if (!raw) return DEFAULT_TOOLS;
+  const result: ToolsConfig = { ...DEFAULT_TOOLS };
+  (Object.keys(DEFAULT_TOOLS) as (keyof ToolsConfig)[]).forEach((k) => {
+    if (typeof raw[k] === "boolean") result[k] = raw[k] as boolean;
+  });
+  return result;
+}
+
+export function setToolsConfig(cfg: ToolsConfig): void {
+  store.set("tools", cfg);
+}
+
+export function getProfileAutoExtract(): boolean {
+  return getBoolean("profile.autoExtract", true);
+}
+
+export function setProfileAutoExtract(v: boolean): void {
+  store.set("profile.autoExtract", v);
+}

@@ -26,6 +26,12 @@ import {
   setApprovalConfig,
   getKnowledgeConfig,
   setKnowledgeConfig,
+  getSubagentsConfig,
+  setSubagentsConfig,
+  getToolsConfig,
+  setToolsConfig,
+  getProfileAutoExtract,
+  setProfileAutoExtract,
 } from "./store";
 import { appendLog, readLogs, cleanOldLogs } from "./logger";
 
@@ -99,6 +105,9 @@ function startPython(): void {
   const approval = getApprovalConfig();
   const knowledge = getKnowledgeConfig();
   const systemPrompt = getSystemPrompt();
+  const subagentsConfig = getSubagentsConfig();
+  const toolsConfig = getToolsConfig();
+  const profileAutoExtract = getProfileAutoExtract();
 
   appendLog("[main] starting python backend");
   pythonHandle = spawnPython({
@@ -122,6 +131,9 @@ function startPython(): void {
       milvusDb: knowledge.milvusDb || undefined,
       milvusCollection: knowledge.milvusCollection || undefined,
       milvusAuthEnabled: knowledge.milvusAuthEnabled,
+      subagentsConfig,
+      toolsConfig,
+      profileAutoExtract,
     },
     onStatus: (status) => {
       appendLog(`[main] python status: ${status}`);
@@ -253,6 +265,24 @@ function registerIpc(): void {
     return { ok: true };
   });
   ipcMain.handle("settings:getKnowledgeConfig", () => getKnowledgeConfig());
+
+  // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取配置 IPC handler
+  // renderer 通过 window.api.settings 读写 electron-store，后端启动时从 env 注入
+  ipcMain.handle("settings:getSubagentsConfig", () => getSubagentsConfig());
+  ipcMain.handle("settings:setSubagentsConfig", (_e, cfg: Parameters<typeof setSubagentsConfig>[0]) => {
+    setSubagentsConfig(cfg);
+    return { ok: true };
+  });
+  ipcMain.handle("settings:getToolsConfig", () => getToolsConfig());
+  ipcMain.handle("settings:setToolsConfig", (_e, cfg: Parameters<typeof setToolsConfig>[0]) => {
+    setToolsConfig(cfg);
+    return { ok: true };
+  });
+  ipcMain.handle("settings:getProfileAutoExtract", () => getProfileAutoExtract());
+  ipcMain.handle("settings:setProfileAutoExtract", (_e, v: boolean) => {
+    setProfileAutoExtract(v);
+    return { ok: true };
+  });
 
   // T6 process-resilience：读取日志（默认当天，最后 200 行）
   ipcMain.handle("logs:read", (_e, date?: string, maxLines?: number) => {

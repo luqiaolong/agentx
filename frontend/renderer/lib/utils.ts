@@ -60,6 +60,64 @@ export interface SkillSummary {
   content_preview: string;
 }
 
+// ---- T11/T12/T13 子代理 + 工具 + 记忆 ----
+
+export interface SubagentConfig {
+  enabled: boolean;
+  temperature: number;
+  systemPrompt: string;
+  tools: string[];
+  keywords: string[];
+}
+
+export interface SubagentsConfig {
+  code: SubagentConfig;
+  rag: SubagentConfig;
+  web: SubagentConfig;
+}
+
+export interface ToolsConfig {
+  read_file: boolean;
+  list_dir: boolean;
+  glob: boolean;
+  grep: boolean;
+  write_file: boolean;
+  edit_file: boolean;
+  web_search: boolean;
+  rag_retrieve: boolean;
+}
+
+export interface SkillFileInfo {
+  name: string;
+  size: number;
+  mtime: string;
+  content_preview: string;
+}
+
+export interface ThreadInfo {
+  thread_id: string;
+  checkpoint_count: number;
+  last_updated: string;
+  size_bytes: number;
+}
+
+export type ProfileCategory = "preference" | "project" | "fact" | "custom";
+
+export interface ProfileEntry {
+  key: string;
+  category: string;
+  content: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileEntryRequest {
+  key: string;
+  category: string;
+  content: string;
+}
+
 export interface WindowAPI {
   chat: {
     send: (msg: { role: string; content: string }, opts?: { threadId?: string }) => Promise<void>;
@@ -115,6 +173,29 @@ export interface WindowAPI {
       milvusCollection?: string;
       milvusAuthEnabled?: boolean;
     }) => Promise<unknown>;
+    getSubagentsConfig: () => Promise<SubagentsConfig>;
+    setSubagentsConfig: (cfg: SubagentsConfig) => Promise<unknown>;
+    getToolsConfig: () => Promise<ToolsConfig>;
+    setToolsConfig: (cfg: ToolsConfig) => Promise<unknown>;
+    getProfileAutoExtract: () => Promise<boolean>;
+    setProfileAutoExtract: (v: boolean) => Promise<unknown>;
+  };
+  memory: {
+    listSkills: () => Promise<{ skills: SkillFileInfo[] }>;
+    getSkill: (name: string) => Promise<{ content: string }>;
+    saveSkill: (name: string, content: string) => Promise<unknown>;
+    deleteSkill: (name: string) => Promise<unknown>;
+    getCheckpointer: () => Promise<{ db_size: number; threads: ThreadInfo[] }>;
+    deleteThread: (thread_id: string) => Promise<{ deleted: number }>;
+    getProfile: () => Promise<{ entries: ProfileEntry[] }>;
+    saveProfile: (entry: ProfileEntryRequest) => Promise<unknown>;
+    updateProfile: (key: string, content: string, category?: string) => Promise<unknown>;
+    deleteProfile: (key: string) => Promise<unknown>;
+    extractProfile: (
+      thread_id: string,
+      message: string,
+      reply: string,
+    ) => Promise<{ extracted: number }>;
   };
   app: {
     getVersion: () => Promise<string>;

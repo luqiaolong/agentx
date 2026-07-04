@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Cpu, MessageSquare, Database, ShieldCheck, FolderLock, ScrollText } from "lucide-react";
+import {
+  X,
+  Cpu,
+  MessageSquare,
+  Database,
+  ShieldCheck,
+  FolderLock,
+  ScrollText,
+  Bot,
+  Wrench,
+  Brain,
+} from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { ModelProviderSettings } from "./ModelProviderSettings";
 import { SystemPromptSettings } from "./SystemPromptSettings";
@@ -7,13 +18,19 @@ import { ApprovalSettings } from "./ApprovalSettings";
 import { LogViewer } from "./LogViewer";
 import { MilvusCredentialsForm } from "./MilvusCredentialsForm";
 import { SandboxSettings } from "./SandboxSettings";
+import { SubagentsSettings } from "./SubagentsSettings";
+import { ToolsSettings } from "./ToolsSettings";
+import { MemorySettings } from "./MemorySettings";
 
 type TabId =
   | "models"
   | "prompt"
+  | "subagents"
+  | "tools"
   | "knowledge"
   | "approval"
   | "sandbox"
+  | "memory"
   | "logs";
 
 interface TabDef {
@@ -26,9 +43,12 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: "models", label: "模型与密钥", desc: "LLM 服务商、API Key 与激活模型", Icon: Cpu },
   { id: "prompt", label: "系统提示词", desc: "agent 的全局系统提示", Icon: MessageSquare },
+  { id: "subagents", label: "子代理", desc: "code/rag/web 子代理配置", Icon: Bot },
+  { id: "tools", label: "工具", desc: "工具启用与禁用", Icon: Wrench },
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
   { id: "sandbox", label: "沙箱目录", desc: "持久化授权目录", Icon: FolderLock },
+  { id: "memory", label: "记忆", desc: "技能、会话与用户画像", Icon: Brain },
   { id: "logs", label: "日志", desc: "运行时日志查看", Icon: ScrollText },
 ];
 
@@ -196,9 +216,12 @@ export function SettingsModal() {
           >
             {active === "models" && <ModelProviderSettings />}
             {active === "prompt" && <SystemPromptSettings />}
+            {active === "subagents" && <SubagentsSettings />}
+            {active === "tools" && <ToolsSettings />}
             {active === "knowledge" && <MilvusCredentialsForm />}
             {active === "approval" && <ApprovalSettings />}
             {active === "sandbox" && <SandboxSettings />}
+            {active === "memory" && <MemorySettings />}
             {active === "logs" && <LogViewer />}
           </div>
         </div>
