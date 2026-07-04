@@ -15,7 +15,6 @@ import {
   AlertCircle,
   RotateCw,
   RefreshCw,
-  Search,
   ExternalLink,
   Server,
 } from "lucide-react";
@@ -512,12 +511,6 @@ export function ModelProviderSettings(): JSX.Element {
     isNew: boolean;
   } | null>(null);
 
-  // Tavily 搜索服务状态（独立于模型条目）
-  const [tavilyKey, setTavilyKey] = useState("");
-  const [tavilyConfigured, setTavilyConfigured] = useState(false);
-  const [showTavily, setShowTavily] = useState(false);
-  const [tavilySaved, setTavilySaved] = useState(false);
-
   const load = useCallback(async () => {
     try {
       const [list, active] = await Promise.all([
@@ -531,21 +524,12 @@ export function ModelProviderSettings(): JSX.Element {
     }
   }, []);
 
-  const loadTavily = useCallback(async () => {
-    try {
-      const key = await window.api.settings.getApiKey("tavily");
-      setTavilyConfigured(typeof key === "string" && key.length > 0);
-    } catch {
-      setTavilyConfigured(false);
-    }
-  }, []);
-
   useEffect(() => {
     void (async () => {
-      await Promise.all([load(), loadTavily()]);
+      await load();
       setLoaded(true);
     })();
-  }, [load, loadTavily]);
+  }, [load]);
 
   const activeEntry = useMemo(
     () => entries.find((e) => e.id === activeId) ?? null,
@@ -622,21 +606,6 @@ export function ModelProviderSettings(): JSX.Element {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setActivatingId(null);
-    }
-  };
-
-  const saveTavilyKey = async (): Promise<void> => {
-    setErrMsg(null);
-    const key = tavilyKey.trim();
-    if (!key) return;
-    try {
-      await window.api.settings.setApiKey("tavily", key);
-      setTavilyConfigured(true);
-      setTavilyKey("");
-      setTavilySaved(true);
-      window.setTimeout(() => setTavilySaved(false), 2000);
-    } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -794,79 +763,6 @@ export function ModelProviderSettings(): JSX.Element {
           </button>
         </div>
       )}
-
-      {/* 搜索服务（Tavily） */}
-      <div className="border-t border-default pt-4">
-        <div className="mb-2 flex items-center gap-1.5">
-          <Search className="h-3 w-3 text-muted-c" />
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            搜索服务
-          </h4>
-        </div>
-        <div className="rounded-lg border border-default bg-surface px-3 py-2.5">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-primary-c">Tavily</span>
-              <span className="text-[11px] text-muted-c">AI 搜索 API</span>
-            </div>
-            {tavilyConfigured ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                <Check className="h-2.5 w-2.5" />
-                已配置
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                未配置
-              </span>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-1 text-[11px] font-medium text-secondary-c">
-              <KeyRound className="h-3 w-3 text-muted-c" />
-              API Key
-            </label>
-            <div className="flex gap-1.5">
-              <div className="relative flex-1">
-                <input
-                  type={showTavily ? "text" : "password"}
-                  value={tavilyKey}
-                  onChange={(e) => setTavilyKey(e.target.value)}
-                  placeholder={
-                    tavilyConfigured ? "输入新 Key 以替换" : "输入 API Key"
-                  }
-                  className="input-field pr-8 font-mono text-[11px]"
-                />
-                <button
-                  type="button"
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-c transition-colors hover:text-primary-c"
-                  onClick={() => setShowTavily((s) => !s)}
-                  aria-label={showTavily ? "隐藏" : "显示"}
-                >
-                  {showTavily ? (
-                    <EyeOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Eye className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              </div>
-              <button
-                type="button"
-                className="btn-primary px-2.5"
-                disabled={!tavilyKey.trim()}
-                onClick={saveTavilyKey}
-              >
-                <Save className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            {tavilySaved && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                <Check className="h-3 w-3" />
-                已保存
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
 
       {/* 说明 */}
       <p className="rounded-md bg-subtle/50 px-3 py-2 text-[11px] leading-relaxed text-muted-c">

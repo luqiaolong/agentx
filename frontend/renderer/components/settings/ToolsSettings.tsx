@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Wrench,
   Save,
@@ -9,6 +9,9 @@ import {
   Globe,
   Database,
   AlertTriangle,
+  KeyRound,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import type { ToolsConfig } from "@/lib/utils";
 
@@ -78,7 +81,7 @@ const TOOL_GROUPS: ToolGroup[] = [
       {
         key: "web_search",
         label: "web_search",
-        desc: "联网搜索（Tavily）",
+        desc: "联网搜索，需要在下方配置 Tavily API Key",
         Icon: Globe,
       },
     ],
@@ -113,6 +116,21 @@ export function ToolsSettings() {
   const [saved, setSaved] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
+  // web_search 工具依赖的 Tavily API Key
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [tavilyConfigured, setTavilyConfigured] = useState(false);
+  const [showTavily, setShowTavily] = useState(false);
+  const [tavilySaved, setTavilySaved] = useState(false);
+
+  const loadTavily = useCallback(async () => {
+    try {
+      const key = await window.api.settings.getApiKey("tavily");
+      setTavilyConfigured(typeof key === "string" && key.length > 0);
+    } catch {
+      setTavilyConfigured(false);
+    }
+  }, []);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -123,8 +141,24 @@ export function ToolsSettings() {
       } finally {
         setLoaded(true);
       }
+      await loadTavily();
     })();
-  }, []);
+  }, [loadTavily]);
+
+  const saveTavilyKey = async (): Promise<void> => {
+    setErrMsg(null);
+    const key = tavilyKey.trim();
+    if (!key) return;
+    try {
+      await window.api.settings.setApiKey("tavily", key);
+      setTavilyConfigured(true);
+      setTavilyKey("");
+      setTavilySaved(true);
+      window.setTimeout(() => setTavilySaved(false), 2000);
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const toggle = (key: keyof ToolsConfig): void => {
     setConfig((s) => ({ ...s, [key]: !s[key] }));
@@ -217,6 +251,96 @@ export function ToolsSettings() {
           </div>
         </div>
       ))}
+
+      {/* web_search 工具依赖凭证：Tavily API Key */}
+      <div className="rounded-lg border border-default bg-surface px-3 py-2.5">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Globe className="h-3.5 w-3.5 shrink-0 text-brand-500" />
+            <span className="text-xs font-semibold text-primary-c">
+              web_search 依赖凭证
+            </span>
+            <span className="text-[11px] text-muted-c">Tavily AI 搜索 API</span>
+          </div>
+          {tavilyConfigured ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+              <Check className="h-2.5 w-2.5" />
+              已配置
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              未配置
+            </span>
+          )}
+        </div>
+
+        {!config.web_search && (
+          <div className="mb-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              web_search 工具当前已禁用，配置 Key 后不会立即生效；启用工具后下次启动后端可用。
+            </span>
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <label className="flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+            <KeyRound className="h-3 w-3 text-muted-c" />
+            API Key
+          </label>
+          <div className="flex gap-1.5">
+            <div className="relative flex-1">
+              <input
+                type={showTavily ? "text" : "password"}
+                value={tavilyKey}
+                onChange={(e) => setTavilyKey(e.target.value)}
+                placeholder={
+                  tavilyConfigured ? "输入新 Key 以替换" : "输入 API Key"
+                }
+                className="input-field pr-8 font-mono text-[11px]"
+              />
+              <button
+                type="button"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-c transition-colors hover:text-primary-c"
+                onClick={() => setShowTavily((s) => !s)}
+                aria-label={showTavily ? "隐藏" : "显示"}
+              >
+                {showTavily ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+            <button
+              type="button"
+              className="btn-primary px-2.5"
+              disabled={!tavilyKey.trim()}
+              onClick={saveTavilyKey}
+            >
+              <Save className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {tavilySaved && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+              <Check className="h-3 w-3" />
+              已保存
+            </span>
+          )}
+          <p className="pt-1 text-[10.5px] leading-relaxed text-muted-c">
+            申请 Key:
+            <a
+              href="https://app.tavily.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-brand-500 underline-offset-2 hover:underline"
+            >
+              app.tavily.com
+            </a>
+            。保存后需重启后端,web 子代理下次启动时读取。
+          </p>
+        </div>
+      </div>
 
       <div className="flex items-center gap-2">
         <button type="button" onClick={save} className="btn-primary">
