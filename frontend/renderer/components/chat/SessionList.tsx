@@ -94,16 +94,16 @@ export function SessionList() {
   };
 
   return (
-    <div className="flex h-full flex-col px-2 py-3">
-      <div className="mb-2 flex items-center justify-between px-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-c">
+    <div className="flex h-full flex-col px-1.5 py-2">
+      <div className="mb-1 flex items-center justify-between px-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-c">
           会话
         </span>
         <button
           type="button"
           onClick={handleCreateInHome}
           disabled={isStreaming}
-          className="btn-ghost"
+          className="btn-ghost p-1"
           aria-label="在 Home 新建会话"
           title="在 Home 新建会话"
         >
@@ -145,8 +145,8 @@ export function SessionList() {
         ))}
 
         {groups.homeItems.length === 0 && groups.workspaces.length === 0 && (
-          <div className="flex flex-col items-center gap-2 px-2 py-8 text-center">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-subtle">
+          <div className="flex flex-col items-center gap-1.5 px-2 py-6 text-center">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-subtle">
               <MessageSquare className="h-4 w-4 text-muted-c" />
             </div>
             <div className="text-xs text-muted-c">点击 + 新建会话</div>
@@ -155,11 +155,11 @@ export function SessionList() {
       </div>
 
       {/* 底部设置入口 —— 固定在左下角 */}
-      <div className="mt-2 shrink-0 border-t border-default pt-2">
+      <div className="mt-1 shrink-0 border-t border-default pt-1">
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+          className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
           aria-label="打开设置"
           title="设置"
         >
@@ -209,7 +209,7 @@ function SessionGroup({
     <button
       type="button"
       onClick={() => setOpen((v) => !v)}
-      className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+      className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
       aria-label={open ? `折叠 ${label}` : `展开 ${label}`}
       title={subtitle ?? label}
     >
@@ -219,7 +219,7 @@ function SessionGroup({
         <ChevronRight className="h-3 w-3 shrink-0 text-muted-c" />
       )}
       {icon}
-      <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wider">
+      <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wider">
         {label}
       </span>
       <span className="shrink-0 rounded bg-subtle px-1 py-px text-[9px] font-medium text-muted-c">
@@ -229,14 +229,14 @@ function SessionGroup({
   );
 
   return (
-    <div className="mb-1.5">
+    <div className="mb-1">
       <div className="flex items-center gap-0.5">
         {headerBtn}
         <button
           type="button"
           onClick={onCreate}
           disabled={isStreaming}
-          className="shrink-0 rounded p-1 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 rounded p-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={`在 ${label} 新建会话`}
           title={`在 ${label} 新建会话`}
         >
@@ -244,7 +244,7 @@ function SessionGroup({
         </button>
       </div>
       {open && (
-        <ul className="mt-0.5 space-y-0.5 pl-2.5">
+        <ul className="mt-0.5 space-y-px pl-4 border-l border-default ml-2">
           {items.map((s) => {
             const active = s.id === currentId;
             return (
@@ -259,7 +259,7 @@ function SessionGroup({
                       onSwitch(s.id);
                     }
                   }}
-                  className={`group relative flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 transition-colors ${
+                  className={`group relative flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 pl-2.5 transition-colors ${
                     isStreaming
                       ? "cursor-not-allowed opacity-60"
                       : "hover:bg-hover-soft"
@@ -267,7 +267,7 @@ function SessionGroup({
                 >
                   {active && (
                     <span
-                      className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-brand-500"
+                      className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-brand-500"
                       aria-hidden
                     />
                   )}
@@ -278,11 +278,11 @@ function SessionGroup({
                   />
                   <div className="min-w-0 flex-1">
                     <div
-                      className={`truncate text-xs font-medium ${active ? "text-primary-c" : "text-secondary-c"}`}
+                      className={`truncate text-xs font-medium leading-tight ${active ? "text-primary-c" : "text-secondary-c"}`}
                     >
                       {s.title}
                     </div>
-                    <div className="text-[10px] text-muted-c">
+                    <div className="text-[10px] leading-tight text-muted-c">
                       {new Date(s.createdAt).toLocaleString()}
                     </div>
                   </div>
@@ -292,7 +292,7 @@ function SessionGroup({
                       e.stopPropagation();
                       onDelete(s.id, s.title);
                     }}
-                    className="shrink-0 rounded p-1 text-muted-c opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-500 group-hover:opacity-100"
+                    className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-500 group-hover:opacity-100"
                     aria-label={`删除会话 ${s.title}`}
                   >
                     <Trash2 className="h-3 w-3" />
