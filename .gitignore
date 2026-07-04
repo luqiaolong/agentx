@@ -69,3 +69,6 @@ langsmith_runs/
 
 # Test secrets
 tests/python/.env.test.local
+
+# Git worktrees (local isolation)
+.worktrees/
