@@ -10,11 +10,11 @@ export function EmptyState() {
       <p className="mb-5 max-w-sm text-sm text-muted-c">
         输入{" "}
         <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/</code>{" "}
-        调技能，
+        调命令与技能，
         <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">@</code>{" "}
         附文件，输入{" "}
-        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/clear</code>{" "}
-        清空会话。
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/help</code>{" "}
+        查看所有命令。
       </p>
       <div className="grid grid-cols-1 gap-2 text-left sm:grid-cols-2">
         <ExampleCard title="问答对话" desc="解释 LangGraph 的 checkpointer 机制" />
