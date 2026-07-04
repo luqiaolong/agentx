@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { ArrowUp, Square, Sparkles, AlertCircle, Paperclip } from "lucide-react";
+import { ArrowUp, Square, Sparkles, AlertCircle, Paperclip, Slash, AtSign } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent } from "@/lib/utils";
@@ -59,6 +59,7 @@ export function ChatView() {
   const [dragOver, setDragOver] = useState(false);
   const [dropError, setDropError] = useState<string | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [textareaHeight, setTextareaHeight] = useState(24);
 
   const pendingIdRef = useRef<string>("pending");
   const currentTaskIdRef = useRef<string | null>(null);
@@ -131,15 +132,24 @@ export function ChatView() {
     }
   }, [messages]);
 
+  // textarea 自动撑高 — 跟随内容从 1 行 (24px) 到 6 行 (≈144px)
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const next = Math.min(144, Math.max(24, el.scrollHeight));
+    setTextareaHeight(next);
+  }, [input]);
+
   const handleSend = async () => {
     const content = input.trim();
     if (!content || isStreaming) return;
 
-    // /reset 命令：调后端清空 checkpointer + 沙箱，再清前端消息（保留会话）
-    if (content === "/reset") {
+    // /reset 与 /clear 等价：调后端清空 checkpointer + 沙箱，再清前端消息（保留会话）
+    if (content === "/reset" || content === "/clear") {
       const resetTid = currentId ?? "";
       try {
-        await window.api.chat.send({ role: "user", content: "/reset" }, { threadId: resetTid });
+        await window.api.chat.send({ role: "user", content }, { threadId: resetTid });
       } catch {
         /* 后端不可用也允许前端清空 */
       }
@@ -203,39 +213,80 @@ export function ChatView() {
       e.preventDefault();
       void handleSend();
     }
+    // Esc 关闭技能选择器，避免遮挡视线
+    if (e.key === "Escape" && skillPickerOpen) {
+      setSkillPickerOpen(false);
+    }
   };
 
-  // 输入末尾为 `@` 时触发技能选择浮层，并记录锚点位置用于回填
+  // 输入末尾为 `/` 且整串仍处于命令模式（行首 / 紧跟空白）时，打开技能选择器，
+  // 锚点记录 `/` 位置以便回填。仅插入"技能名称"本身，不带前缀（与 /reset /clear 风格区分）。
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
-    if (val.endsWith("@")) {
-      skillAnchorRef.current = val.length - 1;
-      setSkillPickerOpen(true);
+    if (val.endsWith("/")) {
+      const prev = val.length >= 2 ? val[val.length - 2] : "";
+      if (prev === "" || /\s/.test(prev)) {
+        skillAnchorRef.current = val.length - 1;
+        setSkillPickerOpen(true);
+      }
     }
   };
 
   const handleSkillSelect = (name: string) => {
     const pos = skillAnchorRef.current;
+    // 仅插入技能名称 + 空格，与 /reset /clear 等带斜杠的命令视觉区分
+    const replacement = `${name} `;
     if (pos === null) {
-      setInput((s) => `${s}@skill:${name} `);
+      setInput((s) => `${s}${replacement}`);
     } else {
-      setInput((s) => `${s.slice(0, pos)}@skill:${name} ${s.slice(pos + 1)}`);
+      setInput((s) => `${s.slice(0, pos)}${replacement}${s.slice(pos + 1)}`);
     }
     skillAnchorRef.current = null;
     setSkillPickerOpen(false);
     textareaRef.current?.focus();
   };
 
+  // 点击 @ 按钮 → 弹出 OS 文件选择器，选中后以 <file>rel</file> 形式追加到末尾。
+  // 支持多选，错误信息走现有 dropError 通道统一展示。
+  const handleAttachFile = async () => {
+    setDropError(null);
+    try {
+      const result = (await window.api.dialog.openFile({
+        properties: ["openFile", "multiSelections"],
+      })) as { canceled?: boolean; filePaths?: string[] } | undefined;
+      const filePaths = result?.filePaths ?? [];
+      if (!result || result.canceled || filePaths.length === 0) return;
+      const fileNames = filePaths.map((p) => p.split(/[\\/]/).pop() ?? p);
+      for (let i = 0; i < filePaths.length; i++) {
+        const filePath = filePaths[i];
+        const fileName = fileNames[i];
+        try {
+          const relPath = await window.api.dialog.saveDroppedFile(filePath, fileName);
+          setInput((s) => `${s}<file>${relPath}</file> `);
+        } catch (err) {
+          setDropError(
+            `文件「${fileName}」保存失败：${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+    } catch (err) {
+      setDropError(
+        `文件选择失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
   // 文件拖拽 —— 把拖入的文件交给主进程保存，返回相对路径后以 <file> 标记追加
-  const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
+  // 事件挂在 .chat-composer 容器上（不再是 textarea），保证整个输入框都可接收拖入
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(true);
   };
 
   const handleDragLeave = () => setDragOver(false);
 
-  const handleDrop = async (e: React.DragEvent<HTMLTextAreaElement>) => {
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files);
@@ -338,59 +389,105 @@ export function ChatView() {
         </div>
       )}
 
-      {/* 输入区 */}
+      {/* 输入区 — Minimal AI-Native Composer */}
       <div className="border-t border-default bg-surface px-4 py-3">
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <div className="relative flex-1">
+        <div className="mx-auto max-w-3xl">
+          <div
+            className={`chat-composer relative px-3 py-2.5 ${
+              dragOver ? "is-drop-target" : ""
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             {skillPickerOpen && (
               <SkillPicker
                 onSelect={handleSkillSelect}
                 onClose={() => setSkillPickerOpen(false)}
               />
             )}
+
             <textarea
               ref={textareaRef}
               value={input}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              rows={2}
-              placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 触发技能，拖拽文件附加引用。"
-              className={`input-field resize-none px-3 py-2.5 leading-relaxed transition-colors ${
-                dragOver
-                  ? "border-brand-500 ring-2 ring-brand-500/20"
-                  : ""
-              }`}
+              rows={1}
+              placeholder="输入消息，或 / 调技能，@ 附文件"
+              aria-label="消息输入框"
+              className="input-borderless block max-h-40 min-h-[1.5rem] w-full pr-1"
+              style={{ height: `${textareaHeight}px` }}
             />
+
+            <div className="mt-1.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1 text-[11px] text-muted-c">
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => {
+                    setInput((s) => {
+                      const next = s.endsWith("/") ? s : `${s}/`;
+                      // 仅在行首或空白后触发命令模式
+                      const prev = next.length >= 2 ? next[next.length - 2] : "";
+                      if (prev === "" || /\s/.test(prev)) {
+                        skillAnchorRef.current = next.length - 1;
+                        setSkillPickerOpen(true);
+                      }
+                      return next;
+                    });
+                    textareaRef.current?.focus();
+                  }}
+                  title="调用技能 (/ 命令)"
+                  aria-label="调用技能"
+                >
+                  <Slash className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => void handleAttachFile()}
+                  title="附加文件 (@)"
+                  aria-label="附加文件"
+                >
+                  <AtSign className="h-3.5 w-3.5" />
+                </button>
+                <span className="hidden sm:inline">
+                  / 调用技能 · @ 附加文件 · 拖入文件也支持
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {isStreaming ? (
+                  <button
+                    type="button"
+                    onClick={handleAbort}
+                    className="btn-send is-stop"
+                    aria-label="中止生成"
+                    title="中止"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={!canSend}
+                    className="btn-send"
+                    aria-label="发送消息"
+                    title="发送 (Enter)"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
+            </div>
+
             {dragOver && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-brand-500">
-                <Paperclip className="mr-1 h-3.5 w-3.5" />
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-brand-500/5 text-xs font-medium text-brand-500">
+                <Paperclip className="mr-1.5 h-3.5 w-3.5" />
                 释放以附加文件
               </div>
             )}
           </div>
-          {isStreaming ? (
-            <button
-              type="button"
-              onClick={handleAbort}
-              className="inline-flex h-[42px] shrink-0 items-center gap-1.5 rounded-lg bg-rose-600 px-4 text-sm font-medium text-white transition-colors hover:bg-rose-500"
-            >
-              <Square className="h-3.5 w-3.5 fill-current" />
-              中止
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={!canSend}
-              className="inline-flex h-[42px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
-              发送
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -405,7 +502,13 @@ function EmptyState() {
       </div>
       <h2 className="mb-1.5 text-lg font-semibold text-primary-c">开始与 Agent 对话</h2>
       <p className="mb-5 max-w-sm text-sm text-muted-c">
-        输入消息开始对话，输入 <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/reset</code> 清空会话。支持 @ 调用技能、拖拽文件附加引用。
+        输入{" "}
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/</code>{" "}
+        调技能，
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">@</code>{" "}
+        附文件，输入{" "}
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/clear</code>{" "}
+        清空会话。
       </p>
       <div className="grid grid-cols-1 gap-2 text-left sm:grid-cols-2">
         <ExampleCard
@@ -422,7 +525,7 @@ function EmptyState() {
         />
         <ExampleCard
           title="技能调用"
-          desc="输入 @ 选择可用技能"
+          desc="输入 / 选择可用技能"
         />
       </div>
     </div>
