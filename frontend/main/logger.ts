@@ -5,6 +5,9 @@ import * as path from "path";
 /**
  * 按日滚动日志：写入 `app.getPath("userData")/logs/agent-py-{YYYYMMDD}.log`。
  * 用 userData 而非 app.getAppPath()，因为打包后 getAppPath() 指向只读 asar。
+ *
+ * 写入策略：异步 appendFile + 微队列保序，避免同步 IO 阻塞主进程
+ *（spawn.ts 把 python stdout 每行 appendLog，高频同步写会卡 UI）。
  */
 function getLogDir(): string {
   return path.join(app.getPath("userData"), "logs");
@@ -36,15 +39,26 @@ function logFilePath(date?: string): string {
   return path.join(getLogDir(), `agent-py-${dateStr}.log`);
 }
 
-/** 追加一行日志（自动加 [HH:MM:SS] 前缀）。 */
+// 异步写入微队列：串行化 appendFile 调用，保证日志顺序 + 不阻塞主进程
+let _writeQueue: Promise<void> = Promise.resolve();
+
+function enqueueWrite(fp: string, entry: string): void {
+  _writeQueue = _writeQueue
+    .then(() => fs.promises.appendFile(fp, entry, "utf8"))
+    .catch(() => {
+      /* 写入失败忽略，避免拖垮主进程 */
+    });
+}
+
+/** 追加一行日志（自动加 [HH:MM:SS] 前缀）。异步写入，不阻塞主进程。 */
 export function appendLog(line: string): void {
   try {
     ensureLogDir();
     const stamp = formatTime(new Date());
     const entry = `[${stamp}] ${line}\n`;
-    fs.appendFileSync(logFilePath(), entry, "utf8");
+    enqueueWrite(logFilePath(), entry);
   } catch {
-    /* 写入失败忽略，避免拖垮主进程 */
+    /* 目录创建失败忽略 */
   }
 }
 

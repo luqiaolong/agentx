@@ -6,6 +6,8 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 // ---- window.api 类型（renderer 侧独立声明，preload 侧另有 ElectronAPI） ----
+// NOTE: 改动此处的 WindowAPI 时，必须同步 frontend/preload/index.ts 的 ElectronAPI
+// （tsconfig.web.json 不 include preload，renderer 无法 import type，只能维护双份声明）
 
 export interface ChatEvent {
   type: string;

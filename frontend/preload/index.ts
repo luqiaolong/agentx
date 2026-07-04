@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// NOTE: 改动 ElectronAPI 接口时，必须同步 frontend/renderer/lib/utils.ts 的 WindowAPI
+// （tsconfig.web.json 不 include preload，renderer 无法 import type，只能维护双份声明）
 const API_BASE = "http://127.0.0.1:8123";
 
 export interface ChatEvent {

@@ -5,11 +5,12 @@ import type { Session } from "@/stores/chat";
  * 左侧栏会话列表。
  *
  * 从 chat store 读取所有会话（按 createdAt 倒序）+ 当前会话 id，
- * 支持新建 / 切换 / 删除会话。删除时会异步调用 /reset 清后端 checkpoint。
+ * 支持新建 / 切换 / 删除会话。streaming 中切换会话会丢 token，故守卫禁用。
  */
 export function SessionList() {
   const sessions = useChatStore((s) => s.sessions);
   const currentId = useChatStore((s) => s.currentId);
+  const isStreaming = useChatStore((s) => s.isStreaming);
   const createSession = useChatStore((s) => s.createSession);
   const switchSession = useChatStore((s) => s.switchSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
@@ -24,14 +25,31 @@ export function SessionList() {
     }
   };
 
+  const handleSwitch = (id: string) => {
+    if (isStreaming) {
+      window.alert("当前会话正在流式输出，请等待完成或中止后再切换");
+      return;
+    }
+    switchSession(id);
+  };
+
+  const handleCreate = () => {
+    if (isStreaming) {
+      window.alert("当前会话正在流式输出，请等待完成或中止后再新建会话");
+      return;
+    }
+    createSession();
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-sm font-medium text-neutral-500">会话</span>
         <button
           type="button"
-          onClick={() => createSession()}
-          className="rounded bg-neutral-800 px-2 py-1 text-xs text-white hover:bg-neutral-700"
+          onClick={handleCreate}
+          disabled={isStreaming}
+          className="rounded bg-neutral-800 px-2 py-1 text-xs text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           新建会话
         </button>
@@ -50,17 +68,17 @@ export function SessionList() {
                 <li key={s.id}>
                   <div
                     role="button"
-                    tabIndex={0}
-                    onClick={() => switchSession(s.id)}
+                    tabIndex={isStreaming ? -1 : 0}
+                    onClick={() => handleSwitch(s.id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        switchSession(s.id);
+                        handleSwitch(s.id);
                       }
                     }}
-                    className={`group flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm hover:bg-neutral-100 ${
-                      active ? "bg-neutral-100" : ""
-                    }`}
+                    className={`group flex items-center justify-between rounded px-2 py-1.5 text-sm ${
+                      isStreaming ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-neutral-100"
+                    } ${active ? "bg-neutral-100" : ""}`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-neutral-800">{s.title}</div>

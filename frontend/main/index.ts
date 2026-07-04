@@ -118,6 +118,19 @@ function registerIpc(): void {
     "dialog:saveDroppedFile",
     async (_e, filePath: string, fileName: string): Promise<string> => {
       const maxBytes = getApprovalConfig().maxUploadBytes;
+      // 安全：源 filePath 系统目录黑名单（防 renderer XSS 后借 copyFile 读取系统敏感文件）
+      const resolvedSrc = path.resolve(String(filePath));
+      const lowerSrc = resolvedSrc.toLowerCase();
+      const systemPrefixes = [
+        "c:\\windows\\", "c:\\program files\\", "c:\\program files (x86)\\",
+        "c:\\programdata\\", "c:\\system volume information\\",
+        "/etc/", "/usr/", "/bin/", "/sbin/", "/var/", "/boot/",
+        "/proc/", "/sys/", "/system/", "/private/",
+      ];
+      if (systemPrefixes.some((p) => lowerSrc.startsWith(p) || lowerSrc === p.slice(0, -1))) {
+        appendLog(`[main] saveDroppedFile rejected system path: ${resolvedSrc}`);
+        throw new Error("不允许读取系统目录文件");
+      }
       let size = 0;
       try {
         const stat = fs.statSync(filePath);

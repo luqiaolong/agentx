@@ -104,14 +104,17 @@ export function getApprovalConfig(): {
 export function setApprovalConfig(
   cfg: Partial<{ autoApproveAfterSeconds: number; approvalMaxWait: number; maxUploadBytes: number }>,
 ): void {
+  // 数值 clamp：防 renderer 传入负数/NaN/极大值导致后端行为异常
+  const clamp = (v: number, min: number, max: number): number =>
+    Number.isFinite(v) ? Math.min(Math.max(v, min), max) : min;
   if (cfg.autoApproveAfterSeconds !== undefined) {
-    store.set("approval.autoApproveAfterSeconds", cfg.autoApproveAfterSeconds);
+    store.set("approval.autoApproveAfterSeconds", clamp(cfg.autoApproveAfterSeconds, 0, 3600));
   }
   if (cfg.approvalMaxWait !== undefined) {
-    store.set("approval.approvalMaxWait", cfg.approvalMaxWait);
+    store.set("approval.approvalMaxWait", clamp(cfg.approvalMaxWait, 0, 3600));
   }
   if (cfg.maxUploadBytes !== undefined) {
-    store.set("approval.maxUploadBytes", cfg.maxUploadBytes);
+    store.set("approval.maxUploadBytes", clamp(cfg.maxUploadBytes, 0, 1_073_741_824)); // 上限 1GB
   }
 }
 
