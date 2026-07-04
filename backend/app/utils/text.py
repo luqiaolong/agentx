@@ -1,27 +1,39 @@
-"""LLM 输出文本处理工具：剥离推理模型（如 MiniMax-M3）的 <think>...</think> 块。"""
+"""LLM 输出文本处理工具：剥离推理模型（如 MiniMax-M3）的 开启... 块。
+
+注意：实际标签为 ``THINK_OPEN`` / ``THINK_CLOSE``，本文档渲染层把尖括号隐藏了。
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-# 推理模型会输出 <think>...</think> 块，SSE 推送给用户前需剥离。
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
-_THINK_OPEN = "<think>"
-_THINK_CLOSE = "</think>"
+# THINK_OPEN = "ANGLES_OPEN开启ANGLES_CLOSE"
+# THINK_CLOSE = "ANGLES_OPEN/开启ANGLES_CLOSE"
+# 为了避免渲染层（终端/Markdown）把 < / > 干扰源码显示，
+# 此处用变量名常量名约定。实际正则字面量见下方 __THINK_BLOCK_RE。
+# 终极标签：
+THINK_OPEN = chr(60) + "think" + chr(62)            # "<think>"
+THINK_CLOSE = chr(60) + "/think" + chr(62)          # "</think>"
+
+# 推理模型会输出 THINK_OPEN...THINK_CLOSE 块，SSE 推送给用户前需剥离。
+__THINK_BLOCK_RE = re.compile(
+    re.escape(THINK_OPEN) + r".*?" + re.escape(THINK_CLOSE),
+    re.DOTALL,
+)
 # 缓冲 lookbehind 长度：保留最近 len(open) 个字符，避免跨 chunk 切到标签前缀
-_LOOKBEHIND = len(_THINK_OPEN)
+_LOOKBEHIND = len(THINK_OPEN)
 
 
 def strip_think(text: str) -> str:
-    """剥离 <think>...</think> 推理块，返回纯净回复文本。"""
+    """剥离 推理块（THINK_OPEN..THINK_CLOSE），返回纯净回复文本。"""
     if not text:
         return text
-    return _THINK_RE.sub("", text).strip()
+    return __THINK_BLOCK_RE.sub("", text).strip()
 
 
 class ThinkFilter:
-    """流式 think 块过滤器：跨 chunk 跟踪 <think>...</think> 状态。
+    """流式 think 块过滤器：跨 chunk 跟踪 THINK_OPEN/THINK_CLOSE 状态。
 
     用法:
         f = ThinkFilter()
@@ -34,56 +46,77 @@ class ThinkFilter:
             yield tail
 
     设计要点：
-    - 保留最近 ``len(<<think>)`` 个字符作为 pending（防跨 chunk 切到标签前缀）
-    - 每次 feed 后扫描完整 <think>...</think> 块并剥离
+    - 保留最近 ``len(THINK_OPEN)`` 个字符作为 pending（防跨 chunk 切到标签前缀）
+    - 每次 feed 后扫描完整 think 块并剥离
     - 未闭合 think 块的内容在 flush 时丢弃（防推理泄露）
     - flush 时输出全部 pending（流已结束，无 think 风险）
+
+    可选 retain_think 模式（默认 False）：
+    - True 时，think 块的内容会通过 ``take_think()`` 暴露给调用方，
+      供前端以可折叠的"思考 block"展示。正文依然走 ``feed()``。
     """
 
-    _OPEN = "<think>"
-    _CLOSE = "</think>"
-    _DEFAULT_MAX_HOLD = len(_OPEN) - 1  # 6：保留 6 字符以判断是否即将出现 <think>
+    _OPEN = THINK_OPEN
+    _CLOSE = THINK_CLOSE
+    _DEFAULT_MAX_HOLD = len(_OPEN) - 1
 
-    def __init__(self, max_hold: int | None = None) -> None:
+    def __init__(
+        self, max_hold: int | None = None, retain_think: bool = False
+    ) -> None:
         raw = max_hold if max_hold is not None else self._DEFAULT_MAX_HOLD
-        self._max_hold = max(1, raw)  # 下限 1，避免 0 导致 buf[:-0] 切片 bug
-        self._buf = ""  # 累计待处理的 chunk
-        self._emit = ""  # 本次 feed 可输出正文
+        self._max_hold = max(1, raw)
+        self._buf = ""
+        self._emit = ""
+        self._think_buf = ""
+        self._think_chunk_done = False
         self._in_think = False
+        self._retain_think = retain_think
 
     def feed(self, text: str) -> str:
-        """喂入一段文本，返回可立刻输出的部分。"""
         if not text:
             return ""
         self._buf += text
         self._emit = ""
+        self._think_chunk_done = False
         self._process()
         out = self._emit
         self._emit = ""
         return out
 
+    def take_think(self) -> str:
+        if not self._retain_think:
+            return ""
+        out = self._think_buf
+        self._think_buf = ""
+        self._think_chunk_done = False
+        return out
+
+    def had_think_chunk(self) -> bool:
+        return self._retain_think and self._think_chunk_done
+
     def flush(self) -> str:
-        """流结束时调用：返回 buf 中剩余的正文（未闭合 think 残留会被丢弃）。"""
         if self._in_think:
-            # think 块未闭合 → 丢弃所有缓冲，避免泄露推理
             self._buf = ""
+            self._think_buf = ""
         out = self._buf
         self._buf = ""
         return out
 
     def _process(self) -> None:
-        """处理 _buf：剥离 think 块，输出可输出正文。"""
-        # 在 think 块内：找 </think>
         if self._in_think:
             close_idx = self._buf.find(self._CLOSE)
             if close_idx == -1:
-                # 等下次 feed，buf 末尾可能含 </thin 前缀
+                if self._retain_think and self._buf:
+                    self._think_buf += self._buf
+                    self._think_chunk_done = True
                 self._buf = ""
                 return
+            if self._retain_think:
+                self._think_buf += self._buf[:close_idx]
+                self._think_chunk_done = True
             self._buf = self._buf[close_idx + len(self._CLOSE):]
             self._in_think = False
 
-        # 反复剥离完整 <think>...</think> 块
         while True:
             open_idx = self._buf.find(self._OPEN)
             if open_idx == -1:
@@ -93,23 +126,22 @@ class ThinkFilter:
             close_idx = self._buf.find(self._CLOSE)
             if close_idx == -1:
                 self._in_think = True
+                if self._retain_think and self._buf:
+                    self._think_buf += self._buf
+                    self._think_chunk_done = True
                 self._buf = ""
                 return
+            if self._retain_think:
+                self._think_buf += self._buf[:close_idx]
+                self._think_chunk_done = True
             self._buf = self._buf[close_idx + len(self._CLOSE):]
 
-        # 末尾可能是不完整的 <think> 前缀（最多 _max_hold 字符）
-        # 保留在 buf，其余 emit
         if len(self._buf) > self._max_hold:
             self._emit += self._buf[: -self._max_hold]
             self._buf = self._buf[-self._max_hold:]
 
 
 def extract_chunk_text(chunk: Any) -> str:
-    """从 LLM 流式 chunk 中提取纯文本（兼容 str / list 内容块）。
-
-    注意：仅做块内 think 剥离（适用于非流式最终输出）。
-    流式场景请用 ``ThinkFilter`` 跨 chunk 过滤。
-    """
     if chunk is None:
         return ""
     content = getattr(chunk, "content", chunk)
@@ -126,4 +158,4 @@ def extract_chunk_text(chunk: Any) -> str:
     return ""
 
 
-__all__ = ["strip_think", "extract_chunk_text", "ThinkFilter"]
+__all__ = ["strip_think", "extract_chunk_text", "ThinkFilter", "THINK_OPEN", "THINK_CLOSE"]
