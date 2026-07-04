@@ -188,7 +188,11 @@ class SkillSaveRequest(BaseModel):
     """技能文件保存请求体。"""
 
     name: str = Field(..., description="技能名（不含 .md 扩展名）")
-    content: str = Field(..., description="文件完整内容（YAML frontmatter + Markdown body）")
+    content: str = Field(
+        ...,
+        max_length=65536,
+        description="文件完整内容（YAML frontmatter + Markdown body），上限 64KB",
+    )
 
 
 class ProfileEntryRequest(BaseModel):

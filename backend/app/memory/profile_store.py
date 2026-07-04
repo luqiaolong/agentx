@@ -52,6 +52,9 @@ _CONTENT_MAX = 500
 # system prompt 注入上限（按 updated_at 降序取前 N 条）
 _PROFILE_MAX_INJECT = 30
 
+# LLM 单次抽取条目上限（防止恶意 LLM 返回超长列表导致大量写盘）
+_MAX_LLM_EXTRACT_ENTRIES = 20
+
 # 合法 category / source 取值
 _VALID_CATEGORIES = {"preference", "project", "fact", "custom"}
 _VALID_SOURCES = {"manual", "llm_extracted"}
@@ -272,6 +275,7 @@ def upsert_from_llm(entries: list[dict[str, Any]]) -> int:
     - key 已存在 → 更新 content 与 source=``llm_extracted``、刷新 updated_at
     - key 不存在 → 新建条目（source=``llm_extracted``）
     - 非法条目（key/content/category 不合法）跳过并记 warning
+    - 单次写入上限 ``_MAX_LLM_EXTRACT_ENTRIES`` 条，超出截断并记 warning
 
     Args:
         entries: LLM 抽取的 dict 列表，每项含 ``key`` / ``category`` / ``content``。
@@ -281,6 +285,13 @@ def upsert_from_llm(entries: list[dict[str, Any]]) -> int:
     """
     if not isinstance(entries, list):
         return 0
+    if len(entries) > _MAX_LLM_EXTRACT_ENTRIES:
+        logger.warning(
+            "LLM 抽取条目数超限，截断",
+            original=len(entries),
+            limit=_MAX_LLM_EXTRACT_ENTRIES,
+        )
+        entries = entries[:_MAX_LLM_EXTRACT_ENTRIES]
     store = _load()
     now = _now_iso()
     written = 0

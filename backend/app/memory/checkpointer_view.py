@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -59,9 +60,14 @@ async def list_threads() -> list[dict[str, Any]]:
         {
           "thread_id": "abc",
           "checkpoint_count": 5,
-          "last_updated": "2026-07-04T10:00:00+00:00",  # MAX(checkpoint_id)
-          "size_bytes": 20480                              # SUM(LENGTH(checkpoint))
+          "last_updated": "1ef4a3b0-...",  # 最新插入 checkpoint 的 checkpoint_id
+          "size_bytes": 20480               # SUM(LENGTH(checkpoint))
         }
+
+    ``last_updated`` 是按 ``rowid`` 取最新插入的 checkpoint 的 ``checkpoint_id``
+    （langgraph 按时间顺序插入，``rowid`` 单调递增）。
+    注意：在生产环境中 ``checkpoint_id`` 是 UUID 而非时间戳；
+    早期实现用 ``MAX(checkpoint_id)`` 返回字典序最大的 UUID，语义错误。
 
     数据库不存在或表不存在时返回空列表（不报错）。
     """
@@ -78,17 +84,22 @@ async def list_threads() -> list[dict[str, Any]]:
             await cur.close()
             if row is None:
                 return []
+            # 用 MAX(rowid) 取最新插入的 checkpoint（langgraph 按时间顺序插入）
+            # 而非 MAX(checkpoint_id)（字典序最大的 UUID，语义错误）
             cur = await conn.execute(
                 """
                 SELECT
                     thread_id,
                     COUNT(*) AS checkpoint_count,
-                    MAX(checkpoint_id) AS last_updated,
+                    (SELECT c2.checkpoint_id FROM checkpoints c2
+                     WHERE c2.thread_id = checkpoints.thread_id
+                       AND c2.checkpoint_ns = checkpoints.checkpoint_ns
+                     ORDER BY c2.rowid DESC LIMIT 1) AS last_updated,
                     SUM(LENGTH(checkpoint)) AS size_bytes
                 FROM checkpoints
                 WHERE checkpoint_ns = ?
                 GROUP BY thread_id
-                ORDER BY last_updated DESC
+                ORDER BY MAX(rowid) DESC
                 """,
                 (_MAIN_NS,),
             )
@@ -127,10 +138,12 @@ async def delete_thread(thread_id: str) -> int:
         thread_id: 待删除的会话 ID。
 
     Returns:
-        实际删除的 checkpoint 行数。
+        实际删除的 checkpoint 行数；thread 不存在时返回 0。
 
     Raises:
         ThreadIdInvalid: thread_id 非法。
+        sqlite3.Error: 数据库错误（如文件损坏、表缺失、DB 锁定），
+            由上层 HTTP 端点映射为 500。
     """
     _validate_thread_id(thread_id)
     db_path = _get_db_path()
@@ -138,20 +151,36 @@ async def delete_thread(thread_id: str) -> int:
         return 0
     try:
         async with aiosqlite.connect(str(db_path)) as conn:
-            # 同时清理 writes 表（外键关联），避免残留
+            # 先查是否存在，区分「不存在返回 0」与「DB 错误」
+            cur = await conn.execute(
+                "SELECT COUNT(*) FROM checkpoints "
+                "WHERE thread_id = ? AND checkpoint_ns = ?",
+                (thread_id, _MAIN_NS),
+            )
+            row = await cur.fetchone()
+            await cur.close()
+            count = row[0] if row else 0
+            if count == 0:
+                return 0  # 正常路径：thread 不存在
+            # 存在则删除（先 writes 后 checkpoints，避免残留）
             await conn.execute(
                 "DELETE FROM writes WHERE thread_id = ?", (thread_id,)
             )
-            cur = await conn.execute(
+            del_cur = await conn.execute(
                 "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?",
                 (thread_id, _MAIN_NS),
             )
-            deleted = cur.rowcount or 0
-            await cur.close()
+            deleted = del_cur.rowcount or 0
+            await del_cur.close()
             await conn.commit()
-    except Exception as exc:  # noqa: BLE001 — 视图层兜底
-        logger.warning("delete_thread 失败", thread_id=thread_id, error=str(exc))
-        return 0
+    except sqlite3.Error as exc:
+        logger.warning(
+            "delete_thread DB 错误",
+            thread_id=thread_id,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
     logger.info("thread checkpoint 已删除", thread_id=thread_id, deleted=deleted)
     return deleted
 

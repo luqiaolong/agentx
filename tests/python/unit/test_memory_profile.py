@@ -249,6 +249,24 @@ def test_upsert_from_llm_empty_list(tmp_path: Path) -> None:
     assert upsert_from_llm(None) == 0  # type: ignore[arg-type]
 
 
+def test_upsert_from_llm_truncates_over_limit(tmp_path: Path) -> None:
+    """超出 ``_MAX_LLM_EXTRACT_ENTRIES`` 的条目被截断，只写前 20 条。"""
+    import app.memory.profile_store as ps
+
+    entries = [
+        {"key": f"k{i:02d}", "category": "fact", "content": f"v{i}"}
+        for i in range(ps._MAX_LLM_EXTRACT_ENTRIES + 5)
+    ]
+    written = upsert_from_llm(entries)
+    assert written == ps._MAX_LLM_EXTRACT_ENTRIES
+    # 前 20 条已写入
+    assert get("k00") is not None
+    assert get(f"k{ps._MAX_LLM_EXTRACT_ENTRIES - 1:02d}") is not None
+    # 第 21 条及之后被截断
+    assert get(f"k{ps._MAX_LLM_EXTRACT_ENTRIES:02d}") is None
+    assert get(f"k{ps._MAX_LLM_EXTRACT_ENTRIES + 4:02d}") is None
+
+
 # ============================================================
 # build_profile_prompt
 # ============================================================

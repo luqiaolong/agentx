@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -49,6 +50,9 @@ _DEEP_SYSTEM_PROMPT = (
 
 # 审批轮询参数
 _APPROVAL_POLL_INTERVAL = 0.3
+
+# T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
+_extract_tasks: set[asyncio.Task] = set()
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -403,16 +407,23 @@ async def run_deep_path(
         return
 
     # T10：路径 C 流式结束后，若开关开启则异步触发画像抽取（失败仅 warning，不报错）
+    # 不阻塞 done 事件：fire-and-forget（spec memory-management R10）
     if get_settings().profile_auto_extract:
-        try:
-            assistant_reply = _extract_last_assistant_reply(agent, config)
-            if assistant_reply:
-                from app.memory.profile_store import upsert_from_llm
+        async def _do_extract() -> None:
+            try:
+                assistant_reply = _extract_last_assistant_reply(agent, config)
+                if assistant_reply:
+                    from app.memory.profile_store import upsert_from_llm
 
-                entries = await _extract_profile_via_llm(message, assistant_reply)
-                upsert_from_llm(entries)
-        except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
-            logger.warning("profile auto extract failed", error=str(exc))
+                    entries = await _extract_profile_via_llm(message, assistant_reply)
+                    upsert_from_llm(entries)
+                    logger.info("profile auto extracted", count=len(entries))
+            except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
+                logger.warning("profile auto extract failed", error=str(exc))
+
+        task = asyncio.create_task(_do_extract())
+        _extract_tasks.add(task)
+        task.add_done_callback(_extract_tasks.discard)
 
     # done 事件由 run_router 统一 yield，此处不再重复
 
@@ -464,7 +475,6 @@ async def _extract_profile_via_llm(message: str, assistant_reply: str) -> list[d
     llm = get_chat_model(temperature=0.0)
     response = await llm.ainvoke(prompt)
     text = response.content if hasattr(response, "content") else str(response)
-    import json
     import re
 
     match = re.search(r"\{.*\}", text, re.DOTALL)

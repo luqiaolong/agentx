@@ -14,6 +14,7 @@ import {
 import type {
   SubagentConfig,
   SubagentsConfig,
+  ToolsConfig,
 } from "@/lib/utils";
 
 // 子代理键名与后端 backend/app/config.py _default_subagents() 一致
@@ -106,13 +107,33 @@ function SubagentCard({
 }) {
   const [open, setOpen] = useState(true);
   const [keywordText, setKeywordText] = useState(keywordsToText(cfg.keywords));
+  const [toolsConfig, setToolsConfig] = useState<ToolsConfig>(
+    {} as ToolsConfig,
+  );
 
   // 当外部 keywords 变化（如重新加载）时同步本地输入
   useEffect(() => {
     setKeywordText(keywordsToText(cfg.keywords));
   }, [cfg.keywords]);
 
-  const allToolsOff = cfg.tools.length === 0;
+  // 加载全局工具启用状态，用于判断「绑定的工具是否在工具 tab 全部被禁用」
+  useEffect(() => {
+    void (async () => {
+      try {
+        const tc = await window.api.settings.getToolsConfig();
+        setToolsConfig(tc);
+      } catch {
+        // 后端未就绪时保留空对象，缺失 key 按 true 处理，不触发警告
+      }
+    })();
+  }, []);
+
+  // 绑定的工具在全局均被禁用时触发警告；toolsConfig 中缺失的 key 按 true 处理（防旧数据）
+  const allToolsOff =
+    cfg.tools.length > 0 &&
+    cfg.tools.every(
+      (t) => toolsConfig[t as keyof ToolsConfig] === false,
+    );
 
   const toggleTool = (tool: string): void => {
     const has = cfg.tools.includes(tool);
@@ -229,7 +250,7 @@ function SubagentCard({
               {allToolsOff && (
                 <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="h-3 w-3" />
-                  未绑定任何工具
+                  绑定的工具全部被禁用，子代理将不可用
                 </span>
               )}
             </div>

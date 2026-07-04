@@ -221,6 +221,40 @@ def test_delete_thread_db_not_exists(tmp_path: Path) -> None:
     assert asyncio.run(delete_thread("any_thread")) == 0
 
 
+def test_delete_thread_db_error_raises(tmp_path: Path) -> None:
+    """DB 错误（如 writes 表缺失）应抛 sqlite3.Error，而非静默返回 0。"""
+    import asyncio
+
+    db_path = tmp_path / "agent_py.db"
+    # 只创建 checkpoints 表（不创建 writes），触发 DELETE FROM writes 失败
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS checkpoints (
+            thread_id TEXT NOT NULL,
+            checkpoint_ns TEXT NOT NULL DEFAULT '',
+            checkpoint_id TEXT NOT NULL,
+            parent_checkpoint_id TEXT,
+            type TEXT,
+            checkpoint BLOB,
+            metadata BLOB,
+            PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO checkpoints (thread_id, checkpoint_ns, checkpoint_id, checkpoint) "
+        "VALUES ('t1', '', 'id1', ?)",
+        (b"blob",),
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(sqlite3.Error):
+        asyncio.run(delete_thread("t1"))
+
+
 def test_delete_thread_also_clears_writes(tmp_path: Path) -> None:
     """delete_thread 同时清理 writes 表（外键关联）。"""
     db_path = tmp_path / "agent_py.db"

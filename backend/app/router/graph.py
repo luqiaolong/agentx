@@ -137,8 +137,8 @@ def _select_subagent(message: str) -> str | None:
         cfg = subagents[agent_name]
         if not cfg.enabled:
             continue
-        # 检查关键词命中（code 的 keywords 默认为空，跳过关键词匹配直接 fallback）
-        if cfg.keywords and not any(kw in message for kw in cfg.keywords):
+        # 检查关键词命中（空 keywords 不匹配任何子代理，spec R6）
+        if not any(kw in message for kw in cfg.keywords):
             continue
         # 检查绑定的工具是否全部被禁用
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
@@ -186,8 +186,8 @@ async def _run_chat_path(
 
     system_prompt = get_settings().default_system_prompt
     if system_prompt_extra:
-        # default 在前，skill 定制在后作为覆盖（LLM 更遵从靠后指令）
-        system_prompt = f"{system_prompt}\n{system_prompt_extra}"
+        # 画像/skill 在前，default 在后（spec R9：画像优先于默认 prompt，与路径 C 一致）
+        system_prompt = f"{system_prompt_extra}\n{system_prompt}"
     try:
         llm = get_chat_model(temperature=0.7, streaming=True)
     except ValueError as exc:
@@ -215,14 +215,22 @@ async def _run_chat_path(
 
 
 async def _run_tool_path(
-    message: str, thread_id: str
+    message: str, thread_id: str, profile_prompt: str | None = None
 ) -> AsyncIterator[dict[str, str]]:
-    """路径 B：选择子代理并透传事件流。"""
+    """路径 B：选择子代理并透传事件流。
+
+    Args:
+        message: 用户消息（已移除 @skill 标记）。
+        thread_id: 会话 ID。
+        profile_prompt: 用户画像，回退路径 A 时注入 system prompt。
+    """
     agent_type = _select_subagent(message)
     if agent_type is None:
-        # 子代理禁用或工具全禁用，退回路径 A
+        # 子代理禁用或工具全禁用，退回路径 A（注入画像）
         logger.info("router.tool_path fallback to CHAT", thread_id=thread_id)
-        async for sse in _run_chat_path(message, thread_id):
+        async for sse in _run_chat_path(
+            message, thread_id, system_prompt_extra=profile_prompt
+        ):
             yield sse
         return
 
@@ -419,7 +427,9 @@ async def run_router(
             ):
                 yield sse
         elif classification == "SINGLE_TOOL":
-            async for sse in _run_tool_path(cleaned_message, thread_id):
+            async for sse in _run_tool_path(
+                cleaned_message, thread_id, profile_prompt=profile_prompt
+            ):
                 yield sse
         else:  # DEEP_TASK
             # 路径 C：画像传给 _run_deep_path，由 deep_path 注入到 agent system prompt
