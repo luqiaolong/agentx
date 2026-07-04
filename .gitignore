@@ -72,3 +72,13 @@ tests/python/.env.test.local
 
 # Git worktrees (local isolation)
 .worktrees/
+
+# Local diagnostic / manual scripts (不纳入版本控制)
+tests/python/diag_*.py
+tests/python/manual_*.py
+tests/python/kill_backend.ps1
+tests/python/show_pids.ps1
+tests/python/crud_demo/
+
+# Local Python learning sandbox
+backend/pythonlearning/

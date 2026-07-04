@@ -35,18 +35,25 @@ let mainWindow: BrowserWindow | null = null;
 let pythonHandle: PythonHandle | null = null;
 let quitting = false;
 
-function getBackendCwd(): string {
-  return path.resolve(app.getAppPath(), "backend");
-}
-
 function getAppIcon(): Electron.NativeImage | undefined {
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "build", "icon.png")
-    : path.join(__dirname, "../../build", "icon.png");
-  if (fs.existsSync(iconPath)) {
-    return nativeImage.createFromPath(iconPath);
+  // 优先用 .ico（Windows 任务栏 / 资源管理器原生支持），
+  // 回退到 PNG（macOS / Linux 启动器也支持）
+  const iconDir = app.isPackaged
+    ? path.join(process.resourcesPath, "build")
+    : path.join(__dirname, "../../build");
+  const icoPath = path.join(iconDir, "icon.ico");
+  const pngPath = path.join(iconDir, "icon.png");
+  if (process.platform === "win32" && fs.existsSync(icoPath)) {
+    return nativeImage.createFromPath(icoPath);
+  }
+  if (fs.existsSync(pngPath)) {
+    return nativeImage.createFromPath(pngPath);
   }
   return undefined;
+}
+
+function getBackendCwd(): string {
+  return path.resolve(app.getAppPath(), "backend");
 }
 
 function createWindow(): void {
@@ -276,8 +283,42 @@ function registerIpc(): void {
   ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 }
 
+// Windows 任务栏：必须设置 AppUserModelID，否则任务栏会从 electron.exe 取默认图标
+// 必须在 app.whenReady() 之前调用
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.agentpy.desktop");
+}
+
 app.whenReady().then(() => {
   cleanOldLogs(7);
+
+  // Windows：调用 setJumpList 把窗口与 AppUserModelID 关联，任务栏图标立即生效
+  if (process.platform === "win32") {
+    const icon = getAppIcon();
+    if (icon && !icon.isEmpty()) {
+      try {
+        app.setJumpList([
+          {
+            type: "tasks",
+            items: [
+              {
+                type: "task",
+                title: "AgentPy",
+                program: process.execPath,
+                args: "--new-window",
+                description: "打开 AgentPy",
+                iconPath: process.execPath,
+                iconIndex: 0,
+              },
+            ],
+          },
+        ]);
+      } catch (err) {
+        appendLog(`[main] setJumpList failed: ${(err as Error).message}`);
+      }
+    }
+  }
+
   createWindow();
   startPython();
   registerIpc();
