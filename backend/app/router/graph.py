@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator
 from langgraph.graph import END, StateGraph
 
 from app.config import get_settings
+from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
@@ -245,11 +246,21 @@ async def _run_tool_path(
 
 
 async def _run_deep_path(
-    message: str, thread_id: str, state: RouterState
+    message: str,
+    thread_id: str,
+    state: RouterState,
+    profile_prompt: str = "",
 ) -> AsyncIterator[dict[str, str]]:
-    """路径 C：DeepAgent + 危险工具中断审批。"""
+    """路径 C：DeepAgent + 危险工具中断审批。
+
+    Args:
+        message: 用户消息（已移除 @skill 标记）。
+        thread_id: 会话 ID。
+        state: Router 状态。
+        profile_prompt: 用户画像前缀，由 ``run_router`` 注入到 DeepAgent system prompt。
+    """
     try:
-        async for event in run_deep_path(state, message):
+        async for event in run_deep_path(state, message, profile_prompt=profile_prompt):
             yield event
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("deep path failed", error=str(exc))
@@ -369,6 +380,14 @@ async def run_router(
         # 解析 @skill 标记（在 classify 之前）
         cleaned_message, skill_content = _parse_skill_tag(message)
 
+        # T9：读取用户画像，拼到 system prompt 前（路径 A 与路径 C 都注入）
+        # build_profile_prompt 失败时返回空字符串，不影响主流程
+        try:
+            profile_prompt = build_profile_prompt()
+        except Exception as exc:  # noqa: BLE001 — 画像读取兜底
+            logger.warning("build_profile_prompt failed", error=str(exc))
+            profile_prompt = ""
+
         try:
             classification = await classify_message(cleaned_message)
         except Exception as exc:  # noqa: BLE001 — 分类器兜底
@@ -389,15 +408,24 @@ async def run_router(
         }
 
         if classification == "CHAT":
+            # 路径 A：画像 + skill content 拼到 system prompt
+            system_prompt_extra = ""
+            if profile_prompt:
+                system_prompt_extra += profile_prompt
+            if skill_content:
+                system_prompt_extra += skill_content
             async for sse in _run_chat_path(
-                cleaned_message, thread_id, system_prompt_extra=skill_content
+                cleaned_message, thread_id, system_prompt_extra=system_prompt_extra
             ):
                 yield sse
         elif classification == "SINGLE_TOOL":
             async for sse in _run_tool_path(cleaned_message, thread_id):
                 yield sse
         else:  # DEEP_TASK
-            async for sse in _run_deep_path(cleaned_message, thread_id, state):
+            # 路径 C：画像传给 _run_deep_path，由 deep_path 注入到 agent system prompt
+            async for sse in _run_deep_path(
+                cleaned_message, thread_id, state, profile_prompt=profile_prompt
+            ):
                 yield sse
 
         yield _sse("done", "{}")

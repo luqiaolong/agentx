@@ -217,7 +217,9 @@ async def test_router_deep_path(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock run_deep_path yield SSE 事件（注意：done 由 run_router 统一 yield）
-    async def _fake_run_deep_path(state: dict, message: str) -> AsyncIterator[dict]:
+    async def _fake_run_deep_path(
+        state: dict, message: str, profile_prompt: str = ""
+    ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "deep response"}
         yield {"event": "todo_update", "data": '{"todos": [{"text": "step1", "done": true}]}'}
 
@@ -249,7 +251,9 @@ async def test_router_deep_path_error_passthrough(
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
-    async def _fake_run_deep_path(state: dict, message: str) -> AsyncIterator[dict]:
+    async def _fake_run_deep_path(
+        state: dict, message: str, profile_prompt: str = ""
+    ) -> AsyncIterator[dict]:
         yield {"event": "error", "data": "用户拒绝执行危险操作"}
 
     monkeypatch.setattr("app.router.graph.run_deep_path", _fake_run_deep_path)
