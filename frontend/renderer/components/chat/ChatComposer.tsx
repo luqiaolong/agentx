@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   Square,
@@ -51,6 +51,26 @@ export function ChatComposer({
   const workspacePath = currentSession?.workspacePath ?? null;
   const showWorkspaceChip = Boolean(workspacePath);
   const { textareaRef, textareaHeight } = useAutoResizeTextarea(input);
+
+  // 切会话时重置本地输入与全局 picker 状态，并把焦点拉回 textarea。
+  //
+  // 根因（用户报告"有时候点击会话，输入框会失灵"）：
+  // 1. ChatComposer 不随会话切换重挂载（同级组件，无 key）；
+  // 2. `input` 是 useState 局部态，跨会话残留半截草稿；
+  // 3. useCommandPickerStore 是全局单例，picker open/anchor/query 跨会话残留；
+  // 4. 残留 picker 会让 handleKeyDown 把 Enter 当作"选中第一项"，
+  //    同时 handleChange 进入 syncQueryFromInput 错误分支，
+  //    整体表现为"按了不响应 / 文本被吃掉"。
+  // 5. 用户点 SessionList 后焦点离开 textarea，必须主动 .focus() 拉回。
+  useEffect(() => {
+    setInput("");
+    resetPicker();
+    textareaRef.current?.focus();
+    // 依赖 currentId：会话变化时上述全部副作用触发一次。
+    // 故意不复位 isStreaming/dragOver：流式状态由父组件控制，
+    // 拖拽状态由用户当前手势决定，不应被切会话擦掉。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
 
   const skills = useSkillsStore((s) => s.skills);
   const pickerOpen = useCommandPickerStore((s) => s.open);
