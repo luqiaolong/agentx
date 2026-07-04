@@ -47,6 +47,32 @@ class SubagentSettings(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
+# 内置子代理键名集合（与 _default_subagents 一致，用于区分内置/自定义）
+BUILTIN_SUBAGENT_KEYS: frozenset[str] = frozenset({"code", "rag", "web"})
+
+# 自定义子代理禁止绑定的危险工具（与 claude.md §10 安全红线一致）
+# subagent 无 interrupt_before 审批流，暴露写/编辑/shell 会绕过 DeepAgent 审批
+FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
+    {"write_file", "edit_file", "shell_exec"}
+)
+
+
+class CustomSubagentEntry(BaseModel):
+    """自定义子代理条目（含展示元数据）。
+
+    与 ``SubagentSettings`` 的差异：额外含 ``name`` / ``description`` 用于 UI 展示。
+    """
+
+    key: str
+    name: str
+    description: str = ""
+    enabled: bool = True
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    system_prompt: str = ""
+    tools: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+
+
 def _default_subagents() -> dict[str, SubagentSettings]:
     """默认子代理配置（与原硬编码一致）。"""
     return {
@@ -63,6 +89,57 @@ def _default_subagents() -> dict[str, SubagentSettings]:
             tools=list(_DEFAULT_WEB_TOOLS), keywords=list(_DEFAULT_WEB_KEYWORDS),
         ),
     }
+
+
+def _sanitize_custom_tools(tools: list[str]) -> list[str]:
+    """过滤自定义子代理工具：移除危险工具与未知工具名，去重保序。"""
+    allowed = set(_ALL_TOOLS) - FORBIDDEN_SUBAGENT_TOOLS
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in tools:
+        if t in allowed and t not in seen:
+            seen.add(t)
+            result.append(t)
+    return result
+
+
+def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
+    """从 env JSON 解析自定义子代理 dict，过滤非法字段与危险工具。
+
+    - raw 必须是 dict，每个 value 也是 dict
+    - key 必须是非空字符串且不与内置 key 冲突
+    - 工具列表经 _sanitize_custom_tools 过滤
+    """
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, CustomSubagentEntry] = {}
+    for key, val in raw.items():
+        if not isinstance(key, str) or not key:
+            continue
+        if key in BUILTIN_SUBAGENT_KEYS:
+            # 不允许自定义 key 与内置冲突
+            continue
+        if not isinstance(val, dict):
+            continue
+        try:
+            entry = CustomSubagentEntry(
+                key=key,
+                name=str(val.get("name", key)),
+                description=str(val.get("description", "")),
+                enabled=bool(val.get("enabled", True)),
+                temperature=float(val.get("temperature", 0.2)),
+                system_prompt=str(val.get("system_prompt", "")),
+                tools=_sanitize_custom_tools(list(val.get("tools", []))),
+                keywords=(
+                    [str(k) for k in val.get("keywords", []) if isinstance(k, str)]
+                ),
+            )
+        except (TypeError, ValueError):
+            continue
+        # 温度 clamp（pydantic 已校验，但防御性再 clamp）
+        entry.temperature = max(0.0, min(2.0, entry.temperature))
+        result[key] = entry
+    return result
 
 
 def _default_tools_enabled() -> dict[str, bool]:
@@ -135,12 +212,23 @@ class Settings(BaseSettings):
     # ---- 子代理与工具配置（T1：从 electron-store 注入 env，重启生效）----
     # AGENT_PY_SUBAGENTS_CONFIG: JSON 字符串，如 {"code":{"enabled":false,"temperature":0.5,...}}
     subagents_config: dict[str, Any] = Field(default_factory=dict)
+    # AGENT_PY_CUSTOM_SUBAGENTS_CONFIG: JSON 字符串，自定义子代理
+    # 形如 {"my_agent":{"key":"my_agent","name":"我的代理","description":"...","enabled":true,...}}
+    custom_subagents_config: dict[str, Any] = Field(default_factory=dict)
     # AGENT_PY_TOOLS_CONFIG: JSON 字符串，如 {"web_search": false}
     tools_config: dict[str, bool] = Field(default_factory=dict)
     # AGENT_PY_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
     profile_auto_extract: bool = True
+    # AGENT_PY_MCP_SERVERS_CONFIG: JSON 字符串，MCP server 配置数组
+    # 见 app.mcp.config.McpServerConfig，由 Electron Main 从 electron-store 注入
+    mcp_servers_config: list[Any] = Field(default_factory=list)
 
-    @field_validator("subagents_config", "tools_config", mode="before")
+    @field_validator(
+        "subagents_config",
+        "custom_subagents_config",
+        "tools_config",
+        mode="before",
+    )
     @classmethod
     def _parse_json_env(cls, v: Any) -> Any:
         """pydantic-settings 对 dict 字段从 env 读取时可能传入字符串，需 JSON 解析。"""
@@ -150,6 +238,18 @@ class Settings(BaseSettings):
             except (json.JSONDecodeError, TypeError):
                 return {}
         return v or {}
+
+    @field_validator("mcp_servers_config", mode="before")
+    @classmethod
+    def _parse_json_list_env(cls, v: Any) -> Any:
+        """``mcp_servers_config`` 是 list 字段，env 注入时为 JSON 字符串，需解析。"""
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return v if isinstance(v, list) else []
 
     @property
     def subagents(self) -> dict[str, SubagentSettings]:
@@ -162,6 +262,15 @@ class Settings(BaseSettings):
                 merged.update(raw)
                 defaults[name] = SubagentSettings(**merged)
         return defaults
+
+    @property
+    def custom_subagents(self) -> dict[str, "CustomSubagentEntry"]:
+        """返回自定义子代理配置（解析 + sanitize，过滤危险工具）。
+
+        与 ``subagents`` 属性的差异：自定义子代理额外含 name/description 元数据，
+        供 UI 展示。每次调用都重新解析，确保 env 变化即时生效。
+        """
+        return _parse_custom_subagents(self.custom_subagents_config)
 
     @property
     def tools_enabled(self) -> dict[str, bool]:

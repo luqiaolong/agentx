@@ -30,7 +30,7 @@ from app.observability.logger import logger
 from app.paths.deep_path import run_deep_path
 from app.router.classifier import classify_message
 from app.router.state import RouterState
-from app.subagents import run_code_agent, run_rag_agent, run_web_agent
+from app.subagents import run_code_agent, run_custom_agent, run_rag_agent, run_web_agent
 from app.utils.text import ThinkFilter, extract_chunk_text as _extract_chunk_text
 
 __all__ = ["build_router_graph", "run_router", "_parse_skill_tag"]
@@ -125,14 +125,19 @@ def _select_subagent(message: str) -> str | None:
     """根据消息内容选择路径 B 的子代理。
 
     Returns:
-        "code" / "rag" / "web" / None
+        "code" / "rag" / "web" / 自定义子代理 key / None
         - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
+
+    匹配优先级：
+    1. 内置子代理（web → rag → code，按关键词命中）
+    2. 自定义子代理（按 key 字典序，关键词命中）
+    3. 默认 code（若可用）
     """
     settings = get_settings()
     subagents = settings.subagents
     tools_enabled = settings.tools_enabled
 
-    # 按优先级检查 web → rag → code（与原逻辑一致）
+    # 1. 内置子代理：按优先级 web → rag → code
     for agent_name in ("web", "rag", "code"):
         cfg = subagents[agent_name]
         if not cfg.enabled:
@@ -146,7 +151,22 @@ def _select_subagent(message: str) -> str | None:
             return None
         return agent_name
 
-    # 无命中，默认 code（若 code 可用）
+    # 2. 自定义子代理：按 key 字典序遍历，关键词命中即返回
+    custom = settings.custom_subagents
+    for key in sorted(custom.keys()):
+        cfg = custom[key]
+        if not cfg.enabled:
+            continue
+        if not any(kw in message for kw in cfg.keywords):
+            continue
+        if not any(tools_enabled.get(t, True) for t in cfg.tools):
+            logger.warning(
+                f"custom subagent {key} matched but all tools disabled, fallback"
+            )
+            return None
+        return key
+
+    # 3. 无命中，默认 code（若 code 可用）
     code_cfg = subagents["code"]
     if code_cfg.enabled and any(tools_enabled.get(t, True) for t in code_cfg.tools):
         return "code"
@@ -239,8 +259,19 @@ async def _run_tool_path(
         runner = run_web_agent
     elif agent_type == "rag":
         runner = run_rag_agent
-    else:
+    elif agent_type == "code":
         runner = run_code_agent
+    else:
+        # 自定义子代理：runner 需要 key 参数，单独处理
+        try:
+            async for event in run_custom_agent(agent_type, thread_id, message):
+                sse = _convert_subagent_event(event)
+                if sse:
+                    yield sse
+        except Exception as exc:  # noqa: BLE001 — SSE 兜底
+            logger.warning("custom subagent failed", key=agent_type, error=str(exc))
+            yield _sse("error", f"自定义子代理执行失败: {exc}")
+        return
 
     try:
         async for event in runner(thread_id, message):
