@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { useChatStore } from "@/stores/chat";
+import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent } from "@/lib/utils";
+import { CodeBlock } from "./CodeBlock";
+import { SkillPicker } from "./SkillPicker";
 
 interface TodoItem {
   text: string;
@@ -27,22 +31,37 @@ function normalizeTodos(todosField: unknown): TodoItem[] {
     .filter((x): x is TodoItem => x !== null);
 }
 
+/** 从 react-markdown 传来的 className（如 "language-ts"）中提取语言标识。 */
+function extractLang(className?: string): string | undefined {
+  if (!className) return undefined;
+  const match = /language-([\w-]+)/.exec(className);
+  return match ? match[1] : undefined;
+}
+
 export function ChatView() {
   const messages = useChatStore((s) => s.messages);
-  const threadId = useChatStore((s) => s.threadId);
+  const currentId = useChatStore((s) => s.currentId);
   const isStreaming = useChatStore((s) => s.isStreaming);
-  const setThreadId = useChatStore((s) => s.setThreadId);
+  const createSession = useChatStore((s) => s.createSession);
   const addMessage = useChatStore((s) => s.addMessage);
   const appendMessageContent = useChatStore((s) => s.appendMessageContent);
   const clearMessages = useChatStore((s) => s.clearMessages);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
 
+  const addTask = useTasksStore((s) => s.addTask);
+  const updateTask = useTasksStore((s) => s.updateTask);
+
   const [input, setInput] = useState("");
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [dropError, setDropError] = useState<string | null>(null);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
 
   const pendingIdRef = useRef<string>("pending");
+  const currentTaskIdRef = useRef<string | null>(null);
+  const skillAnchorRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   // 订阅 SSE 事件与审批请求（仅在挂载时绑定一次）
@@ -58,7 +77,17 @@ export function ChatView() {
         setErrorMsg(typeof errData === "string" ? errData : "请求出错");
       } else if (e.type === "todo_update") {
         // 后端发 {"todos": [...]} 对象，preload 展开后读 e.todos（非 e.data）
-        setTodos(normalizeTodos(e.todos));
+        const next = normalizeTodos(e.todos);
+        setTodos(next);
+        // 同步到 tasks store，让 WorkspacePanel 的 TaskTimeline 可展示
+        const tid = currentTaskIdRef.current;
+        if (tid) {
+          updateTask(tid, { todos: next });
+        } else {
+          const newId = `task-${crypto.randomUUID()}`;
+          currentTaskIdRef.current = newId;
+          addTask({ id: newId, title: "当前任务", status: "running", todos: next });
+        }
       }
     });
 
@@ -85,24 +114,24 @@ export function ChatView() {
     const content = input.trim();
     if (!content || isStreaming) return;
 
-    // /reset 命令：调后端清空 checkpointer + 沙箱，再清前端状态
+    // /reset 命令：调后端清空 checkpointer + 沙箱，再清前端消息（保留会话）
     if (content === "/reset") {
-      const resetTid = threadId ?? "";
+      const resetTid = currentId ?? "";
       try {
         await window.api.chat.send({ role: "user", content: "/reset" }, { threadId: resetTid });
       } catch {
         /* 后端不可用也允许前端清空 */
       }
       clearMessages();
-      setThreadId(null);
       setTodos([]);
+      currentTaskIdRef.current = null;
       setErrorMsg(null);
       setInput("");
       return;
     }
 
-    const tid = threadId ?? crypto.randomUUID();
-    if (!threadId) setThreadId(tid);
+    // 多会话：若当前无会话先创建
+    const tid = currentId ?? createSession();
 
     addMessage({ id: crypto.randomUUID(), role: "user", content, ts: Date.now() });
     const pendingId = `pending-${crypto.randomUUID()}`;
@@ -122,9 +151,9 @@ export function ChatView() {
   };
 
   const handleAbort = async () => {
-    if (!threadId) return;
+    if (!currentId) return;
     try {
-      await window.api.chat.abort(threadId);
+      await window.api.chat.abort(currentId);
     } catch {
       /* ignore */
     }
@@ -135,6 +164,55 @@ export function ChatView() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
+    }
+  };
+
+  // T5: 输入末尾为 `@` 时触发技能选择浮层，并记录锚点位置用于回填
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    if (val.endsWith("@")) {
+      skillAnchorRef.current = val.length - 1;
+      setSkillPickerOpen(true);
+    }
+  };
+
+  const handleSkillSelect = (name: string) => {
+    const pos = skillAnchorRef.current;
+    if (pos === null) {
+      setInput((s) => `${s}@skill:${name} `);
+    } else {
+      setInput((s) => `${s.slice(0, pos)}@skill:${name} ${s.slice(pos + 1)}`);
+    }
+    skillAnchorRef.current = null;
+    setSkillPickerOpen(false);
+  };
+
+  // T2: 文件拖拽 —— 把拖入的文件交给主进程保存，返回相对路径后以 <file> 标记追加
+  const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
+
+  const handleDrop = async (e: React.DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    setDropError(null);
+    for (const file of files) {
+      try {
+        // Electron 在 File 上扩展了 path 字段（标准 DOM 类型不含），这里断言取用
+        const filePath = (file as File & { path: string }).path;
+        const relPath = await window.api.dialog.saveDroppedFile(filePath, file.name);
+        setInput((s) => `${s}<file>${relPath}</file> `);
+      } catch (err) {
+        setDropError(
+          `文件「${file.name}」保存失败：${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   };
 
@@ -150,9 +228,19 @@ export function ChatView() {
           </div>
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-3">
-            {messages.map((m) => (
-              <MessageBubble key={m.id} role={m.role} content={m.content} />
-            ))}
+            {messages.map((m, i) => {
+              const isLast = i === messages.length - 1;
+              const thinking =
+                isStreaming && isLast && m.role === "assistant" && m.content.length === 0;
+              return (
+                <MessageBubble
+                  key={m.id}
+                  role={m.role}
+                  content={m.content}
+                  thinking={thinking}
+                />
+              );
+            })}
           </div>
         )}
         <div ref={bottomRef} />
@@ -183,18 +271,38 @@ export function ChatView() {
           </div>
         </div>
       )}
+      {dropError && (
+        <div className="mx-auto w-full max-w-3xl px-4 pb-2">
+          <div className="rounded border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700">
+            {dropError}
+          </div>
+        </div>
+      )}
 
       {/* 输入区 */}
       <div className="border-t border-neutral-200 px-4 py-3">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            className="flex-1 resize-none rounded border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500"
-          />
+          <div className="relative flex-1">
+            {skillPickerOpen && (
+              <SkillPicker
+                onSelect={handleSkillSelect}
+                onClose={() => setSkillPickerOpen(false)}
+              />
+            )}
+            <textarea
+              value={input}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              rows={2}
+              placeholder="输入消息，Enter 发送，Shift+Enter 换行。@ 触发技能，拖拽文件附加引用。"
+              className={`flex-1 resize-none rounded border px-3 py-2 text-sm outline-none ${
+                dragOver ? "border-blue-500" : "border-neutral-300 focus:border-neutral-500"
+              }`}
+            />
+          </div>
           {isStreaming ? (
             <button
               type="button"
@@ -222,9 +330,11 @@ export function ChatView() {
 function MessageBubble({
   role,
   content,
+  thinking,
 }: {
   role: "user" | "assistant" | "tool";
   content: string;
+  thinking?: boolean;
 }) {
   if (role === "user") {
     return (
@@ -244,10 +354,35 @@ function MessageBubble({
       </div>
     );
   }
+  // assistant：T8 thinking 状态优先；T1 Markdown 渲染
   return (
     <div className="flex justify-start">
-      <div className="max-w-[80%] whitespace-pre-wrap rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-900">
-        {content || <span className="text-neutral-400">…</span>}
+      <div className="max-w-[80%] rounded-lg bg-neutral-100 px-3 py-2 text-sm text-neutral-900">
+        {thinking ? (
+          <span className="animate-pulse text-neutral-400">思考中...</span>
+        ) : content.length === 0 ? (
+          <span className="text-neutral-400">…</span>
+        ) : (
+          <div className="prose prose-sm max-w-none">
+            <ReactMarkdown
+              components={{
+                code({ className, children }) {
+                  const text = String(children ?? "").replace(/\n$/, "");
+                  const lang = extractLang(className);
+                  if (lang || text.includes("\n")) {
+                    return <CodeBlock code={text} language={lang} />;
+                  }
+                  return <code className={className}>{children}</code>;
+                },
+                pre({ children }) {
+                  return <>{children}</>;
+                },
+              }}
+            >
+              {content}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );

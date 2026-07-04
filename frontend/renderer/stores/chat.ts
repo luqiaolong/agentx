@@ -15,12 +15,31 @@ export interface ApprovalRequest {
   preview: string;
 }
 
+export interface Session {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+}
+
 interface ChatState {
+  // 多会话结构
+  sessions: Record<string, Session>;
+  currentId: string | null;
+  // 兼容字段（Wave 3 ChatView 重构后可移除）：始终与 currentId / 当前会话消息同步
   messages: ChatMessage[];
   threadId: string | null;
+  // 通用状态
   isStreaming: boolean;
   approvalRequest: ApprovalRequest | null;
+  // 会话管理
+  createSession: () => string;
+  switchSession: (id: string) => void;
+  deleteSession: (id: string) => void;
+  renameSession: (id: string, title: string) => void;
+  // 兼容方法（Wave 3 移除）：等价于 switchSession，若 session 不存在则创建
   setThreadId: (id: string | null) => void;
+  // 当前会话消息操作（作用于 sessions[currentId]）
   addMessage: (msg: ChatMessage) => void;
   appendMessageContent: (id: string, content: string) => void;
   clearMessages: () => void;
@@ -28,30 +47,184 @@ interface ChatState {
   setApprovalRequest: (req: ApprovalRequest | null) => void;
 }
 
+const DEFAULT_TITLE = "新会话";
+
+function createSessionRecord(id: string): Session {
+  return { id, title: DEFAULT_TITLE, messages: [], createdAt: Date.now() };
+}
+
+// 根据当前 sessions + currentId 计算兼容字段
+function compatFields(
+  sessions: Record<string, Session>,
+  currentId: string | null,
+): { messages: ChatMessage[]; threadId: string | null } {
+  const cur = currentId ? sessions[currentId] : null;
+  return { messages: cur ? cur.messages : [], threadId: currentId };
+}
+
+// 迁移：v0（单会话 {messages, threadId}） -> v1（多会话 {sessions, currentId}）
+function migrateV0toV1(persisted: unknown): Partial<ChatState> {
+  const p = (persisted ?? {}) as Record<string, unknown>;
+  if (p.sessions && typeof p.sessions === "object") {
+    // 已经是新结构，直接返回
+    return p as Partial<ChatState>;
+  }
+  if (!Array.isArray(p.messages)) {
+    return { sessions: {}, currentId: null };
+  }
+  const oldMessages = p.messages as ChatMessage[];
+  const oldThreadId = typeof p.threadId === "string" ? p.threadId : null;
+  const id = oldThreadId ?? crypto.randomUUID();
+  const session: Session = {
+    id,
+    title: DEFAULT_TITLE,
+    messages: oldMessages,
+    createdAt: oldMessages.length > 0 ? oldMessages[0].ts : Date.now(),
+  };
+  return { sessions: { [id]: session }, currentId: id };
+}
+
 export const useChatStore = create<ChatState>()(
   devtools(
     persist(
       (set) => ({
+        sessions: {},
+        currentId: null,
         messages: [],
         threadId: null,
         isStreaming: false,
         approvalRequest: null,
-        setThreadId: (id) => set({ threadId: id }),
-        addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
-        appendMessageContent: (id, content) =>
-          set((s) => ({
-            messages: s.messages.map((m) =>
+
+        createSession: () => {
+          const id = crypto.randomUUID();
+          set((s) => {
+            const sessions = { ...s.sessions, [id]: createSessionRecord(id) };
+            const currentId = id;
+            return { sessions, currentId, ...compatFields(sessions, currentId) };
+          });
+          return id;
+        },
+
+        switchSession: (id) => {
+          set((s) => {
+            if (!s.sessions[id]) return s;
+            const currentId = id;
+            return { currentId, ...compatFields(s.sessions, currentId) };
+          });
+        },
+
+        deleteSession: (id) => {
+          // 不再调用 /reset SSE：chat.send 是流式调用，会触发后端 yield token + done
+          // 事件，被 ChatView 的全局 onEvent 消费，可能污染其他会话消息或中断当前流式。
+          // 后端 checkpoint 残留可接受：thread_id 为 UUID 不复用，残留状态不会被再次加载；
+          // 沙箱授权目录在 thread_id 不复用下也无害。如需清理由后端定期 GC 或用户手动 /reset。
+          set((s) => {
+            const sessions = { ...s.sessions };
+            delete sessions[id];
+            let currentId = s.currentId;
+            if (s.currentId === id) {
+              const remaining = Object.keys(sessions);
+              currentId = remaining.length > 0 ? remaining[0] : null;
+            }
+            return { sessions, currentId, ...compatFields(sessions, currentId) };
+          });
+        },
+
+        renameSession: (id, title) => {
+          set((s) => {
+            const sess = s.sessions[id];
+            if (!sess) return s;
+            const sessions = { ...s.sessions, [id]: { ...sess, title } };
+            return { sessions, ...compatFields(sessions, s.currentId) };
+          });
+        },
+
+        setThreadId: (id) => {
+          // 兼容：等价于 switchSession；若 id 对应 session 不存在则创建
+          if (id === null) {
+            set({ currentId: null, messages: [], threadId: null });
+            return;
+          }
+          set((s) => {
+            if (s.sessions[id]) {
+              const currentId = id;
+              return { currentId, ...compatFields(s.sessions, currentId) };
+            }
+            const sessions = { ...s.sessions, [id]: createSessionRecord(id) };
+            const currentId = id;
+            return { sessions, currentId, ...compatFields(sessions, currentId) };
+          });
+        },
+
+        addMessage: (msg) => {
+          set((s) => {
+            const cid = s.currentId;
+            if (!cid || !s.sessions[cid]) return s;
+            const sess = s.sessions[cid];
+            const messages = [...sess.messages, msg];
+            let title = sess.title;
+            if (title === DEFAULT_TITLE && msg.role === "user") {
+              title = msg.content.slice(0, 20).trim() || DEFAULT_TITLE;
+            }
+            const sessions = {
+              ...s.sessions,
+              [cid]: { ...sess, messages, title },
+            };
+            return { sessions, ...compatFields(sessions, cid) };
+          });
+        },
+
+        appendMessageContent: (id, content) => {
+          set((s) => {
+            const cid = s.currentId;
+            if (!cid || !s.sessions[cid]) return s;
+            const sess = s.sessions[cid];
+            const messages = sess.messages.map((m) =>
               m.id === id ? { ...m, content: m.content + content } : m,
-            ),
-          })),
-        clearMessages: () => set({ messages: [] }),
+            );
+            const sessions = { ...s.sessions, [cid]: { ...sess, messages } };
+            return { sessions, ...compatFields(sessions, cid) };
+          });
+        },
+
+        clearMessages: () => {
+          set((s) => {
+            const cid = s.currentId;
+            if (!cid || !s.sessions[cid]) return s;
+            const sess = s.sessions[cid];
+            const sessions = { ...s.sessions, [cid]: { ...sess, messages: [] } };
+            return { sessions, ...compatFields(sessions, cid) };
+          });
+        },
+
         setStreaming: (v) => set({ isStreaming: v }),
+
         setApprovalRequest: (req) => set({ approvalRequest: req }),
       }),
       {
         name: "agent-py-chat",
         storage: createJSONStorage(() => localStorage),
-        partialize: (s) => ({ threadId: s.threadId, messages: s.messages }),
+        version: 1,
+        migrate: (persisted, version) => {
+          if (version < 1) {
+            return migrateV0toV1(persisted);
+          }
+          return persisted as Partial<ChatState>;
+        },
+        merge: (persistedState, currentState) => {
+          const p = (persistedState ?? {}) as Partial<ChatState>;
+          const sessions = p.sessions ?? currentState.sessions;
+          const currentId =
+            p.currentId !== undefined ? p.currentId : currentState.currentId;
+          return {
+            ...currentState,
+            ...p,
+            sessions,
+            currentId,
+            ...compatFields(sessions, currentId),
+          };
+        },
+        partialize: (s) => ({ sessions: s.sessions, currentId: s.currentId }),
       },
     ),
     { name: "chat-store" },
