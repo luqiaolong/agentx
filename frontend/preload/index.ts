@@ -10,12 +10,20 @@ import type {
   HealthStatus,
   SubagentConfig,
   SubagentsConfig,
+  CustomSubagentEntry,
+  CustomSubagentsMap,
+  CustomSubagentInput,
   ToolsConfig,
   SkillFileInfo,
   ThreadInfo,
   ProfileCategory,
   ProfileEntry,
   ProfileEntryRequest,
+  ModelEntry,
+  McpServerConfig,
+  McpServerStatus,
+  McpToolInfo,
+  McpTestResult,
   ElectronAPI,
 } from "../shared/api-types";
 
@@ -27,12 +35,20 @@ export type {
   WorkspaceEntry,
   SubagentConfig,
   SubagentsConfig,
+  CustomSubagentEntry,
+  CustomSubagentsMap,
+  CustomSubagentInput,
   ToolsConfig,
   SkillFileInfo,
   ThreadInfo,
   ProfileCategory,
   ProfileEntry,
   ProfileEntryRequest,
+  ModelEntry,
+  McpServerConfig,
+  McpServerStatus,
+  McpToolInfo,
+  McpTestResult,
   ElectronAPI,
 };
 
@@ -223,10 +239,47 @@ const api: ElectronAPI = {
     setKnowledgeConfig: (cfg) => ipcRenderer.invoke("settings:setKnowledgeConfig", cfg),
     getSubagentsConfig: () => ipcRenderer.invoke("settings:getSubagentsConfig"),
     setSubagentsConfig: (cfg) => ipcRenderer.invoke("settings:setSubagentsConfig", cfg),
+    // 自定义子代理 CRUD
+    getCustomSubagents: () => ipcRenderer.invoke("settings:getCustomSubagents"),
+    setCustomSubagents: (cfg) => ipcRenderer.invoke("settings:setCustomSubagents", cfg),
+    addCustomSubagent: (input) => ipcRenderer.invoke("settings:addCustomSubagent", input),
+    removeCustomSubagent: (key) => ipcRenderer.invoke("settings:removeCustomSubagent", key),
     getToolsConfig: () => ipcRenderer.invoke("settings:getToolsConfig"),
     setToolsConfig: (cfg) => ipcRenderer.invoke("settings:setToolsConfig", cfg),
     getProfileAutoExtract: () => ipcRenderer.invoke("settings:getProfileAutoExtract"),
     setProfileAutoExtract: (v) => ipcRenderer.invoke("settings:setProfileAutoExtract", v),
+    getMcpServersConfig: () => ipcRenderer.invoke("settings:getMcpServersConfig"),
+    setMcpServersConfig: (servers) =>
+      ipcRenderer.invoke("settings:setMcpServersConfig", servers),
+    // 模型条目 CRUD + 激活
+    getModelEntries: () => ipcRenderer.invoke("settings:getModelEntries"),
+    setModelEntries: (entries) =>
+      ipcRenderer.invoke("settings:setModelEntries", entries),
+    getActiveModelId: () => ipcRenderer.invoke("settings:getActiveModelId"),
+    activateModel: (id) => ipcRenderer.invoke("settings:activateModel", id),
+  },
+  mcp: {
+    // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由
+    listServers: async () => {
+      const r = await fetch(`${API_BASE}/api/mcp/servers`);
+      return (await r.json()) as { servers: McpServerStatus[] };
+    },
+    listTools: async () => {
+      const r = await fetch(`${API_BASE}/api/mcp/tools`);
+      return (await r.json()) as { tools: McpToolInfo[] };
+    },
+    testServer: async (config: McpServerConfig) => {
+      const r = await fetch(`${API_BASE}/api/mcp/servers/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      return (await r.json()) as McpTestResult;
+    },
+    refresh: async () => {
+      const r = await fetch(`${API_BASE}/api/mcp/refresh`, { method: "POST" });
+      return (await r.json()) as { ok: boolean; servers: McpServerStatus[] };
+    },
   },
   memory: {
     // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/memory/* 路由

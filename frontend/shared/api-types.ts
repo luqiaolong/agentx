@@ -74,6 +74,36 @@ export interface SubagentsConfig {
   web: SubagentConfig;
 }
 
+/**
+ * 自定义子代理条目（含展示元数据）。
+ * 与 SubagentConfig 的差异：额外含 key/name/description 用于 UI 展示。
+ */
+export interface CustomSubagentEntry {
+  key: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  temperature: number;
+  systemPrompt: string;
+  tools: string[];
+  keywords: string[];
+}
+
+/** 自定义子代理 dict（key → entry）。 */
+export type CustomSubagentsMap = Record<string, CustomSubagentEntry>;
+
+/** 新建自定义子代理时的输入（key 由调用方生成，后端不会重写）。 */
+export interface CustomSubagentInput {
+  key: string;
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  temperature?: number;
+  systemPrompt?: string;
+  tools?: string[];
+  keywords?: string[];
+}
+
 export interface ToolsConfig {
   read_file: boolean;
   list_dir: boolean;
@@ -114,6 +144,55 @@ export interface ProfileEntryRequest {
   key: string;
   category: string;
   content: string;
+}
+
+// ---- MCP (Model Context Protocol) ----
+
+export type McpTransport = "stdio" | "sse" | "streamable_http";
+
+// ---- 模型条目（Model Entries）----
+// 用户可保存多个 LLM 模型配置，"激活"某条目时写入 legacy 槽位由后端 spawn 时读取
+export type ModelProviderId = "openai" | "deepseek" | "minimax" | "custom";
+
+export interface ModelEntry {
+  id: string;
+  label: string;
+  providerId: ModelProviderId;
+  model: string;
+  baseUrl: string;
+  /** 加密后的 API Key（enc:... 或 plain:...），renderer 视为不透明字符串 */
+  apiKey: string;
+  createdAt: number;
+}
+
+export interface McpServerConfig {
+  name: string;
+  transport: McpTransport;
+  command: string | null;
+  args: string[];
+  env: Record<string, string>;
+  url: string | null;
+  enabled: boolean;
+  trusted: boolean;
+}
+
+// 后端 list_servers 返回的项 = McpServerConfig + 连接状态
+export interface McpServerStatus extends McpServerConfig {
+  connected: boolean;
+  error: string | null;
+  tool_count: number;
+}
+
+export interface McpToolInfo {
+  name: string;
+  description: string;
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  error?: string;
+  tools: McpToolInfo[];
+  tool_count?: number;
 }
 
 export interface ElectronAPI {
@@ -190,10 +269,30 @@ export interface ElectronAPI {
     // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取
     getSubagentsConfig: () => Promise<SubagentsConfig>;
     setSubagentsConfig: (cfg: SubagentsConfig) => Promise<unknown>;
+    // 自定义子代理（CRUD，与内置 subagents 配置独立持久化）
+    getCustomSubagents: () => Promise<CustomSubagentsMap>;
+    setCustomSubagents: (cfg: CustomSubagentsMap) => Promise<unknown>;
+    addCustomSubagent: (input: CustomSubagentInput) => Promise<CustomSubagentEntry>;
+    removeCustomSubagent: (key: string) => Promise<{ ok: boolean; key: string }>;
     getToolsConfig: () => Promise<ToolsConfig>;
     setToolsConfig: (cfg: ToolsConfig) => Promise<unknown>;
     getProfileAutoExtract: () => Promise<boolean>;
     setProfileAutoExtract: (v: boolean) => Promise<unknown>;
+    // MCP server 配置（electron-store 持久化，env 注入后端，重启生效）
+    getMcpServersConfig: () => Promise<McpServerConfig[]>;
+    setMcpServersConfig: (servers: McpServerConfig[]) => Promise<unknown>;
+    // 模型条目 CRUD + 激活（electron-store 持久化，激活时写入 legacy 槽位，重启后端生效）
+    getModelEntries: () => Promise<ModelEntry[]>;
+    setModelEntries: (entries: ModelEntry[]) => Promise<unknown>;
+    getActiveModelId: () => Promise<string | null>;
+    activateModel: (id: string) => Promise<unknown>;
+  };
+  mcp: {
+    // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由
+    listServers: () => Promise<{ servers: McpServerStatus[] }>;
+    listTools: () => Promise<{ tools: McpToolInfo[] }>;
+    testServer: (config: McpServerConfig) => Promise<McpTestResult>;
+    refresh: () => Promise<{ ok: boolean; servers: McpServerStatus[] }>;
   };
   memory: {
     listSkills: () => Promise<{ skills: SkillFileInfo[] }>;

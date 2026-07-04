@@ -1,185 +1,667 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Cpu,
   Eye,
   EyeOff,
-  Save,
-  Check,
   KeyRound,
-  Cpu,
-  Search,
+  Plus,
+  Pencil,
+  Trash2,
+  Save,
+  X,
+  Check,
   Sparkles,
   CheckCircle2,
   AlertCircle,
+  RotateCw,
+  RefreshCw,
+  Search,
+  ExternalLink,
+  Server,
 } from "lucide-react";
-import { useSettingsStore, type ProviderId, type ProviderPreset } from "@/stores/settings";
+import type { ModelEntry, ModelProviderId } from "@/lib/utils";
 
-// 模型服务商（涉及 API Key + Base URL + 模型名）
-const MODEL_PROVIDERS: Array<{
-  id: Exclude<ProviderId, "tavily">;
-  label: string;
-  desc: string;
-  docs: string;
-}> = [
-  {
-    id: "openai",
+// 服务商预设：默认模型名 / Base URL / 文档链接
+// 与 backend/app/llm.py 路由逻辑对齐：
+// - deepseek*  → AGENT_PY_DEEPSEEK_API_KEY
+// - gpt*/o1*/o3* → AGENT_PY_OPENAI_API_KEY
+// - 其他 + openai_base_url → OpenAI 兼容兜底（minimax / custom 走此分支）
+const PROVIDER_PRESETS: Record<
+  Exclude<ModelProviderId, "custom">,
+  { label: string; desc: string; docs: string; defaultModel: string; defaultBaseUrl: string }
+> = {
+  openai: {
     label: "OpenAI",
-    desc: "GPT 系列模型",
+    desc: "GPT-4o / o1 / o3 系列",
     docs: "https://platform.openai.com/api-keys",
+    defaultModel: "gpt-4o-mini",
+    defaultBaseUrl: "https://api.openai.com/v1",
   },
-  {
-    id: "deepseek",
+  deepseek: {
     label: "DeepSeek",
     desc: "DeepSeek-V3 / R1",
     docs: "https://platform.deepseek.com/api_keys",
+    defaultModel: "deepseek-chat",
+    defaultBaseUrl: "https://api.deepseek.com",
   },
-  {
-    id: "minimax",
+  minimax: {
     label: "MiniMax",
     desc: "MiniMax-M3 / abab 系列",
     docs: "https://platform.minimaxi.com/",
+    defaultModel: "MiniMax-M3",
+    defaultBaseUrl: "https://api.minimaxi.com/v1",
   },
-];
-
-const ALL_PROVIDERS: ProviderId[] = ["openai", "deepseek", "minimax", "tavily"];
-
-type ConfiguredFlags = Record<ProviderId, boolean>;
-type ShowFlags = Record<ProviderId, boolean>;
-type SavedFlags = Record<ProviderId, boolean>;
-type ActiveFlags = Record<ProviderId, boolean>;
-
-const emptyFlags: ConfiguredFlags = {
-  openai: false,
-  deepseek: false,
-  minimax: false,
-  tavily: false,
 };
 
-/** 判断某 provider 的预设是否与后端当前激活配置一致 */
-function isActiveMatch(preset: ProviderPreset, activeModel: string, activeBaseUrl: string): boolean {
-  // 模型名非空时必须匹配；Base URL 在 preset 非空时也要匹配
-  const modelMatch = preset.model === activeModel;
-  // 两边都为空也算匹配（使用后端默认值）
-  const urlMatch =
-    preset.baseUrl === activeBaseUrl ||
-    (preset.baseUrl === "" && activeBaseUrl === "") ||
-    (preset.baseUrl === "" && activeBaseUrl === undefined);
-  return modelMatch && urlMatch;
+const PROVIDER_OPTIONS: Array<{
+  id: ModelProviderId;
+  label: string;
+  desc: string;
+}> = [
+  { id: "openai", label: "OpenAI", desc: "GPT 系列" },
+  { id: "deepseek", label: "DeepSeek", desc: "V3 / R1" },
+  { id: "minimax", label: "MiniMax", desc: "M3 / abab" },
+  { id: "custom", label: "自定义", desc: "OpenAI 兼容端点" },
+];
+
+function providerLabel(id: ModelProviderId): string {
+  if (id === "custom") return "自定义";
+  return PROVIDER_PRESETS[id].label;
 }
 
-export function ModelProviderSettings() {
-  const presets = useSettingsStore((s) => s.providerPresets);
-  const setProviderPreset = useSettingsStore((s) => s.setProviderPreset);
+function providerColor(id: ModelProviderId): string {
+  switch (id) {
+    case "openai":
+      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+    case "deepseek":
+      return "bg-violet-500/10 text-violet-600 dark:text-violet-400";
+    case "minimax":
+      return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
+    case "custom":
+      return "bg-sky-500/10 text-sky-600 dark:text-sky-400";
+  }
+}
 
-  const [keyInputs, setKeyInputs] = useState<Record<ProviderId, string>>({
-    openai: "",
-    deepseek: "",
-    minimax: "",
-    tavily: "",
-  });
-  const [configured, setConfigured] = useState<ConfiguredFlags>(emptyFlags);
-  const [show, setShow] = useState<ShowFlags>(emptyFlags);
-  const [saved, setSaved] = useState<SavedFlags>(emptyFlags);
-  const [activeFlags, setActiveFlags] = useState<ActiveFlags>(emptyFlags);
-  const [activeModel, setActiveModel] = useState("");
-  const [activeBaseUrl, setActiveBaseUrl] = useState("");
-  const [errMsg, setErrMsg] = useState<string | null>(null);
+function emptyEntry(): ModelEntry {
+  return {
+    id: "",
+    label: "",
+    providerId: "openai",
+    model: "",
+    baseUrl: "",
+    apiKey: "",
+    createdAt: Date.now(),
+  };
+}
 
-  // 加载：读取后端激活配置 + 各 provider 是否已配置密钥
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const cfg = await window.api.settings.getLLMConfig();
-        if (cancelled) return;
-        setActiveModel(cfg.defaultModel ?? "");
-        setActiveBaseUrl(cfg.openaiBaseUrl ?? "");
-      } catch {
-        // 后端未就绪时保留默认值
+// 为新建条目生成 id：时间戳 + 随机后缀，避免与已有 id 冲突
+function genId(): string {
+  return `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+interface ModelRowProps {
+  entry: ModelEntry;
+  isActive: boolean;
+  hasKey: boolean;
+  onActivate: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  activating: boolean;
+}
+
+function ModelRow({
+  entry,
+  isActive,
+  hasKey,
+  onActivate,
+  onEdit,
+  onDelete,
+  activating,
+}: ModelRowProps): JSX.Element {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const displayLabel = entry.label || `${providerLabel(entry.providerId)} · ${entry.model}`;
+  const baseUrlDisplay =
+    entry.baseUrl ||
+    (entry.providerId !== "custom" ? PROVIDER_PRESETS[entry.providerId].defaultBaseUrl : "—");
+
+  return (
+    <li
+      className={`rounded-lg border px-3 py-2.5 text-xs transition-colors ${
+        isActive
+          ? "border-brand-500/40 bg-brand-500/5"
+          : "border-default bg-surface hover:bg-hover-soft"
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <Cpu
+          className={`mt-0.5 h-4 w-4 shrink-0 ${
+            isActive ? "text-brand-500" : "text-muted-c"
+          }`}
+        />
+        <div className="min-w-0 flex-1">
+          {/* 第一行：标签 + provider 徽章 + 状态 */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-primary-c">{displayLabel}</span>
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${providerColor(
+                entry.providerId,
+              )}`}
+            >
+              {providerLabel(entry.providerId)}
+            </span>
+            {isActive && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-500">
+                <Sparkles className="h-2.5 w-2.5" />
+                使用中
+              </span>
+            )}
+            {hasKey ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <Check className="h-2.5 w-2.5" />
+                密钥已配置
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                <AlertCircle className="h-2.5 w-2.5" />
+                未配置密钥
+              </span>
+            )}
+          </div>
+          {/* 第二行：模型名 + Base URL */}
+          <div className="mt-1 truncate font-mono text-[11px] text-muted-c">
+            <span className="text-secondary-c">{entry.model || "（未设置模型名）"}</span>
+            <span className="mx-1.5 text-muted-c/50">·</span>
+            <span className="break-all">{baseUrlDisplay}</span>
+          </div>
+        </div>
+        {/* 操作按钮 */}
+        <div className="flex shrink-0 items-center gap-1">
+          {!isActive && (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={onActivate}
+              disabled={activating}
+              aria-label="设为默认"
+              title="设为默认模型"
+            >
+              {activating ? (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={onEdit}
+            aria-label="编辑"
+            title="编辑"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          {confirmDelete ? (
+            <>
+              <button
+                type="button"
+                className="cursor-pointer rounded px-1.5 py-0.5 text-[10px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                onClick={() => {
+                  onDelete();
+                  setConfirmDelete(false);
+                }}
+              >
+                确认
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setConfirmDelete(false)}
+                aria-label="取消"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setConfirmDelete(true)}
+              aria-label="删除"
+              title="删除"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+interface EditorProps {
+  initial: ModelEntry;
+  isNew: boolean;
+  existingIds: string[];
+  onSave: (entry: ModelEntry) => Promise<void>;
+  onCancel: () => void;
+}
+
+function ModelEditor({
+  initial,
+  isNew,
+  existingIds,
+  onSave,
+  onCancel,
+}: EditorProps): JSX.Element {
+  const [draft, setDraft] = useState<ModelEntry>(initial);
+  const [showKey, setShowKey] = useState(false);
+  // apiKey 输入框的值：编辑已有条目时为空（不回显密钥），仅当用户输入新值才替换
+  const [keyInput, setKeyInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [errs, setErrs] = useState<Record<string, string>>({});
+
+  const isCustom = draft.providerId === "custom";
+  const preset = draft.providerId !== "custom" ? PROVIDER_PRESETS[draft.providerId] : null;
+
+  // 切换 provider 时，若是预设则自动填充默认 model + baseUrl（仅当用户未自定义时）
+  const handleProviderChange = (id: ModelProviderId): void => {
+    setDraft((s) => {
+      if (id !== "custom") {
+        const p = PROVIDER_PRESETS[id];
+        // 若当前 model/baseUrl 为空或等于其他预设的默认值，则替换为新预设的默认值
+        const modelIsDefault =
+          !s.model ||
+          Object.values(PROVIDER_PRESETS).some((pp) => pp.defaultModel === s.model);
+        const urlIsDefault =
+          !s.baseUrl ||
+          Object.values(PROVIDER_PRESETS).some((pp) => pp.defaultBaseUrl === s.baseUrl);
+        return {
+          ...s,
+          providerId: id,
+          model: modelIsDefault ? p.defaultModel : s.model,
+          baseUrl: urlIsDefault ? p.defaultBaseUrl : s.baseUrl,
+        };
       }
-      const next: ConfiguredFlags = { ...emptyFlags };
-      for (const p of ALL_PROVIDERS) {
-        try {
-          const key = await window.api.settings.getApiKey(p);
-          next[p] = typeof key === "string" && key.length > 0;
-        } catch {
-          next[p] = false;
-        }
-      }
-      if (!cancelled) setConfigured(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // 激活状态联动：当 presets 或后端激活配置变化时，重新计算每个 provider 的 active 标志
-  useEffect(() => {
-    setActiveFlags({
-      openai: isActiveMatch(presets.openai, activeModel, activeBaseUrl),
-      deepseek: isActiveMatch(presets.deepseek, activeModel, activeBaseUrl),
-      minimax: isActiveMatch(presets.minimax, activeModel, activeBaseUrl),
-      tavily: false, // Tavily 不是模型服务商
+      return { ...s, providerId: id };
     });
-  }, [presets, activeModel, activeBaseUrl]);
-
-  const flashSaved = (p: ProviderId): void => {
-    setSaved((s) => ({ ...s, [p]: true }));
-    window.setTimeout(() => {
-      setSaved((s) => ({ ...s, [p]: false }));
-    }, 2000);
+    setErrs({});
   };
 
-  /** 模型服务商"设为默认"：保存密钥（若有输入）+ 同步 model/baseURL 到后端 */
-  const setAsDefault = async (p: Exclude<ProviderId, "tavily">): Promise<void> => {
-    setErrMsg(null);
-    try {
-      const preset = presets[p];
-      if (!preset.model.trim()) {
-        setErrMsg("请先填写模型名称");
-        return;
-      }
-      // 1. 若用户输入了新密钥，先保存密钥
-      const newKey = keyInputs[p].trim();
-      if (newKey) {
-        await window.api.settings.setApiKey(p, newKey);
-        setConfigured((s) => ({ ...s, [p]: true }));
-        setKeyInputs((s) => ({ ...s, [p]: "" }));
-      }
-      // 2. 同步该 provider 的 model + baseURL 到后端激活配置
-      await window.api.settings.setLLMConfig(preset.model.trim(), preset.baseUrl.trim());
-      setActiveModel(preset.model.trim());
-      setActiveBaseUrl(preset.baseUrl.trim());
-      flashSaved(p);
-    } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : String(e));
-    }
+  const validate = (): boolean => {
+    const e: Record<string, string> = {};
+    if (!draft.model.trim()) e.model = "模型名称不能为空";
+    if (isCustom && !draft.baseUrl.trim()) e.baseUrl = "自定义服务商必须填写 API 地址";
+    if (isCustom && !draft.label.trim()) e.label = "自定义服务商必须填写显示名称";
+    // 新建时必须输入密钥；编辑时若未输入新密钥则保留旧密钥
+    if (isNew && !keyInput.trim()) e.apiKey = "API Key 不能为空";
+    setErrs(e);
+    return Object.keys(e).length === 0;
   };
 
-  /** Tavily 密钥保存 */
-  const saveTavilyKey = async (): Promise<void> => {
-    setErrMsg(null);
-    const key = keyInputs.tavily.trim();
-    if (!key) return;
+  const handleSave = async (): Promise<void> => {
+    if (!validate()) return;
+    setSaving(true);
     try {
-      await window.api.settings.setApiKey("tavily", key);
-      setConfigured((s) => ({ ...s, tavily: true }));
-      setKeyInputs((s) => ({ ...s, tavily: "" }));
-      flashSaved("tavily");
-    } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : String(e));
+      // 编辑时若用户未输入新密钥，保留原 entry.apiKey（已是加密字符串）
+      const finalKey = keyInput.trim() || draft.apiKey;
+      const entry: ModelEntry = {
+        ...draft,
+        id: draft.id || genId(),
+        label: draft.label.trim(),
+        model: draft.model.trim(),
+        baseUrl: draft.baseUrl.trim(),
+        apiKey: finalKey,
+        createdAt: draft.createdAt || Date.now(),
+      };
+      await onSave(entry);
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <div className="space-y-5">
-      {/* 错误提示 */}
-      {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
-          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>{errMsg}</span>
+    <div className="space-y-3 rounded-lg border border-brand-500/30 bg-brand-500/[0.03] p-3">
+      {/* 服务商选择 */}
+      <div role="radiogroup" aria-label="服务商类型">
+        <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+          服务商类型
+        </label>
+        <div className="grid grid-cols-2 gap-1.5">
+          {PROVIDER_OPTIONS.map((opt) => {
+            const selected = draft.providerId === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => handleProviderChange(opt.id)}
+                className={`flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                  selected
+                    ? "border-brand-500 bg-brand-600/5"
+                    : "border-default bg-surface hover:bg-hover-soft"
+                }`}
+              >
+                <span
+                  className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${
+                    selected ? "border-brand-500" : "border-muted-c/50"
+                  }`}
+                >
+                  {selected && (
+                    <span className="h-2 w-2 rounded-full bg-brand-500" />
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-primary-c">
+                    {opt.label}
+                  </div>
+                  <div className="text-[10px] text-muted-c">{opt.desc}</div>
+                </div>
+              </button>
+            );
+          })}
         </div>
+      </div>
+
+      {/* 显示名称（自定义必填，预设可选） */}
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-secondary-c">
+          显示名称{isCustom ? "（必填）" : "（可选）"}
+        </label>
+        <input
+          type="text"
+          value={draft.label}
+          onChange={(e) => setDraft((s) => ({ ...s, label: e.target.value }))}
+          placeholder={
+            isCustom
+              ? "例如：我的中转服务"
+              : `${providerLabel(draft.providerId)} · ${draft.model || "model"}`
+          }
+          className="input-field text-[11px]"
+        />
+        {errs.label && <p className="mt-1 text-[10px] text-rose-500">{errs.label}</p>}
+      </div>
+
+      {/* 模型名称 */}
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-secondary-c">
+          模型名称
+        </label>
+        <input
+          type="text"
+          value={draft.model}
+          onChange={(e) => setDraft((s) => ({ ...s, model: e.target.value }))}
+          placeholder={preset?.defaultModel ?? "例如 gpt-4o-mini"}
+          className="input-field font-mono text-[11px]"
+        />
+        {errs.model && <p className="mt-1 text-[10px] text-rose-500">{errs.model}</p>}
+      </div>
+
+      {/* Base URL */}
+      <div>
+        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+          <Server className="h-3 w-3 text-muted-c" />
+          API 地址{isCustom ? "（必填）" : preset ? "（可选，留空使用默认）" : ""}
+        </label>
+        <input
+          type="text"
+          value={draft.baseUrl}
+          onChange={(e) => setDraft((s) => ({ ...s, baseUrl: e.target.value }))}
+          placeholder={
+            isCustom
+              ? "https://api.example.com/v1"
+              : preset?.defaultBaseUrl ?? ""
+          }
+          className="input-field font-mono text-[11px]"
+        />
+        {errs.baseUrl && (
+          <p className="mt-1 text-[10px] text-rose-500">{errs.baseUrl}</p>
+        )}
+      </div>
+
+      {/* API Key */}
+      <div>
+        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+          <KeyRound className="h-3 w-3 text-muted-c" />
+          API Key
+        </label>
+        <div className="relative">
+          <input
+            type={showKey ? "text" : "password"}
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            placeholder={
+              !isNew && draft.apiKey
+                ? "输入新 Key 以替换（留空保留原密钥）"
+                : "输入 API Key"
+            }
+            className="input-field pr-8 font-mono text-[11px]"
+          />
+          <button
+            type="button"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-c transition-colors hover:text-primary-c"
+            onClick={() => setShowKey((s) => !s)}
+            aria-label={showKey ? "隐藏" : "显示"}
+          >
+            {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+        {errs.apiKey && (
+          <p className="mt-1 text-[10px] text-rose-500">{errs.apiKey}</p>
+        )}
+      </div>
+
+      {/* 获取密钥链接 + 提示 */}
+      {preset && (
+        <a
+          href={preset.docs}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] text-muted-c transition-colors hover:text-brand-500"
+        >
+          <ExternalLink className="h-3 w-3" />
+          获取密钥
+        </a>
       )}
 
+      {/* 操作按钮 */}
+      <div className="flex items-center gap-2 border-t border-default pt-2.5">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="btn-primary px-2.5 py-1.5 text-[11px]"
+        >
+          {saving ? (
+            <RefreshCw className="h-3 w-3 animate-spin" />
+          ) : (
+            <Save className="h-3 w-3" />
+          )}
+          保存
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="btn-secondary px-2.5 py-1.5 text-[11px]"
+        >
+          <X className="h-3 w-3" />
+          取消
+        </button>
+        {preset && (
+          <span className="ml-auto text-[10px] text-muted-c">
+            {preset.label} 默认模型：{preset.defaultModel}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ModelProviderSettings(): JSX.Element {
+  const [entries, setEntries] = useState<ModelEntry[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [needsRestart, setNeedsRestart] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{
+    entry: ModelEntry;
+    isNew: boolean;
+  } | null>(null);
+
+  // Tavily 搜索服务状态（独立于模型条目）
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [tavilyConfigured, setTavilyConfigured] = useState(false);
+  const [showTavily, setShowTavily] = useState(false);
+  const [tavilySaved, setTavilySaved] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [list, active] = await Promise.all([
+        window.api.settings.getModelEntries(),
+        window.api.settings.getActiveModelId(),
+      ]);
+      setEntries(list);
+      setActiveId(active);
+    } catch {
+      // 后端未就绪时保留空列表
+    }
+  }, []);
+
+  const loadTavily = useCallback(async () => {
+    try {
+      const key = await window.api.settings.getApiKey("tavily");
+      setTavilyConfigured(typeof key === "string" && key.length > 0);
+    } catch {
+      setTavilyConfigured(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      await Promise.all([load(), loadTavily()]);
+      setLoaded(true);
+    })();
+  }, [load, loadTavily]);
+
+  const activeEntry = useMemo(
+    () => entries.find((e) => e.id === activeId) ?? null,
+    [entries, activeId],
+  );
+
+  const startNew = (): void => {
+    setEditing({ entry: emptyEntry(), isNew: true });
+  };
+
+  const startEdit = (entry: ModelEntry): void => {
+    setEditing({ entry: { ...entry }, isNew: false });
+  };
+
+  const cancelEdit = (): void => {
+    setEditing(null);
+  };
+
+  const saveEdit = async (entry: ModelEntry): Promise<void> => {
+    setErrMsg(null);
+    try {
+      const wasActive = !editing?.isNew && activeId === entry.id;
+      let next: ModelEntry[];
+      if (editing?.isNew) {
+        next = [...entries, entry];
+      } else {
+        next = entries.map((e) => (e.id === entry.id ? entry : e));
+      }
+      await window.api.settings.setModelEntries(next);
+      setEntries(next);
+      setEditing(null);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+      // 若编辑的是当前激活条目，重新写入 legacy 槽位以同步新配置，并提示重启
+      if (wasActive) {
+        try {
+          await window.api.settings.activateModel(entry.id);
+          setNeedsRestart(true);
+        } catch (e) {
+          setErrMsg(e instanceof Error ? e.message : String(e));
+        }
+      }
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const deleteEntry = async (id: string): Promise<void> => {
+    setErrMsg(null);
+    try {
+      const next = entries.filter((e) => e.id !== id);
+      await window.api.settings.setModelEntries(next);
+      setEntries(next);
+      // 若删除的是当前激活条目，清空激活标记（后端仍保留旧 env，直到激活其他条目）
+      if (activeId === id) {
+        setActiveId(null);
+        setErrMsg(
+          "已删除当前激活的模型，后端仍使用旧配置运行。请激活其他模型或重启后端。",
+        );
+      }
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const activateEntry = async (id: string): Promise<void> => {
+    setErrMsg(null);
+    setActivatingId(id);
+    try {
+      await window.api.settings.activateModel(id);
+      setActiveId(id);
+      setNeedsRestart(true);
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActivatingId(null);
+    }
+  };
+
+  const saveTavilyKey = async (): Promise<void> => {
+    setErrMsg(null);
+    const key = tavilyKey.trim();
+    if (!key) return;
+    try {
+      await window.api.settings.setApiKey("tavily", key);
+      setTavilyConfigured(true);
+      setTavilyKey("");
+      setTavilySaved(true);
+      window.setTimeout(() => setTavilySaved(false), 2000);
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const restart = async (): Promise<void> => {
+    setErrMsg(null);
+    try {
+      setRestarting(true);
+      await window.api.app.restart();
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  if (!loaded) {
+    return (
+      <div className="space-y-3">
+        <div className="shimmer-bg h-32 rounded-lg" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
       {/* 当前激活模型 banner */}
       <div className="flex items-center justify-between rounded-lg border border-brand-500/30 bg-brand-500/5 px-3.5 py-2.5">
         <div className="flex items-center gap-2.5">
@@ -191,7 +673,7 @@ export function ModelProviderSettings() {
               <span className="text-[11px] font-medium uppercase tracking-wide text-muted-c">
                 当前模型
               </span>
-              {activeModel ? (
+              {activeEntry ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="h-2.5 w-2.5" />
                   已激活
@@ -204,159 +686,117 @@ export function ModelProviderSettings() {
               )}
             </div>
             <div className="mt-0.5 truncate font-mono text-xs text-primary-c">
-              {activeModel || '尚未设置，请选择服务商并点击"设为默认"'}
+              {activeEntry
+                ? `${activeEntry.model}`
+                : "尚未激活，请添加模型并点击「设为默认」"}
             </div>
-            {activeBaseUrl && (
-              <div className="mt-0.5 truncate text-[11px] text-muted-c">{activeBaseUrl}</div>
+            {activeEntry && (
+              <div className="mt-0.5 truncate text-[11px] text-muted-c">
+                {providerLabel(activeEntry.providerId)}
+                {activeEntry.baseUrl ? ` · ${activeEntry.baseUrl}` : ""}
+              </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* 模型服务商卡片 */}
+      {/* 错误提示 */}
+      {errMsg && (
+        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>{errMsg}</span>
+        </div>
+      )}
+
+      {/* 模型列表 */}
       <div>
-        <div className="mb-2 flex items-center gap-1.5">
-          <Cpu className="h-3 w-3 text-muted-c" />
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            模型服务商
-          </h4>
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Cpu className="h-3 w-3 text-muted-c" />
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+              已添加模型
+            </h4>
+            <span className="rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-secondary-c">
+              {entries.length}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn-primary px-2.5 py-1.5 text-[11px]"
+            onClick={startNew}
+            disabled={editing !== null}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            添加模型
+          </button>
         </div>
-        <div className="grid grid-cols-1 gap-2.5">
-          {MODEL_PROVIDERS.map((p) => {
-            const preset = presets[p.id];
-            const isActive = activeFlags[p.id];
-            return (
-              <div
-                key={p.id}
-                className={`rounded-lg border px-3 py-2.5 transition-colors ${
-                  isActive
-                    ? "border-brand-500/40 bg-brand-500/5"
-                    : "border-default bg-surface"
-                }`}
-              >
-                {/* 卡片头部 */}
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-primary-c">{p.label}</span>
-                    <span className="text-[11px] text-muted-c">{p.desc}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {configured[p.id] ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                        <Check className="h-2.5 w-2.5" />
-                        密钥已配置
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                        未配置
-                      </span>
-                    )}
-                    {isActive && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-500">
-                        <Sparkles className="h-2.5 w-2.5" />
-                        使用中
-                      </span>
-                    )}
-                  </div>
-                </div>
 
-                {/* API Key 输入 */}
-                <div className="space-y-1.5">
-                  <label className="flex items-center gap-1 text-[11px] font-medium text-secondary-c">
-                    <KeyRound className="h-3 w-3 text-muted-c" />
-                    API Key
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={show[p.id] ? "text" : "password"}
-                      value={keyInputs[p.id]}
-                      onChange={(e) =>
-                        setKeyInputs((s) => ({ ...s, [p.id]: e.target.value }))
-                      }
-                      placeholder={configured[p.id] ? "输入新 Key 以替换" : "输入 API Key"}
-                      className="input-field pr-8 font-mono text-[11px]"
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-c transition-colors hover:text-primary-c"
-                      onClick={() => setShow((s) => ({ ...s, [p.id]: !s[p.id] }))}
-                      aria-label={show[p.id] ? "隐藏" : "显示"}
-                    >
-                      {show[p.id] ? (
-                        <EyeOff className="h-3.5 w-3.5" />
-                      ) : (
-                        <Eye className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </div>
-                </div>
+        {entries.length === 0 && !editing && (
+          <div className="rounded-lg border border-dashed border-default px-3 py-6 text-center">
+            <Cpu className="mx-auto mb-2 h-6 w-6 text-muted-c/50" />
+            <p className="text-xs text-muted-c">暂无模型配置</p>
+            <p className="mt-1 text-[11px] text-muted-c">
+              点击「添加模型」选择服务商并填入密钥
+            </p>
+          </div>
+        )}
 
-                {/* 模型名 + Base URL */}
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-medium text-secondary-c">
-                      模型
-                    </label>
-                    <input
-                      type="text"
-                      value={preset.model}
-                      onChange={(e) =>
-                        setProviderPreset(p.id, { model: e.target.value })
-                      }
-                      placeholder="例如 gpt-4o-mini"
-                      className="input-field font-mono text-[11px]"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-medium text-secondary-c">
-                      Base URL
-                    </label>
-                    <input
-                      type="text"
-                      value={preset.baseUrl}
-                      onChange={(e) =>
-                        setProviderPreset(p.id, { baseUrl: e.target.value })
-                      }
-                      placeholder="留空使用后端默认"
-                      className="input-field font-mono text-[11px]"
-                    />
-                  </div>
-                </div>
+        {entries.length > 0 && !editing && (
+          <ul className="space-y-1.5">
+            {entries.map((entry) => (
+              <ModelRow
+                key={entry.id}
+                entry={entry}
+                isActive={entry.id === activeId}
+                hasKey={Boolean(entry.apiKey)}
+                onActivate={() => activateEntry(entry.id)}
+                onEdit={() => startEdit(entry)}
+                onDelete={() => deleteEntry(entry.id)}
+                activating={activatingId === entry.id}
+              />
+            ))}
+          </ul>
+        )}
 
-                {/* 操作区 */}
-                <div className="mt-2.5 flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="btn-primary px-2.5 py-1.5 text-[11px]"
-                    onClick={() => setAsDefault(p.id)}
-                    disabled={!preset.model.trim()}
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    设为默认
-                  </button>
-                  {saved[p.id] && (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                      <Check className="h-3 w-3" />
-                      已激活
-                    </span>
-                  )}
-                  <a
-                    href={p.docs}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-auto text-[11px] text-muted-c transition-colors hover:text-brand-500"
-                  >
-                    获取密钥 →
-                  </a>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        {editing && (
+          <ModelEditor
+            initial={editing.entry}
+            isNew={editing.isNew}
+            existingIds={entries.map((e) => e.id)}
+            onSave={saveEdit}
+            onCancel={cancelEdit}
+          />
+        )}
+
+        {saved && (
+          <div className="mt-2 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3 w-3" />
+            已保存
+          </div>
+        )}
       </div>
 
+      {/* 重启提示 */}
+      {needsRestart && (
+        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/30">
+          <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span>模型配置已更新，需重启后端才能生效</span>
+          </div>
+          <button
+            type="button"
+            onClick={restart}
+            className="btn-secondary px-2.5 py-1 text-[11px]"
+            disabled={restarting}
+          >
+            <RotateCw className={`h-3 w-3 ${restarting ? "animate-spin" : ""}`} />
+            {restarting ? "重启中…" : "重启后端"}
+          </button>
+        </div>
+      )}
+
       {/* 搜索服务（Tavily） */}
-      <div>
+      <div className="border-t border-default pt-4">
         <div className="mb-2 flex items-center gap-1.5">
           <Search className="h-3 w-3 text-muted-c" />
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
@@ -369,7 +809,7 @@ export function ModelProviderSettings() {
               <span className="text-xs font-semibold text-primary-c">Tavily</span>
               <span className="text-[11px] text-muted-c">AI 搜索 API</span>
             </div>
-            {configured.tavily ? (
+            {tavilyConfigured ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                 <Check className="h-2.5 w-2.5" />
                 已配置
@@ -388,21 +828,21 @@ export function ModelProviderSettings() {
             <div className="flex gap-1.5">
               <div className="relative flex-1">
                 <input
-                  type={show.tavily ? "text" : "password"}
-                  value={keyInputs.tavily}
-                  onChange={(e) =>
-                    setKeyInputs((s) => ({ ...s, tavily: e.target.value }))
+                  type={showTavily ? "text" : "password"}
+                  value={tavilyKey}
+                  onChange={(e) => setTavilyKey(e.target.value)}
+                  placeholder={
+                    tavilyConfigured ? "输入新 Key 以替换" : "输入 API Key"
                   }
-                  placeholder={configured.tavily ? "输入新 Key 以替换" : "输入 API Key"}
                   className="input-field pr-8 font-mono text-[11px]"
                 />
                 <button
                   type="button"
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-c transition-colors hover:text-primary-c"
-                  onClick={() => setShow((s) => ({ ...s, tavily: !s.tavily }))}
-                  aria-label={show.tavily ? "隐藏" : "显示"}
+                  onClick={() => setShowTavily((s) => !s)}
+                  aria-label={showTavily ? "隐藏" : "显示"}
                 >
-                  {show.tavily ? (
+                  {showTavily ? (
                     <EyeOff className="h-3.5 w-3.5" />
                   ) : (
                     <Eye className="h-3.5 w-3.5" />
@@ -412,13 +852,13 @@ export function ModelProviderSettings() {
               <button
                 type="button"
                 className="btn-primary px-2.5"
-                disabled={!keyInputs.tavily.trim()}
+                disabled={!tavilyKey.trim()}
                 onClick={saveTavilyKey}
               >
                 <Save className="h-3.5 w-3.5" />
               </button>
             </div>
-            {saved.tavily && (
+            {tavilySaved && (
               <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
                 <Check className="h-3 w-3" />
                 已保存
@@ -430,9 +870,8 @@ export function ModelProviderSettings() {
 
       {/* 说明 */}
       <p className="rounded-md bg-subtle/50 px-3 py-2 text-[11px] leading-relaxed text-muted-c">
-        后端通过 OpenAI 兼容协议调用 LLM。点击"设为默认"会将该服务商的模型名与 Base URL
-        同步为后端激活配置，同时保存输入的密钥。各服务商的模型/Base URL 预设会在本地持久化，
-        切换服务商时不会丢失输入。
+        后端通过 OpenAI 兼容协议调用 LLM。点击「设为默认」会将该模型的密钥与配置同步到后端激活槽位，
+        需重启后端生效。各模型条目的密钥经 safeStorage 加密存储于本地，切换模型时不会丢失。
       </p>
     </div>
   );

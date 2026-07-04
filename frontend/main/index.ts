@@ -28,10 +28,21 @@ import {
   setKnowledgeConfig,
   getSubagentsConfig,
   setSubagentsConfig,
+  getCustomSubagents,
+  setCustomSubagents,
+  addCustomSubagent,
+  removeCustomSubagent,
   getToolsConfig,
   setToolsConfig,
   getProfileAutoExtract,
   setProfileAutoExtract,
+  getMcpServersConfig,
+  setMcpServersConfig,
+  getModelEntries,
+  setModelEntries,
+  getActiveModelId,
+  activateModelEntry,
+  migrateLegacyLLMConfig,
 } from "./store";
 import { appendLog, readLogs, cleanOldLogs } from "./logger";
 
@@ -113,8 +124,10 @@ function startPython(): void {
   const knowledge = getKnowledgeConfig();
   const systemPrompt = getSystemPrompt();
   const subagentsConfig = getSubagentsConfig();
+  const customSubagentsConfig = getCustomSubagents();
   const toolsConfig = getToolsConfig();
   const profileAutoExtract = getProfileAutoExtract();
+  const mcpServersConfig = getMcpServersConfig();
 
   appendLog("[main] starting python backend");
   pythonHandle = spawnPython({
@@ -139,8 +152,10 @@ function startPython(): void {
       milvusCollection: knowledge.milvusCollection || undefined,
       milvusAuthEnabled: knowledge.milvusAuthEnabled,
       subagentsConfig,
+      customSubagentsConfig,
       toolsConfig,
       profileAutoExtract,
+      mcpServersConfig,
     },
     onStatus: (status) => {
       appendLog(`[main] python status: ${status}`);
@@ -280,6 +295,24 @@ function registerIpc(): void {
     setSubagentsConfig(cfg);
     return { ok: true };
   });
+  // 自定义子代理 CRUD IPC handler
+  ipcMain.handle("settings:getCustomSubagents", () => getCustomSubagents());
+  ipcMain.handle("settings:setCustomSubagents", (_e, cfg: Parameters<typeof setCustomSubagents>[0]) => {
+    setCustomSubagents(cfg);
+    return { ok: true };
+  });
+  ipcMain.handle(
+    "settings:addCustomSubagent",
+    (_e, input: Parameters<typeof addCustomSubagent>[0]) => {
+      try {
+        return addCustomSubagent(input);
+      } catch (e) {
+        // 抛给 renderer 的错误信息保持原样
+        throw new Error(e instanceof Error ? e.message : String(e));
+      }
+    },
+  );
+  ipcMain.handle("settings:removeCustomSubagent", (_e, key: string) => removeCustomSubagent(key));
   ipcMain.handle("settings:getToolsConfig", () => getToolsConfig());
   ipcMain.handle("settings:setToolsConfig", (_e, cfg: Parameters<typeof setToolsConfig>[0]) => {
     setToolsConfig(cfg);
@@ -289,6 +322,36 @@ function registerIpc(): void {
   ipcMain.handle("settings:setProfileAutoExtract", (_e, v: boolean) => {
     setProfileAutoExtract(v);
     return { ok: true };
+  });
+  // MCP server 配置 IPC handler：renderer 通过 window.api.settings 读写 electron-store，
+  // 后端启动时从 AGENT_PY_MCP_SERVERS_CONFIG env 注入
+  ipcMain.handle("settings:getMcpServersConfig", () => getMcpServersConfig());
+  ipcMain.handle(
+    "settings:setMcpServersConfig",
+    (_e, servers: Parameters<typeof setMcpServersConfig>[0]) => {
+      setMcpServersConfig(servers);
+      return { ok: true };
+    },
+  );
+
+  // 模型条目 IPC handler：renderer 通过 window.api.settings 读写 electron-store，
+  // "激活"时写入 legacy 槽位（llm.* + apikey.*），后端 spawn 时从 env 读取
+  ipcMain.handle("settings:getModelEntries", () => getModelEntries());
+  ipcMain.handle(
+    "settings:setModelEntries",
+    (_e, entries: Parameters<typeof setModelEntries>[0]) => {
+      setModelEntries(entries);
+      return { ok: true };
+    },
+  );
+  ipcMain.handle("settings:getActiveModelId", () => getActiveModelId());
+  ipcMain.handle("settings:activateModel", (_e, id: string) => {
+    try {
+      activateModelEntry(id);
+      return { ok: true };
+    } catch (e) {
+      throw new Error(e instanceof Error ? e.message : String(e));
+    }
   });
 
   // T6 process-resilience：读取日志（默认当天，最后 200 行）
@@ -350,6 +413,8 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+  // 迁移 legacy LLM 配置到 model entries（老用户首次升级时种子一条默认条目）
+  migrateLegacyLLMConfig();
   startPython();
   registerIpc();
 

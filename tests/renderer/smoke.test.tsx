@@ -85,6 +85,12 @@ const mockApi = {
     setToolsConfig: vi.fn().mockResolvedValue({ ok: true }),
     getProfileAutoExtract: vi.fn().mockResolvedValue(true),
     setProfileAutoExtract: vi.fn().mockResolvedValue({ ok: true }),
+    getMcpServersConfig: vi.fn().mockResolvedValue([]),
+    setMcpServersConfig: vi.fn().mockResolvedValue({ ok: true }),
+    getModelEntries: vi.fn().mockResolvedValue([]),
+    setModelEntries: vi.fn().mockResolvedValue({ ok: true }),
+    getActiveModelId: vi.fn().mockResolvedValue(null),
+    activateModel: vi.fn().mockResolvedValue({ ok: true }),
   },
   memory: {
     listSkills: vi.fn().mockResolvedValue({ skills: [] }),
