@@ -9,6 +9,7 @@ import { WorkspacePanel } from "./components/workspace/WorkspacePanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { useSettingsStore } from "./stores/settings";
+import { useChatStore } from "./stores/chat";
 
 type PythonStatus = "starting" | "ready" | "crashed" | "giving_up" | null;
 
@@ -37,6 +38,24 @@ export default function App() {
       root.classList.remove("dark");
     }
   }, [theme]);
+
+  // 拉取 Home workspace 路径（桌面目录）并写入 chat store，供 SessionList 分组 + ChatComposer tooltip 使用
+  useEffect(() => {
+    let mounted = true;
+    void window.api.app
+      .getHomeWorkspaceDir()
+      .then((p) => {
+        if (mounted && typeof p === "string" && p.length > 0) {
+          useChatStore.getState().setHomeWorkspacePath(p);
+        }
+      })
+      .catch(() => {
+        /* 拉取失败不致命，UI 会以"默认（桌面）"占位 */
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // 订阅窗口最大化状态
   useEffect(() => {

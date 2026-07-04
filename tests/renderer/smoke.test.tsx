@@ -125,6 +125,7 @@ const mockApi = {
     getVersion: vi.fn().mockResolvedValue("0.1.0"),
     quit: vi.fn().mockResolvedValue(undefined),
     restart: vi.fn().mockResolvedValue(undefined),
+    getHomeWorkspaceDir: vi.fn().mockResolvedValue("/tmp/desktop"),
   },
   window: {
     minimize: vi.fn().mockResolvedValue(undefined),

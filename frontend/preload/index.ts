@@ -366,6 +366,7 @@ const api: ElectronAPI = {
     getVersion: () => ipcRenderer.invoke("app:getVersion"),
     quit: () => ipcRenderer.invoke("app:quit"),
     restart: () => ipcRenderer.invoke("app:restart"),
+    getHomeWorkspaceDir: () => ipcRenderer.invoke("app:getHomeWorkspaceDir"),
   },
   window: {
     minimize: () => ipcRenderer.invoke("window:minimize"),

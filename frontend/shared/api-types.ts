@@ -315,6 +315,8 @@ export interface ElectronAPI {
     getVersion: () => Promise<string>;
     quit: () => Promise<void>;
     restart: () => Promise<void>;
+    /** 返回桌面目录路径（Home workspace 默认归属） */
+    getHomeWorkspaceDir: () => Promise<string>;
   };
   window: {
     minimize: () => Promise<void>;

@@ -73,6 +73,31 @@ function getBackendCwd(): string {
   return path.resolve(app.getAppPath(), "backend");
 }
 
+/**
+ * 返回 Home workspace 的根目录：用户的桌面（Desktop）。
+ *
+ * - Windows: %USERPROFILE%\Desktop
+ * - macOS:   $HOME/Desktop
+ * - Linux:   $HOME/Desktop
+ *
+ * 若桌面目录不存在（少数 Linux/服务器环境），回退到 home 目录，
+ * 保证调用方永远拿到一个非空的可写路径。
+ */
+export function getHomeWorkspaceDir(): string {
+  const home = app.getPath("home");
+  const candidates = [
+    process.platform === "win32" ? path.join(home, "Desktop") : path.join(home, "Desktop"),
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+    } catch {
+      /* ignore */
+    }
+  }
+  return home;
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -254,6 +279,8 @@ function registerIpc(): void {
     app.relaunch();
     app.quit();
   });
+  // Home workspace：返回桌面目录路径，renderer 用作"未显式选 workspace"时的默认归属
+  ipcMain.handle("app:getHomeWorkspaceDir", () => getHomeWorkspaceDir());
 
   ipcMain.handle("settings:setMilvusCredentials", async (_e, user: string, password: string) => {
     setMilvusCredentials(user, password);

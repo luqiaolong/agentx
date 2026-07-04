@@ -178,4 +178,37 @@ describe("chat store", () => {
     expect(state.threadId).toBeUndefined();
     expect(state.setThreadId).toBeUndefined();
   });
+
+  it("createSession 不传参时归属 Home（workspacePath=null）", () => {
+    const id = useChatStore.getState().createSession();
+    expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
+  });
+
+  it("createSession 传 workspace 时归属该 workspace", () => {
+    const id = useChatStore.getState().createSession("/tmp/foo");
+    expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/foo");
+  });
+
+  it("moveSessionToWorkspace 迁移会话到新 workspace", () => {
+    const id = useChatStore.getState().createSession("/tmp/a");
+    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/b");
+    expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/b");
+  });
+
+  it("moveSessionToWorkspace 传 null 迁回 Home", () => {
+    const id = useChatStore.getState().createSession("/tmp/a");
+    useChatStore.getState().moveSessionToWorkspace(id, null);
+    expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
+  });
+
+  it("moveSessionToWorkspace 对不存在的 id 是空操作", () => {
+    const before = useChatStore.getState().sessions;
+    useChatStore.getState().moveSessionToWorkspace("not-exist", "/tmp/x");
+    expect(useChatStore.getState().sessions).toEqual(before);
+  });
+
+  it("setHomeWorkspacePath 设置后 state 持有路径", () => {
+    useChatStore.getState().setHomeWorkspacePath("/tmp/desktop");
+    expect(useChatStore.getState().homeWorkspacePath).toBe("/tmp/desktop");
+  });
 });

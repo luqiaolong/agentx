@@ -20,20 +20,40 @@ export interface Session {
   title: string;
   messages: ChatMessage[];
   createdAt: number;
+  /**
+   * 会话归属的 workspace 绝对路径。
+   * - `null`：归属 Home（虚拟 workspace），等价于 Electron 桌面目录
+   * - 非空字符串：用户显式选择的目录
+   *
+   * 所有会话必须挂载在某个 workspace 下（Home 也是 workspace）。
+   */
+  workspacePath: string | null;
 }
 
 interface ChatState {
   // 多会话结构
   sessions: Record<string, Session>;
   currentId: string | null;
+  // Home workspace 路径（来自 Electron Main；首次启动时拉取，写入 store 后即可用于分组）
+  homeWorkspacePath: string | null;
   // 通用状态
   isStreaming: boolean;
   approvalRequest: ApprovalRequest | null;
   // 会话管理
-  createSession: () => string;
+  /**
+   * 新建会话。
+   * @param workspacePath 显式指定归属（一般是 Home 或用户选择的目录）。
+   *                      不传时按需求"总是新建到 Home"。
+   */
+  createSession: (workspacePath?: string | null) => string;
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   renameSession: (id: string, title: string) => void;
+  /**
+   * 把会话迁到指定 workspace。null 表示迁回 Home。
+   */
+  moveSessionToWorkspace: (id: string, workspacePath: string | null) => void;
+  setHomeWorkspacePath: (p: string | null) => void;
   // 当前会话消息操作（作用于 sessions[currentId]）
   addMessage: (msg: ChatMessage) => void;
   appendMessageContent: (id: string, content: string) => void;
@@ -44,8 +64,14 @@ interface ChatState {
 
 const DEFAULT_TITLE = "新会话";
 
-function createSessionRecord(id: string): Session {
-  return { id, title: DEFAULT_TITLE, messages: [], createdAt: Date.now() };
+function createSessionRecord(id: string, workspacePath: string | null = null): Session {
+  return {
+    id,
+    title: DEFAULT_TITLE,
+    messages: [],
+    createdAt: Date.now(),
+    workspacePath,
+  };
 }
 
 // 迁移：v0（单会话 {messages, threadId}） -> v1（多会话 {sessions, currentId}）
@@ -66,8 +92,33 @@ function migrateV0toV1(persisted: unknown): Partial<ChatState> {
     title: DEFAULT_TITLE,
     messages: oldMessages,
     createdAt: oldMessages.length > 0 ? oldMessages[0].ts : Date.now(),
+    workspacePath: null,
   };
   return { sessions: { [id]: session }, currentId: id };
+}
+
+// v1 -> v2：所有 session 补 workspacePath 字段（缺省为 null = Home）
+function migrateV1toV2(persisted: unknown): Partial<ChatState> {
+  const p = (persisted ?? {}) as Record<string, unknown>;
+  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
+  const sessions: Record<string, Session> = {};
+  for (const [id, raw] of Object.entries(rawSessions)) {
+    if (!raw || typeof raw !== "object") continue;
+    sessions[id] = {
+      id: typeof raw.id === "string" ? raw.id : id,
+      title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
+      messages: Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : [],
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      workspacePath:
+        typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
+          ? raw.workspacePath
+          : null,
+    };
+  }
+  return {
+    sessions,
+    currentId: typeof p.currentId === "string" ? p.currentId : null,
+  };
 }
 
 export const useChatStore = create<ChatState>()(
@@ -76,13 +127,17 @@ export const useChatStore = create<ChatState>()(
       (set) => ({
         sessions: {},
         currentId: null,
+        homeWorkspacePath: null,
         isStreaming: false,
         approvalRequest: null,
 
-        createSession: () => {
+        createSession: (workspacePath = null) => {
           const id = crypto.randomUUID();
           set((s) => {
-            const sessions = { ...s.sessions, [id]: createSessionRecord(id) };
+            const sessions = {
+              ...s.sessions,
+              [id]: createSessionRecord(id, workspacePath),
+            };
             const currentId = id;
             return { sessions, currentId };
           });
@@ -121,6 +176,21 @@ export const useChatStore = create<ChatState>()(
             return { sessions };
           });
         },
+
+        moveSessionToWorkspace: (id, workspacePath) => {
+          set((s) => {
+            const sess = s.sessions[id];
+            if (!sess) return s;
+            if (sess.workspacePath === workspacePath) return s;
+            const sessions = {
+              ...s.sessions,
+              [id]: { ...sess, workspacePath },
+            };
+            return { sessions };
+          });
+        },
+
+        setHomeWorkspacePath: (p) => set({ homeWorkspacePath: p }),
 
         addMessage: (msg) => {
           set((s) => {
@@ -170,12 +240,16 @@ export const useChatStore = create<ChatState>()(
       {
         name: "agent-py-chat",
         storage: createJSONStorage(() => localStorage),
-        version: 1,
+        version: 2,
         migrate: (persisted, version) => {
+          let state: Partial<ChatState> = persisted as Partial<ChatState>;
           if (version < 1) {
-            return migrateV0toV1(persisted);
+            state = migrateV0toV1(state);
           }
-          return persisted as Partial<ChatState>;
+          if (version < 2) {
+            state = migrateV1toV2(state);
+          }
+          return state;
         },
         merge: (persistedState, currentState) => {
           const p = (persistedState ?? {}) as Partial<ChatState>;
@@ -189,7 +263,11 @@ export const useChatStore = create<ChatState>()(
             currentId,
           };
         },
-        partialize: (s) => ({ sessions: s.sessions, currentId: s.currentId }),
+        partialize: (s) => ({
+          sessions: s.sessions,
+          currentId: s.currentId,
+          homeWorkspacePath: s.homeWorkspacePath,
+        }),
       },
     ),
     { name: "chat-store" },

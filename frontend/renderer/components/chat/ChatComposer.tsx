@@ -1,12 +1,31 @@
 import { useRef, useState } from "react";
-import { ArrowUp, Square, Paperclip, Slash, AtSign } from "lucide-react";
-import { SkillPicker } from "./SkillPicker";
+import {
+  ArrowUp,
+  Square,
+  Paperclip,
+  Slash,
+  AtSign,
+  FolderPlus,
+  Folder,
+  X,
+} from "lucide-react";
+import { CommandPicker } from "./CommandPicker";
 import { useAutoResizeTextarea } from "@/hooks/useAutoResizeTextarea";
+import {
+  buildCommandList,
+  useCommandPickerStore,
+  type CommandEntry,
+} from "@/stores/commands";
+import { useSkillsStore } from "@/stores/skills";
+import { useChatStore } from "@/stores/chat";
 
 /**
- * 输入区 + 拖拽 + 技能触发。
- * 拥有输入文本、拖拽、技能选择器、textarea 撑高等局部状态；
- * 通过 onSend/onAbort 把发送/中止交给 ChatView 协调 store 与 SSE。
+ * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）。
+ *
+ * 命令面板状态由 stores/commands.ts::useCommandPickerStore 持有：
+ * - open / anchor / query / activeIndex
+ * ChatComposer 只负责：检测 / 触发、键盘导航、关闭、把选中的 entry.insert 回填输入框。
+ * 内置命令的"执行"由 ChatView 接管（onSend 收到完整文本后再分发）。
  */
 export function ChatComposer({
   isStreaming,
@@ -21,55 +40,190 @@ export function ChatComposer({
 }) {
   const [input, setInput] = useState("");
   const [dragOver, setDragOver] = useState(false);
-  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
-  const skillAnchorRef = useRef<number | null>(null);
+  const currentId = useChatStore((s) => s.currentId);
+  const currentSession = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId] ?? null : null,
+  );
+  const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
+  const moveSessionToWorkspace = useChatStore((s) => s.moveSessionToWorkspace);
+  // workspace 路径跟随当前会话绑定，而非本地 state，
+  // 这样切换会话能正确切换 workspace；store 会持久化到 localStorage
+  const workspacePath = currentSession?.workspacePath ?? null;
+  const showWorkspaceChip = Boolean(workspacePath);
   const { textareaRef, textareaHeight } = useAutoResizeTextarea(input);
 
-  const handleSubmit = () => {
-    const content = input.trim();
-    if (!content || isStreaming) return;
-    onSend(content);
-    setInput("");
+  const skills = useSkillsStore((s) => s.skills);
+  const pickerOpen = useCommandPickerStore((s) => s.open);
+  const setPickerOpen = useCommandPickerStore((s) => s.setOpen);
+  const setAnchor = useCommandPickerStore((s) => s.setAnchor);
+  const setQuery = useCommandPickerStore((s) => s.setQuery);
+  const activeIndex = useCommandPickerStore((s) => s.activeIndex);
+  const setActiveIndex = useCommandPickerStore((s) => s.setActiveIndex);
+  const resetPicker = useCommandPickerStore((s) => s.reset);
+
+  // 同步打开状态：当面板关闭时清空 query/anchor，避免残留影响下一次触发
+  const handleClosePicker = () => {
+    resetPicker();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-    // Esc 关闭技能选择器，避免遮挡视线
-    if (e.key === "Escape" && skillPickerOpen) {
-      setSkillPickerOpen(false);
+  // 把 `/` 到当前光标的子串作为 query 写入 store。
+  // 例如当前输入 "/set" 时，query = "set"。
+  const syncQueryFromInput = (val: string, anchor: number) => {
+    const slice = val.slice(anchor + 1);
+    // 若 slice 中出现空白或换行，说明已经退出命令模式，关闭面板
+    if (/\s/.test(slice) || slice.includes("\n")) {
+      setPickerOpen(false);
+      setQuery("");
+      setAnchor(null);
+    } else {
+      setQuery(slice);
     }
   };
 
-  // 输入末尾为 `/` 且整串仍处于命令模式（行首 / 紧跟空白）时，打开技能选择器，
-  // 锚点记录 `/` 位置以便回填。仅插入"技能名称"本身，不带前缀（与 /reset /clear 风格区分）。
+  // 检测输入末尾为 `/`，且 `/` 处于行首或紧跟空白 → 打开命令面板
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
     if (val.endsWith("/")) {
       const prev = val.length >= 2 ? val[val.length - 2] : "";
       if (prev === "" || /\s/.test(prev)) {
-        skillAnchorRef.current = val.length - 1;
-        setSkillPickerOpen(true);
+        const anchor = val.length - 1;
+        setAnchor(anchor);
+        setQuery("");
+        setPickerOpen(true);
+      }
+    } else if (pickerOpen) {
+      const anchor = useCommandPickerStore.getState().anchor;
+      if (anchor !== null && anchor < val.length) {
+        syncQueryFromInput(val, anchor);
       }
     }
   };
 
-  const handleSkillSelect = (name: string) => {
-    const pos = skillAnchorRef.current;
-    // 仅插入技能名称 + 空格，与 /reset /clear 等带斜杠的命令视觉区分
-    const replacement = `${name} `;
-    if (pos === null) {
-      setInput((s) => `${s}${replacement}`);
-    } else {
-      setInput((s) => `${s.slice(0, pos)}${replacement}${s.slice(pos + 1)}`);
-    }
-    skillAnchorRef.current = null;
-    setSkillPickerOpen(false);
+  // 选中条目后，把 entry.insert 替换到 anchor 位置；用户继续输入参数或回车
+  const handleEntrySelect = (entry: CommandEntry) => {
+    const anchor = useCommandPickerStore.getState().anchor;
+    setInput((s) => {
+      if (anchor === null || anchor >= s.length) {
+        return `${s}${entry.insert}`;
+      }
+      // 替换从 anchor（含 /）开始到当前光标的整段子串
+      const tail = s.slice(anchor + 1);
+      const tailEnd = /\s/.test(tail) ? anchor + 1 + tail.search(/\s/) : s.length;
+      return `${s.slice(0, anchor)}${entry.insert}${s.slice(tailEnd)}`;
+    });
+    resetPicker();
     textareaRef.current?.focus();
   };
+
+  const entries = buildCommandList(
+    useCommandPickerStore.getState().query,
+    skills,
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 面板打开时拦截 ↑↓ Enter Esc，避免破坏 textarea 默认行为
+    if (pickerOpen && entries.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex((activeIndex + 1) % entries.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex((activeIndex - 1 + entries.length) % entries.length);
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const entry = entries[activeIndex];
+        if (entry) handleEntrySelect(entry);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleClosePicker();
+        return;
+      }
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    } else if (e.key === "Escape" && pickerOpen) {
+      handleClosePicker();
+    }
+  };
+
+  const handleSubmit = () => {
+    const content = input.trim();
+    if (!content || isStreaming) return;
+    // 工作区标记：用户显式选了 workspace 就附上当前会话绑定的路径；
+    // Home（null）情况下不附带 <workspace> 标签，让 LLM 知道当前不在特定目录下。
+    const finalContent = workspacePath
+      ? `<workspace>${workspacePath}</workspace> ${content}`
+      : content;
+    onSend(finalContent);
+    setInput("");
+    handleClosePicker();
+  };
+
+  const openCommandPickerManually = () => {
+    setInput((s) => {
+      const next = s.endsWith("/") ? s : `${s}/`;
+      const prev = next.length >= 2 ? next[next.length - 2] : "";
+      if (prev === "" || /\s/.test(prev)) {
+        const anchor = next.length - 1;
+        setAnchor(anchor);
+        setQuery("");
+        setPickerOpen(true);
+      }
+      return next;
+    });
+    textareaRef.current?.focus();
+  };
+
+  // 选择 workspace 目录：弹出 OS 目录选择器，授权当前 thread 为可写 workspace，
+  // 并把路径写回当前会话的 workspacePath（store 持久化）；
+  // 提交消息时再以 <workspace> 标记拼到内容前面发给后端，让 LLM 看到当前工作目录。
+  // 若当前无 thread，则先创建会话；授权失败走 dropError 通道统一展示。
+  const handleAttachWorkspace = async () => {
+    setDropError(null);
+    const result = (await window.api.dialog.openFolder()) as
+      | { canceled?: boolean; filePaths?: string[] }
+      | undefined;
+    if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return;
+    }
+    const dirPath = result.filePaths[0];
+    const store = useChatStore.getState();
+    let tid = store.currentId;
+    if (!tid) {
+      // 没有当前会话：创建并绑定到这个新 workspace（需求允许"workspace 侧新建"）
+      tid = store.createSession(dirPath);
+    } else {
+      // 把当前会话迁到新 workspace（持久化）
+      store.moveSessionToWorkspace(tid, dirPath);
+    }
+    try {
+      await window.api.sandbox.authorize(tid, dirPath, true);
+    } catch (err) {
+      setDropError(
+        `授权目录「${dirPath}」失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+  };
+
+  // 移除/切换 workspace chip：把当前会话迁回 Home（workspacePath=null）
+  const handleRemoveWorkspace = () => {
+    const tid = useChatStore.getState().currentId;
+    if (!tid) return;
+    useChatStore.getState().moveSessionToWorkspace(tid, null);
+  };
+
+  // 工作区 chip 的 tooltip：展示完整路径，Home 时附带桌面目录（来自 store）
+  const workspaceChipTitle = workspacePath ?? homeWorkspacePath ?? "Home";
 
   // 点击 @ 按钮 → 弹出 OS 文件选择器，选中后以 <file>rel</file> 形式追加到末尾。
   // 支持多选，错误信息走现有 dropError 通道统一展示。
@@ -142,10 +296,10 @@ export function ChatComposer({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {skillPickerOpen && (
-            <SkillPicker
-              onSelect={handleSkillSelect}
-              onClose={() => setSkillPickerOpen(false)}
+          {pickerOpen && (
+            <CommandPicker
+              onSelect={handleEntrySelect}
+              onClose={handleClosePicker}
             />
           )}
 
@@ -155,7 +309,7 @@ export function ChatComposer({
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             rows={1}
-            placeholder="输入消息，或 / 调技能，@ 附文件"
+            placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
             aria-label="消息输入框"
             className="input-borderless block max-h-40 min-h-[1.5rem] w-full pr-1"
             style={{ height: `${textareaHeight}px` }}
@@ -166,21 +320,9 @@ export function ChatComposer({
               <button
                 type="button"
                 className="btn-icon"
-                onClick={() => {
-                  setInput((s) => {
-                    const next = s.endsWith("/") ? s : `${s}/`;
-                    // 仅在行首或空白后触发命令模式
-                    const prev = next.length >= 2 ? next[next.length - 2] : "";
-                    if (prev === "" || /\s/.test(prev)) {
-                      skillAnchorRef.current = next.length - 1;
-                      setSkillPickerOpen(true);
-                    }
-                    return next;
-                  });
-                  textareaRef.current?.focus();
-                }}
-                title="调用技能 (/ 命令)"
-                aria-label="调用技能"
+                onClick={openCommandPickerManually}
+                title="调用命令或技能 (/ 命令)"
+                aria-label="调用命令或技能"
               >
                 <Slash className="h-3.5 w-3.5" />
               </button>
@@ -193,8 +335,51 @@ export function ChatComposer({
               >
                 <AtSign className="h-3.5 w-3.5" />
               </button>
+              {showWorkspaceChip && workspacePath ? (
+                <span
+                  className="inline-flex max-w-[200px] items-center gap-1 rounded-md bg-brand-600/10 px-1.5 py-0.5 text-[11px] font-medium text-brand-500"
+                  title={workspaceChipTitle}
+                >
+                  <Folder className="h-3 w-3 shrink-0" />
+                  <span className="truncate">
+                    {workspacePath.split(/[\\/]/).pop() || workspacePath}
+                  </span>
+                  <button
+                    type="button"
+                    className="ml-0.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-brand-500/70 transition-colors hover:bg-brand-500/20 hover:text-brand-500"
+                    onClick={handleRemoveWorkspace}
+                    title="迁回 Home"
+                    aria-label="迁回 Home"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-brand-500/70 transition-colors hover:bg-brand-500/20 hover:text-brand-500"
+                    onClick={() => void handleAttachWorkspace()}
+                    title="更换 workspace"
+                    aria-label="更换 workspace"
+                  >
+                    <FolderPlus className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => void handleAttachWorkspace()}
+                  title={
+                    homeWorkspacePath
+                      ? `选择 workspace（Home = ${homeWorkspacePath}）`
+                      : "选择 workspace 目录"
+                  }
+                  aria-label="选择 workspace 目录"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                </button>
+              )}
               <span className="hidden sm:inline">
-                / 调用技能 · @ 附加文件 · 拖入文件也支持
+                / 命令与技能 · @ 附加文件 · 文件夹选 workspace · 拖入文件也支持
               </span>
             </div>
             <div className="flex items-center gap-1.5">
