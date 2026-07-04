@@ -166,12 +166,11 @@ def test_parse_skill_tag_with_valid_skill(
 def test_parse_skill_tag_skill_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """@skill:<nonexistent> → 保持原样，不注入 content。"""
+    """@skill:<nonexistent> → 移除标记（避免 LLM 困惑），不注入 content。"""
     monkeypatch.setattr("app.router.graph.get_skills", lambda: [])
 
-    original = "@skill:nonexistent 做某事"
-    msg, content = _parse_skill_tag(original)
-    assert msg == original
+    msg, content = _parse_skill_tag("@skill:nonexistent 做某事")
+    assert msg == "做某事"
     assert content is None
 
 
@@ -189,6 +188,32 @@ def test_parse_skill_tag_truncates_long_content(
     assert len(content) <= 4000 + len("\n[skill content truncated]")
     assert content.startswith("A" * 4000)
     assert "[skill content truncated]" in content
+
+
+def test_parse_skill_tag_multiple_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """多个 @skill: 标记 → 首个存在技能注入 content，所有标记从消息移除。"""
+    fake_skills = [
+        _make_skill(name="a", content="A技能"),
+        _make_skill(name="b", content="B技能"),
+    ]
+    monkeypatch.setattr("app.router.graph.get_skills", lambda: fake_skills)
+
+    msg, content = _parse_skill_tag("@skill:a @skill:b 任务")
+    assert msg == "任务"
+    assert content == "A技能"
+
+
+def test_parse_skill_tag_multiple_all_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """多个不存在的 @skill: 标记 → 全部移除，不注入 content。"""
+    monkeypatch.setattr("app.router.graph.get_skills", lambda: [])
+
+    msg, content = _parse_skill_tag("@skill:x @skill:y 做事")
+    assert msg == "做事"
+    assert content is None
 
 
 def test_parse_skill_tag_tag_in_middle(

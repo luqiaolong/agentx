@@ -233,7 +233,11 @@ async def list_workspace(path: str) -> list[dict]:
     try:
         for entry in sorted(target.iterdir(), key=lambda e: e.name):
             try:
-                stat = entry.stat()
+                # 安全：用 lstat 而非 stat，避免 follow symlink 泄露目标元数据
+                # symlink 本身跳过不列出（白名单内 symlink 通常无必要，且可能逃逸沙箱）
+                if entry.is_symlink():
+                    continue
+                stat = entry.lstat()
                 entries.append(
                     {
                         "name": entry.name,

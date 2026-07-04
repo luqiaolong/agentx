@@ -295,30 +295,42 @@ _SKILL_TAG_RE = re.compile(r"@skill:(\S+)")
 
 
 def _parse_skill_tag(message: str) -> tuple[str, str | None]:
-    """解析用户消息中的 ``@skill:<name>`` 标记。
+    """解析用户消息中的所有 ``@skill:<name>`` 标记。
 
-    - 命中且技能存在：从 message 中移除标记，返回 ``(cleaned_message, skill_content)``。
-    - 未命中或技能不存在：返回 ``(原消息, None)``，保持原样。
+    - 移除所有 @skill: 标记（无论技能是否存在），避免 LLM 看到未知标记困惑。
+    - 首个存在的技能 → 注入其 content；其余标记仅移除。
+    - 无标记或所有技能都不存在 → ``(cleaned_message, None)``。
     - 单 skill content 超过 ``_SKILL_CONTENT_MAX`` 字符时截断并追加标记。
+
+    Examples:
+        >>> _parse_skill_tag("@skill:coder 帮我写代码")
+        ("帮我写代码", "<coder skill content>")
+        >>> _parse_skill_tag("@skill:unknown 帮我")  # 技能不存在
+        ("帮我", None)
+        >>> _parse_skill_tag("@skill:a @skill:b 任务")  # 多标签，a 存在
+        ("任务", "<a skill content>")
     """
-    match = _SKILL_TAG_RE.search(message)
-    if not match:
+    matches = list(_SKILL_TAG_RE.finditer(message))
+    if not matches:
         return (message, None)
 
-    skill_name = match.group(1)
     skills = get_skills()
-    skill = next((s for s in skills if s.name == skill_name), None)
-    if skill is None:
-        return (message, None)
+    skill_content: str | None = None
+    for match in matches:
+        skill_name = match.group(1)
+        skill = next((s for s in skills if s.name == skill_name), None)
+        if skill is not None:
+            content = skill.content
+            if len(content) > _SKILL_CONTENT_MAX:
+                content = content[:_SKILL_CONTENT_MAX] + "\n[skill content truncated]"
+            skill_content = content
+            break  # 仅注入首个存在的技能
 
-    # 移除首个 @skill:<name> 标记，剩余文本作为用户消息
-    cleaned = message.replace(match.group(0), "", 1).strip()
-
-    content = skill.content
-    if len(content) > _SKILL_CONTENT_MAX:
-        content = content[:_SKILL_CONTENT_MAX] + "\n[skill content truncated]"
-
-    return (cleaned, content)
+    # 移除所有 @skill:<name> 标记（含不存在的），剩余文本作为用户消息
+    cleaned = _SKILL_TAG_RE.sub("", message).strip()
+    # 合并多余空白（移除标记后可能留下连续空格）
+    cleaned = " ".join(cleaned.split())
+    return (cleaned, skill_content)
 
 
 async def run_router(
