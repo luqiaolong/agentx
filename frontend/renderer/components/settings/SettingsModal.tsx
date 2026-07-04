@@ -10,6 +10,8 @@ import {
   Bot,
   Wrench,
   Brain,
+  FileText,
+  Plug,
 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { ModelProviderSettings } from "./ModelProviderSettings";
@@ -21,10 +23,14 @@ import { SandboxSettings } from "./SandboxSettings";
 import { SubagentsSettings } from "./SubagentsSettings";
 import { ToolsSettings } from "./ToolsSettings";
 import { MemorySettings } from "./MemorySettings";
+import { McpSettings } from "./McpSettings";
+import { SkillsManager } from "./memory/SkillsManager";
 
 type TabId =
-  | "models"
   | "prompt"
+  | "models"
+  | "skills"
+  | "mcp"
   | "subagents"
   | "tools"
   | "knowledge"
@@ -41,14 +47,16 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  { id: "models", label: "模型与密钥", desc: "LLM 服务商、API Key 与激活模型", Icon: Cpu },
   { id: "prompt", label: "系统提示词", desc: "agent 的全局系统提示", Icon: MessageSquare },
+  { id: "models", label: "模型", desc: "LLM 服务商、API Key 与激活模型", Icon: Cpu },
+  { id: "skills", label: "技能", desc: "data/skills/*.md 技能文件管理", Icon: FileText },
+  { id: "mcp", label: "MCP", desc: "外部 MCP server 配置与连接", Icon: Plug },
   { id: "subagents", label: "子代理", desc: "code/rag/web 子代理配置", Icon: Bot },
   { id: "tools", label: "工具", desc: "工具启用与禁用", Icon: Wrench },
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
   { id: "sandbox", label: "沙箱目录", desc: "持久化授权目录", Icon: FolderLock },
-  { id: "memory", label: "记忆", desc: "技能、会话与用户画像", Icon: Brain },
+  { id: "memory", label: "记忆", desc: "会话状态与用户画像", Icon: Brain },
   { id: "logs", label: "日志", desc: "运行时日志查看", Icon: ScrollText },
 ];
 
@@ -57,17 +65,17 @@ const PANEL_ID = "settings-tabpanel";
 export function SettingsModal() {
   const isOpen = useSettingsStore((s) => s.isSettingsOpen);
   const setOpen = useSettingsStore((s) => s.setSettingsOpen);
-  const [active, setActive] = useState<TabId>("models");
+  const [active, setActive] = useState<TabId>("prompt");
 
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
   // 打开时记录触发元素，关闭后恢复焦点
   const triggerRef = useRef<HTMLElement | null>(null);
 
-  // 打开时：重置 tab 到首个、记录触发元素、初始聚焦关闭按钮
+  // 打开时：重置 tab 到首个（系统提示词）、记录触发元素、初始聚焦关闭按钮
   useEffect(() => {
     if (!isOpen) return;
-    setActive("models");
+    setActive("prompt");
     triggerRef.current = document.activeElement as HTMLElement | null;
     // 下一帧聚焦，确保 dialog 已渲染
     const t = window.setTimeout(() => {
@@ -214,8 +222,10 @@ export function SettingsModal() {
             tabIndex={0}
             className="flex-1 overflow-y-auto px-5 py-4"
           >
-            {active === "models" && <ModelProviderSettings />}
             {active === "prompt" && <SystemPromptSettings />}
+            {active === "models" && <ModelProviderSettings />}
+            {active === "skills" && <SkillsManager />}
+            {active === "mcp" && <McpSettings />}
             {active === "subagents" && <SubagentsSettings />}
             {active === "tools" && <ToolsSettings />}
             {active === "knowledge" && <MilvusCredentialsForm />}

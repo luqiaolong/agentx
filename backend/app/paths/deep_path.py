@@ -63,7 +63,7 @@ __all__ = [
 
 
 def _make_deep_tools(thread_id: str) -> list:
-    """构建 DeepAgent 工具集：只读 fs + 危险 fs + rag + web。
+    """构建 DeepAgent 内置工具集：只读 fs + 危险 fs + rag + web（同步部分）。
 
     安全设计：
     - 只读工具（read_file/list_dir/glob/grep）复用 ``_make_fs_tools``，与 subagent 一致。
@@ -73,6 +73,8 @@ def _make_deep_tools(thread_id: str) -> list:
     T4: 根据 ``get_settings().tools_enabled`` 过滤工具集。若工具被禁用，
     则不暴露给 LLM，且运行时 dangerous 集合也不含该工具（见 ``run_deep_path``）。
     工具名映射：``glob_files``→``glob``、``grep_files``→``grep``（与 subagents 一致）。
+
+    MCP 工具由 ``_load_mcp_tools`` 异步加载并合并（见 ``run_deep_path``）。
     """
     from langchain_core.tools import tool
 
@@ -101,6 +103,25 @@ def _make_deep_tools(thread_id: str) -> list:
         t for t in all_tools
         if enabled.get(_TOOL_NAME_MAP.get(t.name, t.name), True)
     ]
+
+
+async def _load_mcp_tools() -> tuple[list, set[str]]:
+    """加载 MCP 工具，返回 (tools, untrusted_tool_names)。
+
+    - ``tools``: MCP 工具列表（LangChain BaseTool），失败时为空列表。
+    - ``untrusted_tool_names``: 来自 ``trusted=False`` server 的工具名集合，
+      调用方应将其加入 ``runtime_dangerous``，触发 ``interrupt_before`` 审批流。
+
+    失败降级：MCP 客户端未安装或连接失败时返回空列表，不影响 DeepAgent 主流程。
+    """
+    try:
+        from app.mcp import get_mcp_manager
+
+        manager = get_mcp_manager()
+        return await manager.get_tools_with_trust()
+    except Exception as exc:  # noqa: BLE001 — MCP 失败不阻塞主流程
+        logger.warning("MCP tools load failed, skipping: {}", exc)
+        return [], set()
 
 
 def build_deep_agent(
@@ -316,6 +337,17 @@ async def run_deep_path(
     # 1. 构建 agent（先构建工具集，便于计算运行时 dangerous 集合）
     try:
         agent_tools = _make_deep_tools(thread_id)
+        # 异步加载 MCP 工具并合并到 DeepAgent 工具集
+        # MCP 工具仅暴露给 DeepAgent（路径 C），subagent 不暴露（安全红线）
+        mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
+        if mcp_tools:
+            agent_tools.extend(mcp_tools)
+            logger.info(
+                "MCP tools merged into DeepAgent",
+                thread_id=thread_id,
+                count=len(mcp_tools),
+                untrusted=len(mcp_untrusted_names),
+            )
         agent = build_deep_agent(thread_id, tools=agent_tools, profile_prompt=profile_prompt)
     except ValueError as exc:
         yield {"event": "error", "data": f"LLM 不可用: {exc}"}
@@ -327,10 +359,11 @@ async def run_deep_path(
 
     # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集
     # 安全关键：若 edit_file 被禁用，此处不含 edit_file，审批流不会误触发
+    # MCP 工具：来自 trusted=False server 的工具也加入危险集合，触发审批
     enabled_tool_names = {
         _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
     }
-    runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
+    runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
     # 2. 初始流式运行（可能中断在 tools 前）
     try:

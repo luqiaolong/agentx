@@ -1,25 +1,21 @@
 import { useState } from "react";
-import { FileText, Database, UserCircle } from "lucide-react";
-import { SkillsManager } from "./memory/SkillsManager";
+import { Database, UserCircle } from "lucide-react";
 import { CheckpointerManager } from "./memory/CheckpointerManager";
 import { ProfileManager } from "./memory/ProfileManager";
 
-type MemoryTab = "skills" | "checkpointer" | "profile";
+// 技能文件管理已迁移到一级 tab「技能」（SettingsModal.tsx 的 skills tab），
+// 此处仅保留 Checkpointer 与用户画像两个子 tab。
+
+type MemoryTab = "checkpointer" | "profile";
 
 interface MemoryTabDef {
   id: MemoryTab;
   label: string;
   desc: string;
-  Icon: typeof FileText;
+  Icon: typeof Database;
 }
 
 const MEMORY_TABS: MemoryTabDef[] = [
-  {
-    id: "skills",
-    label: "技能文件",
-    desc: "data/skills/*.md 的增删改",
-    Icon: FileText,
-  },
   {
     id: "checkpointer",
     label: "Checkpointer",
@@ -35,7 +31,7 @@ const MEMORY_TABS: MemoryTabDef[] = [
 ];
 
 export function MemorySettings() {
-  const [active, setActive] = useState<MemoryTab>("skills");
+  const [active, setActive] = useState<MemoryTab>("checkpointer");
   const activeTab = MEMORY_TABS.find((t) => t.id === active) ?? MEMORY_TABS[0];
 
   return (
@@ -70,7 +66,6 @@ export function MemorySettings() {
 
       <p className="text-[11px] text-muted-c">{activeTab.desc}</p>
 
-      {active === "skills" && <SkillsManager />}
       {active === "checkpointer" && <CheckpointerManager />}
       {active === "profile" && <ProfileManager />}
     </div>
