@@ -38,9 +38,10 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings, reload_settings
@@ -170,6 +171,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class UTF8JSONBodyMiddleware(BaseHTTPMiddleware):
+    """application/json request body 编码探测与解码。
+
+    背景：Windows Git Bash + curl 在命令行 ``-d '{"name":"测试"}'`` 时会做
+    ``locale → wide-char → locale`` 双重转码，导致发送的字节流被序列化为
+    GBK（即便 ``Content-Type: application/json`` 没声明 charset）。
+    Starlette 默认按声明的 charset 解码 → 400。
+
+    本 middleware 拦截 ``application/json`` 请求：
+    1. UTF-8 解码成功 → 放回 body（正常路径）
+    2. UTF-8 失败但 GBK 成功 → 转码为 UTF-8 再放回（兼容 Windows curl）
+    3. 都失败 → 400 with 明确错误
+
+    非 application/json 请求透传不动，避免误伤 form / multipart / SSE 上行。
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        content_type = (request.headers.get("content-type") or "").lower()
+        if content_type.startswith("application/json"):
+            raw = await request.body()
+            if raw:
+                # 1. 优先 UTF-8
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    # 2. 回退 GBK（Windows cmd / Git Bash 默认）
+                    try:
+                        text = raw.decode("gbk")
+                    except UnicodeDecodeError:
+                        from starlette.responses import JSONResponse
+                        return JSONResponse(
+                            {"detail": "request body is not valid UTF-8 or GBK"},
+                            status_code=400,
+                        )
+                    # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
+                    request._body = text.encode("utf-8")  # noqa: SLF001
+                else:
+                    # UTF-8 合法，按原样放回
+                    request._body = raw  # noqa: SLF001
+        return await call_next(request)
+
+
+app.add_middleware(UTF8JSONBodyMiddleware)
 
 
 # ============================================================
@@ -374,13 +420,18 @@ async def skills_reload() -> dict[str, Any]:
 
 
 @app.get("/api/workspace/list")
-async def workspace_list(path: str = "data/workspace") -> dict[str, Any]:
-    """列出沙箱白名单内目录的条目（含 type/size/mtime）。
+async def workspace_list(
+    path: str = "data/workspace",
+    thread_id: str = "",
+) -> dict[str, Any]:
+    """列出沙箱白名单内或已授权目录的条目（含 type/size/mtime）。
 
-    仅允许 ``data/workspace`` 和 ``data/uploads``，其他路径 → 400。
+    允许 ``data/workspace`` 和 ``data/uploads``（始终可读），
+    以及通过 ``POST /api/sandbox/authorize`` 授权给 ``thread_id`` 的目录。
+    其他路径 → 400。
     """
     try:
-        entries = await list_workspace(path)
+        entries = await list_workspace(path, thread_id or None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError as exc:

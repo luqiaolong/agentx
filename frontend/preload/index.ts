@@ -207,9 +207,14 @@ const api: ElectronAPI = {
     },
   },
   workspace: {
-    list: async (p) => {
+    list: async (p, threadId) => {
+      const params = new URLSearchParams();
+      params.set("path", p ?? "");
+      if (threadId) {
+        params.set("thread_id", threadId);
+      }
       const r = await fetch(
-        `${API_BASE}/api/workspace/list?path=${encodeURIComponent(p ?? "")}`,
+        `${API_BASE}/api/workspace/list?${params.toString()}`,
       );
       return (await r.json()) as { entries: WorkspaceEntry[] };
     },

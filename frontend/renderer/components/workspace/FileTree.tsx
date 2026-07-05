@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Folder, FileText, ChevronRight, Home, FolderOpen } from "lucide-react";
+import { useChatStore } from "@/stores/chat";
 
 interface Entry {
   name: string;
@@ -21,14 +22,35 @@ function joinPath(base: string, name: string): string {
 export function FileTree() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [currentPath, setCurrentPath] = useState("");
+  const [relPath, setRelPath] = useState("");
   const [err, setErr] = useState<string | null>(null);
+
+  const currentId = useChatStore((s) => s.currentId);
+  const currentSession = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId] ?? null : null,
+  );
+  const workspacePath = currentSession?.workspacePath ?? null;
+
+  /**
+   * 计算当前浏览的绝对路径：
+   * - 有 workspacePath：root = workspacePath，current = root + relPath
+   * - 无 workspacePath（Home）：root = ""，current = relPath（后端解析为 data/workspace）
+   */
+  const rootPath = workspacePath ?? "";
+  const currentPath = rootPath
+    ? relPath
+      ? `${rootPath}/${relPath}`.replace(/\\/g, "/")
+      : rootPath
+    : relPath;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const { entries: list } = await window.api.workspace.list(currentPath);
+      const { entries: list } = await window.api.workspace.list(
+        currentPath,
+        currentId ?? undefined,
+      );
       const sorted = [...list].sort((a, b) => {
         if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
         return a.name.localeCompare(b.name);
@@ -40,23 +62,29 @@ export function FileTree() {
     } finally {
       setLoading(false);
     }
-  }, [currentPath]);
+  }, [currentPath, currentId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const breadcrumbParts = currentPath ? currentPath.split("/") : [];
+  // 切换会话时重置相对路径，让文件树回到新会话的 workspace 根
+  useEffect(() => {
+    setRelPath("");
+  }, [currentId]);
+
+  // 面包屑：基于 workspacePath 的相对路径
+  const breadcrumbParts = relPath ? relPath.split("/") : [];
 
   const enter = (name: string): void => {
-    setCurrentPath((p) => joinPath(p, name));
+    setRelPath((p) => joinPath(p, name));
   };
 
   const goTo = (index: number): void => {
     if (index < 0) {
-      setCurrentPath("");
+      setRelPath("");
     } else {
-      setCurrentPath(breadcrumbParts.slice(0, index + 1).join("/"));
+      setRelPath(breadcrumbParts.slice(0, index + 1).join("/"));
     }
   };
 

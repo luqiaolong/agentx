@@ -263,7 +263,7 @@ export interface ElectronAPI {
     reload: () => Promise<{ ok: boolean; count: number }>;
   };
   workspace: {
-    list: (path?: string) => Promise<{ entries: WorkspaceEntry[] }>;
+    list: (path?: string, threadId?: string) => Promise<{ entries: WorkspaceEntry[] }>;
   };
   python: {
     onStatus: (handler: (status: string) => void) => () => void;

@@ -154,8 +154,8 @@ async def grep(thread_id: str, pattern: str, path: str) -> list[str]:
 
 
 # 模块级：记录最近写入操作，用于幂等性检查（防重复写入）
-_recent_writes: dict[str, tuple[str, int, str]] = {}
-"""thread_id → (path, content_len, content_hash) 最近成功写入记录"""
+_recent_writes: dict[str, tuple[str, int, str, float]] = {}
+"""thread_id → (path, content_len, content_hash, timestamp) 最近成功写入记录"""
 
 
 def _content_hash(content: str) -> str:
@@ -183,9 +183,9 @@ async def write_file(thread_id: str, path: str, content: str) -> str:
     now = time()
     recent = _recent_writes.get(thread_id)
     if recent is not None:
-        recent_path, recent_len, recent_hash = recent
+        recent_path, recent_len, recent_hash, recent_ts = recent
         if (recent_path == str(resolved) and recent_len == content_len
-                and recent_hash == content_h and now - recent[3] < 60):  # type: ignore[index]
+                and recent_hash == content_h and now - recent_ts < 60):
             logger.info(
                 "fs.write_file.idempotent_skip",
                 thread_id=thread_id,
@@ -276,10 +276,11 @@ async def edit_file(thread_id: str, path: str, old_text: str, new_text: str) -> 
         return f"编辑文件失败: {path} ({exc})"
 
 
-async def list_workspace(path: str) -> list[dict]:
+async def list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
     """列出沙箱白名单内目录的条目（含 type/size/mtime）。
 
-    仅允许 ``data/workspace`` 和 ``data/uploads``（白名单），其他路径返回 ValueError。
+    允许 ``data/workspace`` 和 ``data/uploads``（白名单），以及通过
+    ``SessionSandbox`` 授权给指定 ``thread_id`` 的目录。
     ``path`` 相对路径基于 ``PROJECT_ROOT`` 解析（与 ``_resolve`` 一致）；
     空或 ``"."`` 表示 ``WORKSPACE_DIR`` 根。
 
@@ -287,7 +288,7 @@ async def list_workspace(path: str) -> list[dict]:
         ``[{"name": str, "type": "file"|"dir", "size": int, "mtime": float}]``。
 
     Raises:
-        ValueError: 路径不在白名单内。
+        ValueError: 路径不在白名单内且未授权。
         FileNotFoundError: 路径不存在。
     """
     # 解析路径
@@ -308,8 +309,20 @@ async def list_workspace(path: str) -> list[dict]:
     # 白名单校验
     whitelist = [WORKSPACE_DIR.resolve(), UPLOADS_DIR.resolve()]
     in_whitelist = any(target == w or w in target.parents for w in whitelist)
+
+    # 若不在白名单，检查是否在当前 thread_id 的授权目录内
     if not in_whitelist:
-        raise ValueError(f"路径不在白名单内: {path}")
+        if thread_id is None:
+            raise ValueError(f"路径不在白名单内: {path}")
+        sandbox = get_sandbox()
+        # 检查目标是否位于该 thread_id 的任一授权目录之下
+        authorized = sandbox.authorized_dirs.get(thread_id, set())
+        in_authorized = any(
+            target == auth_path or auth_path in target.parents
+            for (auth_path, _writable) in authorized
+        )
+        if not in_authorized:
+            raise ValueError(f"路径不在白名单内且未授权: {path}")
 
     if not target.exists():
         raise FileNotFoundError(f"路径不存在: {path}")
