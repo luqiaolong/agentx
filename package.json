@@ -38,6 +38,7 @@
     "react-hook-form": "^7.53.0",
     "react-markdown": "^9.0.0",
     "react-router-dom": "^6.27.0",
+    "remark-gfm": "^4.0.1",
     "shiki": "^1.22.0",
     "tailwind-merge": "^2.5.0",
     "zod": "^3.23.0",

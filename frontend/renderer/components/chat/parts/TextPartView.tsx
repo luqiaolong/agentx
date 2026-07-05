@@ -1,6 +1,7 @@
 import { useDeferredValue, useMemo } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { CodeBlock } from "../CodeBlock";
 
 /** 从 react-markdown 传来的 className（如 "language-ts"）中提取语言标识。 */
@@ -54,7 +55,9 @@ export function TextPartView({
 
   return (
     <div className="prose-chat">
-      <ReactMarkdown components={markdownComponents}>{deferredText}</ReactMarkdown>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+        {deferredText}
+      </ReactMarkdown>
     </div>
   );
 }
