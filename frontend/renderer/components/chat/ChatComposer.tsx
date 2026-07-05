@@ -6,7 +6,6 @@ import {
   Slash,
   AtSign,
   FolderPlus,
-  Folder,
   X,
 } from "lucide-react";
 import { CommandPicker } from "./CommandPicker";
@@ -18,6 +17,8 @@ import {
 } from "@/stores/commands";
 import { useSkillsStore } from "@/stores/skills";
 import { useChatStore } from "@/stores/chat";
+import { usePermissionStore } from "@/stores/permission";
+import { PermissionToggle } from "./PermissionToggle";
 
 /**
  * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）。
@@ -65,6 +66,9 @@ export function ChatComposer({
   useEffect(() => {
     setInput("");
     resetPicker();
+    // 切会话时复位权限模式：permission 是会话级状态，
+    // 跨会话残留 full_trust 会导致新会话直接放行危险工具。
+    usePermissionStore.getState().reset();
     textareaRef.current?.focus();
     // 依赖 currentId：会话变化时上述全部副作用触发一次。
     // 故意不复位 isStreaming/dragOver：流式状态由父组件控制，
@@ -359,11 +363,10 @@ export function ChatComposer({
               </button>
               {showWorkspaceChip && workspacePath ? (
                 <span
-                  className="inline-flex max-w-[200px] items-center gap-1 rounded-md bg-brand-600/10 px-1.5 py-0.5 text-[11px] font-medium text-brand-500"
+                  className="inline-flex max-w-[160px] items-center gap-0.5 rounded-md bg-brand-600/10 px-1.5 py-0.5 text-[11px] font-medium text-brand-500"
                   title={workspaceChipTitle}
                 >
-                  <Folder className="h-3 w-3 shrink-0" />
-                  <span className="truncate">
+                  <span className="max-w-[110px] truncate">
                     {workspacePath.split(/[\\/]/).pop() || workspacePath}
                   </span>
                   <button
@@ -402,6 +405,10 @@ export function ChatComposer({
               )}
             </div>
             <div className="flex items-center gap-1.5">
+              <PermissionToggle
+                workspacePath={workspacePath}
+                homeWorkspacePath={homeWorkspacePath}
+              />
               {isStreaming ? (
                 <button
                   type="button"
