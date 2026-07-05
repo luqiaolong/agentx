@@ -233,6 +233,9 @@ class Settings(BaseSettings):
     dashscope_api_key: str | None = None
     deepseek_api_key: str | None = None
     default_model: str = "minimax-m3"
+    # 单次响应最大 token 数；None = 不限制（依赖模型默认）
+    # 从 AGENTX_MAX_OUTPUT_TOKENS env 读取；用户在 ModelProviderSettings 设置面板填写
+    max_output_tokens: int | None = None
 
     # ---- Embedding (BGE-M3 service on myserver:8093) ----
     embedding_url: str = "http://192.168.1.4:8093/v1/embeddings"
