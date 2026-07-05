@@ -27,7 +27,7 @@
 - ``POST /api/config/reload``    — 热更新后端配置（无需重启进程，清除 settings 缓存）。
 
 跨进程状态：
-- ``_pending_approvals: dict[str, bool]`` — thread_id → 审批决定，DeepAgent 轮询。
+- ``_pending_approvals: dict[str, ApprovalDecision]`` — thread_id → 审批决策，DeepAgent 轮询。
 - ``_abort_flags: dict[str, bool]``       — thread_id → 中止标志，SSE 循环检查。
 """
 
@@ -71,12 +71,12 @@ from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
 from app.router import run_router
 from app.tools.filesystem import list_workspace
-from app.utils.security import PathNotAuthorized, get_sandbox
+from app.utils.security import ApprovalDecision, PathNotAuthorized, get_sandbox
 from app.vectorstore import MilvusUnavailable, get_milvus_client
 
 # ---- 跨请求内存态（M2 迁移到 checkpoint / Redis）----
-# thread_id → 审批决定（True=批准 / False=拒绝）。DeepAgent 经 wait_for_approval 消费。
-_pending_approvals: dict[str, bool] = {}
+# thread_id → 审批决策（含 decision/path/writable）。DeepAgent 经 wait_for_approval 消费。
+_pending_approvals: dict[str, ApprovalDecision] = {}
 # thread_id → 中止标志。SSE handler 每轮迭代检查。
 _abort_flags: dict[str, bool] = {}
 
@@ -185,6 +185,12 @@ class RevokeRequest(BaseModel):
 class ApproveRequest(BaseModel):
     thread_id: str = Field(..., description="会话 ID")
     approval: bool = Field(..., description="True=批准 / False=拒绝")
+    decision: str = Field(
+        default="approve",
+        description='审批决策类型：approve/deny（dangerous_tool）或 once/session/deny（directory_extension）',
+    )
+    path: str | None = Field(default=None, description="directory_extension 目标路径")
+    writable: bool = Field(default=False, description="directory_extension 是否允许写入")
 
 
 class AbortRequest(BaseModel):
@@ -194,6 +200,14 @@ class AbortRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="用户消息（/reset 触发会话重置）")
     thread_id: str = Field(..., description="会话 ID")
+    permission_mode: str = Field(
+        default="standard",
+        description='权限模式：standard（审批流）或 full_trust（会话内全量放行）',
+    )
+    system_prompt: str | None = Field(
+        default=None,
+        description="可选场景 prompt；非空时覆盖 default_system_prompt（场景切换器注入）",
+    )
 
 
 class SkillSaveRequest(BaseModel):
@@ -417,13 +431,22 @@ async def sandbox_authorized(thread_id: str) -> dict[str, Any]:
 
 @app.post("/api/chat/approve")
 async def chat_approve(req: ApproveRequest) -> dict[str, Any]:
-    """提交危险操作审批决定，写入 ``_pending_approvals`` 供 DeepAgent 消费。
+    """提交审批决定，写入 ``_pending_approvals`` 供 DeepAgent 消费。
+
+    支持两种审批场景：
+    - dangerous_tool：approval=True/False，decision="approve"/"deny"
+    - directory_extension：decision="once"/"session"/"deny"，path/writable 描述目标
 
     若 ``auto_approve_after_seconds > 0`` 且倒计时归零，记录 auto_approve trace；
     否则按用户实际操作记录 user_approve / user_reject。
     """
     settings = get_settings()
-    _pending_approvals[req.thread_id] = req.approval
+    _pending_approvals[req.thread_id] = ApprovalDecision(
+        approved=req.approval,
+        decision=req.decision,
+        path=req.path,
+        writable=req.writable,
+    )
 
     # LangSmith trace：区分用户批准 / 拒绝 / 自动批准
     if req.approval and settings.auto_approve_after_seconds > 0:
@@ -445,6 +468,8 @@ async def chat_approve(req: ApproveRequest) -> dict[str, Any]:
         thread_id=req.thread_id,
         action=action,
         auto_approved=auto_approved,
+        decision=req.decision,
+        path=req.path,
         args=mark_redacted(),
     ):
         pass
@@ -453,6 +478,7 @@ async def chat_approve(req: ApproveRequest) -> dict[str, Any]:
         "approval submitted",
         thread_id=req.thread_id,
         approval=req.approval,
+        decision=req.decision,
         auto_approved=auto_approved,
     )
     return {"ok": True}
@@ -517,7 +543,13 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 
         # 其他消息：走 Router 三路径分发（传入 checkpointer 加载历史）
         checkpointer = await get_async_checkpointer()
-        async for event in run_router(req.message, req.thread_id, checkpointer=checkpointer):
+        async for event in run_router(
+            req.message,
+            req.thread_id,
+            checkpointer=checkpointer,
+            permission_mode=req.permission_mode,
+            scene_prompt=req.system_prompt,
+        ):
             # 检查中止标志
             if _abort_flags.get(req.thread_id):
                 yield {"event": "error", "data": "用户已中止"}

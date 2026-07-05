@@ -473,6 +473,7 @@ async def run_router(
     thread_id: str,
     checkpointer: Any = None,
     permission_mode: str = "standard",
+    scene_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """运行 Router，yield SSE 事件。
 
@@ -489,6 +490,8 @@ async def run_router(
         checkpointer: 可选的 LangGraph checkpointer，用于加载历史 messages。
         permission_mode: 权限模式，"standard"（审批流）或 "full_trust"（会话内全量放行）。
             仅影响路径 C（DeepAgent）的危险工具审批与目录越界扩展授权。
+        scene_prompt: 可选场景 prompt（前端场景切换器注入），非空时覆盖
+            ``default_system_prompt``（路径 A/B）或 ``_DEEP_SYSTEM_PROMPT``（路径 C）。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
