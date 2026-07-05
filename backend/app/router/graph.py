@@ -276,6 +276,7 @@ async def _run_tool_path(
     thread_id: str,
     profile_prompt: str | None = None,
     history: list | None = None,
+    scene_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 B：选择子代理并透传事件流。
 
@@ -284,6 +285,7 @@ async def _run_tool_path(
         thread_id: 会话 ID。
         profile_prompt: 用户画像，回退路径 A 时注入 system prompt。
         history: 历史 messages 列表（已截断），传给子代理拼到 inputs 前。
+        scene_prompt: 可选场景 prompt，回退路径 A 时透传。
 
     Note:
         子代理 token 事件经 ``ThinkFilter`` 过滤 ``<think>...</think>`` 块后再 yield，
@@ -294,7 +296,11 @@ async def _run_tool_path(
         # 子代理禁用或工具全禁用，退回路径 A（注入画像）
         logger.info("router.tool_path fallback to CHAT", thread_id=thread_id)
         async for sse in _run_chat_path(
-            message, thread_id, system_prompt_extra=profile_prompt, history=history
+            message,
+            thread_id,
+            system_prompt_extra=profile_prompt,
+            history=history,
+            scene_prompt=scene_prompt,
         ):
             yield sse
         return
@@ -569,6 +575,7 @@ async def run_router(
                 thread_id,
                 profile_prompt=profile_prompt,
                 history=history,
+                scene_prompt=scene_prompt,
             ):
                 yield sse
         else:  # DEEP_TASK
