@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowUp,
   Square,
   Paperclip,
-  Slash,
-  AtSign,
   Folder,
   FolderPlus,
   X,
   Send,
 } from "lucide-react";
 import { CommandPicker } from "./CommandPicker";
+import { ContextUsage } from "./ContextUsage";
 import { useAutoResizeTextarea } from "@/hooks/useAutoResizeTextarea";
 import {
   buildCommandList,
@@ -372,28 +370,10 @@ export function ChatComposer({
               style={{ height: `${textareaHeight}px` }}
             />
 
-            {/* 底部 Toolbar：左 = 触发类 [/][@][workspace]，右 = 状态类 + 动作类 */}
-            <div className="mt-1.5 flex items-center justify-between gap-1 border-t border-default pt-1.5">
-              {/* LEFT — 触发类 */}
+            {/* 底部 Toolbar：左 = workspace，右 = context + Model + Permission + Send */}
+            <div className="mt-1.5 flex items-center justify-between gap-1 pt-1.5">
+              {/* LEFT — 仅 workspace（[/] [@] 已在 M2 清理中删除，可继续以输入 "/" / 拖拽文件取代） */}
               <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="btn-icon"
-                  onClick={openCommandPickerManually}
-                  title="调用命令或技能 (/ 命令)"
-                  aria-label="调用命令或技能"
-                >
-                  <Slash className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="btn-icon"
-                  onClick={() => void handleAttachFile()}
-                  title="附加文件 (@)"
-                  aria-label="附加文件"
-                >
-                  <AtSign className="h-3.5 w-3.5" />
-                </button>
                 {showWorkspaceChip && workspacePath ? (
                   <span
                     className="group/ws inline-flex max-w-[160px] items-center gap-1 rounded-md border border-brand-500/25 bg-brand-600/10 pl-1.5 pr-1 py-0.5 text-[10.5px] font-medium text-brand-500 transition-colors hover:bg-brand-600/15"
@@ -445,8 +425,9 @@ export function ChatComposer({
               {/* SPACER */}
               <div className="flex-1" />
 
-              {/* RIGHT — 状态 + 动作 */}
-              <div className="flex items-center gap-1">
+              {/* RIGHT — 状态 + 动作：ContextUsage → Model → Permission → Send */}
+              <div className="flex items-center gap-1.5">
+                <ContextUsage />
                 <div className="flex items-center">
                   <ModelToggle />
                 </div>
