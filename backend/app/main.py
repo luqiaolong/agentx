@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -110,11 +110,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("checkpointer init failed on startup: {}", exc)
 
     # 0.5. 沙箱授权从 DB 恢复
-    try:
-        get_sandbox().bootstrap_from_store()
-        logger.info("sandbox bootstrap completed on startup")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("sandbox bootstrap failed on startup: {}", exc)
+    # bootstrap_from_store 内部 try/except + 记日志（成功 bootstrap_loaded / 失败 bootstrap_failed），
+    # 不阻塞启动，外层无需再包 try/except（否则失败时仍会误报 completed）。
+    get_sandbox().bootstrap_from_store()
 
     # 1. 嵌入客户端：get_embedding_client() 懒构造，此处显式 warmup 记日志
     logger.info("embedding client initialized", url=settings.embedding_url)
@@ -183,7 +181,9 @@ class AuthorizeRequest(BaseModel):
     thread_id: str = Field(..., description="会话 ID")
     path: str = Field(..., description="待授权目录绝对路径")
     writable: bool = Field(False, description="是否允许写入（默认只读）")
-    source: str = Field("manual", description="授权来源：manual（用户手动）/ chip（工作区自动同步）")
+    source: Literal["manual", "chip", "legacy"] = Field(
+        "manual", description="授权来源：manual（用户手动）/ chip（工作区自动同步）/ legacy（历史数据）"
+    )
 
 
 class RevokeRequest(BaseModel):
