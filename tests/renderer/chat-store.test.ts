@@ -752,3 +752,271 @@ describe("chat store 配额保护（parts 模型）", () => {
     });
   });
 });
+
+// ============================================================
+// v3 → v4 迁移测试（Task 6 修复：补 manuallyRevokedPaths 字段）
+// ============================================================
+
+describe("chat store 持久化迁移 v3→v4", () => {
+  it("v3 旧 session 缺 manuallyRevokedPaths 时迁移后补 []", () => {
+    // 构造 v3 持久化数据：session 故意省略 manuallyRevokedPaths 字段
+    // 模拟 Task 6 之前的老用户 localStorage（v3 schema 无该字段）
+    const v3State = {
+      state: {
+        sessions: {
+          s1: {
+            id: "s1",
+            title: "旧会话",
+            createdAt: 1000,
+            workspacePath: "/tmp/old",
+            messages: [
+              {
+                id: "m1",
+                role: "user",
+                ts: 1000,
+                parts: [{ type: "text", id: "t1", text: "hi" }],
+                content: "hi",
+              },
+            ],
+            // 故意省略 manuallyRevokedPaths
+          },
+        },
+        currentId: "s1",
+        homeWorkspacePath: null,
+      },
+      version: 3,
+    };
+    localStorage.setItem("agentx-chat", JSON.stringify(v3State));
+
+    vi.resetModules();
+    return import("@/stores/chat").then(({ useChatStore: freshStore }) => {
+      const sess = freshStore.getState().sessions["s1"];
+      expect(sess).toBeDefined();
+      // 关键断言：迁移后必须有 manuallyRevokedPaths 数组
+      expect(Array.isArray(sess.manuallyRevokedPaths)).toBe(true);
+      expect(sess.manuallyRevokedPaths).toEqual([]);
+      // 其他字段保留
+      expect(sess.workspacePath).toBe("/tmp/old");
+      expect(sess.messages).toHaveLength(1);
+    });
+  });
+
+  it("v3 已有 manuallyRevokedPaths 时迁移后保留原值", () => {
+    const v3State = {
+      state: {
+        sessions: {
+          s1: {
+            id: "s1",
+            title: "会话",
+            createdAt: 1000,
+            workspacePath: null,
+            messages: [],
+            manuallyRevokedPaths: ["/tmp/revoked"],
+          },
+        },
+        currentId: "s1",
+        homeWorkspacePath: null,
+      },
+      version: 3,
+    };
+    localStorage.setItem("agentx-chat", JSON.stringify(v3State));
+
+    vi.resetModules();
+    return import("@/stores/chat").then(({ useChatStore: freshStore }) => {
+      const sess = freshStore.getState().sessions["s1"];
+      expect(sess.manuallyRevokedPaths).toEqual(["/tmp/revoked"]);
+    });
+  });
+
+  it("迁移后 moveSessionToWorkspace 不再因 manuallyRevokedPaths 缺失而崩溃", () => {
+    // 回归测试：v3 老数据迁移后调用 moveSessionToWorkspace 不抛 TypeError
+    const v3State = {
+      state: {
+        sessions: {
+          s1: {
+            id: "s1",
+            title: "旧会话",
+            createdAt: 1000,
+            workspacePath: null,
+            messages: [],
+            // 省略 manuallyRevokedPaths
+          },
+        },
+        currentId: "s1",
+        homeWorkspacePath: null,
+      },
+      version: 3,
+    };
+    localStorage.setItem("agentx-chat", JSON.stringify(v3State));
+
+    vi.resetModules();
+    return import("@/stores/chat").then(({ useChatStore: freshStore }) => {
+      // 迁移后调用 moveSessionToWorkspace（内部读 manuallyRevokedPaths.includes）
+      expect(() =>
+        freshStore.getState().moveSessionToWorkspace("s1", "/tmp/new"),
+      ).not.toThrow();
+      const sess = freshStore.getState().sessions["s1"];
+      expect(sess.workspacePath).toBe("/tmp/new");
+      expect(Array.isArray(sess.manuallyRevokedPaths)).toBe(true);
+    });
+  });
+});
+
+// ============================================================
+// 沙箱授权逻辑测试（chip 隐式授权 + manuallyRevokedPaths 守卫）
+// ============================================================
+
+describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
+  // createSession / moveSessionToWorkspace 用 optional chaining 调 authorize（失败静默）
+  // revokeAndMark / authorizeAndUnmark 用 await 直接调（需 mock 返回 Promise）
+  let authorizeMock: ReturnType<typeof vi.fn>;
+  let revokeMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    authorizeMock = vi.fn().mockResolvedValue(undefined);
+    revokeMock = vi.fn().mockResolvedValue(undefined);
+    (globalThis.window as unknown as { api: unknown }).api = {
+      sandbox: {
+        authorize: authorizeMock,
+        revoke: revokeMock,
+      },
+    };
+  });
+
+  // ---- createSession ----
+  it("createSession 传 workspacePath 时隐式调 authorize(source=chip)", () => {
+    const id = useChatStore.getState().createSession("/tmp/proj");
+    expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/proj");
+    expect(authorizeMock).toHaveBeenCalledTimes(1);
+    // 签名：(sessionId, path, writable, source)
+    expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/proj", true, "chip");
+  });
+
+  it("createSession 不传 workspacePath 时不调 authorize", () => {
+    useChatStore.getState().createSession();
+    expect(authorizeMock).not.toHaveBeenCalled();
+  });
+
+  it("createSession 新 session 的 manuallyRevokedPaths 总是空，因此总是调 authorize", () => {
+    // createSession 创建的新 session 的 manuallyRevokedPaths 默认 []
+    // 所以 guard `!sess.manuallyRevokedPaths.includes(path)` 恒为 true
+    // 这条测试验证 guard 的 true 分支；false 分支由 moveSessionToWorkspace 覆盖
+    const id = useChatStore.getState().createSession("/tmp/fresh");
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([]);
+    expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/fresh", true, "chip");
+  });
+
+  // ---- moveSessionToWorkspace ----
+  it("moveSessionToWorkspace 迁到新路径时调 authorize(source=chip)", () => {
+    const id = useChatStore.getState().createSession(); // Home，不触发 authorize
+    authorizeMock.mockClear();
+    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/moved");
+    expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/moved");
+    expect(authorizeMock).toHaveBeenCalledTimes(1);
+    expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/moved", true, "chip");
+  });
+
+  it("moveSessionToWorkspace 路径在 manuallyRevokedPaths 中时不调 authorize", () => {
+    const id = useChatStore.getState().createSession();
+    // 注入 revoked 路径（模拟用户先 revokeAndMark 再迁回同一路径）
+    useChatStore.setState((s) => ({
+      sessions: {
+        ...s.sessions,
+        [id]: {
+          ...s.sessions[id],
+          manuallyRevokedPaths: ["/tmp/rev"],
+        },
+      },
+    }));
+    authorizeMock.mockClear();
+    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/rev");
+    expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/rev");
+    // 关键断言：路径在 revoked 集合中，跳过隐式授权
+    expect(authorizeMock).not.toHaveBeenCalled();
+  });
+
+  it("moveSessionToWorkspace 迁到 null(Home) 时不调 authorize", () => {
+    const id = useChatStore.getState().createSession("/tmp/a");
+    authorizeMock.mockClear();
+    useChatStore.getState().moveSessionToWorkspace(id, null);
+    expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
+    expect(authorizeMock).not.toHaveBeenCalled();
+  });
+
+  // ---- revokeAndMark ----
+  it("revokeAndMark 调 sandbox.revoke 并写入 manuallyRevokedPaths（幂等）", async () => {
+    const id = useChatStore.getState().createSession();
+    await useChatStore.getState().revokeAndMark(id, "/tmp/x");
+    expect(revokeMock).toHaveBeenCalledTimes(1);
+    expect(revokeMock).toHaveBeenCalledWith(id, "/tmp/x");
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([
+      "/tmp/x",
+    ]);
+    // 幂等：重复调不重复写入路径
+    await useChatStore.getState().revokeAndMark(id, "/tmp/x");
+    expect(revokeMock).toHaveBeenCalledTimes(2); // 后端 revoke 每次都调
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([
+      "/tmp/x",
+    ]);
+  });
+
+  it("revokeAndMark 可累加多个不同路径", async () => {
+    const id = useChatStore.getState().createSession();
+    await useChatStore.getState().revokeAndMark(id, "/tmp/a");
+    await useChatStore.getState().revokeAndMark(id, "/tmp/b");
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([
+      "/tmp/a",
+      "/tmp/b",
+    ]);
+  });
+
+  // ---- authorizeAndUnmark ----
+  it("authorizeAndUnmark 调 sandbox.authorize(source=manual) 并从 manuallyRevokedPaths 移除", async () => {
+    const id = useChatStore.getState().createSession();
+    // 先标记两个 revoked 路径
+    useChatStore.setState((s) => ({
+      sessions: {
+        ...s.sessions,
+        [id]: {
+          ...s.sessions[id],
+          manuallyRevokedPaths: ["/tmp/a", "/tmp/b"],
+        },
+      },
+    }));
+    await useChatStore.getState().authorizeAndUnmark(id, "/tmp/a");
+    expect(authorizeMock).toHaveBeenCalledTimes(1);
+    expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/a", true, "manual");
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([
+      "/tmp/b",
+    ]);
+  });
+
+  it("authorizeAndUnmark writable=false 时透传", async () => {
+    const id = useChatStore.getState().createSession();
+    useChatStore.setState((s) => ({
+      sessions: {
+        ...s.sessions,
+        [id]: {
+          ...s.sessions[id],
+          manuallyRevokedPaths: ["/tmp/ro"],
+        },
+      },
+    }));
+    await useChatStore.getState().authorizeAndUnmark(id, "/tmp/ro", false);
+    expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/ro", false, "manual");
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([]);
+  });
+
+  it("authorizeAndUnmark 对不在集合中的路径仍调 authorize（无副作用）", async () => {
+    const id = useChatStore.getState().createSession();
+    await useChatStore.getState().authorizeAndUnmark(id, "/tmp/never-revoked");
+    expect(authorizeMock).toHaveBeenCalledWith(
+      id,
+      "/tmp/never-revoked",
+      true,
+      "manual",
+    );
+    // 集合本来就空，filter 后仍空
+    expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([]);
+  });
+});

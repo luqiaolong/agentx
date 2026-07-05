@@ -300,6 +300,37 @@ function migrateV2toV3(persisted: unknown): Partial<ChatState> {
   };
 }
 
+/**
+ * v3 -> v4：所有 session 补 manuallyRevokedPaths 字段（缺省为 []）。
+ *
+ * 旧 session 没有 manuallyRevokedPaths 字段，访问 .includes() 会抛 TypeError。
+ * 防御性补字段，确保所有 session 都有该数组。
+ */
+function migrateV3toV4(persisted: unknown): Partial<ChatState> {
+  const p = (persisted ?? {}) as Record<string, unknown>;
+  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
+  const sessions: Record<string, Session> = {};
+  for (const [id, raw] of Object.entries(rawSessions)) {
+    if (!raw || typeof raw !== "object") continue;
+    sessions[id] = {
+      id: typeof raw.id === "string" ? raw.id : id,
+      title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
+      messages: Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : [],
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      workspacePath:
+        typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
+          ? raw.workspacePath
+          : null,
+      manuallyRevokedPaths:
+        Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
+    };
+  }
+  return {
+    sessions,
+    currentId: typeof p.currentId === "string" ? p.currentId : null,
+  };
+}
+
 // 归档保留的最近会话数（超限时按 createdAt 降序保留）
 const MAX_SESSIONS_ON_QUOTA = 10;
 
@@ -684,7 +715,7 @@ export const useChatStore = create<ChatState>()(
       {
         name: "agentx-chat",
         storage: createJSONStorage(() => createQuotaGuardedStorage()),
-        version: 3,
+        version: 4,
         migrate: (persisted, version) => {
           let state: Partial<ChatState> = persisted as Partial<ChatState>;
           if (version < 1) {
@@ -695,6 +726,9 @@ export const useChatStore = create<ChatState>()(
           }
           if (version < 3) {
             state = migrateV2toV3(state);
+          }
+          if (version < 4) {
+            state = migrateV3toV4(state);
           }
           return state;
         },
