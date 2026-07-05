@@ -366,6 +366,17 @@ const api: ElectronAPI = {
     getVersion: () => ipcRenderer.invoke("app:getVersion"),
     quit: () => ipcRenderer.invoke("app:quit"),
     restart: () => ipcRenderer.invoke("app:restart"),
+    restartBackend: () =>
+      ipcRenderer.invoke("app:restartBackend") as Promise<{
+        ok: boolean;
+        message?: string;
+      }>,
+    reloadBackendConfig: () =>
+      ipcRenderer.invoke("app:reloadBackendConfig") as Promise<{
+        ok: boolean;
+        default_model?: string;
+        mcp_refreshed?: boolean;
+      }>,
     getHomeWorkspaceDir: () => ipcRenderer.invoke("app:getHomeWorkspaceDir"),
   },
   window: {

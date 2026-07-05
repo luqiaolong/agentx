@@ -400,9 +400,6 @@ export function ChatComposer({
                   <FolderPlus className="h-3.5 w-3.5" />
                 </button>
               )}
-              <span className="hidden sm:inline">
-                / 命令与技能 · @ 附加文件 · 文件夹选 workspace · 拖入文件也支持
-              </span>
             </div>
             <div className="flex items-center gap-1.5">
               {isStreaming ? (

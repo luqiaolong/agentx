@@ -299,3 +299,25 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def reload_settings(env_overrides: dict[str, str] | None = None) -> Settings:
+    """热更新后端配置（无需重启进程）。
+
+    将 ``env_overrides`` 写入 ``os.environ`` 后清除 ``get_settings`` 的 ``lru_cache``，
+    后续所有 ``get_settings()`` 调用将返回新实例。``get_chat_model`` / 子代理 / 工具
+    等运行时均通过 ``get_settings()`` 读取配置，因此热更新后立即生效。
+
+    Args:
+        env_overrides: ``AGENTX_*`` env var → value 映射。为 None 时仅清缓存（用已有 env 重建）。
+
+    Returns:
+        新的 ``Settings`` 实例。
+    """
+    import os
+
+    if env_overrides:
+        for key, value in env_overrides.items():
+            os.environ[key] = value
+    get_settings.cache_clear()
+    return get_settings()

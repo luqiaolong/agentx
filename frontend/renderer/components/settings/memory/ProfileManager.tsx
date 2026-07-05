@@ -92,6 +92,8 @@ export function ProfileManager() {
     setAutoExtract(v);
     try {
       await window.api.settings.setProfileAutoExtract(v);
+      // 热更新后端配置，无需重启
+      await window.api.app.reloadBackendConfig();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     }

@@ -314,7 +314,16 @@ export interface ElectronAPI {
   app: {
     getVersion: () => Promise<string>;
     quit: () => Promise<void>;
+    /** 全量重启 Electron（仅用于 ErrorBoundary 渲染错误恢复） */
     restart: () => Promise<void>;
+    /** 仅重启 Python 后端（不重启 Electron 窗口），返回就绪状态 */
+    restartBackend: () => Promise<{ ok: boolean; message?: string }>;
+    /** 热更新后端配置（无需重启进程），从 electron-store 读最新配置 POST 到 /api/config/reload */
+    reloadBackendConfig: () => Promise<{
+      ok: boolean;
+      default_model?: string;
+      mcp_refreshed?: boolean;
+    }>;
     /** 返回桌面目录路径（Home workspace 默认归属） */
     getHomeWorkspaceDir: () => Promise<string>;
   };

@@ -81,7 +81,10 @@ export default function App() {
         onDoubleClick={() => void window.api.window.maximize()}
       >
         <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white shadow-soft">
+          <div
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-soft"
+            style={{ backgroundColor: "#4f46e5" }}
+          >
             <Bot className="h-4 w-4" strokeWidth={2.5} />
           </div>
           <span className="text-sm font-semibold tracking-tight">AgentX</span>
@@ -187,10 +190,10 @@ export default function App() {
             <div className="mb-4 text-xs text-muted-c">请查看日志以排查问题</div>
             <button
               type="button"
-              onClick={() => void window.api.app.restart()}
+              onClick={() => void window.api.app.restartBackend()}
               className="btn-primary w-full"
             >
-              重启应用
+              重启后端
             </button>
           </div>
         </div>

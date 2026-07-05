@@ -398,11 +398,20 @@ uv run ruff check backend/                              # 风格检查
 
 ---
 
-## 16. 配置入口（renderer 改 → electron-store → 重启后端生效）
+## 16. 配置入口（renderer 改 → electron-store → 热更新即时生效）
 
 后端启动时从 `AGENTX_SUBAGENTS_CONFIG` / `AGENTX_TOOLS_CONFIG` / `AGENTX_PROFILE_AUTO_EXTRACT`
-读取 JSON 配置，由 `frontend/main/python/spawn.ts::buildEnv` 注入。
-**修改后必须重启应用**——后端不监听热更新。
+等 `AGENTX_*` 环境变量读取配置，由 `frontend/main/python/spawn.ts::buildEnv` 注入。
+
+**配置变更即时生效**（无需重启后端）：
+- Renderer 保存配置 → electron-store → `window.api.app.reloadBackendConfig()` IPC
+- Main 进程从 electron-store 读最新配置 → `POST /api/config/reload`
+- 后端 `reload_settings()` 清除 `get_settings` 的 `lru_cache` → 后续 `get_chat_model` /
+  子代理 / 工具 / 用户画像等运行时立即读取新配置
+- MCP 配置变更额外触发 `get_mcp_manager().refresh()` 重连
+
+如遇异常可手动「重启后端」（`window.api.app.restartBackend()`，仅重启 Python 进程，
+不重启 Electron 窗口）。全量重启 Electron（`app:restart`）仅用于 ErrorBoundary 渲染错误恢复。
 
 ---
 

@@ -52,12 +52,16 @@ let mainWindow: BrowserWindow | null = null;
 let pythonHandle: PythonHandle | null = null;
 let quitting = false;
 
+function getIconDir(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "build")
+    : path.join(__dirname, "../../build");
+}
+
 function getAppIcon(): Electron.NativeImage | undefined {
   // 优先用 .ico（Windows 任务栏 / 资源管理器原生支持），
   // 回退到 PNG（macOS / Linux 启动器也支持）
-  const iconDir = app.isPackaged
-    ? path.join(process.resourcesPath, "build")
-    : path.join(__dirname, "../../build");
+  const iconDir = getIconDir();
   const icoPath = path.join(iconDir, "icon.ico");
   const pngPath = path.join(iconDir, "icon.png");
   if (process.platform === "win32" && fs.existsSync(icoPath)) {
@@ -67,6 +71,11 @@ function getAppIcon(): Electron.NativeImage | undefined {
     return nativeImage.createFromPath(pngPath);
   }
   return undefined;
+}
+
+function getIconIcoPath(): string | undefined {
+  const icoPath = path.join(getIconDir(), "icon.ico");
+  return fs.existsSync(icoPath) ? icoPath : undefined;
 }
 
 function getBackendCwd(): string {
@@ -275,9 +284,84 @@ function registerIpc(): void {
 
   ipcMain.handle("app:getVersion", () => app.getVersion());
   ipcMain.handle("app:quit", () => app.quit());
+  // 全量重启 Electron（仅用于 ErrorBoundary 渲染错误恢复）
   ipcMain.handle("app:restart", () => {
     app.relaunch();
     app.quit();
+  });
+  // 仅重启 Python 后端（不重启 Electron 窗口），用于设置页"重启后端"按钮
+  ipcMain.handle("app:restartBackend", async () => {
+    appendLog("[main] restarting python backend (no relaunch)");
+    if (pythonHandle) {
+      pythonHandle.stop();
+      pythonHandle = null;
+    }
+    // 等待端口释放（Windows TCP TIME_WAIT）
+    await new Promise((r) => setTimeout(r, 800));
+    startPython();
+    // 轮询轻量端点 GET / 等待后端就绪（不用 /api/health，它串行调 TEI+Milvus 慢）
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${PYTHON_PORT}/`);
+        if (res.ok) {
+          appendLog("[main] python backend restarted and ready");
+          return { ok: true };
+        }
+      } catch {
+        // 尚未就绪
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    appendLog("[main] python backend restart timeout");
+    return { ok: false, message: "backend restart timeout" };
+  });
+  // 热更新后端配置（无需重启进程）：从 electron-store 读取最新配置，
+  // POST 到 /api/config/reload，后端清除 get_settings lru_cache 后立即生效
+  ipcMain.handle("app:reloadBackendConfig", async () => {
+    const llm = getLLMConfig();
+    const approval = getApprovalConfig();
+    const systemPrompt = getSystemPrompt();
+    const subagentsConfig = getSubagentsConfig();
+    const customSubagentsConfig = getCustomSubagents();
+    const toolsConfig = getToolsConfig();
+    const profileAutoExtract = getProfileAutoExtract();
+    const mcpServersConfig = getMcpServersConfig();
+    const openaiKey = getApiKey("openai");
+    const deepseekKey = getApiKey("deepseek");
+    const tavilyKey = getApiKey("tavily");
+
+    const payload: Record<string, unknown> = {};
+    if (llm.defaultModel) payload.default_model = llm.defaultModel;
+    if (llm.openaiBaseUrl) payload.openai_base_url = llm.openaiBaseUrl;
+    if (openaiKey) payload.openai_api_key = openaiKey;
+    if (deepseekKey) payload.deepseek_api_key = deepseekKey;
+    if (tavilyKey) payload.tavily_api_key = tavilyKey;
+    payload.approval_max_wait = approval.approvalMaxWait;
+    payload.max_upload_bytes = approval.maxUploadBytes;
+    payload.auto_approve_after_seconds = approval.autoApproveAfterSeconds;
+    if (systemPrompt) payload.default_system_prompt = systemPrompt;
+    payload.subagents_config = subagentsConfig;
+    payload.custom_subagents_config = customSubagentsConfig;
+    payload.tools_config = toolsConfig;
+    payload.profile_auto_extract = profileAutoExtract;
+    payload.mcp_servers_config = mcpServersConfig;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${PYTHON_PORT}/api/config/reload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      return await res.json();
+    } catch (e) {
+      appendLog(`[main] reloadBackendConfig failed: ${(e as Error).message}`);
+      throw new Error(e instanceof Error ? e.message : String(e));
+    }
   });
   // Home workspace：返回桌面目录路径，renderer 用作"未显式选 workspace"时的默认归属
   ipcMain.handle("app:getHomeWorkspaceDir", () => getHomeWorkspaceDir());
@@ -412,10 +496,12 @@ if (process.platform === "win32") {
 app.whenReady().then(() => {
   cleanOldLogs(7);
 
-  // Windows：调用 setJumpList 把窗口与 AppUserModelID 关联，任务栏图标立即生效
+  // Windows：调用 setJumpList 把窗口与 AppUserModelID 关联，任务栏图标立即生效。
+  // iconPath 必须指向固定的 .ico，避免从 electron.exe 取图标时被主题色影响。
   if (process.platform === "win32") {
     const icon = getAppIcon();
-    if (icon && !icon.isEmpty()) {
+    const icoPath = getIconIcoPath();
+    if (icon && !icon.isEmpty() && icoPath) {
       try {
         app.setJumpList([
           {
@@ -427,7 +513,7 @@ app.whenReady().then(() => {
                 program: process.execPath,
                 args: "--new-window",
                 description: "打开 AgentX",
-                iconPath: process.execPath,
+                iconPath: icoPath,
                 iconIndex: 0,
               },
             ],

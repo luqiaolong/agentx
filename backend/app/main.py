@@ -24,6 +24,7 @@
 - ``GET /api/mcp/tools``          — 当前已发现的 MCP 工具列表。
 - ``POST /api/mcp/servers/test``  — 测试单个 server 配置连接（不入主客户端状态）。
 - ``POST /api/mcp/refresh``       — 强制重连所有 server（配置热更新后调用）。
+- ``POST /api/config/reload``    — 热更新后端配置（无需重启进程，清除 settings 缓存）。
 
 跨进程状态：
 - ``_pending_approvals: dict[str, bool]`` — thread_id → 审批决定，DeepAgent 轮询。
@@ -32,6 +33,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -41,7 +43,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from app.config import get_settings
+from app.config import get_settings, reload_settings
 from app.embedding import get_embedding_client
 from app.embedding.tei_client import healthcheck as embedding_healthcheck
 from app.mcp import get_mcp_manager
@@ -243,6 +245,35 @@ class McpServerTestRequest(BaseModel):
     url: str | None = None
     enabled: bool = True
     trusted: bool = False
+
+
+class ConfigReloadRequest(BaseModel):
+    """配置热更新请求体。所有字段可选，仅传需要更新的字段。
+
+    传入的字段会映射到对应的 ``AGENTX_*`` env var，然后清除 ``get_settings`` 的
+    ``lru_cache``，后续所有 ``get_settings()`` 调用返回新配置。MCP 配置变更时
+    额外触发 ``manager.refresh()`` 重连。
+    """
+
+    # LLM
+    default_model: str | None = None
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None
+    deepseek_api_key: str | None = None
+    tavily_api_key: str | None = None
+    # 审批
+    approval_max_wait: float | None = None
+    max_upload_bytes: int | None = None
+    auto_approve_after_seconds: int | None = None
+    # 系统提示词
+    default_system_prompt: str | None = None
+    # 子代理 + 工具 + 用户画像
+    subagents_config: dict[str, Any] | None = None
+    custom_subagents_config: dict[str, Any] | None = None
+    tools_config: dict[str, Any] | None = None
+    profile_auto_extract: bool | None = None
+    # MCP
+    mcp_servers_config: list[Any] | None = None
 
 
 # ============================================================
@@ -748,6 +779,74 @@ async def mcp_refresh() -> dict[str, Any]:
     await manager.refresh()
     servers = await manager.list_servers()
     return {"ok": True, "servers": servers}
+
+
+# ============================================================
+# 配置热更新
+# ============================================================
+
+
+@app.post("/api/config/reload")
+async def config_reload(req: ConfigReloadRequest) -> dict[str, Any]:
+    """热更新后端配置（无需重启进程）。
+
+    将请求字段映射到 ``AGENTX_*`` env var，然后清除 ``get_settings`` 的
+    ``lru_cache``。``get_chat_model`` / 子代理 / 工具 / 用户画像等运行时
+    均通过 ``get_settings()`` 读取配置，因此热更新后立即生效。
+
+    MCP 配置变更时额外触发 ``manager.refresh()`` 重连所有 server。
+    """
+    env_overrides: dict[str, str] = {}
+    if req.default_model is not None:
+        env_overrides["AGENTX_DEFAULT_MODEL"] = req.default_model
+    if req.openai_api_key is not None:
+        env_overrides["AGENTX_OPENAI_API_KEY"] = req.openai_api_key
+    if req.openai_base_url is not None:
+        env_overrides["AGENTX_OPENAI_BASE_URL"] = req.openai_base_url
+    if req.deepseek_api_key is not None:
+        env_overrides["AGENTX_DEEPSEEK_API_KEY"] = req.deepseek_api_key
+    if req.tavily_api_key is not None:
+        env_overrides["AGENTX_TAVILY_API_KEY"] = req.tavily_api_key
+    if req.approval_max_wait is not None:
+        env_overrides["AGENTX_APPROVAL_MAX_WAIT"] = str(req.approval_max_wait)
+    if req.max_upload_bytes is not None:
+        env_overrides["AGENTX_MAX_UPLOAD_BYTES"] = str(req.max_upload_bytes)
+    if req.auto_approve_after_seconds is not None:
+        env_overrides["AGENTX_AUTO_APPROVE_AFTER_SECONDS"] = str(req.auto_approve_after_seconds)
+    if req.default_system_prompt is not None:
+        env_overrides["AGENTX_DEFAULT_SYSTEM_PROMPT"] = req.default_system_prompt
+    if req.subagents_config is not None:
+        env_overrides["AGENTX_SUBAGENTS_CONFIG"] = json.dumps(req.subagents_config)
+    if req.custom_subagents_config is not None:
+        env_overrides["AGENTX_CUSTOM_SUBAGENTS_CONFIG"] = json.dumps(req.custom_subagents_config)
+    if req.tools_config is not None:
+        env_overrides["AGENTX_TOOLS_CONFIG"] = json.dumps(req.tools_config)
+    if req.profile_auto_extract is not None:
+        env_overrides["AGENTX_PROFILE_AUTO_EXTRACT"] = str(req.profile_auto_extract)
+    if req.mcp_servers_config is not None:
+        env_overrides["AGENTX_MCP_SERVERS_CONFIG"] = json.dumps(req.mcp_servers_config)
+
+    new_settings = reload_settings(env_overrides)
+
+    # MCP 配置变更时触发重连（关闭旧连接 + 重新解析 + 初始化）
+    mcp_refreshed = False
+    if req.mcp_servers_config is not None:
+        try:
+            await get_mcp_manager().refresh()
+            mcp_refreshed = True
+        except Exception as exc:  # noqa: BLE001 — 热更新兜底
+            logger.warning("MCP refresh after config reload failed: {}", exc)
+
+    logger.info(
+        "config reloaded: model={}, mcp_refreshed={}",
+        new_settings.default_model,
+        mcp_refreshed,
+    )
+    return {
+        "ok": True,
+        "default_model": new_settings.default_model,
+        "mcp_refreshed": mcp_refreshed,
+    }
 
 
 if __name__ == "__main__":

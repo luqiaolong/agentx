@@ -504,7 +504,7 @@ export function ModelProviderSettings(): JSX.Element {
   const [saved, setSaved] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
-  const [needsRestart, setNeedsRestart] = useState(false);
+  const [hotReloaded, setHotReloaded] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [editing, setEditing] = useState<{
     entry: ModelEntry;
@@ -563,11 +563,13 @@ export function ModelProviderSettings(): JSX.Element {
       setEditing(null);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
-      // 若编辑的是当前激活条目，重新写入 legacy 槽位以同步新配置，并提示重启
+      // 若编辑的是当前激活条目，重新写入 legacy 槽位以同步新配置，并热更新后端
       if (wasActive) {
         try {
           await window.api.settings.activateModel(entry.id);
-          setNeedsRestart(true);
+          await window.api.app.reloadBackendConfig();
+          setHotReloaded(true);
+          window.setTimeout(() => setHotReloaded(false), 2000);
         } catch (e) {
           setErrMsg(e instanceof Error ? e.message : String(e));
         }
@@ -587,7 +589,7 @@ export function ModelProviderSettings(): JSX.Element {
       if (activeId === id) {
         setActiveId(null);
         setErrMsg(
-          "已删除当前激活的模型，后端仍使用旧配置运行。请激活其他模型或重启后端。",
+          "已删除当前激活的模型，后端仍使用旧配置运行。请激活其他模型以切换。",
         );
       }
     } catch (e) {
@@ -601,7 +603,10 @@ export function ModelProviderSettings(): JSX.Element {
     try {
       await window.api.settings.activateModel(id);
       setActiveId(id);
-      setNeedsRestart(true);
+      // 热更新后端配置，无需重启
+      await window.api.app.reloadBackendConfig();
+      setHotReloaded(true);
+      window.setTimeout(() => setHotReloaded(false), 2000);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -613,7 +618,10 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     try {
       setRestarting(true);
-      await window.api.app.restart();
+      const result = await window.api.app.restartBackend();
+      if (!result.ok) {
+        setErrMsg(result.message ?? "重启后端超时");
+      }
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -745,29 +753,37 @@ export function ModelProviderSettings(): JSX.Element {
         )}
       </div>
 
-      {/* 重启提示 */}
-      {needsRestart && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/30">
-          <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            <span>模型配置已更新，需重启后端才能生效</span>
-          </div>
-          <button
-            type="button"
-            onClick={restart}
-            className="btn-secondary px-2.5 py-1 text-[11px]"
-            disabled={restarting}
-          >
-            <RotateCw className={`h-3 w-3 ${restarting ? "animate-spin" : ""}`} />
-            {restarting ? "重启中…" : "重启后端"}
-          </button>
+      {/* 热更新成功提示 */}
+      {hotReloaded && (
+        <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
+            模型配置已生效
+          </span>
         </div>
       )}
 
+      {/* 手动重启后端（兜底） */}
+      <div className="flex items-center justify-between rounded-lg border border-default bg-subtle/30 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-c">
+          <RotateCw className="h-3 w-3 shrink-0" />
+          <span>如遇异常可手动重启后端</span>
+        </div>
+        <button
+          type="button"
+          onClick={restart}
+          className="btn-secondary px-2.5 py-1 text-[11px]"
+          disabled={restarting}
+        >
+          <RotateCw className={`h-3 w-3 ${restarting ? "animate-spin" : ""}`} />
+          {restarting ? "重启中…" : "重启后端"}
+        </button>
+      </div>
+
       {/* 说明 */}
       <p className="rounded-md bg-subtle/50 px-3 py-2 text-[11px] leading-relaxed text-muted-c">
-        后端通过 OpenAI 兼容协议调用 LLM。点击「设为默认」会将该模型的密钥与配置同步到后端激活槽位，
-        需重启后端生效。各模型条目的密钥经 safeStorage 加密存储于本地，切换模型时不会丢失。
+        后端通过 OpenAI 兼容协议调用 LLM。点击「设为默认」会将该模型的密钥与配置同步到后端并即时生效，
+        无需重启。各模型条目的密钥经 safeStorage 加密存储于本地，切换模型时不会丢失。
       </p>
     </div>
   );

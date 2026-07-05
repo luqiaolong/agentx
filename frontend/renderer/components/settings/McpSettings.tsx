@@ -578,6 +578,8 @@ export function McpSettings(): JSX.Element {
       await window.api.settings.setMcpServersConfig(next);
       setServers(next);
       setEditing(null);
+      // 热更新后端配置（含 MCP server 重连），无需重启
+      await window.api.app.reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -597,6 +599,8 @@ export function McpSettings(): JSX.Element {
         delete next[name];
         return next;
       });
+      // 热更新后端配置（含 MCP server 重连），无需重启
+      await window.api.app.reloadBackendConfig();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     }
@@ -626,7 +630,10 @@ export function McpSettings(): JSX.Element {
     setErrMsg(null);
     try {
       setRestarting(true);
-      await window.api.app.restart();
+      const result = await window.api.app.restartBackend();
+      if (!result.ok) {
+        setErrMsg(result.message ?? "重启后端超时");
+      }
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -661,7 +668,7 @@ export function McpSettings(): JSX.Element {
         <Plug className="h-3.5 w-3.5 shrink-0" />
         <span>
           配置外部 MCP (Model Context Protocol) server。MCP 工具仅暴露给 DeepAgent
-          （路径 C），未标记 trusted 的 server 工具调用需用户审批。保存后需重启后端生效。
+          （路径 C），未标记 trusted 的 server 工具调用需用户审批。保存后即时生效。
         </span>
       </div>
 
@@ -752,7 +759,7 @@ export function McpSettings(): JSX.Element {
         {saved && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-3 w-3" />
-            已保存，重启后端生效
+            已保存并生效
           </span>
         )}
       </div>

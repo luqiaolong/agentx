@@ -166,9 +166,10 @@ export function ChatView() {
             return true;
           }
           await window.api.settings.activateModel(target.id);
+          await window.api.app.reloadBackendConfig();
           appendCommandResult({
             kind: "info",
-            text: `已激活模型「${target.label}」，重启后端后生效。`,
+            text: `已激活模型「${target.label}」，配置已即时生效。`,
           });
         } catch (err) {
           appendCommandResult({

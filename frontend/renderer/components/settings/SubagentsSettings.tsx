@@ -489,6 +489,8 @@ export function SubagentsSettings() {
         window.api.settings.setSubagentsConfig(config),
         window.api.settings.setCustomSubagents(customMap),
       ]);
+      // 热更新后端配置，无需重启
+      await window.api.app.reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -501,7 +503,10 @@ export function SubagentsSettings() {
     try {
       setRestarting(true);
       await save();
-      await window.api.app.restart();
+      const result = await window.api.app.restartBackend();
+      if (!result.ok) {
+        setErrMsg(result.message ?? "重启后端超时");
+      }
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -748,7 +753,7 @@ export function SubagentsSettings() {
         {saved && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
             <Check className="h-3 w-3" />
-            已保存，重启后端生效
+            已保存并生效
           </span>
         )}
       </div>

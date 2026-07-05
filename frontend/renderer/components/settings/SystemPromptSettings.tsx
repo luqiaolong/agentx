@@ -21,6 +21,8 @@ export function SystemPromptSettings() {
     setError(null);
     try {
       await window.api.settings.setSystemPrompt(value);
+      // 热更新后端配置，无需重启
+      await window.api.app.reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {

@@ -155,6 +155,8 @@ export function ToolsSettings() {
       setTavilyKey("");
       setTavilySaved(true);
       window.setTimeout(() => setTavilySaved(false), 2000);
+      // 热更新后端配置（tavily_api_key），无需重启
+      await window.api.app.reloadBackendConfig();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     }
@@ -170,6 +172,8 @@ export function ToolsSettings() {
     setErrMsg(null);
     try {
       await window.api.settings.setToolsConfig(config);
+      // 热更新后端配置，无需重启
+      await window.api.app.reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -193,7 +197,7 @@ export function ToolsSettings() {
         <Wrench className="h-3.5 w-3.5 shrink-0" />
         <span>
           全局工具启用开关。禁用的工具不会注册到 LangGraph ToolNode，子代理与主代理均无法调用。
-          保存后需重启后端生效。
+          保存后即时生效。
         </span>
       </div>
 
@@ -278,7 +282,7 @@ export function ToolsSettings() {
           <div className="mb-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>
-              web_search 工具当前已禁用，配置 Key 后不会立即生效；启用工具后下次启动后端可用。
+              web_search 工具当前已禁用，配置 Key 后启用工具即可使用。
             </span>
           </div>
         )}
@@ -337,7 +341,7 @@ export function ToolsSettings() {
             >
               app.tavily.com
             </a>
-            。保存后需重启后端,web 子代理下次启动时读取。
+            。保存后即时生效,web 子代理下次启动时读取。
           </p>
         </div>
       </div>
@@ -350,7 +354,7 @@ export function ToolsSettings() {
         {saved && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
             <Check className="h-3 w-3" />
-            已保存，重启后端生效
+            已保存并生效
           </span>
         )}
       </div>
