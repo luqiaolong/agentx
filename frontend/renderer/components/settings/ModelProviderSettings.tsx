@@ -27,7 +27,15 @@ import type { ModelEntry, ModelProviderId } from "@/lib/utils";
 // - 其他 + openai_base_url → OpenAI 兼容兜底（minimax / custom 走此分支）
 const PROVIDER_PRESETS: Record<
   Exclude<ModelProviderId, "custom">,
-  { label: string; desc: string; docs: string; defaultModel: string; defaultBaseUrl: string }
+  {
+    label: string;
+    desc: string;
+    docs: string;
+    defaultModel: string;
+    defaultBaseUrl: string;
+    defaultContextK: number;
+    defaultOutputK: number;
+  }
 > = {
   openai: {
     label: "OpenAI",
@@ -35,6 +43,8 @@ const PROVIDER_PRESETS: Record<
     docs: "https://platform.openai.com/api-keys",
     defaultModel: "gpt-4o-mini",
     defaultBaseUrl: "https://api.openai.com/v1",
+    defaultContextK: 128,
+    defaultOutputK: 4,
   },
   deepseek: {
     label: "DeepSeek",
@@ -42,6 +52,8 @@ const PROVIDER_PRESETS: Record<
     docs: "https://platform.deepseek.com/api_keys",
     defaultModel: "deepseek-chat",
     defaultBaseUrl: "https://api.deepseek.com",
+    defaultContextK: 64,
+    defaultOutputK: 8,
   },
   minimax: {
     label: "MiniMax",
@@ -49,6 +61,8 @@ const PROVIDER_PRESETS: Record<
     docs: "https://platform.minimaxi.com/",
     defaultModel: "MiniMax-M3",
     defaultBaseUrl: "https://api.minimaxi.com/v1",
+    defaultContextK: 128,
+    defaultOutputK: 16,
   },
 };
 
