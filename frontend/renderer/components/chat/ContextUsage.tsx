@@ -22,7 +22,7 @@ export function ContextUsage() {
     <div
       title={tooltip}
       aria-label={tooltip}
-      className="inline-flex h-[18px] w-[10px] flex-col items-stretch justify-end gap-[1px] cursor-help"
+      className="inline-flex h-7 w-3 flex-col items-stretch justify-end gap-[1.5px] cursor-help"
     >
       {Array.from({ length: 5 }).map((_, i) => {
         const filled = i < filledStripes;
@@ -31,7 +31,7 @@ export function ContextUsage() {
             key={i}
             data-filled={filled ? "true" : "false"}
             className={[
-              "h-[2.5px] w-full rounded-[0.5px]",
+              "h-1 w-full rounded-[0.5px]",
               filled ? "bg-brand-500" : "bg-default",
             ].join(" ")}
           />
