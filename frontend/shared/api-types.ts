@@ -195,10 +195,18 @@ export interface McpTestResult {
   tool_count?: number;
 }
 
+export interface CompactResult {
+  ok: boolean;
+  summary?: string;
+  compressed_count?: number;
+  error?: string;
+}
+
 export interface ElectronAPI {
   chat: {
     send: (msg: { role: string; content: string }, opts?: { threadId?: string }) => Promise<void>;
     abort: (threadId: string) => Promise<void>;
+    compact: (threadId: string) => Promise<CompactResult>;
     onEvent: (handler: (e: ChatEvent) => void) => () => void;
     onApprovalRequest: (handler: (req: ApprovalRequest) => void) => () => void;
   };

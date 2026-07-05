@@ -83,16 +83,26 @@ def build_web_agent(thread_id: str) -> Any:
     return create_react_agent(model, tools, name="web_agent", **kwargs)
 
 
-async def run_web_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+async def run_web_agent(
+    thread_id: str,
+    message: str,
+    history: list | None = None,
+) -> AsyncIterator[dict]:
     """运行 Web 子代理，yield 标准化事件流。
 
     事件类型:
     - ``{"type": "token", "content": str}``: 模型流式输出 token
     - ``{"type": "tool_call", "name": str, "args": dict}``: 工具调用开始
     - ``{"type": "tool_result", "name": str, "result": Any}``: 工具调用结束
+
+    Args:
+        thread_id: 会话 ID。
+        message: 当前用户消息。
+        history: 历史 messages 列表（已截断），拼到 inputs 前。
     """
     agent = build_web_agent(thread_id)
-    inputs = {"messages": [{"role": "user", "content": message}]}
+    history_msgs = list(history) if history else []
+    inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     async for event in agent.astream_events(inputs, version="v2"):
         kind = event["event"]
         name = event.get("name", "")

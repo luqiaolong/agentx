@@ -63,7 +63,7 @@ async def test_approval_request_event_shape(client: AsyncClient) -> None:
         "preview": "将写入文件: /tmp/test.txt",
     }
 
-    async def _fake(message: str, tid: str) -> AsyncIterator[dict[str, str]]:
+    async def _fake(message: str, tid: str, checkpointer: object = None) -> AsyncIterator[dict[str, str]]:
         yield {"event": "approval_request", "data": json.dumps(payload, ensure_ascii=False)}
         yield {"event": "done", "data": "{}"}
 
@@ -116,7 +116,7 @@ async def test_full_approval_flow_auto_resume(client: AsyncClient) -> None:
 
     approval_yielded = asyncio.Event()
 
-    async def _fake(message: str, tid: str) -> AsyncIterator[dict[str, str]]:
+    async def _fake(message: str, tid: str, checkpointer: object = None) -> AsyncIterator[dict[str, str]]:
         yield {
             "event": "todo_update",
             "data": json.dumps(

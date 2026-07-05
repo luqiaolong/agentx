@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   ChatEvent,
   ApprovalRequest,
+  CompactResult,
   MilvusCredentialResult,
   SkillSummary,
   WorkspaceEntry,
@@ -135,6 +136,12 @@ const api: ElectronAPI = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ thread_id: threadId }),
       }).then(() => undefined),
+    compact: (threadId) =>
+      fetch(`${API_BASE}/api/chat/compact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: threadId }),
+      }).then((r) => r.json() as Promise<CompactResult>),
     onEvent: (handler) => {
       eventHandlers.add(handler);
       return () => eventHandlers.delete(handler);

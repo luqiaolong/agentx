@@ -107,11 +107,30 @@ export function ChatView() {
         return true;
       }
       case "compact": {
-        // 占位：将来可与后端协作做摘要压缩
-        appendCommandResult({
-          kind: "info",
-          text: "compact 尚未实现，建议使用 /clear 开启新会话。",
-        });
+        const tid = currentId ?? "";
+        if (!tid) {
+          appendCommandResult({ kind: "error", text: "无当前会话，无法压缩。" });
+          return true;
+        }
+        try {
+          const result = await window.api.chat.compact(tid);
+          if (result.ok) {
+            appendCommandResult({
+              kind: "info",
+              text: `已压缩 ${result.compressed_count ?? 0} 条消息为摘要。`,
+            });
+          } else {
+            appendCommandResult({
+              kind: "info",
+              text: result.error ?? "压缩失败。",
+            });
+          }
+        } catch (err) {
+          appendCommandResult({
+            kind: "error",
+            text: `压缩请求失败：${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
         return true;
       }
       case "settings": {

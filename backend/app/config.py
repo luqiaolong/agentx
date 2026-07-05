@@ -200,6 +200,12 @@ class Settings(BaseSettings):
     # ---- ThinkFilter 缓冲（T8）----
     think_filter_max_hold: int = Field(default=6, ge=1)  # 最小 1，避免 0 切片 bug
 
+    # ---- 上下文管理（chat-context-management）----
+    # 滑动窗口消息数上限（含当前消息，超限丢弃最早）
+    context_max_messages: int = Field(default=20, ge=2)
+    # token 预算上限（保守值，兼容多数模型上下文窗口）
+    context_max_tokens: int = Field(default=16000, ge=1000)
+
     # ---- LangSmith ----
     langsmith_api_key: str | None = None
     langsmith_project: str = "agentx"

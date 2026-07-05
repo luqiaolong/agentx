@@ -6,7 +6,7 @@
   工具是否属于 ``DANGEROUS_TOOLS``，是则 yield approval_request 等用户审批，否则自动放行
 - 审批恢复: ``_await_approval`` 轮询 ``_pending_approvals``，通过后以
   ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_before`` 的标准恢复方式）
-- 使用 ``MemorySaver`` 作为 agent 内部 checkpointer，支持同一会话内 interrupt/resume 循环
+- 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer，支持跨轮次历史 + interrupt/resume
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
 from app.config import get_settings
 from app.llm import get_chat_model
+from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.subagents.code_agent import _make_fs_tools
 from app.subagents.rag_agent import _make_rag_tools
@@ -128,18 +128,21 @@ def build_deep_agent(
     thread_id: str,
     tools: list | None = None,
     profile_prompt: str = "",
+    checkpointer: Any = None,
 ) -> Any:
     """构造真实 DeepAgent 图。
 
     用 ``create_react_agent`` 构建 ReAct 子图，``interrupt_before=["tools"]`` 使图在
-    执行任何工具前暂停。``MemorySaver`` 作为 agent 内部 checkpointer 支持
-    interrupt/resume 循环（每次 ``run_deep_path`` 调用构建新 agent + 新 saver）。
+    执行任何工具前暂停。使用共享的 ``AsyncSqliteSaver`` 作为 checkpointer，支持
+    跨轮次历史恢复与 interrupt/resume 循环。
 
     Args:
         thread_id: 会话 ID（用于工具的沙箱授权绑定）。
         tools: 可选，已构建的工具列表。若未传则内部调用 ``_make_deep_tools(thread_id)``。
             ``run_deep_path`` 可先构建工具集，复用于 dangerous 判断。
         profile_prompt: 可选，用户画像前缀，拼到 ``_DEEP_SYSTEM_PROMPT`` 前。
+        checkpointer: 可选，共享的 LangGraph checkpointer。若未传则用
+            ``get_async_checkpointer()`` 获取全局 ``AsyncSqliteSaver`` 单例。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -147,7 +150,8 @@ def build_deep_agent(
     model = get_chat_model(temperature=0.3, streaming=True)
     if tools is None:
         tools = _make_deep_tools(thread_id)
-    checkpointer = MemorySaver()
+    if checkpointer is None:
+        checkpointer = get_async_checkpointer()
     # T9：画像前缀拼到默认 system prompt 前（遵循与路径 A 一致的"画像优先"约定）
     system_prompt = _DEEP_SYSTEM_PROMPT
     if profile_prompt:
@@ -308,6 +312,7 @@ async def run_deep_path(
     state: RouterState,
     message: str,
     profile_prompt: str = "",
+    history: list | None = None,
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器（真实实现）。
 
@@ -326,13 +331,18 @@ async def run_deep_path(
         state: Router 状态（含 thread_id）。
         message: 用户消息。
         profile_prompt: 用户画像前缀，拼到 DeepAgent system prompt 前。
+        history: 历史 messages 列表（已截断），拼到 inputs 前。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
     """
     thread_id = state.get("thread_id", "")
     config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
-    inputs = {"messages": [{"role": "user", "content": message}]}
+
+    # 构建完整 inputs：history + 当前消息
+    # history 已是 BaseMessage 列表，create_react_agent 的 messages channel 接受 BaseMessage
+    history_msgs = list(history) if history else []
+    inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
 
     # 1. 构建 agent（先构建工具集，便于计算运行时 dangerous 集合）
     try:

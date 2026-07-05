@@ -148,7 +148,7 @@ async def test_router_tool_path(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock run_code_agent yield 标准化事件
-    async def _fake_run_code_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "文件内容"}
         yield {"type": "tool_call", "name": "read_file", "args": {"path": "/tmp/a.txt"}}
         yield {"type": "tool_result", "name": "read_file", "result": "content"}
@@ -183,12 +183,12 @@ async def test_router_tool_path_selects_web_agent(
 
     web_called = False
 
-    async def _fake_run_web_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+    async def _fake_run_web_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         nonlocal web_called
         web_called = True
         yield {"type": "token", "content": "web result"}
 
-    async def _fake_run_code_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "code result"}
 
     monkeypatch.setattr("app.router.graph.run_web_agent", _fake_run_web_agent)
@@ -217,7 +217,7 @@ async def test_router_tool_path_strips_think_blocks(
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
-    async def _fake_run_code_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         # 模拟 MiniMax-M3 推理模型输出：think 块 + 正文
         yield {"type": "token", "content": "<think>用户要读文件，我应该用 list_dir</think>"}
         yield {"type": "token", "content": "好的，我来读取文件内容。"}
@@ -253,7 +253,7 @@ async def test_router_deep_path(
 
     # mock run_deep_path yield SSE 事件（注意：done 由 run_router 统一 yield）
     async def _fake_run_deep_path(
-        state: dict, message: str, profile_prompt: str = ""
+        state: dict, message: str, profile_prompt: str = "", history: list | None = None
     ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "deep response"}
         yield {"event": "todo_update", "data": '{"todos": [{"text": "step1", "done": true}]}'}
@@ -287,7 +287,7 @@ async def test_router_deep_path_error_passthrough(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     async def _fake_run_deep_path(
-        state: dict, message: str, profile_prompt: str = ""
+        state: dict, message: str, profile_prompt: str = "", history: list | None = None
     ) -> AsyncIterator[dict]:
         yield {"event": "error", "data": "用户拒绝执行危险操作"}
 

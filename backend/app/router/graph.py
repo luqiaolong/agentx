@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator
 from langgraph.graph import END, StateGraph
 
 from app.config import get_settings
+from app.memory.context import trim_messages_with_budget
 from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
@@ -191,7 +192,10 @@ def _sse(event: str, data: Any) -> dict[str, str]:
 
 
 async def _run_chat_path(
-    message: str, thread_id: str, system_prompt_extra: str | None = None
+    message: str,
+    thread_id: str,
+    system_prompt_extra: str | None = None,
+    history: list | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 A：LLM 直答 + 流式 token。
 
@@ -199,6 +203,8 @@ async def _run_chat_path(
         message: 用户消息（已移除 @skill 标记）。
         thread_id: 会话 ID。
         system_prompt_extra: 可选的 skill content，拼到默认 system prompt 前。
+        history: 历史 messages 列表（含 SystemMessage / HumanMessage / AIMessage），
+            已截断到 ``context_max_messages`` / ``context_max_tokens`` 内。
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -214,8 +220,13 @@ async def _run_chat_path(
         yield _sse("error", f"LLM 不可用: {exc}")
         return
 
+    # 构建完整 messages：system + history + current
+    # history 已是 BaseMessage 列表（含早期 SystemMessage 会被 trim 移除，
+    # 但此处保险起见再过滤一次，避免多个 system prompt）
+    history_msgs = [m for m in (history or []) if not isinstance(m, SystemMessage)]
     messages = [
         SystemMessage(content=system_prompt),
+        *history_msgs,
         HumanMessage(content=message),
     ]
     think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
@@ -235,7 +246,10 @@ async def _run_chat_path(
 
 
 async def _run_tool_path(
-    message: str, thread_id: str, profile_prompt: str | None = None
+    message: str,
+    thread_id: str,
+    profile_prompt: str | None = None,
+    history: list | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 B：选择子代理并透传事件流。
 
@@ -243,6 +257,7 @@ async def _run_tool_path(
         message: 用户消息（已移除 @skill 标记）。
         thread_id: 会话 ID。
         profile_prompt: 用户画像，回退路径 A 时注入 system prompt。
+        history: 历史 messages 列表（已截断），传给子代理拼到 inputs 前。
 
     Note:
         子代理 token 事件经 ``ThinkFilter`` 过滤 ``<think>...</think>`` 块后再 yield，
@@ -253,7 +268,7 @@ async def _run_tool_path(
         # 子代理禁用或工具全禁用，退回路径 A（注入画像）
         logger.info("router.tool_path fallback to CHAT", thread_id=thread_id)
         async for sse in _run_chat_path(
-            message, thread_id, system_prompt_extra=profile_prompt
+            message, thread_id, system_prompt_extra=profile_prompt, history=history
         ):
             yield sse
         return
@@ -269,7 +284,7 @@ async def _run_tool_path(
         # 自定义子代理：runner 需要 key 参数，单独处理
         think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
         try:
-            async for event in run_custom_agent(agent_type, thread_id, message):
+            async for event in run_custom_agent(agent_type, thread_id, message, history=history):
                 sse = _convert_subagent_event(event, think_filter)
                 if sse:
                     yield sse
@@ -284,7 +299,7 @@ async def _run_tool_path(
 
     think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
     try:
-        async for event in runner(thread_id, message):
+        async for event in runner(thread_id, message, history=history):
             sse = _convert_subagent_event(event, think_filter)
             if sse:
                 yield sse
@@ -303,6 +318,7 @@ async def _run_deep_path(
     thread_id: str,
     state: RouterState,
     profile_prompt: str = "",
+    history: list | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 C：DeepAgent + 危险工具中断审批。
 
@@ -311,9 +327,12 @@ async def _run_deep_path(
         thread_id: 会话 ID。
         state: Router 状态。
         profile_prompt: 用户画像前缀，由 ``run_router`` 注入到 DeepAgent system prompt。
+        history: 历史 messages 列表（已截断），传给 DeepAgent 拼到 inputs 前。
     """
     try:
-        async for event in run_deep_path(state, message, profile_prompt=profile_prompt):
+        async for event in run_deep_path(
+            state, message, profile_prompt=profile_prompt, history=history
+        ):
             yield event
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("deep path failed", error=str(exc))
@@ -424,19 +443,23 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
 
 
 async def run_router(
-    message: str, thread_id: str
+    message: str,
+    thread_id: str,
+    checkpointer: Any = None,
 ) -> AsyncIterator[dict[str, str]]:
     """运行 Router，yield SSE 事件。
 
     流程:
     1. 解析 ``@skill:<name>`` 标记，提取 skill content（注入路径 A system prompt）
-    2. 调 classify_message 获取分类
-    3. 按分类驱动对应路径的流式生成器
-    4. 将路径事件转为 SSE 格式（token / todo_update / approval_request / done / error）
+    2. 从 checkpointer 加载 ``thread_id`` 的历史 ``messages``（若提供 checkpointer）
+    3. 调 classify_message 获取分类
+    4. 按分类驱动对应路径的流式生成器，传入截断后的历史
+    5. 将路径事件转为 SSE 格式（token / todo_update / approval_request / done / error）
 
     Args:
         message: 用户消息。
         thread_id: 会话 ID。
+        checkpointer: 可选的 LangGraph checkpointer，用于加载历史 messages。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -453,6 +476,23 @@ async def run_router(
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
 
+        # 加载历史 messages（从 checkpointer）
+        history: list = []
+        if checkpointer is not None:
+            try:
+                history = await _load_history_from_checkpointer(checkpointer, thread_id)
+            except Exception as exc:  # noqa: BLE001 — 历史加载兜底
+                logger.warning("load history failed", error=str(exc))
+                history = []
+
+        # 截断历史到预算内（不含当前消息，当前消息在路径内部 append）
+        settings = get_settings()
+        history = trim_messages_with_budget(
+            history,
+            max_messages=settings.context_max_messages,
+            max_tokens=settings.context_max_tokens,
+        )
+
         try:
             classification = await classify_message(cleaned_message)
         except Exception as exc:  # noqa: BLE001 — 分类器兜底
@@ -464,6 +504,7 @@ async def run_router(
             thread_id=thread_id,
             classification=classification,
             message_len=len(cleaned_message),
+            history_count=len(history),
         )
 
         state: RouterState = {
@@ -480,19 +521,61 @@ async def run_router(
             if skill_content:
                 system_prompt_extra += skill_content
             async for sse in _run_chat_path(
-                cleaned_message, thread_id, system_prompt_extra=system_prompt_extra
+                cleaned_message,
+                thread_id,
+                system_prompt_extra=system_prompt_extra,
+                history=history,
             ):
                 yield sse
         elif classification == "SINGLE_TOOL":
             async for sse in _run_tool_path(
-                cleaned_message, thread_id, profile_prompt=profile_prompt
+                cleaned_message,
+                thread_id,
+                profile_prompt=profile_prompt,
+                history=history,
             ):
                 yield sse
         else:  # DEEP_TASK
             # 路径 C：画像传给 _run_deep_path，由 deep_path 注入到 agent system prompt
             async for sse in _run_deep_path(
-                cleaned_message, thread_id, state, profile_prompt=profile_prompt
+                cleaned_message,
+                thread_id,
+                state,
+                profile_prompt=profile_prompt,
+                history=history,
             ):
                 yield sse
 
         yield _sse("done", "{}")
+
+
+async def _load_history_from_checkpointer(
+    checkpointer: Any, thread_id: str
+) -> list:
+    """从 checkpointer 加载 ``thread_id`` 的历史 messages。
+
+    Args:
+        checkpointer: LangGraph checkpointer（同步或异步）。
+        thread_id: 会话 ID。
+
+    Returns:
+        历史 ``BaseMessage`` 列表（不含当前消息）。若 checkpoint 不存在或无 messages，
+        返回空列表。
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    # 优先用 aget（异步 checkpointer）
+    if hasattr(checkpointer, "aget"):
+        checkpoint = await checkpointer.aget(config)
+    elif hasattr(checkpointer, "get"):
+        checkpoint = checkpointer.get(config)
+    else:
+        return []
+
+    if not checkpoint:
+        return []
+
+    # LangGraph checkpoint 结构：{"channel_values": {"messages": [...]}, ...}
+    # 不同版本字段名可能不同，防御性读取
+    channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
+    messages = channel_values.get("messages", [])
+    return list(messages) if messages else []

@@ -287,20 +287,26 @@ async def root() -> dict[str, str]:
     return {"app": "agentx", "version": "0.1.0", "status": "ok"}
 
 
+async def _health_with_timeout(coro: Any, timeout: float = 1.0) -> dict[str, Any]:
+    """带超时的健康检查子项，避免慢依赖拖垮整体响应。"""
+    import asyncio
+
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except asyncio.TimeoutError:
+        return {"status": "unhealthy", "error": "health check timeout"}
+    except Exception as exc:  # noqa: BLE001 — 健康检查兜底
+        return {"status": "unhealthy", "error": str(exc)}
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    """聚合健康检查：BGE-M3 + Milvus 子项。整体 200 即使子项 unhealthy。"""
-    # 嵌入服务健康：调 tei_client.healthcheck（嵌入 "healthcheck" 字符串）
-    try:
-        embedding_status = await embedding_healthcheck()
-    except Exception as exc:  # noqa: BLE001 — 健康检查兜底
-        embedding_status = {"status": "unhealthy", "error": str(exc)}
+    """聚合健康检查：BGE-M3 + Milvus 子项。整体 200 即使子项 unhealthy。
 
-    # Milvus 健康：调 client.healthcheck（不抛异常）
-    try:
-        milvus_status = await get_milvus_client().healthcheck()
-    except Exception as exc:  # noqa: BLE001 — 健康检查兜底
-        milvus_status = {"status": "unhealthy", "error": str(exc)}
+    每个子项最多等待 1 秒，保证 Electron 启动轮询在 2 秒内拿到响应。
+    """
+    embedding_status = await _health_with_timeout(embedding_healthcheck(), timeout=1.0)
+    milvus_status = await _health_with_timeout(get_milvus_client().healthcheck(), timeout=1.0)
 
     return {"status": "ok", "embedding": embedding_status, "milvus": milvus_status}
 
@@ -509,8 +515,9 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             yield {"event": "done", "data": "{}"}
             return
 
-        # 其他消息：走 Router 三路径分发
-        async for event in run_router(req.message, req.thread_id):
+        # 其他消息：走 Router 三路径分发（传入 checkpointer 加载历史）
+        checkpointer = await get_async_checkpointer()
+        async for event in run_router(req.message, req.thread_id, checkpointer=checkpointer):
             # 检查中止标志
             if _abort_flags.get(req.thread_id):
                 yield {"event": "error", "data": "用户已中止"}
@@ -535,6 +542,88 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
     - ``error``         — 错误（含消息）。
     """
     return EventSourceResponse(_event_generator(req))
+
+
+class CompactRequest(BaseModel):
+    """``/compact`` 请求体。"""
+
+    thread_id: str = Field(..., description="会话 ID")
+
+
+@app.post("/api/chat/compact")
+async def chat_compact(req: CompactRequest) -> dict[str, Any]:
+    """压缩会话历史：把早期消息摘要化，保留最近 2 条。
+
+    流程:
+    1. 从 checkpointer 读取 ``thread_id`` 的历史 messages
+    2. 若消息不足 4 条，返回 ``{ok: false, error: "消息不足"}``
+    3. 调 LLM 把前 N-2 条压缩成摘要
+    4. 用 ``[SystemMessage(summary), 最近 2 条]`` 写回 checkpoint
+    5. 返回 ``{ok: true, summary: str, compressed_count: int}``
+
+    LLM 失败时不写回 checkpoint，返回 ``{ok: false, error: str}``。
+    """
+    from langchain_core.messages import SystemMessage
+
+    from app.memory import summarize_messages
+
+    checkpointer = await get_async_checkpointer()
+    config = {"configurable": {"thread_id": req.thread_id}}
+
+    # 1. 读取历史 messages
+    try:
+        if hasattr(checkpointer, "aget"):
+            checkpoint = await checkpointer.aget(config)
+        else:
+            checkpoint = checkpointer.get(config)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("compact: load checkpoint failed", thread_id=req.thread_id, error=str(exc))
+        return {"ok": False, "error": f"加载 checkpoint 失败: {exc}"}
+
+    if not checkpoint:
+        return {"ok": False, "error": "无 checkpoint 可压缩"}
+
+    channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
+    messages = list(channel_values.get("messages", []))
+    if len(messages) < 4:
+        return {"ok": False, "error": "消息不足，无需压缩"}
+
+    # 2. 调 LLM 压缩前 N-2 条
+    to_compress = messages[:-2]
+    keep_recent = messages[-2:]
+    try:
+        summary = await summarize_messages(to_compress)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("compact: summarize failed", thread_id=req.thread_id, error=str(exc))
+        return {"ok": False, "error": f"摘要生成失败: {exc}"}
+
+    # 3. 写回 checkpoint：[SystemMessage(summary), *keep_recent]
+    new_messages = [SystemMessage(content=summary), *keep_recent]
+    new_channel_values = {**channel_values, "messages": new_messages}
+    new_checkpoint = {**checkpoint, "channel_values": new_channel_values}
+
+    try:
+        if hasattr(checkpointer, "aput"):
+            await checkpointer.aput(config, new_checkpoint, {"messages": "any"}, [])
+        elif hasattr(checkpointer, "put"):
+            checkpointer.put(config, new_checkpoint, {"messages": "any"}, [])
+        else:
+            return {"ok": False, "error": "checkpointer 不支持写回"}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("compact: write checkpoint failed", thread_id=req.thread_id, error=str(exc))
+        return {"ok": False, "error": f"写回 checkpoint 失败: {exc}"}
+
+    logger.info(
+        "compact done",
+        thread_id=req.thread_id,
+        compressed_count=len(to_compress),
+        summary_len=len(summary),
+    )
+    return {
+        "ok": True,
+        "summary": summary,
+        "compressed_count": len(to_compress),
+    }
 
 
 # ============================================================
