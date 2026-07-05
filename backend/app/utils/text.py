@@ -203,12 +203,21 @@ class ThinkFilter:
             self._buf = self._buf[-self._max_hold:]
 
 
-def extract_chunk_text(chunk: Any) -> str:
+def extract_chunk_text(chunk: Any, *, strip: bool = True) -> str:
+    """从 LLM chunk 中提取文本内容。
+
+    Args:
+        chunk: LangChain AIMessageChunk 或任意对象。
+        strip: 为 True 时（默认）剥离 ``THINK_OPEN..THINK_CLOSE`` 块；
+               为 False 时保留原始文本，供 ``ThinkFilter`` 流式处理。
+    """
     if chunk is None:
         return ""
     content = getattr(chunk, "content", chunk)
     if isinstance(content, str):
-        return strip_think(content)
+        if strip:
+            return strip_think(content)
+        return content
     if isinstance(content, list):
         parts: list[str] = []
         for block in content:
@@ -216,7 +225,10 @@ def extract_chunk_text(chunk: Any) -> str:
                 parts.append(block)
             elif isinstance(block, dict) and isinstance(block.get("text"), str):
                 parts.append(block["text"])
-        return strip_think("".join(parts))
+        raw = "".join(parts)
+        if strip:
+            return strip_think(raw)
+        return raw
     return ""
 
 

@@ -376,11 +376,19 @@ async def _run_chat_path(
         *history_msgs,
         HumanMessage(content=message),
     ]
-    think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
+    think_filter = ThinkFilter(
+        max_hold=get_settings().think_filter_max_hold,
+        retain_think=True,
+    )
     try:
         async for chunk in llm.astream(messages):
-            raw = _extract_chunk_text(chunk)
+            raw = _extract_chunk_text(chunk, strip=False)
             cleaned = think_filter.feed(raw)
+            # retain_think 模式：提取 reasoning chunk 并 yield reasoning 事件
+            if getattr(think_filter, "_retain_think", False):
+                reasoning = think_filter.take_think()
+                if reasoning:
+                    yield _sse("reasoning", {"content": reasoning, "source": "assistant"})
             if cleaned:
                 yield _sse("token", cleaned)
         tail = think_filter.flush()
