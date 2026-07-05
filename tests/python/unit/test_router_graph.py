@@ -3,13 +3,17 @@
 覆盖：
 1. build_router_graph 返回编译后的图实例
 2. CHAT 路径：mock classify_message → "CHAT" + mock LLM，验证 yield token 事件
-3. SINGLE_TOOL 路径：mock classify_message → "SINGLE_TOOL" + mock run_code_agent，验证透传事件
+3. SINGLE_TOOL 路径：mock classify_message → "SINGLE_TOOL" + mock run_code_agent
+   - 验证 delegation 事件（路径 B 入口）
+   - 验证 tool_call/tool_result 透传为同名 SSE 事件（含 source 字段）
+   - 验证 token 经 ThinkFilter 分离后 yield reasoning + token
 4. DEEP_TASK 路径：mock classify_message → "DEEP_TASK" + mock run_deep_path，验证透传事件
 5. /reset 消息触发 checkpoint 清理 + 沙箱清理
 """
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
@@ -140,35 +144,174 @@ async def test_router_chat_path_llm_error(
 async def test_router_tool_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SINGLE_TOOL 路径：mock run_code_agent，验证透传事件 + 转为 SSE 格式。"""
+    """SINGLE_TOOL 路径：mock run_code_agent，验证 tool_call/tool_result 透传为同名 SSE 事件。"""
 
     async def _fake_classify(message: str) -> str:
         return "SINGLE_TOOL"
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
-    # mock run_code_agent yield 标准化事件
+    # mock run_code_agent yield 标准化事件（T3 后子代理已带 source 字段）
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "文件内容"}
-        yield {"type": "tool_call", "name": "read_file", "args": {"path": "/tmp/a.txt"}}
-        yield {"type": "tool_result", "name": "read_file", "result": "content"}
+        yield {
+            "type": "tool_call",
+            "name": "read_file",
+            "args": {"path": "/tmp/a.txt"},
+            "source": "code",
+        }
+        yield {
+            "type": "tool_result",
+            "name": "read_file",
+            "result": "content",
+            "source": "code",
+        }
 
     monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("读文件 /tmp/a.txt", "t1"))
 
-    # 验证 token 事件透传
-    token_events = [e for e in events if e["event"] == "token"]
-    assert len(token_events) == 1
-    assert token_events[0]["data"] == "文件内容"
+    # 验证 token 事件透传（ThinkFilter 对纯文本透传，受 max_hold 缓冲影响，
+    # 可能拆为 feed 输出 + flush 输出，校验拼接文本）
+    token_text = "".join(e["data"] for e in events if e["event"] == "token")
+    assert token_text == "文件内容"
 
-    # 验证 tool_call → todo_update 转换
-    todo_events = [e for e in events if e["event"] == "todo_update"]
-    assert len(todo_events) == 2  # tool_call + tool_result
+    # 验证 tool_call 透传为 tool_call SSE 事件（不再压扁为 todo_update）
+    tool_call_events = [e for e in events if e["event"] == "tool_call"]
+    assert len(tool_call_events) == 1
+    tc_data = json.loads(tool_call_events[0]["data"])
+    assert tc_data["name"] == "read_file"
+    assert tc_data["args"] == {"path": "/tmp/a.txt"}
+    assert tc_data["source"] == "code"
+    assert "id" in tc_data and tc_data["id"]  # id 非空
+
+    # 验证 tool_result 透传为 tool_result SSE 事件
+    tool_result_events = [e for e in events if e["event"] == "tool_result"]
+    assert len(tool_result_events) == 1
+    tr_data = json.loads(tool_result_events[0]["data"])
+    assert tr_data["name"] == "read_file"
+    assert tr_data["result"] == "content"
+    assert tr_data["source"] == "code"
+    assert "id" in tr_data and tr_data["id"]
 
     # 验证 done 事件
     done_events = [e for e in events if e["event"] == "done"]
     assert len(done_events) == 1
+
+
+async def test_router_tool_path_yields_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SINGLE_TOOL 路径入口 yield delegation 事件标识委派目标（spec D6）。"""
+
+    async def _fake_classify(message: str) -> str:
+        return "SINGLE_TOOL"
+
+    monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+        yield {"type": "token", "content": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+
+    events = await _collect_events(run_router("读文件", "t-delegation"))
+
+    # 验证 delegation 事件（应为第一个事件）
+    delegation_events = [e for e in events if e["event"] == "delegation"]
+    assert len(delegation_events) == 1
+    assert events[0]["event"] == "delegation"  # delegation 应在流的最前面
+    dlg_data = json.loads(delegation_events[0]["data"])
+    assert dlg_data["target"] == "code"
+    assert dlg_data["source"] == "router"
+    assert "message" in dlg_data and dlg_data["message"]
+
+
+async def test_router_tool_path_delegation_for_web_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SINGLE_TOOL 路径选 web 子代理时，delegation 事件 target="web"。"""
+
+    async def _fake_classify(message: str) -> str:
+        return "SINGLE_TOOL"
+
+    monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    async def _fake_run_web_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+        yield {"type": "token", "content": "web result"}
+
+    monkeypatch.setattr("app.router.graph.run_web_agent", _fake_run_web_agent)
+
+    events = await _collect_events(run_router("搜索网页信息", "t-web"))
+
+    delegation_events = [e for e in events if e["event"] == "delegation"]
+    assert len(delegation_events) == 1
+    dlg_data = json.loads(delegation_events[0]["data"])
+    assert dlg_data["target"] == "web"
+
+
+async def test_router_tool_path_source_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """子代理事件未带 source 字段时（旧格式兼容），用 caller 传入的 source 兜底。"""
+
+    async def _fake_classify(message: str) -> str:
+        return "SINGLE_TOOL"
+
+    monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    # mock yield 旧格式事件（无 source 字段）
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+        yield {"type": "tool_call", "name": "read_file", "args": {"path": "/tmp"}}
+        yield {"type": "tool_result", "name": "read_file", "result": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+
+    events = await _collect_events(run_router("读文件", "t-fallback"))
+
+    tc_events = [e for e in events if e["event"] == "tool_call"]
+    assert len(tc_events) == 1
+    assert json.loads(tc_events[0]["data"])["source"] == "code"
+
+    tr_events = [e for e in events if e["event"] == "tool_result"]
+    assert len(tr_events) == 1
+    assert json.loads(tr_events[0]["data"])["source"] == "code"
+
+
+async def test_router_tool_path_reasoning_separation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SINGLE_TOOL 路径：token 含 <think> 块时，reasoning 走 reasoning SSE，text 走 token SSE。"""
+
+    async def _fake_classify(message: str) -> str:
+        return "SINGLE_TOOL"
+
+    monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+        # 模拟推理模型输出：think 块 + 正文
+        yield {"type": "token", "content": "<think>用户要读文件，我应该用 list_dir</think>"}
+        yield {"type": "token", "content": "好的，我来读取文件内容。"}
+
+    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+
+    events = await _collect_events(run_router("列出 /tmp 目录", "t-reasoning"))
+
+    # 验证 reasoning 事件下发（含 think 块内容）
+    reasoning_events = [e for e in events if e["event"] == "reasoning"]
+    reasoning_text = "".join(
+        json.loads(e["data"])["content"] for e in reasoning_events
+    )
+    assert "用户要读文件" in reasoning_text
+    assert "list_dir" in reasoning_text
+    # 验证 reasoning 事件 source 字段
+    for e in reasoning_events:
+        assert json.loads(e["data"])["source"] == "code"
+
+    # 验证 token 事件不含 think 标签
+    token_text = "".join(e["data"] for e in events if e["event"] == "token")
+    assert "<think>" not in token_text
+    assert "</think>" not in token_text
+    assert "好的，我来读取文件内容。" in token_text
 
 
 async def test_router_tool_path_selects_web_agent(
@@ -252,8 +395,14 @@ async def test_router_deep_path(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock run_deep_path yield SSE 事件（注意：done 由 run_router 统一 yield）
+    # 签名需与 run_deep_path 真实签名对齐（含 permission_mode / scene_prompt）
     async def _fake_run_deep_path(
-        state: dict, message: str, profile_prompt: str = "", history: list | None = None
+        state: dict,
+        message: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "workspace",
+        scene_prompt: str | None = None,
     ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "deep response"}
         yield {"event": "todo_update", "data": '{"todos": [{"text": "step1", "done": true}]}'}
@@ -287,7 +436,12 @@ async def test_router_deep_path_error_passthrough(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     async def _fake_run_deep_path(
-        state: dict, message: str, profile_prompt: str = "", history: list | None = None
+        state: dict,
+        message: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "workspace",
+        scene_prompt: str | None = None,
     ) -> AsyncIterator[dict]:
         yield {"event": "error", "data": "用户拒绝执行危险操作"}
 

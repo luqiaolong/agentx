@@ -35,13 +35,16 @@ def test_approve_true_records_pending_approval(client: TestClient) -> None:
         )
         assert r.status_code == 200
         assert r.json() == {"ok": True}
-        assert _pending_approvals.get(tid) is True
+        # _pending_approvals 现存 ApprovalDecision 对象（非 bool），校验 approved 字段
+        decision = _pending_approvals.get(tid)
+        assert decision is not None
+        assert decision.approved is True
     finally:
         _pending_approvals.pop(tid, None)
 
 
 def test_approve_false_records_pending_approval(client: TestClient) -> None:
-    """POST /api/chat/approve approval=false → 写入 _pending_approvals[tid] = False。"""
+    """POST /api/chat/approve approval=false → 写入 _pending_approvals[tid].approved = False。"""
     from app.main import _pending_approvals
 
     tid = "unit-test-approve-2"
@@ -52,7 +55,9 @@ def test_approve_false_records_pending_approval(client: TestClient) -> None:
             json={"thread_id": tid, "approval": False},
         )
         assert r.status_code == 200
-        assert _pending_approvals.get(tid) is False
+        decision = _pending_approvals.get(tid)
+        assert decision is not None
+        assert decision.approved is False
     finally:
         _pending_approvals.pop(tid, None)
 
@@ -66,7 +71,9 @@ def test_approve_overwrites_previous_decision(client: TestClient) -> None:
     try:
         client.post("/api/chat/approve", json={"thread_id": tid, "approval": True})
         client.post("/api/chat/approve", json={"thread_id": tid, "approval": False})
-        assert _pending_approvals.get(tid) is False
+        decision = _pending_approvals.get(tid)
+        assert decision is not None
+        assert decision.approved is False
     finally:
         _pending_approvals.pop(tid, None)
 
