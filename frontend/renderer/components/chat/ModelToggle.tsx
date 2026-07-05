@@ -2,24 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Check } from "lucide-react";
 import { useModelStore } from "@/stores/model";
-import type { ModelEntry } from "../../../shared/api-types";
 
 /**
  * 模型切换按钮 —— 与 ChatComposer 左侧 btn-icon 同款 minimal 风格。
  *
- * - icon-only trigger：[Cpu] 图标 + 当前激活模型短名（最多 10 字符），hover 高亮
- * - popover：当前激活摘要 + 列表（provider 标签 + id），切换走 setActive()
- * - 首次挂载调用 model.load() 拉取 entries
+ * Trigger 信息密度：
+ * - [Cpu 图标] 当前生效模型名（来自 defaultModel 槽位，单一事实源）
+ * - 显示来源优先级：用户自定义 label → entry.id → defaultModel 裸字符串
+ * - 即使 entries 为空（未在「设置 → 模型」添加任何条目），也能从 defaultModel
+ *   槽位读到当前后端实际跑的模型，避免按钮只显示图标看不见名字。
+ *
+ * Popover：当前激活摘要 + 列表（provider + id），切换走 setActive()
  */
-function shortLabel(entry: ModelEntry | null, fallback: string): string {
-  if (!entry) return fallback;
-  const s = entry.label || entry.id;
-  return s.length > 10 ? s.slice(0, 9) + "…" : s;
+function inferProvider(model: string, baseUrl?: string): string {
+  if (!model) return "";
+  if (model.startsWith("deepseek")) return "deepseek";
+  if (/^(gpt|o1|o3)/.test(model)) return "openai";
+  if (baseUrl && baseUrl.includes("minimaxi")) return "minimax";
+  return "custom";
 }
 
 export function ModelToggle() {
   const entries = useModelStore((s) => s.entries);
   const activeId = useModelStore((s) => s.activeId);
+  const defaultModel = useModelStore((s) => s.defaultModel);
   const loaded = useModelStore((s) => s.loaded);
   const load = useModelStore((s) => s.load);
   const setActive = useModelStore((s) => s.setActive);
@@ -48,7 +54,17 @@ export function ModelToggle() {
     };
   }, [open]);
 
-  const active = entries.find((e) => e.id === activeId) ?? null;
+  // 用户在设置中配的"激活条目"（含友好 label）
+  const activeEntry = entries.find((e) => e.id === activeId) ?? null;
+
+  // trigger 展示：label > defaultModel；空则显式"未选"（区别于"已选但未命名"）
+  const triggerLabel = activeEntry?.label || defaultModel || "未选";
+  // provider 用于 popover header 与 fallback tooltip
+  const provider = activeEntry?.providerId ?? inferProvider(defaultModel);
+  // 给"未添加条目但 defaultModel 有值"的情况一个清晰的 fallback tooltip
+  const triggerTitle = defaultModel
+    ? `模型：${triggerLabel}${provider ? `（${provider}）` : ""}`
+    : "选择模型";
 
   const choose = async (id: string) => {
     setError(null);
@@ -67,7 +83,7 @@ export function ModelToggle() {
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title={active ? `模型：${active.label}（${active.id}）` : "选择模型"}
+        title={triggerTitle}
         className={[
           "btn-icon group inline-flex h-[1.875rem] w-auto items-center gap-1 px-1.5",
           "text-[11px] leading-none",
@@ -75,8 +91,8 @@ export function ModelToggle() {
         ].join(" ")}
       >
         <Cpu className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        <span className="max-w-[80px] truncate font-medium">
-          {shortLabel(active, "未选")}
+        <span className="max-w-[140px] truncate font-medium">
+          {triggerLabel}
         </span>
       </button>
 
@@ -106,9 +122,17 @@ export function ModelToggle() {
               </div>
               <div className="mt-1 flex items-center gap-1.5 text-[11px] text-secondary-c">
                 <Cpu className="h-3 w-3" aria-hidden="true" />
-                <span className="truncate font-medium">
-                  {active ? active.label : "未选择（在设置中添加）"}
+                <span
+                  className="truncate font-medium"
+                  title={triggerLabel}
+                >
+                  {triggerLabel}
                 </span>
+                {provider && (
+                  <span className="rounded bg-default px-1 font-mono text-[9px] text-muted-c">
+                    {provider}
+                  </span>
+                )}
               </div>
             </div>
 
