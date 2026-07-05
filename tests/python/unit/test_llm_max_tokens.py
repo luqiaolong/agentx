@@ -108,6 +108,33 @@ def test_deepseek_branch_with_max_tokens(
 
 @patch("app.llm.get_settings")
 @patch("langchain_openai.ChatOpenAI")
+def test_deepseek_branch_no_max_tokens(
+    mock_chat: MagicMock,
+    mock_get_settings: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DeepSeek 分支：max_output_tokens=None 时 kwargs 不含 max_tokens。"""
+    monkeypatch.delenv("AGENTX_MAX_OUTPUT_TOKENS", raising=False)
+    mock_get_settings.return_value = _settings(
+        default_model="deepseek-chat",
+        openai_api_key=None,
+        deepseek_api_key="test-ds-key",
+        max_output_tokens=None,
+    )
+    mock_chat.return_value = MagicMock(name="chat_instance")
+
+    get_chat_model(temperature=0.7)
+
+    kwargs = mock_chat.call_args.kwargs
+    assert "max_tokens" not in kwargs, (
+        f"DeepSeek 分支未设置 max_output_tokens 时不应注入 max_tokens, kwargs={kwargs!r}"
+    )
+    # 同时验证 DeepSeek 仍正确注入 base_url
+    assert kwargs.get("base_url") == "https://api.deepseek.com"
+
+
+@patch("app.llm.get_settings")
+@patch("langchain_openai.ChatOpenAI")
 def test_fallback_branch_with_max_tokens(
     mock_chat: MagicMock,
     mock_get_settings: MagicMock,
