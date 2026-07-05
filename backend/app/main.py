@@ -65,6 +65,7 @@ from app.memory import (
     list_skills_files,
     list_threads,
 )
+from app.memory.sandbox_store import get_sandbox_store
 from app.memory.skills_loader import get_skills, reload_skills
 from app.memory.skills_store import save_skill_file
 from app.observability.langsmith import mark_redacted, trace_span
@@ -107,6 +108,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("checkpointer initialized on startup")
     except Exception as exc:  # noqa: BLE001
         logger.warning("checkpointer init failed on startup: {}", exc)
+
+    # 0.5. 沙箱授权从 DB 恢复
+    try:
+        get_sandbox().bootstrap_from_store()
+        logger.info("sandbox bootstrap completed on startup")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sandbox bootstrap failed on startup: {}", exc)
 
     # 1. 嵌入客户端：get_embedding_client() 懒构造，此处显式 warmup 记日志
     logger.info("embedding client initialized", url=settings.embedding_url)
@@ -175,6 +183,7 @@ class AuthorizeRequest(BaseModel):
     thread_id: str = Field(..., description="会话 ID")
     path: str = Field(..., description="待授权目录绝对路径")
     writable: bool = Field(False, description="是否允许写入（默认只读）")
+    source: str = Field("manual", description="授权来源：manual（用户手动）/ chip（工作区自动同步）")
 
 
 class RevokeRequest(BaseModel):
@@ -389,7 +398,9 @@ async def sandbox_authorize(req: AuthorizeRequest) -> dict[str, Any]:
     """授权目录。系统关键目录或非法路径 → 400。"""
     sandbox = get_sandbox()
     try:
-        resolved = sandbox.authorize(req.thread_id, req.path, writable=req.writable)
+        resolved = sandbox.authorize(
+            req.thread_id, req.path, writable=req.writable, source=req.source
+        )
     except ValueError as exc:
         # 系统关键目录
         logger.warning(
@@ -817,11 +828,17 @@ async def memory_checkpointer_status() -> dict[str, Any]:
 
 @app.delete("/api/memory/checkpointer/{thread_id}")
 async def memory_checkpointer_delete(thread_id: str) -> dict[str, Any]:
-    """删除指定 thread 的所有 checkpoint。"""
+    """删除指定 thread 的所有 checkpoint + 沙箱授权记录。"""
     try:
         deleted = await delete_thread(thread_id)
     except ThreadIdInvalid as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    # 联动删除沙箱授权记录
+    try:
+        get_sandbox_store().delete_by_thread(thread_id)
+        get_sandbox().clear(thread_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sandbox cleanup failed for thread {}: {}", thread_id, exc)
     return {"ok": True, "deleted": deleted}
 
 
