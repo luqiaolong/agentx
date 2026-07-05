@@ -219,6 +219,7 @@ async def _run_chat_path(
     thread_id: str,
     system_prompt_extra: str | None = None,
     history: list | None = None,
+    scene_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 A：LLM 直答 + 流式 token。
 
@@ -228,15 +229,17 @@ async def _run_chat_path(
         system_prompt_extra: 可选的 skill content，拼到默认 system prompt 前。
         history: 历史 messages 列表（含 SystemMessage / HumanMessage / AIMessage），
             已截断到 ``context_max_messages`` / ``context_max_tokens`` 内。
+        scene_prompt: 可选场景 prompt，非空时覆盖 default_system_prompt。
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from app.llm import get_chat_model
 
-    system_prompt = get_settings().default_system_prompt
-    if system_prompt_extra:
-        # 画像/skill 在前，default 在后（spec R9：画像优先于默认 prompt，与路径 C 一致）
-        system_prompt = f"{system_prompt_extra}\n{system_prompt}"
+    system_prompt = resolve_system_prompt(
+        default=get_settings().default_system_prompt,
+        scene_prompt=scene_prompt,
+        skill_extra=system_prompt_extra,
+    )
     try:
         llm = get_chat_model(temperature=0.7, streaming=True)
     except ValueError as exc:
@@ -557,6 +560,7 @@ async def run_router(
                 thread_id,
                 system_prompt_extra=system_prompt_extra,
                 history=history,
+                scene_prompt=scene_prompt,
             ):
                 yield sse
         elif classification == "SINGLE_TOOL":
