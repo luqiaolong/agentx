@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
+import { act } from "react";
 import { BrowserRouter } from "react-router-dom";
 import App from "@/App";
 
@@ -141,13 +142,25 @@ beforeAll(() => {
 });
 
 describe("App smoke", () => {
-  it("renders without throwing", () => {
-    const { container } = render(
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>,
-    );
+  it("renders without throwing", async () => {
+    // App 启动时会异步拉取 home workspace path、订阅 python status、
+    // 订阅窗口最大化事件；这些副作用在 render 之后才会触发 setState，
+    // 必须 await 让所有 microtask 在 act 包裹中完成，否则触发 act 警告。
+    let container: HTMLElement;
+    await act(async () => {
+      const result = render(
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>,
+      );
+      container = result.container;
+      // flush 所有微任务（getHomeWorkspaceDir 的 .then、onStatus 订阅）
+      await Promise.resolve();
+    });
+    // 再 waitFor 一次确保所有 React 状态更新都已落盘
+    await waitFor(() => {
+      expect(container.textContent).toContain("AgentPy");
+    });
     expect(container).toBeTruthy();
-    expect(container.textContent).toContain("AgentPy");
   });
 });

@@ -131,7 +131,14 @@ class SessionSandbox:
         raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
 
     def authorize(self, thread_id: str, path: str | Path, writable: bool = False) -> Path:
-        """授权目录。返回规范化后的 Path。拒绝系统关键目录。"""
+        """授权目录。返回规范化后的 Path。拒绝系统关键目录。
+
+        拒绝空字符串 / 纯空白 / "." / ".." —— 否则会被 ``Path.resolve()`` 静默解析为
+        CWD（当前目录），授权 CWD 等价于一次性把仓库根目录读权限交给 LLM。
+        """
+        path_str = str(path).strip()
+        if not path_str or path_str in (".", ".."):
+            raise ValueError(f"路径 {path!r} 无效，请提供具体目录绝对路径")
         resolved = self._normalize(path)
         if self._is_critical(resolved):
             raise ValueError(f"路径 {path} 是系统关键目录，不可授权")

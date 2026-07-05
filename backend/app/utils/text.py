@@ -71,10 +71,22 @@ class ThinkFilter:
         self._think_chunk_done = False
         self._in_think = False
         self._retain_think = retain_think
+        # 首 chunk 输入可能含 LLM 礼貌性前导空白（"\n\nHi"），lstrip 一次。
+        # 纯空白 chunk 不消耗 _first_chunk 状态，等真有内容的 chunk 到来再剥。
+        self._first_chunk = True
 
     def feed(self, text: str) -> str:
         if not text:
             return ""
+        if self._first_chunk:
+            stripped = text.lstrip()
+            if stripped != text:
+                # 真的剥到了前导空白；用它替换，并标记首 chunk 已消费
+                text = stripped
+                self._first_chunk = False
+            else:
+                # 首 chunk 无前导空白，仍标记已消费（后续不再剥）
+                self._first_chunk = False
         self._buf += text
         self._emit = ""
         self._think_chunk_done = False

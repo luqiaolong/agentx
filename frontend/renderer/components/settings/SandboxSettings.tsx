@@ -9,6 +9,7 @@ export function SandboxSettings() {
   const persistAuthorizedDirs = useSettingsStore((s) => s.persistAuthorizedDirs);
   const setPersistAuthorizedDirs = useSettingsStore((s) => s.setPersistAuthorizedDirs);
   const [dirs, setDirs] = useState<AuthorizedDir[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!threadId) {
@@ -37,8 +38,13 @@ export function SandboxSettings() {
   }
 
   const revoke = async (p: string) => {
-    await window.api.sandbox.revoke(threadId, p);
-    await refresh();
+    setError(null);
+    try {
+      await window.api.sandbox.revoke(threadId, p);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
@@ -80,6 +86,9 @@ export function SandboxSettings() {
             </li>
           ))}
         </ul>
+      )}
+      {error && (
+        <p className="text-xs text-rose-600 dark:text-rose-400">撤销失败：{error}</p>
       )}
     </div>
   );

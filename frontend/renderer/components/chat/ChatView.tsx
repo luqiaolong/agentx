@@ -141,14 +141,41 @@ export function ChatView() {
         return true;
       }
       case "model": {
-        if (args) {
-          // 占位：将来接 settings.activateModel(id)
+        if (!args) {
+          // 无参：打开设置面板让用户手动选择
+          setSettingsOpen(true);
+          appendCommandResult({ kind: "info", text: "已打开设置面板，请在「模型」tab 选择。" });
+          return true;
+        }
+        try {
+          const entries = await window.api.settings.getModelEntries();
+          // 优先精确匹配 id，其次大小写不敏感匹配 label
+          const target =
+            entries.find((e) => e.id === args) ??
+            entries.find((e) => e.label.toLowerCase() === args.toLowerCase());
+          if (!target) {
+            const available = entries
+              .map((e) => `${e.label}（id: ${e.id}）`)
+              .join("、");
+            appendCommandResult({
+              kind: "error",
+              text: `未找到模型「${args}」。可用模型：${
+                available || "（暂无，请在设置中添加）"
+              }`,
+            });
+            return true;
+          }
+          await window.api.settings.activateModel(target.id);
           appendCommandResult({
             kind: "info",
-            text: `切换模型到「${args}」尚未在 UI 中实现，已打开设置面板手动选择。`,
+            text: `已激活模型「${target.label}」，重启后端后生效。`,
+          });
+        } catch (err) {
+          appendCommandResult({
+            kind: "error",
+            text: `切换模型失败：${err instanceof Error ? err.message : String(err)}`,
           });
         }
-        setSettingsOpen(true);
         return true;
       }
       case "skills": {

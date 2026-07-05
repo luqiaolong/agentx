@@ -4,6 +4,10 @@ import { resolve } from "node:path";
 
 export default defineConfig({
   plugins: [react()],
-  test: { environment: "jsdom", globals: true, setupFiles: [] },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./setup.ts"],
+  },
   resolve: { alias: { "@": resolve(__dirname, "../../frontend/renderer") } },
 });

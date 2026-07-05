@@ -87,11 +87,13 @@ function migrateV0toV1(persisted: unknown): Partial<ChatState> {
   const oldMessages = p.messages as ChatMessage[];
   const oldThreadId = typeof p.threadId === "string" ? p.threadId : null;
   const id = oldThreadId ?? crypto.randomUUID();
+  // oldMessages 是 ChatMessage[]，TS 不知道 length > 0 时 [0] 必存在；先收一下再用。
+  const firstMsg = oldMessages[0];
   const session: Session = {
     id,
     title: DEFAULT_TITLE,
     messages: oldMessages,
-    createdAt: oldMessages.length > 0 ? oldMessages[0].ts : Date.now(),
+    createdAt: firstMsg ? firstMsg.ts : Date.now(),
     workspacePath: null,
   };
   return { sessions: { [id]: session }, currentId: id };
@@ -162,7 +164,8 @@ export const useChatStore = create<ChatState>()(
             let currentId = s.currentId;
             if (s.currentId === id) {
               const remaining = Object.keys(sessions);
-              currentId = remaining.length > 0 ? remaining[0] : null;
+              // length > 0 时 [0] 必存在；用 ?? null 兼容 noUncheckedIndexedAccess。
+              currentId = remaining.length > 0 ? (remaining[0] ?? null) : null;
             }
             return { sessions, currentId };
           });
@@ -212,13 +215,26 @@ export const useChatStore = create<ChatState>()(
 
         appendMessageContent: (id, content) => {
           set((s) => {
-            const cid = s.currentId;
-            if (!cid || !s.sessions[cid]) return s;
-            const sess = s.sessions[cid];
+            // 按 message id 定位所属 session，而非依赖 currentId。
+            // 即便会话切换/删除导致 currentId 漂移（如 deleteSession 无 isStreaming 守卫），
+            // 流式 token 仍能追加到正确的消息上，避免静默丢失。
+            let targetCid: string | null = null;
+            for (const sid of Object.keys(s.sessions)) {
+              // s.sessions[sid] 在 noUncheckedIndexedAccess 下是 Session | undefined，显式收口。
+              const candidate = s.sessions[sid];
+              if (candidate && candidate.messages.some((m) => m.id === id)) {
+                targetCid = sid;
+                break;
+              }
+            }
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            // targetCid 是合法 session id，但 TS 不携带该不变量，再次收口防御性兜底。
+            if (!sess) return s;
             const messages = sess.messages.map((m) =>
               m.id === id ? { ...m, content: m.content + content } : m,
             );
-            const sessions = { ...s.sessions, [cid]: { ...sess, messages } };
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
           });
         },

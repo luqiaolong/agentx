@@ -32,7 +32,8 @@ const MEMORY_TABS: MemoryTabDef[] = [
 
 export function MemorySettings() {
   const [active, setActive] = useState<MemoryTab>("checkpointer");
-  const activeTab = MEMORY_TABS.find((t) => t.id === active) ?? MEMORY_TABS[0];
+  // MEMORY_TABS 是非空静态数组，[0] 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
+  const activeTab = MEMORY_TABS.find((t) => t.id === active) ?? MEMORY_TABS[0]!;
 
   return (
     <div className="space-y-3">

@@ -9,6 +9,7 @@ export function ApprovalDialog() {
   const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
   const autoApproveAfterSeconds = useSettingsStore((s) => s.autoApproveAfterSeconds);
   const [remaining, setRemaining] = useState(autoApproveAfterSeconds);
+  const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -34,9 +35,31 @@ export function ApprovalDialog() {
 
   const submit = async (approved: boolean) => {
     if (!approvalRequest) return;
+    setError(null);
     if (timerRef.current) clearInterval(timerRef.current);
-    await window.api.approve.submit(approvalRequest.threadId, approved);
-    setApprovalRequest(null);
+    try {
+      await window.api.approve.submit(approvalRequest.threadId, approved);
+      setApprovalRequest(null);
+    } catch (err) {
+      // 提交失败时保留对话框，让用户可重试；恢复倒计时定时器
+      setError(err instanceof Error ? err.message : String(err));
+      if (autoApproveAfterSeconds > 0) {
+        setRemaining(autoApproveAfterSeconds);
+        timerRef.current = setInterval(() => {
+          setRemaining((r) => {
+            if (r <= 1) {
+              if (timerRef.current) clearInterval(timerRef.current);
+              void window.api.approve
+                .submit(approvalRequest.threadId, true)
+                .catch(() => {});
+              setApprovalRequest(null);
+              return 0;
+            }
+            return r - 1;
+          });
+        }, 1000);
+      }
+    }
   };
 
   return (
@@ -80,6 +103,12 @@ export function ApprovalDialog() {
                 {approvalRequest.preview}
               </pre>
             </div>
+
+            {error && (
+              <div className="border-b border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+                提交失败：{error}，请重试
+              </div>
+            )}
 
             {/* 操作按钮 */}
             <div className="flex justify-end gap-2 border-t border-default px-4 py-3">

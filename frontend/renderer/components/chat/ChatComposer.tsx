@@ -105,7 +105,7 @@ export function ChatComposer({
     const val = e.target.value;
     setInput(val);
     if (val.endsWith("/")) {
-      const prev = val.length >= 2 ? val[val.length - 2] : "";
+      const prev = val.length >= 2 ? val[val.length - 2] ?? "" : "";
       if (prev === "" || /\s/.test(prev)) {
         const anchor = val.length - 1;
         setAnchor(anchor);
@@ -191,7 +191,7 @@ export function ChatComposer({
   const openCommandPickerManually = () => {
     setInput((s) => {
       const next = s.endsWith("/") ? s : `${s}/`;
-      const prev = next.length >= 2 ? next[next.length - 2] : "";
+      const prev = next.length >= 2 ? next[next.length - 2] ?? "" : "";
       if (prev === "" || /\s/.test(prev)) {
         const anchor = next.length - 1;
         setAnchor(anchor);
@@ -215,7 +215,8 @@ export function ChatComposer({
     if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
       return;
     }
-    const dirPath = result.filePaths[0];
+    // 上面 length === 0 已 return，这里 [0] 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
+    const dirPath = result.filePaths[0]!;
     const store = useChatStore.getState();
     let tid = store.currentId;
     if (!tid) {
@@ -257,8 +258,9 @@ export function ChatComposer({
       if (!result || result.canceled || filePaths.length === 0) return;
       const fileNames = filePaths.map((p) => p.split(/[\\/]/).pop() ?? p);
       for (let i = 0; i < filePaths.length; i++) {
-        const filePath = filePaths[i];
-        const fileName = fileNames[i];
+        // 循环边界 i < filePaths.length === fileNames.length；用 ! 抑制 noUncheckedIndexedAccess。
+        const filePath = filePaths[i]!;
+        const fileName = fileNames[i]!;
         try {
           const relPath = await window.api.dialog.saveDroppedFile(filePath, fileName);
           setInput((s) => `${s}<file>${relPath}</file> `);

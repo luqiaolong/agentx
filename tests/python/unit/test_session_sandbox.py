@@ -125,3 +125,100 @@ def test_singleton() -> None:
     s1 = get_sandbox()
     s2 = get_sandbox()
     assert s1 is s2
+
+
+# ============================================================
+# 路径安全：边界攻击向量
+# ============================================================
+
+
+def test_relative_path_resolved_against_project_root(sandbox: SessionSandbox) -> None:
+    """相对路径按 PROJECT_ROOT 解析（不是 CWD），避免 LLM 工具调用路径错位。"""
+    # data/workspace 是白名单，相对路径解析后应命中
+    sandbox.check_read("t1", "data/workspace/foo.txt")
+    # 相对路径走出 PROJECT_ROOT 仍被拒
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_read("t1", "../../etc/passwd")
+
+
+def test_path_traversal_in_authorized_dir(sandbox: SessionSandbox) -> None:
+    """授权目录内用 .. 跳出：被规范化后应仍位于授权目录下（无逃逸）。"""
+    sandbox.authorize("t1", "d:/docs")
+    # d:/docs/../secrets/x 规范化为 d:/secrets/x，应被拒
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_read("t1", "d:/docs/../secrets/x")
+
+
+def test_authorize_rejects_empty_path(sandbox: SessionSandbox) -> None:
+    """空字符串路径授权应直接抛错（避免授权到 CWD 根）。"""
+    with pytest.raises((ValueError, OSError)):
+        sandbox.authorize("t1", "")
+
+
+def test_writable_upgrade_via_reauthorize(sandbox: SessionSandbox) -> None:
+    """同路径重新授权 writable=True 应升级权限（先 remove 再 add）。"""
+    sandbox.authorize("t1", "d:/docs", writable=False)
+    # 写应被拒
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_write("t1", "d:/docs/out.txt")
+    # 重新授权为可写
+    sandbox.authorize("t1", "d:/docs", writable=True)
+    sandbox.check_write("t1", "d:/docs/out.txt")  # 现在通过
+
+
+def test_writable_downgrade_via_reauthorize(sandbox: SessionSandbox) -> None:
+    """从可写降级为只读也应生效。"""
+    sandbox.authorize("t1", "d:/docs", writable=True)
+    sandbox.check_write("t1", "d:/docs/x")
+    sandbox.authorize("t1", "d:/docs", writable=False)
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_write("t1", "d:/docs/x")
+
+
+def test_unauthorized_path_does_not_leak_authorization(sandbox: SessionSandbox) -> None:
+    """未授权路径访问时不应被记录为已授权（防 side-effect）。"""
+    before = set(sandbox.list_authorized("t1"))
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_read("t1", "d:/some/other/path")
+    after = set(sandbox.list_authorized("t1"))
+    assert before == after
+
+
+def test_prefix_match_case_insensitive_on_windows(
+    sandbox: SessionSandbox,
+) -> None:
+    """Windows 路径大小写不敏感：授权 D:/docs，访问 d:/DOCS/x 应通过。"""
+    if sys.platform != "win32":
+        pytest.skip("Windows-specific")
+    sandbox.authorize("t1", "D:/docs")
+    sandbox.check_read("t1", "d:/DOCS/x.txt")  # 混合大小写
+    sandbox.check_read("t1", "D:/Docs/x.txt")  # 标题大小写
+
+
+def test_restore_with_empty_list_keeps_existing(sandbox: SessionSandbox) -> None:
+    """restore(tid, []) 是 no-op：只往里加，不删已有（避免 checkpoint 空 list 清空授权）。
+
+    调用方需要清空应显式调 clear()，不要靠 restore([])。
+    """
+    sandbox.authorize("t1", "d:/docs")
+    sandbox.restore("t1", [])
+    # 仍可读
+    sandbox.check_read("t1", "d:/docs/x")
+
+
+def test_snapshot_deterministic_ordering(sandbox: SessionSandbox) -> None:
+    """snapshot 输出按路径排序，结果确定性（便于 checkpoint 校验）。"""
+    sandbox.authorize("t1", "z:/z")
+    sandbox.authorize("t1", "a:/a")
+    sandbox.authorize("t1", "m:/m")
+    snap = sandbox.snapshot("t1")
+    # 排序断言
+    assert snap == sorted(snap)
+
+
+def test_authorize_normalizes_trailing_slash(sandbox: SessionSandbox) -> None:
+    """trailing slash 不影响授权结果（Path 规范化时去掉）。"""
+    sandbox.authorize("t1", "d:/docs/")
+    listed = sandbox.list_authorized("t1")
+    # 不带 trailing slash
+    assert listed[0][0] == Path("d:/docs").resolve()

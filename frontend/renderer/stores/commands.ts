@@ -97,10 +97,10 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
   {
     name: "model",
     description: "切换当前 LLM 模型",
-    detail: "无参数时打开设置中的模型条目面板；带参数时切换到指定 id（占位）。",
+    detail: "无参数时打开设置中的模型条目面板；带参数时按 id 或 label 匹配并激活（重启后端后生效）。",
     scope: "settings",
     takesArgument: true,
-    argumentHint: "<model-id>",
+    argumentHint: "<model-id | model-label>",
     iconKey: "wrench",
   },
   {
@@ -124,8 +124,9 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
 export function findBuiltinCommand(raw: string): BuiltinCommand | undefined {
   const trimmed = raw.trim().replace(/^\//, "").toLowerCase();
   if (!trimmed) return undefined;
-  // 拆分主命令名（首个空格前的部分）
-  const head = trimmed.split(/\s+/, 1)[0];
+  // 拆分主命令名（首个空格前的部分）。
+  // 已在 trim() 后判 !trimmed，所以 split 至少返回一项；用 ! 抑制 noUncheckedIndexedAccess 报错。
+  const head = trimmed.split(/\s+/, 1)[0]!;
   return BUILTIN_COMMANDS.find(
     (c) => c.name === head || (c.aliases ?? []).includes(head),
   );

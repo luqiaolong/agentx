@@ -10,6 +10,12 @@ interface SettingsState {
   maxUploadBytes: number;
   theme: Theme;
   isSettingsOpen: boolean;
+  /**
+   * 下次打开设置面板时初始聚焦的 tab id（与 SettingsModal 的 TabId 对应）。
+   * null 表示使用默认值（"prompt"）。打开后会被清空，避免残留影响下次默认打开。
+   * 用于 ErrorBoundary 等场景直接跳转到 "logs" tab。
+   */
+  pendingSettingsTab: string | null;
   setPersistAuthorizedDirs: (v: boolean) => void;
   setAutoApproveAfterSeconds: (v: number) => void;
   setMilvusConfigured: (v: boolean) => void;
@@ -17,6 +23,7 @@ interface SettingsState {
   setTheme: (v: Theme) => void;
   toggleTheme: () => void;
   setSettingsOpen: (v: boolean) => void;
+  setPendingSettingsTab: (tab: string | null) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -29,6 +36,7 @@ export const useSettingsStore = create<SettingsState>()(
         maxUploadBytes: 52428800,
         theme: "dark",
         isSettingsOpen: false,
+        pendingSettingsTab: null,
         setPersistAuthorizedDirs: (v) => set({ persistAuthorizedDirs: v }),
         setAutoApproveAfterSeconds: (v) => set({ autoApproveAfterSeconds: v }),
         setMilvusConfigured: (v) => set({ milvusConfigured: v }),
@@ -36,6 +44,7 @@ export const useSettingsStore = create<SettingsState>()(
         setTheme: (v) => set({ theme: v }),
         toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
         setSettingsOpen: (v) => set({ isSettingsOpen: v }),
+        setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
       }),
       {
         name: "agent-py-settings",

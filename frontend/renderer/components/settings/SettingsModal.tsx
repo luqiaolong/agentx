@@ -65,6 +65,8 @@ const PANEL_ID = "settings-tabpanel";
 export function SettingsModal() {
   const isOpen = useSettingsStore((s) => s.isSettingsOpen);
   const setOpen = useSettingsStore((s) => s.setSettingsOpen);
+  const pendingSettingsTab = useSettingsStore((s) => s.pendingSettingsTab);
+  const setPendingSettingsTab = useSettingsStore((s) => s.setPendingSettingsTab);
   const [active, setActive] = useState<TabId>("prompt");
 
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -72,17 +74,23 @@ export function SettingsModal() {
   // 打开时记录触发元素，关闭后恢复焦点
   const triggerRef = useRef<HTMLElement | null>(null);
 
-  // 打开时：重置 tab 到首个（系统提示词）、记录触发元素、初始聚焦关闭按钮
+  // 打开时：若有 pendingSettingsTab 则跳转到该 tab（如 ErrorBoundary 跳"日志"），
+  // 否则重置到首个（系统提示词）；记录触发元素、初始聚焦关闭按钮
   useEffect(() => {
     if (!isOpen) return;
-    setActive("prompt");
+    const initial = pendingSettingsTab as TabId | null;
+    setActive(
+      initial && TABS.some((t) => t.id === initial) ? initial : "prompt",
+    );
+    // 消费后清空，避免残留影响下次默认打开
+    if (pendingSettingsTab) setPendingSettingsTab(null);
     triggerRef.current = document.activeElement as HTMLElement | null;
     // 下一帧聚焦，确保 dialog 已渲染
     const t = window.setTimeout(() => {
       closeBtnRef.current?.focus();
     }, 0);
     return () => window.clearTimeout(t);
-  }, [isOpen]);
+  }, [isOpen, pendingSettingsTab, setPendingSettingsTab]);
 
   // ESC 关闭
   useEffect(() => {
@@ -115,7 +123,8 @@ export function SettingsModal() {
 
   if (!isOpen) return null;
 
-  const activeTab = TABS.find((t) => t.id === active) ?? TABS[0];
+  // TABS 是非空静态数组，[0] 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
+  const activeTab = TABS.find((t) => t.id === active) ?? TABS[0]!;
 
   // Tab 焦点陷阱：在 dialog 内 Tab/Shift-Tab 循环
   const onKeyDownTrap = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -126,8 +135,9 @@ export function SettingsModal() {
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     if (focusables.length === 0) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
+    // 上面已判 length > 0，first/last 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
     if (e.shiftKey) {
       if (document.activeElement === first) {
         e.preventDefault();

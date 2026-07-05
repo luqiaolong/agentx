@@ -197,8 +197,43 @@ async def test_router_tool_path_selects_web_agent(
     events = await _collect_events(run_router("搜索网页信息", "t1"))
 
     assert web_called
-    token_events = [e for e in events if e["event"] == "token"]
-    assert token_events[0]["data"] == "web result"
+    # ThinkFilter 会跨 chunk 缓冲最多 max_hold 字符，单 chunk 长 content 会被拆分为
+    # feed 立即输出 + flush 末尾输出。校验拼接后的完整文本而非单个事件。
+    token_text = "".join(e["data"] for e in events if e["event"] == "token")
+    assert token_text == "web result"
+
+
+async def test_router_tool_path_strips_think_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """回归测试：SINGLE_TOOL 路径子代理 token 中的 <think>...</think> 块必须被剥离。
+
+    复现 claude.md §5 SSE 契约违反：子代理 yield 的 token 含推理模型 think 块时，
+    _run_tool_path 经 ThinkFilter 过滤后再 yield，前端不应看到 <think> 标签。
+    """
+
+    async def _fake_classify(message: str) -> str:
+        return "SINGLE_TOOL"
+
+    monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    async def _fake_run_code_agent(thread_id: str, message: str) -> AsyncIterator[dict]:
+        # 模拟 MiniMax-M3 推理模型输出：think 块 + 正文
+        yield {"type": "token", "content": "<think>用户要读文件，我应该用 list_dir</think>"}
+        yield {"type": "token", "content": "好的，我来读取文件内容。"}
+        yield {"type": "tool_call", "name": "list_dir", "args": {"path": "/tmp"}}
+        yield {"type": "tool_result", "name": "list_dir", "result": ["a.txt"]}
+
+    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+
+    events = await _collect_events(run_router("列出 /tmp 目录", "t-think"))
+
+    token_text = "".join(e["data"] for e in events if e["event"] == "token")
+    # 必须不含 think 标签
+    assert "<think>" not in token_text
+    assert "</think>" not in token_text
+    # 正文必须保留
+    assert "好的，我来读取文件内容。" in token_text
 
 
 # ============================================================

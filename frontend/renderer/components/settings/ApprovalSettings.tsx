@@ -18,6 +18,7 @@ export function ApprovalSettings() {
     Math.round(maxUploadBytes / BYTES_PER_MB),
   );
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // 从后端加载持久化配置（electron-store 是后端读取的真正来源）。
   // zustand 中的 autoApproveAfterSeconds / maxUploadBytes 仅作前端缓存，
@@ -42,16 +43,21 @@ export function ApprovalSettings() {
   }, [setAutoApproveAfterSeconds, setMaxUploadBytes]);
 
   const save = async () => {
+    setError(null);
     const bytes = Math.max(0, Math.round(maxUploadMb * BYTES_PER_MB));
     setMaxUploadBytes(bytes);
-    // 三个字段全部写入 electron-store，后端从 getApprovalConfig() 读取
-    await window.api.settings.setApprovalConfig({
-      autoApproveAfterSeconds,
-      approvalMaxWait,
-      maxUploadBytes: bytes,
-    });
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2000);
+    try {
+      // 三个字段全部写入 electron-store，后端从 getApprovalConfig() 读取
+      await window.api.settings.setApprovalConfig({
+        autoApproveAfterSeconds,
+        approvalMaxWait,
+        maxUploadBytes: bytes,
+      });
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
@@ -109,6 +115,9 @@ export function ApprovalSettings() {
           </span>
         )}
       </div>
+      {error && (
+        <p className="text-xs text-rose-600 dark:text-rose-400">保存失败：{error}</p>
+      )}
     </div>
   );
 }

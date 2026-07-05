@@ -243,6 +243,10 @@ async def _run_tool_path(
         message: 用户消息（已移除 @skill 标记）。
         thread_id: 会话 ID。
         profile_prompt: 用户画像，回退路径 A 时注入 system prompt。
+
+    Note:
+        子代理 token 事件经 ``ThinkFilter`` 过滤 ``<think>...</think>`` 块后再 yield，
+        与路径 A 行为对齐（claude.md §5 SSE 契约：token 必须已剥离 think 块）。
     """
     agent_type = _select_subagent(message)
     if agent_type is None:
@@ -263,25 +267,35 @@ async def _run_tool_path(
         runner = run_code_agent
     else:
         # 自定义子代理：runner 需要 key 参数，单独处理
+        think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
         try:
             async for event in run_custom_agent(agent_type, thread_id, message):
-                sse = _convert_subagent_event(event)
+                sse = _convert_subagent_event(event, think_filter)
                 if sse:
                     yield sse
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.warning("custom subagent failed", key=agent_type, error=str(exc))
             yield _sse("error", f"自定义子代理执行失败: {exc}")
+        finally:
+            tail = think_filter.flush()
+            if tail:
+                yield _sse("token", tail)
         return
 
+    think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
     try:
         async for event in runner(thread_id, message):
-            sse = _convert_subagent_event(event)
+            sse = _convert_subagent_event(event, think_filter)
             if sse:
                 yield sse
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("tool path subagent failed", error=str(exc))
         yield _sse("error", f"子代理执行失败: {exc}")
         return
+    finally:
+        tail = think_filter.flush()
+        if tail:
+            yield _sse("token", tail)
 
 
 async def _run_deep_path(
@@ -307,22 +321,34 @@ async def _run_deep_path(
         return
 
 
-def _convert_subagent_event(event: dict[str, Any]) -> dict[str, str] | None:
+def _convert_subagent_event(
+    event: dict[str, Any], think_filter: ThinkFilter | None = None
+) -> dict[str, str] | None:
     """将子代理标准化事件转为 SSE 格式。
 
     子代理事件: {type: "token"/"tool_call"/"tool_result", ...}
     SSE 事件: {event: "token"/"todo_update", data: ...}
 
-    - token → token（透传 content）
+    - token → token（经 ThinkFilter 过滤 ``<think>`` 块后再输出，对齐 claude.md §5 契约）
     - tool_call → todo_update（工具调用进度）
     - tool_result → todo_update（工具调用完成）
+
+    Args:
+        event: 子代理标准化事件 dict。
+        think_filter: 可选的流式 think 过滤器。若提供则 token 内容经 ``feed`` 过滤；
+            若不提供（向后兼容）则直接透传（仅供单元测试 mock 使用）。
     """
     etype = event.get("type", "")
     if etype == "token":
         content = event.get("content", "")
-        if content:
-            return _sse("token", content)
-        return None
+        if not content:
+            return None
+        if think_filter is not None:
+            cleaned = think_filter.feed(content)
+            if not cleaned:
+                return None
+            return _sse("token", cleaned)
+        return _sse("token", content)
     if etype == "tool_call":
         name = event.get("name", "")
         args = event.get("args", {})

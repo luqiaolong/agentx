@@ -130,3 +130,66 @@ def test_extract_chunk_text_list_dict_blocks() -> None:
 
 def test_extract_chunk_text_none() -> None:
     assert extract_chunk_text(None) == ""
+
+
+# ============================================================
+# 首段前导空白剥离（Issue: \n\nHi 透传到 SSE）
+# ============================================================
+
+
+def test_think_filter_strips_leading_whitespace_on_first_emit() -> None:
+    """首段 emit 含前导空白时应自动 lstrip，避免模型"先空行再说话"渲染成两空行。
+
+    现象（产线上 curl /api/chat 真实抓到）:
+        event: token
+        data:
+        data:
+        data: Hi there!
+    第一个 token 事件 data 编码为 "\n\nHi there!"（首两个 data: 空行 = 字面 \n）。
+    修复前 _run_chat_path 会把它原样下发，前端 MessageBubble 用 whitespace-pre-wrap 渲染
+    出两条空行——视觉噪音。
+    """
+    f = ThinkFilter()
+    # 模拟模型首 chunk 包含 "\n\nHi there!"
+    out1 = f.feed("\n\nHi there!")
+    out2 = f.feed(" 👋")
+    tail = f.flush()
+    combined = out1 + out2 + tail
+    assert combined == "Hi there! 👋", (
+        f"首段 emit 应已 lstrip，实际: {combined!r}"
+    )
+
+
+def test_think_filter_does_not_strip_intermediate_whitespace() -> None:
+    """中间及末尾空白必须保留（不破坏表格/代码块）。
+
+    首 chunk "abc\\n" 含尾部换行；次 chunk "\\ndef" 含前导换行 → 中间应留下 "\\n\\n"。
+    """
+    f = ThinkFilter()
+    f.feed("abc\n")  # 首 chunk：无前导空白，但有尾部换行
+    out2 = f.feed("\ndef")  # 次 chunk：开头换行是中间分隔，不应剥
+    tail = f.flush()
+    assert out2 + tail == "abc\n\ndef"
+
+
+def test_think_filter_flush_strips_when_first_emit_deferred() -> None:
+    """当首段短到没触发 max_hold 阈值时，flush 也应 lstrip。"""
+    f = ThinkFilter(max_hold=100)  # 大阈值保证 feed 不 emit
+    f.feed("  hello")
+    tail = f.flush()
+    assert tail == "hello", f"flush 也应 lstrip 首段前导空白: {tail!r}"
+
+
+def test_think_filter_after_think_preserves_separator_whitespace() -> None:
+    """think 块**内部**的剥离不会越过块边界，正文前的 \\n\\n 视为块间分隔，**保留**。
+
+    设计取舍：用户可能用 think 块做章节标记，块后保留 \\n\\n 是常见格式礼仪。
+    真正"流首"前导空白是首 chunk 入口处的，由 test_think_filter_strips_leading_whitespace_on_first_emit 覆盖。
+    """
+    from app.utils.text import THINK_OPEN, THINK_CLOSE
+
+    f = ThinkFilter()
+    out = _consume(f, f"{THINK_OPEN}r{THINK_CLOSE}\n\nhi")
+    assert out == "\n\nhi", (
+        f"think 块后 \\n\\n 应保留为章节分隔: {out!r}"
+    )

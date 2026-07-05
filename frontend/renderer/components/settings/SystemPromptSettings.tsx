@@ -4,6 +4,7 @@ import { Save, Check } from "lucide-react";
 export function SystemPromptSettings() {
   const [value, setValue] = useState("");
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -17,9 +18,14 @@ export function SystemPromptSettings() {
   }, []);
 
   const save = async () => {
-    await window.api.settings.setSystemPrompt(value);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2000);
+    setError(null);
+    try {
+      await window.api.settings.setSystemPrompt(value);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (
@@ -44,6 +50,9 @@ export function SystemPromptSettings() {
           </span>
         )}
       </div>
+      {error && (
+        <p className="text-xs text-rose-600 dark:text-rose-400">保存失败：{error}</p>
+      )}
     </div>
   );
 }

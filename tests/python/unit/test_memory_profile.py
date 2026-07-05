@@ -387,3 +387,96 @@ async def test_extract_profile_via_llm_json_with_surrounding_text(
     entries = await _extract_profile_via_llm("msg", "reply")
     assert len(entries) == 1
     assert entries[0]["key"] == "k1"
+
+
+# ============================================================
+# 文件格式容错：边界
+# ============================================================
+
+
+def test_get_all_empty_when_top_level_not_dict(tmp_path: Path) -> None:
+    """profile.json 顶层是 list/str/数字等非 object 时，返回空 store。"""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "profile.json").write_text('[1, 2, 3]', encoding="utf-8")
+    assert get_all() == []
+
+
+def test_get_all_empty_when_entries_not_list(tmp_path: Path) -> None:
+    """profile.json 顶层合法但 entries 不是 list 时，返回空 store。"""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "profile.json").write_text(
+        '{"entries": "not a list"}', encoding="utf-8"
+    )
+    assert get_all() == []
+
+
+def test_get_all_empty_when_entry_missing_required_field(
+    tmp_path: Path,
+) -> None:
+    """entry 缺必填字段时整个文件按空 store 处理。"""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    # 缺 content 字段
+    (config_dir / "profile.json").write_text(
+        '{"entries": [{"key": "k1", "category": "fact", "source": "manual", '
+        '"created_at": "x", "updated_at": "y"}]}',
+        encoding="utf-8",
+    )
+    assert get_all() == []
+
+
+# ============================================================
+# upsert_from_llm 边界
+# ============================================================
+
+
+def test_upsert_from_llm_skips_non_dict_entries(tmp_path: Path) -> None:
+    """非 dict 条目（字符串、列表等）跳过。"""
+    entries: list[Any] = [
+        "not a dict",
+        ["also", "not"],
+        None,
+        {"key": "valid", "category": "fact", "content": "ok"},
+    ]
+    written = upsert_from_llm(entries)  # type: ignore[arg-type]
+    assert written == 1
+    assert get("valid") is not None
+
+
+def test_upsert_from_llm_default_category_is_custom(tmp_path: Path) -> None:
+    """LLM 抽取条目缺 category 时默认 custom。"""
+    entries = [{"key": "k_no_cat", "content": "no category given"}]
+    written = upsert_from_llm(entries)
+    assert written == 1
+    assert get("k_no_cat").category == "custom"
+
+
+# ============================================================
+# build_profile_prompt 边界
+# ============================================================
+
+
+def test_build_profile_prompt_with_single_entry(tmp_path: Path) -> None:
+    """单条画像也正确格式化。"""
+    add(_make_entry(key="only", content="only one"))
+    prompt = build_profile_prompt()
+    assert prompt == "用户画像（请遵循以下偏好与约定）:\n- [preference] only one"
+
+
+# ============================================================
+# 校验顺序：key 非法 vs key 不存在
+# ============================================================
+
+
+def test_update_invalid_key_format_raises_first(tmp_path: Path) -> None:
+    """update 非法 key 抛 ProfileKeyInvalid（不抛 KeyError）。"""
+    with pytest.raises(ProfileKeyInvalid):
+        update("../bad", "content")
+
+
+def test_delete_invalid_key_format_raises_first(tmp_path: Path) -> None:
+    """delete 非法 key 抛 ProfileKeyInvalid。"""
+    with pytest.raises(ProfileKeyInvalid):
+        delete("../bad")

@@ -158,6 +158,23 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[id].messages[0].content).toBe("foo");
   });
 
+  it("appendMessageContent 按 id 跨会话定位消息（不依赖 currentId）", () => {
+    // 模拟流式 token 追加到非当前会话的消息（如 deleteSession 后 currentId 漂移）
+    const idA = useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({
+      id: "stream-1",
+      role: "assistant",
+      content: "foo",
+      ts: 1,
+    });
+    const idB = useChatStore.getState().createSession();
+    // 现在 currentId = idB，但 stream-1 属于 idA
+    useChatStore.getState().appendMessageContent("stream-1", "bar");
+    expect(useChatStore.getState().sessions[idA].messages[0].content).toBe("foobar");
+    // idB 不应受影响
+    expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
+  });
+
   it("clearMessages 清空当前会话消息", () => {
     const id = useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "m1", role: "user", content: "x", ts: 1 });

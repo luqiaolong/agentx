@@ -322,7 +322,12 @@ function ServerEditor({
           onChange={(e) => setDraft((s) => ({ ...s, name: e.target.value }))}
           placeholder="filesystem"
           className="input-field font-mono text-[11px]"
-          disabled={!isNew && !isStdio ? false : !isNew}
+          // name 在编辑已有 server 时不可改：
+          // - 后端 key 用 name 索引（MultiServerMCPClient）
+          // - 已连接 stdio 改名会留孤儿进程，与 runtime_dangerous tracking 不一致
+          // 原条件 "!isNew && !isStdio ? false : !isNew" 允许 HTTP 改名，与下行提示
+          // "编辑时不可改名" 不一致且与 saveEdit 的 originalName 跟踪脱节 → 简化为总锁定
+          disabled={!isNew}
         />
         {!isNew && (
           <span className="text-[10px] text-muted-c">编辑时不可改名</span>
