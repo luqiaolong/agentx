@@ -150,11 +150,11 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 # LLM 子代理路由 system prompt
 _SUBAGENT_ROUTER_PROMPT = (
     "你是子代理路由决策器。根据用户消息，选择最合适的子代理来处理。\n\n"
-    "可用子代理：\n"
+    "可用子代理及其触发条件：\n"
     "{descriptions}\n\n"
     "规则：\n"
     "1. 只输出子代理名称（如 code / rag / web），不要解释\n"
-    "2. 根据每个子代理的功能描述，判断哪个最匹配用户意图\n"
+    "2. 根据每个子代理的触发条件，判断哪个最匹配用户意图\n"
     "3. 如果都不匹配，选 code 作为默认兜底"
 )
 
@@ -169,7 +169,7 @@ async def _llm_select_subagent(message: str) -> str | None:
     subagents = settings.subagents
     tools_enabled = settings.tools_enabled
 
-    # 构建可用子代理描述
+    # 构建可用子代理触发条件
     available: list[str] = []
     for name in ("code", "rag", "web"):
         cfg = subagents[name]
@@ -177,8 +177,8 @@ async def _llm_select_subagent(message: str) -> str | None:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             continue
-        desc = cfg.description or name
-        available.append(f"- {name}: {desc}")
+        trigger = cfg.keywords
+        available.append(f"- {name}: {trigger}")
 
     custom = settings.custom_subagents
     custom_available: list[str] = []
@@ -188,7 +188,8 @@ async def _llm_select_subagent(message: str) -> str | None:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             continue
-        custom_available.append(f"- {key}: {cfg.name}。工具：{', '.join(cfg.tools)}")
+        trigger = cfg.keywords
+        custom_available.append(f"- {key}: {trigger}")
 
     all_available = available + custom_available
     if not all_available:
@@ -201,8 +202,8 @@ async def _llm_select_subagent(message: str) -> str | None:
     try:
         llm = get_chat_model(temperature=0.0, streaming=False)
     except ValueError as exc:
-        logger.warning("LLM 不可用，子代理路由降级为关键词匹配", error=str(exc))
-        return _keyword_select_subagent(message)
+        logger.warning("LLM 不可用，子代理路由退回路径 A", error=str(exc))
+        return None
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -213,13 +214,14 @@ async def _llm_select_subagent(message: str) -> str | None:
         ]
         result = await llm.ainvoke(messages)
     except Exception as exc:
-        logger.warning("LLM 子代理路由调用失败，降级为关键词匹配", error=str(exc))
-        return _keyword_select_subagent(message)
+        logger.warning("LLM 子代理路由调用失败，退回路径 A", error=str(exc))
+        return None
 
     content = getattr(result, "content", "") or ""
     stripped = strip_think(content) if isinstance(content, str) else ""
     if not stripped:
-        return _keyword_select_subagent(message)
+        logger.warning("LLM 子代理路由输出为空，退回路径 A")
+        return None
 
     label = stripped.splitlines()[0].strip().lower()
 
@@ -229,28 +231,31 @@ async def _llm_select_subagent(message: str) -> str | None:
         cfg = subagents[label]
         if cfg.enabled and any(tools_enabled.get(t, True) for t in cfg.tools):
             return label
-        return _keyword_select_subagent(message)
+        logger.warning(f"LLM 路由返回的子代理 {label} 不可用，退回路径 A")
+        return None
 
     if label in custom:
         cfg = custom[label]
         if cfg.enabled and any(tools_enabled.get(t, True) for t in cfg.tools):
             return label
-        return _keyword_select_subagent(message)
+        logger.warning(f"LLM 路由返回的自定义子代理 {label} 不可用，退回路径 A")
+        return None
 
-    # 未知标签，降级到关键词匹配
-    return _keyword_select_subagent(message)
+    # 未知标签，退回路径 A
+    logger.warning(f"LLM 路由返回未知子代理 '{label}'，退回路径 A")
+    return None
 
 
 def _keyword_select_subagent(message: str) -> str | None:
-    """关键词回退：LLM 不可用时使用原有关键词匹配逻辑。
+    """触发条件回退：LLM 不可用时，使用触发条件描述进行简单关键词匹配。
 
     Returns:
         "code" / "rag" / "web" / 自定义子代理 key / None
         - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
 
     匹配优先级：
-    1. 内置子代理（web → rag → code，按关键词命中）
-    2. 自定义子代理（按 key 字典序，关键词命中）
+    1. 内置子代理（web → rag → code，按触发条件描述中的关键词命中）
+    2. 自定义子代理（按 key 字典序，触发条件描述命中）
     3. 默认 code（若可用）
     """
     settings = get_settings()
@@ -262,8 +267,8 @@ def _keyword_select_subagent(message: str) -> str | None:
         cfg = subagents[agent_name]
         if not cfg.enabled:
             continue
-        # 检查关键词命中（空 keywords 不匹配任何子代理，spec R6）
-        if not any(kw in message for kw in cfg.keywords):
+        # 检查触发条件描述命中（空字符串不匹配任何子代理）
+        if cfg.keywords and cfg.keywords not in message:
             continue
         # 检查绑定的工具是否全部被禁用
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
@@ -271,13 +276,13 @@ def _keyword_select_subagent(message: str) -> str | None:
             return None
         return agent_name
 
-    # 2. 自定义子代理：按 key 字典序遍历，关键词命中即返回
+    # 2. 自定义子代理：按 key 字典序遍历，触发条件描述命中即返回
     custom = settings.custom_subagents
     for key in sorted(custom.keys()):
         cfg = custom[key]
         if not cfg.enabled:
             continue
-        if not any(kw in message for kw in cfg.keywords):
+        if cfg.keywords and cfg.keywords not in message:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             logger.warning(
@@ -294,15 +299,15 @@ def _keyword_select_subagent(message: str) -> str | None:
 
 
 def _select_subagent(message: str) -> str | None:
-    """根据消息内容选择路径 B 的子代理（LLM 语义分析优先，降级关键词匹配）。
+    """根据消息内容选择路径 B 的子代理（仅使用 LLM 语义分析）。
 
     Returns:
         "code" / "rag" / "web" / 自定义子代理 key / None
-        - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
+        - None 表示 LLM 不可用或返回无效，退回路径 A
     """
     # 同步调用异步 LLM 路由：由 run_router 在 async 上下文中调用
     # 实际调用方应使用 _llm_select_subagent，本函数保留兼容签名
-    return _keyword_select_subagent(message)
+    return None
 
 
 def _sse(event: str, data: Any) -> dict[str, str]:

@@ -1,10 +1,11 @@
-import { Fragment, useMemo, useState, useCallback } from "react";
+import { Fragment, useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { Sparkles, Pencil } from "lucide-react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
 import { ToolCallCard } from "./parts/ToolCallCard";
 import { DelegationCard } from "./parts/DelegationCard";
+import { ModelToggle } from "./ModelToggle";
 
 /**
  * tool-call part 与 tool-result part 按 id 配对后的合并视图。
@@ -127,16 +128,21 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
 function MessageParts({
   message,
   isStreamingLast,
-  onEdit,
+  onEditSubmit,
+  isStreaming,
 }: {
   message: ChatMessage;
   isStreamingLast: boolean;
-  onEdit?: (messageId: string, content: string) => void;
+  onEditSubmit?: (messageId: string, newContent: string) => void;
+  isStreaming: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const editRef = useRef<HTMLTextAreaElement>(null);
   const items = useMemo(() => buildRenderItems(message.parts), [message.parts]);
 
-  // 用户消息：纯文本气泡（支持编辑）
+  // 用户消息：纯文本气泡（支持就地编辑）
   if (message.role === "user") {
     const rawText = message.parts
       .filter((p) => p.type === "text")
@@ -146,12 +152,70 @@ function MessageParts({
     const workspaceMatch = rawText.match(/<workspace>(.*?)<\/workspace>\s?(.*)/);
     const workspacePath = workspaceMatch?.[1];
     const userText = workspaceMatch?.[2] ?? rawText;
-    const handleEdit = useCallback(() => {
-      onEdit?.(message.id, rawText);
-    }, [onEdit, message.id, rawText]);
+
+    const handleStartEdit = useCallback(() => {
+      if (isStreaming) return;
+      setEditText(userText);
+      setIsEditing(true);
+    }, [isStreaming, userText]);
+
+    const handleEditSubmit = useCallback(() => {
+      const trimmed = editText.trim();
+      if (!trimmed) return;
+      // 保留 workspace 标签，替换文本内容
+      const newContent = workspacePath
+        ? `<workspace>${workspacePath}</workspace> ${trimmed}`
+        : trimmed;
+      onEditSubmit?.(message.id, newContent);
+      setIsEditing(false);
+    }, [editText, workspacePath, message.id, onEditSubmit]);
+
+    const handleEditKeyDown = useCallback(
+      (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          handleEditSubmit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setIsEditing(false);
+        }
+      },
+      [handleEditSubmit],
+    );
+
+    // 进入编辑模式后自动聚焦并选中文本
+    useEffect(() => {
+      if (isEditing && editRef.current) {
+        editRef.current.focus();
+        editRef.current.select();
+      }
+    }, [isEditing]);
+
+    if (isEditing) {
+      return (
+        <div className="flex justify-end">
+          <div className="max-w-[80%] w-full">
+            <textarea
+              ref={editRef}
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={handleEditKeyDown}
+              rows={2}
+              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-600 px-3 py-2 text-sm leading-relaxed text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+              style={{ minHeight: "48px" }}
+            />
+            {/* 模型切换按钮：textarea 下侧 */}
+            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+              <ModelToggle />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
-        className="group flex justify-end"
+        className="group flex justify-end items-start gap-1"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -165,17 +229,17 @@ function MessageParts({
             </span>
           )}
           {userText}
-          {/* 编辑按钮：hover 时显示，非流式状态才允许编辑 */}
-          <button
-            type="button"
-            onClick={handleEdit}
-            className={`absolute -left-7 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-md bg-surface text-muted-c shadow-soft transition-opacity hover:text-primary-c ${hovered ? "opacity-100" : "opacity-0"}`}
-            title="重新编辑"
-            aria-label="重新编辑"
-          >
-            <Pencil className="h-3 w-3" />
-          </button>
         </div>
+        {/* 编辑按钮：消息右侧，hover 时显示 */}
+        <button
+          type="button"
+          onClick={handleStartEdit}
+          className={`mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c ${hovered ? "opacity-100" : "opacity-0"}`}
+          title="重新编辑"
+          aria-label="重新编辑"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
       </div>
     );
   }
@@ -285,11 +349,11 @@ function MessageParts({
 export function AssistantUIThread({
   messages,
   isStreaming,
-  onEditMessage,
+  onEditSubmit,
 }: {
   messages: ChatMessage[];
   isStreaming: boolean;
-  onEditMessage?: (messageId: string, content: string) => void;
+  onEditSubmit?: (messageId: string, newContent: string) => void;
 }) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-2 px-4 py-4">
@@ -301,7 +365,8 @@ export function AssistantUIThread({
             key={m.id}
             message={m}
             isStreamingLast={isStreamingLast}
-            onEdit={onEditMessage}
+            isStreaming={isStreaming}
+            onEditSubmit={onEditSubmit}
           />
         );
       })}

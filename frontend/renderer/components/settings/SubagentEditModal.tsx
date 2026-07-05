@@ -11,18 +11,6 @@ const ALL_TOOLS: string[] = [
   "rag_retrieve",
 ];
 
-// 关键词分隔符支持「逗号 / 换行」
-function parseKeywords(text: string): string[] {
-  return text
-    .split(/[,，\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
-
-function keywordsToText(keywords: string[]): string {
-  return keywords.join(", ");
-}
-
 export interface SubagentEditModalData {
   /** 内置子代理 key（"code"/"rag"/"web"）；自定义子代理为 undefined */
   builtinKey?: "code" | "rag" | "web";
@@ -36,7 +24,7 @@ export interface SubagentEditModalData {
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string[];
+  keywords: string;
 }
 
 interface Props {
@@ -62,18 +50,18 @@ export function SubagentEditModal({
   const [keywordText, setKeywordText] = useState("");
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
-  // 当 initial 变化（打开/切换）时同步本地状态
+  // 当弹窗打开/切换时同步本地状态；open 变化时总是重置，避免关闭后重新打开同一子代理时显示旧值
   useEffect(() => {
-    if (initial) {
+    if (open && initial) {
       setData(initial);
-      setKeywordText(keywordsToText(initial.keywords));
+      setKeywordText(initial.keywords);
       setErrMsg(null);
-    } else {
+    } else if (!open) {
       setData(null);
       setKeywordText("");
       setErrMsg(null);
     }
-  }, [initial, open]);
+  }, [open, initial]);
 
   const isBuiltin = data?.builtinKey !== undefined;
 
@@ -121,7 +109,7 @@ export function SubagentEditModal({
       ...data,
       customKey: isBuiltin ? undefined : data.customKey?.trim(),
       name: data.name.trim(),
-      keywords: parseKeywords(keywordText),
+      keywords: keywordText.trim(),
     });
   };
 
@@ -211,17 +199,14 @@ export function SubagentEditModal({
           {/* 描述 */}
           <div>
             <label className="mb-1 block text-xs font-medium text-secondary-c">
-              描述{isBuiltin ? "（内置只读）" : ""}
+              描述
             </label>
             <input
               type="text"
               value={data.description}
               onChange={(e) => update({ description: e.target.value })}
-              disabled={isBuiltin}
               placeholder="如：用于代码检索与文件读取"
-              className={`input-field text-xs ${
-                isBuiltin ? "cursor-not-allowed opacity-60" : ""
-              }`}
+              className="input-field text-xs"
             />
           </div>
 
@@ -275,20 +260,20 @@ export function SubagentEditModal({
             />
           </div>
 
-          {/* 触发关键词 — 放在系统提示词下方，作为降级路由的辅助配置 */}
+          {/* 触发条件 — 放在系统提示词下方，作为降级路由的辅助配置 */}
           <div>
             <label className="mb-1 block text-xs font-medium text-secondary-c">
-              触发关键词（逗号分隔）
+              触发条件
             </label>
             <textarea
               value={keywordText}
               onChange={(e) => setKeywordText(e.target.value)}
               rows={2}
-              placeholder="如：知识库, 检索, rag"
+              placeholder="描述该子代理的触发场景，供LLM语义分析使用"
               className="input-field resize-y font-mono text-[11px] leading-relaxed"
             />
             <p className="mt-1 text-[11px] text-muted-c">
-              LLM 语义路由失败时的降级匹配关键词。主路由已改为 LLM 分析子代理功能描述，此字段仅作为备用。
+              LLM 语义路由失败时的降级匹配条件。主路由已改为 LLM 分析子代理功能描述，此字段仅作为备用。
             </p>
           </div>
 

@@ -432,7 +432,32 @@ async def _stream_agent_events(
 
         elif isinstance(last_msg, AIMessage):
             if getattr(last_msg, "tool_calls", None):
-                # AIMessage with tool_calls → tool_call SSE + todo_update
+                # AIMessage with tool_calls → 先展示思考计划，再 yield tool_call
+                # LLM 的 content 通常包含 <think>... 计划 ...</think> 或纯文本计划
+                content = last_msg.content
+                if isinstance(content, list):
+                    content = "".join(
+                        block if isinstance(block, str)
+                        else block.get("text", "") if isinstance(block, dict)
+                        else ""
+                        for block in content
+                    )
+                plan_text = str(content) if content else ""
+                # 提取 think 块作为 reasoning 展示，剩余内容作为计划文本
+                from app.utils.text import split_think
+                reasoning, visible = split_think(plan_text)
+                # 优先展示 reasoning（think 块内），其次展示 visible（非 think 内容）
+                display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
+                if display_plan:
+                    # yield reasoning 事件供前端展示思考过程
+                    yield {
+                        "event": "reasoning",
+                        "data": json.dumps(
+                            {"content": display_plan, "source": "deep"},
+                            ensure_ascii=False,
+                        ),
+                    }
+                # 再 yield 每个 tool_call
                 for tc in last_msg.tool_calls:
                     if isinstance(tc, dict):
                         tc_name = tc.get("name", tc.get("tool", "unknown"))
@@ -597,9 +622,25 @@ async def run_deep_path(
 
         # standard 模式：按工具类型处理
         # 检查是否有危险工具（运行时集合 = DANGEROUS_TOOLS ∩ 已启用工具）
-        dangerous_calls = [
-            tc for tc in pending_calls if tc.get("name") in runtime_dangerous
-        ]
+        # 优化：若危险工具的目标路径已授权写入，则跳过审批（工作区内免审批）
+        dangerous_calls = []
+        for tc in pending_calls:
+            name = tc.get("name", "")
+            if name not in runtime_dangerous:
+                continue
+            # 提取路径并检查是否已授权写入
+            paths = _extract_paths_from_tool_call(tc)
+            # 无路径参数的工具（如 shell_exec）或路径未授权 → 需审批
+            if not paths:
+                dangerous_calls.append(tc)
+                continue
+            # 所有路径均已授权写入 → 跳过审批
+            all_authorized = all(
+                sandbox.is_path_authorized(thread_id, p, writable=True)
+                for p in paths
+            )
+            if not all_authorized:
+                dangerous_calls.append(tc)
 
         if dangerous_calls:
             # 4a. 危险工具 → yield approval_request(dangerous_tool)，等待审批

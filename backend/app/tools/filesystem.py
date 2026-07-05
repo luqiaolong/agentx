@@ -153,23 +153,102 @@ async def grep(thread_id: str, pattern: str, path: str) -> list[str]:
     return results
 
 
+# 模块级：记录最近写入操作，用于幂等性检查（防重复写入）
+_recent_writes: dict[str, tuple[str, int, str]] = {}
+"""thread_id → (path, content_len, content_hash) 最近成功写入记录"""
+
+
+def _content_hash(content: str) -> str:
+    """计算内容短哈希，用于幂等性比对。"""
+    import hashlib
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
 async def write_file(thread_id: str, path: str, content: str) -> str:
-    """写入文本文件（覆盖）。未授权时返回错误字符串。"""
+    """写入文本文件（覆盖）。未授权时返回错误字符串。
+
+    幂等性保护：
+    - 若同一 thread_id 在 60 秒内写入相同路径 + 相同内容，直接返回上次结果，
+      防止 LLM 因重试机制导致重复写入。
+    - 若文件已存在且内容相同，跳过写入并提示。
+    """
+    from time import time
+
     sandbox = get_sandbox()
+    resolved = _resolve(path)
+    content_len = len(content)
+    content_h = _content_hash(content)
+
+    # ---- 1. 幂等性检查：同一 thread 近期是否已写入相同内容 ----
+    now = time()
+    recent = _recent_writes.get(thread_id)
+    if recent is not None:
+        recent_path, recent_len, recent_hash = recent
+        if (recent_path == str(resolved) and recent_len == content_len
+                and recent_hash == content_h and now - recent[3] < 60):  # type: ignore[index]
+            logger.info(
+                "fs.write_file.idempotent_skip",
+                thread_id=thread_id,
+                path=str(path),
+                reason="duplicate_within_60s",
+            )
+            return f"已写入(重复请求已跳过): {path} ({content_len} 字符)"
+
+    # ---- 2. 权限校验 ----
     try:
         sandbox.check_write(thread_id, path)
     except PathNotAuthorized as exc:
-        # 区分"已授权只读"与"完全未授权"，给出针对性提示
         msg = str(exc)
         matched_readonly = "仅授权读取" in msg
-        logger.warning("fs.write_file denied", thread_id=thread_id, path=str(path))
+        logger.warning(
+            "fs.write_file.denied",
+            thread_id=thread_id,
+            path=str(path),
+            resolved=str(resolved),
+            reason="readonly" if matched_readonly else "unauthorized",
+        )
         return _deny_write(path, matched_readonly)
+
+    # ---- 3. 文件已存在且内容相同：跳过写入 ----
+    if resolved.exists() and resolved.is_file():
+        try:
+            existing = resolved.read_text(encoding="utf-8")
+            if existing == content:
+                logger.info(
+                    "fs.write_file.identical_skip",
+                    thread_id=thread_id,
+                    path=str(path),
+                    reason="content_identical",
+                )
+                return f"文件已存在且内容相同，跳过写入: {path} ({content_len} 字符)"
+        except OSError as exc:
+            logger.warning(
+                "fs.write_file.read_existing_failed",
+                thread_id=thread_id,
+                path=str(path),
+                error=str(exc),
+            )
+
+    # ---- 4. 执行写入 ----
     try:
-        p = _resolve(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-        return f"已写入: {path} ({len(content)} 字符)"
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        _recent_writes[thread_id] = (str(resolved), content_len, content_h, now)
+        logger.info(
+            "fs.write_file.success",
+            thread_id=thread_id,
+            path=str(path),
+            resolved=str(resolved),
+            size=content_len,
+        )
+        return f"已写入: {path} ({content_len} 字符)"
     except OSError as exc:
+        logger.error(
+            "fs.write_file.os_error",
+            thread_id=thread_id,
+            path=str(path),
+            error=str(exc),
+        )
         return f"写入文件失败: {path} ({exc})"
 
 
@@ -217,7 +296,13 @@ async def list_workspace(path: str) -> list[dict]:
     else:
         p = Path(path)
         if not p.is_absolute():
-            p = PROJECT_ROOT / p
+            # 相对路径：若以 data/workspace 或 data/uploads 开头则基于 PROJECT_ROOT，
+            # 否则默认基于 WORKSPACE_DIR（支持前端仅传子目录名如 "subdir"）
+            norm = str(path).replace("\\", "/")
+            if norm.startswith("data/workspace") or norm.startswith("data/uploads"):
+                p = PROJECT_ROOT / p
+            else:
+                p = WORKSPACE_DIR / p
         target = p.resolve()
 
     # 白名单校验

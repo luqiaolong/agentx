@@ -155,7 +155,7 @@ export function SettingsModal() {
     >
       <div
         ref={dialogRef}
-        className="glass-card flex h-[640px] max-h-[88vh] w-[880px] max-w-[94vw] overflow-hidden rounded-2xl border border-default shadow-pop"
+        className="glass-card flex h-[90vh] max-h-[90vh] w-[90vw] max-w-[90vw] overflow-hidden rounded-2xl border border-default shadow-pop"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDownTrap}
         role="dialog"

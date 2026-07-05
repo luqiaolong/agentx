@@ -78,6 +78,14 @@ export function ChatComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId]);
 
+  // SSE 流结束后自动恢复焦点，让用户可以继续输入（无需手动点击）
+  useEffect(() => {
+    if (!isStreaming) {
+      textareaRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStreaming]);
+
   const skills = useSkillsStore((s) => s.skills);
   const pickerOpen = useCommandPickerStore((s) => s.open);
   const setPickerOpen = useCommandPickerStore((s) => s.setOpen);

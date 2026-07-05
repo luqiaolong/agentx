@@ -50,7 +50,7 @@ export function ChatView() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
-  const [editTarget, setEditTarget] = useState<{ messageId: string; content: string } | null>(null);
+
 
   const pendingIdRef = useRef<string>("pending");
   const currentTaskIdRef = useRef<string | null>(null);
@@ -331,13 +331,14 @@ export function ChatView() {
           <AssistantUIThread
             messages={messages}
             isStreaming={isStreaming}
-            onEditMessage={(messageId, content) => {
-              // 点击编辑：删除该消息及之后的所有消息，把内容回填到输入框
+            onEditSubmit={(messageId, newContent) => {
+              // 就地编辑提交：删除该消息及之后的所有消息，重新发送编辑后的内容
               if (isStreaming) return;
               deleteMessagesAfter(messageId);
-              setEditTarget({ messageId, content });
               setTodos([]);
               setErrorMsg(null);
+              // 触发重新发送（复用 handleSend）
+              void handleSend(newContent);
             }}
           />
         )}
@@ -365,8 +366,6 @@ export function ChatView() {
         setDropError={setDropError}
         onSend={handleSend}
         onAbort={handleAbort}
-        editTarget={editTarget}
-        onEditCancel={() => setEditTarget(null)}
       />
     </div>
   );

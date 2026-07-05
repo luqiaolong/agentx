@@ -52,19 +52,19 @@ const BUILTIN_SUBAGENTS: BuiltinMeta[] = [
   {
     key: "code",
     label: "Code 子代理",
-    desc: "代码检索与文件系统只读操作",
+    desc: "代码与文件操作专家：擅长读取、搜索、分析代码文件和目录结构，回答与代码、文件内容、项目结构、HTML/CSS/JS/Python/Java 等技术实现相关的问题。",
     Icon: Code2,
   },
   {
     key: "rag",
     label: "RAG 子代理",
-    desc: "知识库与向量检索",
+    desc: "知识库检索专家：擅长从向量知识库中检索文档、知识点、技术文档，回答需要引用内部知识库资料的问题。",
     Icon: Database,
   },
   {
     key: "web",
     label: "Web 子代理",
-    desc: "联网搜索",
+    desc: "联网搜索专家：擅长搜索互联网上的实时信息、新闻、资料，回答需要最新外部信息的问题。",
     Icon: Globe,
   },
 ];
@@ -75,21 +75,24 @@ const EMPTY_CONFIG: SubagentsConfig = {
     temperature: 0.2,
     systemPrompt: "",
     tools: [],
-    keywords: [],
+    keywords: "",
+    description: "",
   },
   rag: {
     enabled: true,
     temperature: 0.2,
     systemPrompt: "",
     tools: [],
-    keywords: [],
+    keywords: "",
+    description: "",
   },
   web: {
     enabled: true,
     temperature: 0.2,
     systemPrompt: "",
     tools: [],
-    keywords: [],
+    keywords: "",
+    description: "",
   },
 };
 
@@ -145,7 +148,7 @@ function BuiltinCard({ meta, cfg, onEnabledChange, onEdit }: BuiltinCardProps) {
           <span className="text-xs font-semibold text-primary-c truncate">
             {meta.label}
           </span>
-          <span className="truncate text-[11px] text-muted-c">{meta.desc}</span>
+          <span className="truncate text-[11px] text-muted-c">{cfg.description || meta.desc}</span>
         </button>
 
         {/* 开关（始终显示） */}
@@ -183,7 +186,7 @@ function BuiltinCard({ meta, cfg, onEnabledChange, onEdit }: BuiltinCardProps) {
             <span>·</span>
             <span>工具 {cfg.tools.length}</span>
             <span>·</span>
-            <span>关键词 {cfg.keywords.length}</span>
+            <span>条件</span>
           </div>
           {allToolsOff && (
             <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
@@ -203,21 +206,9 @@ function BuiltinCard({ meta, cfg, onEnabledChange, onEdit }: BuiltinCardProps) {
               ))}
             </div>
           )}
-          {cfg.keywords.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {cfg.keywords.slice(0, 6).map((k) => (
-                <span
-                  key={k}
-                  className="rounded bg-brand-500/10 px-1.5 py-0.5 text-[10px] text-brand-600 dark:text-brand-400"
-                >
-                  {k}
-                </span>
-              ))}
-              {cfg.keywords.length > 6 && (
-                <span className="text-[10px] text-muted-c">
-                  +{cfg.keywords.length - 6}
-                </span>
-              )}
+          {cfg.keywords && (
+            <div className="rounded bg-brand-500/10 px-2 py-1 text-[10px] text-brand-600 dark:text-brand-400 line-clamp-2">
+              {cfg.keywords}
             </div>
           )}
           {cfg.systemPrompt && (
@@ -346,7 +337,7 @@ function CustomCard({
             <span>·</span>
             <span>工具 {entry.tools.length}</span>
             <span>·</span>
-            <span>关键词 {entry.keywords.length}</span>
+            <span>条件</span>
           </div>
           {allToolsOff && (
             <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
@@ -366,21 +357,9 @@ function CustomCard({
               ))}
             </div>
           )}
-          {entry.keywords.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {entry.keywords.slice(0, 6).map((k) => (
-                <span
-                  key={k}
-                  className="rounded bg-brand-500/10 px-1.5 py-0.5 text-[10px] text-brand-600 dark:text-brand-400"
-                >
-                  {k}
-                </span>
-              ))}
-              {entry.keywords.length > 6 && (
-                <span className="text-[10px] text-muted-c">
-                  +{entry.keywords.length - 6}
-                </span>
-              )}
+          {entry.keywords && (
+            <div className="rounded bg-brand-500/10 px-2 py-1 text-[10px] text-brand-600 dark:text-brand-400 line-clamp-2">
+              {entry.keywords}
             </div>
           )}
           {entry.systemPrompt && (
@@ -516,7 +495,7 @@ export function SubagentsSettings() {
     setModalData({
       builtinKey: meta.key,
       name: meta.label,
-      description: meta.desc,
+      description: cfg.description || meta.desc,
       enabled: cfg.enabled,
       temperature: cfg.temperature,
       systemPrompt: cfg.systemPrompt,
@@ -553,7 +532,7 @@ export function SubagentsSettings() {
       temperature: 0.2,
       systemPrompt: "",
       tools: [],
-      keywords: [],
+      keywords: "",
     });
     setModalIsNew(true);
     setModalOpen(true);
@@ -569,6 +548,7 @@ export function SubagentsSettings() {
         systemPrompt: data.systemPrompt,
         tools: data.tools,
         keywords: data.keywords,
+        description: data.description,
       });
     } else if (data.customKey) {
       // 提取到局部 const 以便 TS 在 async 闭包内正确收窄类型

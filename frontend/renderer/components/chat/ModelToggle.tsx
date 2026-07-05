@@ -22,6 +22,26 @@ function inferProvider(model: string, baseUrl?: string): string {
   return "custom";
 }
 
+/** 获取当前模型的展示标签（label > defaultModel > "未选"） */
+export function useModelLabel(): string {
+  const entries = useModelStore((s) => s.entries);
+  const activeId = useModelStore((s) => s.activeId);
+  const defaultModel = useModelStore((s) => s.defaultModel);
+  const activeEntry = entries.find((e) => e.id === activeId) ?? null;
+  return activeEntry?.label || defaultModel || "未选";
+}
+
+/** 纯展示用的模型标签（无交互，用于编辑区域等只读场景） */
+export function ModelLabel({ className = "" }: { className?: string }) {
+  const label = useModelLabel();
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] text-muted-c ${className}`}>
+      <Cpu className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
 export function ModelToggle() {
   const entries = useModelStore((s) => s.entries);
   const activeId = useModelStore((s) => s.activeId);

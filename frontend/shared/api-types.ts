@@ -104,7 +104,8 @@ export interface SubagentConfig {
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string[];
+  keywords: string;
+  description: string;
 }
 
 export interface SubagentsConfig {
@@ -125,7 +126,7 @@ export interface CustomSubagentEntry {
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string[];
+  keywords: string;
 }
 
 /** 自定义子代理 dict（key → entry）。 */
@@ -140,7 +141,7 @@ export interface CustomSubagentInput {
   temperature?: number;
   systemPrompt?: string;
   tools?: string[];
-  keywords?: string[];
+  keywords?: string;
 }
 
 export interface ToolsConfig {

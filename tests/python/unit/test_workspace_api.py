@@ -164,6 +164,10 @@ def test_list_workspace_rejects_arbitrary_relative() -> None:
     """不在白名单的相对路径 → ValueError。"""
     import asyncio
 
-    # 相对路径解析为 PROJECT_ROOT/some_secret_dir，不在白名单内
-    with pytest.raises(ValueError):
+    # 相对路径解析为 WORKSPACE_DIR/some_secret_dir，在白名单内但不存在 → FileNotFoundError
+    with pytest.raises(FileNotFoundError):
         asyncio.run(list_workspace("some_secret_dir"))
+
+    # 使用 ../ 逃逸 WORKSPACE_DIR，不在白名单内 → ValueError
+    with pytest.raises(ValueError):
+        asyncio.run(list_workspace("../../secrets"))
