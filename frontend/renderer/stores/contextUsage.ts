@@ -32,9 +32,9 @@ export function useContextUsage(): ContextUsageInfo {
   const activeId = useModelStore((s) => s.activeId);
 
   const activeEntry = entries.find((e) => e.id === activeId) ?? null;
-  // 防御性保护：contextWindow 必须是正整数；0 / null / undefined 均降级到默认 16000
-  const rawMax = activeEntry?.contextWindow;
-  const modelMax = rawMax && rawMax > 0 ? rawMax : 16000;
+  // 防御性保护：contextWindow 必须是正整数；0 / null / undefined / 负数 均降级到默认 16000
+  const rawMax = activeEntry?.contextWindow ?? 0;
+  const modelMax = rawMax > 0 ? rawMax : 16000;
   const activeLabel = activeEntry?.label ?? "";
 
   const sess = currentId ? sessions[currentId] : null;

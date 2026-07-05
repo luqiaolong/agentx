@@ -136,19 +136,24 @@ describe("ContextUsage 组件", () => {
   });
 });
 
-describe("useContextUsage selector 边界", () => {
-  it("active model contextWindow=0 时降级使用默认 16000", () => {
+describe("useContextUsage selector 边界（防御性保护）", () => {
+  // guard 应同时覆盖 0 / null / 负数；undefined 由默认空 store 测试隐式覆盖
+  it.each<[string, number | null, string]>([
+    ["0 零值", 0, "ZeroCtx"],
+    ["-100 负数", -100, "NegCtx"],
+    ["null 显式 null", null, "NullCtx"],
+  ])("active model contextWindow=%s 时降级到默认 16000", (_label, ctx, label) => {
     useModelStore.setState({
       entries: [
         {
           id: "m1",
-          label: "ZeroCtx",
+          label,
           providerId: "custom",
           model: "x",
           baseUrl: "",
           apiKey: "",
           createdAt: 0,
-          contextWindow: 0,
+          contextWindow: ctx,
         },
       ],
       activeId: "m1",
