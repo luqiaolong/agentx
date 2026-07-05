@@ -718,6 +718,9 @@ async def run_deep_path(
 
             if decision is None or not decision.approved:
                 yield {"event": "error", "data": "用户拒绝执行危险操作"}
+                await _inject_tool_error_messages(
+                    agent, config, "用户拒绝执行危险操作"
+                )
                 sandbox.set_full_trust(thread_id, False)
                 return
 
@@ -736,10 +739,16 @@ async def run_deep_path(
                 yield evt
             if extension_handled.denied:
                 yield {"event": "error", "data": "用户拒绝访问该目录"}
+                await _inject_tool_error_messages(
+                    agent, config, "用户拒绝访问该目录"
+                )
                 sandbox.set_full_trust(thread_id, False)
                 return
             if extension_handled.timed_out:
                 yield {"event": "error", "data": "目录授权等待被中断，操作未执行"}
+                await _inject_tool_error_messages(
+                    agent, config, "目录授权等待被中断，操作未执行"
+                )
                 sandbox.set_full_trust(thread_id, False)
                 return
 
@@ -760,6 +769,9 @@ async def run_deep_path(
     if iteration >= max_iterations:
         logger.warning("deep agent hit max iterations", thread_id=thread_id)
         yield {"event": "error", "data": "DeepAgent 达到最大迭代上限"}
+        await _inject_tool_error_messages(
+            agent, config, "DeepAgent 达到最大迭代上限"
+        )
         sandbox.set_full_trust(thread_id, False)
         return
 
