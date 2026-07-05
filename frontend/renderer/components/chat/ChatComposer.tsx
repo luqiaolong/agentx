@@ -358,19 +358,52 @@ export function ChatComposer({
             />
           )}
 
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
-            aria-label="消息输入框"
-            className="input-borderless relative z-20 block h-12 w-full resize-none pr-1"
-            style={{ height: `${textareaHeight}px` }}
-          />
+          <div className="relative">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              rows={2}
+              placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
+              aria-label="消息输入框"
+              className="input-borderless relative z-20 block h-12 w-full resize-none pr-36"
+              style={{ height: `${textareaHeight}px` }}
+            />
 
-          <div className="mt-1 flex items-center justify-between gap-2">
+            {/* 模型选择 + 发送按钮：定位在 textarea 右下角 */}
+            <div className="absolute bottom-1.5 right-1 z-30 flex items-center gap-1.5">
+              <ModelToggle />
+              <PermissionToggle
+                workspacePath={workspacePath}
+                homeWorkspacePath={homeWorkspacePath}
+              />
+              {isStreaming ? (
+                <button
+                  type="button"
+                  onClick={onAbort}
+                  className="btn-send is-stop"
+                  aria-label="中止生成"
+                  title="中止"
+                >
+                  <Square className="h-3 w-3 fill-current" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!canSend}
+                  className="btn-send"
+                  aria-label="发送消息"
+                  title="发送 (Enter)"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-1 flex items-center gap-2">
             <div className="flex items-center gap-1 text-[11px] text-muted-c">
               <button
                 type="button"
@@ -434,35 +467,6 @@ export function ChatComposer({
                   aria-label="选择 workspace 目录"
                 >
                   <FolderPlus className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5">
-              <ModelToggle />
-              <PermissionToggle
-                workspacePath={workspacePath}
-                homeWorkspacePath={homeWorkspacePath}
-              />
-              {isStreaming ? (
-                <button
-                  type="button"
-                  onClick={onAbort}
-                  className="btn-send is-stop"
-                  aria-label="中止生成"
-                  title="中止"
-                >
-                  <Square className="h-3 w-3 fill-current" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={!canSend}
-                  className="btn-send"
-                  aria-label="发送消息"
-                  title="发送 (Enter)"
-                >
-                  <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
                 </button>
               )}
             </div>

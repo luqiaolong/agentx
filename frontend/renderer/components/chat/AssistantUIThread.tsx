@@ -220,14 +220,6 @@ function MessageParts({
         onMouseLeave={() => setHovered(false)}
       >
         <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-1.5 text-sm leading-relaxed text-white shadow-soft">
-          {workspacePath && (
-            <span className="mr-1.5 inline-flex items-center rounded-md bg-white/20 px-1.5 py-0.5 text-xs font-medium text-white">
-              <svg className="mr-0.5 h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-              </svg>
-              {workspacePath}
-            </span>
-          )}
           {userText}
         </div>
         {/* 编辑按钮：消息右侧，hover 时显示 */}
