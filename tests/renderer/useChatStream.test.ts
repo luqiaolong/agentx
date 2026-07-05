@@ -256,3 +256,354 @@ describe("useChatStream hook", () => {
     expect(stored?.toolName).toBe("shell_exec");
   });
 });
+
+// ============================================================
+// parts-based 事件分发测试（chat-rendering-trace-v2 T8）
+// ============================================================
+
+describe("useChatStream part 分发", () => {
+  /** 创建会话 + pending assistant 消息（空 parts），返回 sessionId */
+  function setupPendingMessage(pendingId: string): string {
+    const sid = useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({
+      id: pendingId,
+      role: "assistant",
+      ts: 1,
+    });
+    return sid;
+  }
+
+  /** 获取 pending 消息的 parts */
+  function getParts(pendingId: string) {
+    for (const sess of Object.values(useChatStore.getState().sessions)) {
+      const msg = sess.messages.find((m) => m.id === pendingId);
+      if (msg) return msg.parts;
+    }
+    return undefined;
+  }
+
+  it("token 事件 append 到 text part；无则新建", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({ type: "token", data: "hello" });
+      api._emitEvent({ type: "token", data: " world" });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.type).toBe("text");
+    if (parts[0]?.type === "text") {
+      expect(parts[0].text).toBe("hello world");
+    }
+  });
+
+  it("reasoning 事件 append 到 reasoning part（done=false）；无则新建", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({ type: "reasoning", content: "分析", source: "deep" });
+      api._emitEvent({ type: "reasoning", content: "中", source: "deep" });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.type).toBe("reasoning");
+    if (parts[0]?.type === "reasoning") {
+      expect(parts[0].text).toBe("分析中");
+      expect(parts[0].done).toBe(false);
+    }
+  });
+
+  it("done 事件标记所有 reasoning part 的 done=true", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({ type: "reasoning", content: "思考", source: "deep" });
+      api._emitEvent({ type: "token", data: "回答" });
+      api._emitEvent({ type: "done" });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    const reasoningParts = parts.filter((p) => p.type === "reasoning");
+    expect(reasoningParts).toHaveLength(1);
+    if (reasoningParts[0]?.type === "reasoning") {
+      expect(reasoningParts[0].done).toBe(true);
+    }
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it("tool_call 事件新建 tool-call part（status=running）", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({
+        type: "tool_call",
+        id: "tc1",
+        name: "read_file",
+        args: { path: "/tmp/a.txt" },
+        source: "code",
+      });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.type).toBe("tool-call");
+    if (parts[0]?.type === "tool-call") {
+      expect(parts[0].id).toBe("tc1");
+      expect(parts[0].toolName).toBe("read_file");
+      expect(parts[0].args).toEqual({ path: "/tmp/a.txt" });
+      expect(parts[0].source).toBe("code");
+      expect(parts[0].status).toBe("running");
+    }
+  });
+
+  it("tool_result 事件新建 tool-result part（与 tool-call 同 id）", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({
+        type: "tool_call",
+        id: "tc1",
+        name: "read_file",
+        args: { path: "/tmp" },
+        source: "code",
+      });
+      api._emitEvent({
+        type: "tool_result",
+        id: "tc1",
+        name: "read_file",
+        result: "file content",
+        source: "code",
+      });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    expect(parts).toHaveLength(2);
+    expect(parts[0]?.type).toBe("tool-call");
+    expect(parts[1]?.type).toBe("tool-result");
+    if (parts[1]?.type === "tool-result") {
+      expect(parts[1].id).toBe("tc1");
+      expect(parts[1].toolName).toBe("read_file");
+      expect(parts[1].result).toBe("file content");
+      expect(parts[1].source).toBe("code");
+      expect(parts[1].error).toBeUndefined();
+    }
+  });
+
+  it("tool_result 事件带 error 字段时写入 part.error", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({
+        type: "tool_call",
+        id: "tc1",
+        name: "shell_exec",
+        args: { command: "rm -rf" },
+        source: "code",
+      });
+      api._emitEvent({
+        type: "tool_result",
+        id: "tc1",
+        name: "shell_exec",
+        result: null,
+        source: "code",
+        error: "permission denied",
+      });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    if (parts[1]?.type === "tool-result") {
+      expect(parts[1].error).toBe("permission denied");
+    }
+  });
+
+  it("delegation 事件新建 delegation part", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({
+        type: "delegation",
+        target: "code",
+        source: "router",
+        message: "委派给代码子代理",
+      });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.type).toBe("delegation");
+    if (parts[0]?.type === "delegation") {
+      expect(parts[0].target).toBe("code");
+      expect(parts[0].source).toBe("router");
+      expect(parts[0].message).toBe("委派给代码子代理");
+      expect(typeof parts[0].id).toBe("string");
+    }
+  });
+
+  it("完整 turn：delegation → reasoning → tool_call → tool_result → token → done", () => {
+    setupPendingMessage("pending-1");
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      api._emitEvent({
+        type: "delegation",
+        target: "code",
+        source: "router",
+        message: "委派给 code agent",
+      });
+      api._emitEvent({ type: "reasoning", content: "分析中", source: "code" });
+      api._emitEvent({
+        type: "tool_call",
+        id: "tc1",
+        name: "read_file",
+        args: { path: "/tmp" },
+        source: "code",
+      });
+      api._emitEvent({
+        type: "tool_result",
+        id: "tc1",
+        name: "read_file",
+        result: "content",
+        source: "code",
+      });
+      api._emitEvent({ type: "token", data: "最终" });
+      api._emitEvent({ type: "token", data: "回答" });
+      api._emitEvent({ type: "done" });
+    });
+
+    const parts = getParts("pending-1") ?? [];
+    expect(parts.map((p) => p.type)).toEqual([
+      "delegation",
+      "reasoning",
+      "tool-call",
+      "tool-result",
+      "text",
+    ]);
+    // done 标记 reasoning 完成
+    const reasoningPart = parts.find((p) => p.type === "reasoning");
+    if (reasoningPart?.type === "reasoning") {
+      expect(reasoningPart.done).toBe(true);
+    }
+    // text part 拼接正确
+    const textPart = parts.find((p) => p.type === "text");
+    if (textPart?.type === "text") {
+      expect(textPart.text).toBe("最终回答");
+    }
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it("todo_update / approval_request / error 逻辑在 parts 模型下保持不变", () => {
+    setupPendingMessage("pending-1");
+    const setTodos = vi.fn();
+    const setErrorMsg = vi.fn();
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "pending-1" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "查询" },
+        setTodos,
+        setErrorMsg,
+      }),
+    );
+
+    // todo_update 创建任务
+    act(() => {
+      api._emitEvent({
+        type: "todo_update",
+        todos: [{ text: "step1", done: false }],
+      });
+    });
+    expect(setTodos).toHaveBeenCalledWith([{ text: "step1", done: false }]);
+    expect(useTasksStore.getState().tasks).toHaveLength(1);
+
+    // approval_request 写入 store
+    act(() => {
+      api._emitApproval({
+        threadId: "t-1",
+        toolName: "shell_exec",
+        args: {},
+        preview: "",
+      });
+    });
+    expect(useChatStore.getState().approvalRequest?.threadId).toBe("t-1");
+
+    // error 写入 errorMsg
+    act(() => {
+      api._emitEvent({ type: "error", data: "失败" });
+    });
+    expect(setErrorMsg).toHaveBeenCalledWith("失败");
+    expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+});
