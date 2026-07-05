@@ -73,23 +73,7 @@ export function LogViewer({ fillParent = false }: LogViewerProps = {}) {
   };
 
   return (
-    <div className={`flex min-h-0 flex-col space-y-2 ${fillParent ? "h-full" : ""}`}>
-      <div className="flex items-center justify-between text-[11px] text-muted-c">
-        <span className="inline-flex items-center gap-1.5">
-          <FileText className="h-3.5 w-3.5" />
-          实时日志 · 每 2 秒刷新
-        </span>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={loading}
-          className="btn-ghost"
-          aria-label="刷新"
-          title="刷新"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-        </button>
-      </div>
+    <div className={`flex min-h-0 flex-col ${fillParent ? "h-full" : ""}`}>
       {err && (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
           {err}

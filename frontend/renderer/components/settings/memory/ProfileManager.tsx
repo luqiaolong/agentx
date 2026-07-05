@@ -21,13 +21,14 @@ const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 // content 上限与后端 _CONTENT_MAX 一致
 const CONTENT_MAX = 500;
 
-const CATEGORIES: ProfileCategory[] = ["preference", "project", "fact", "custom"];
+// 用户画像 Tab 只保留 fact + custom
+const CATEGORIES: ProfileCategory[] = ["fact", "custom"];
 
 const CATEGORY_LABELS: Record<ProfileCategory, string> = {
-  preference: "偏好",
-  project: "项目",
   fact: "事实",
   custom: "自定义",
+  preference: "偏好",
+  project: "项目",
 };
 
 interface DraftEntry {
@@ -62,21 +63,31 @@ function formatTime(iso: string): string {
 export function ProfileManager() {
   const [entries, setEntries] = useState<ProfileEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [autoExtract, setAutoExtract] = useState(true);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftEntry | null>(null);
   const [draftErr, setDraftErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [autoExtract, setAutoExtract] = useState(false);
 
   const refresh = useCallback(async () => {
     setErrMsg(null);
     try {
-      const [profileResult, autoExtractVal] = await Promise.all([
-        window.api.memory.getProfile(),
-        window.api.settings.getProfileAutoExtract(),
+      // 用户画像 Tab 展示 fact + custom，分别请求后合并
+      const [factResult, customResult] = await Promise.all([
+        window.api.memory.getProfile("fact"),
+        window.api.memory.getProfile("custom"),
       ]);
-      setEntries(profileResult.entries ?? []);
-      setAutoExtract(autoExtractVal);
+      const all = [
+        ...(factResult.entries ?? []),
+        ...(customResult.entries ?? []),
+      ];
+      // 按 updated_at 降序排列
+      all.sort((a, b) => {
+        const ta = new Date(a.updated_at).getTime();
+        const tb = new Date(b.updated_at).getTime();
+        return tb - ta;
+      });
+      setEntries(all);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -87,17 +98,6 @@ export function ProfileManager() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const toggleAutoExtract = async (v: boolean): Promise<void> => {
-    setAutoExtract(v);
-    try {
-      await window.api.settings.setProfileAutoExtract(v);
-      // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
-    } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
 
   const startNew = (): void => {
     setDraftErr(null);
@@ -179,7 +179,7 @@ export function ProfileManager() {
         <div className="flex items-center gap-1.5">
           <UserCircle className="h-3.5 w-3.5 text-muted-c" />
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            用户画像（data/config/profile.json）
+            用户画像（事实与自定义）
           </h4>
           <span className="rounded-full bg-subtle px-2 py-0.5 text-[10px] text-secondary-c">
             {entries.length}
@@ -205,29 +205,6 @@ export function ProfileManager() {
           </button>
         </div>
       </div>
-
-      {/* 自动抽取开关 */}
-      <label className="flex cursor-pointer items-center justify-between rounded-lg border border-default bg-surface px-3 py-2">
-        <span className="flex items-center gap-1.5 text-xs text-secondary-c">
-          <Sparkles className="h-3.5 w-3.5 text-brand-500" />
-          对话结束后自动抽取画像
-        </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={autoExtract}
-          onClick={() => toggleAutoExtract(!autoExtract)}
-          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-            autoExtract ? "bg-brand-600" : "bg-subtle"
-          }`}
-        >
-          <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-              autoExtract ? "translate-x-3.5" : "translate-x-0.5"
-            }`}
-          />
-        </button>
-      </label>
 
       {errMsg && (
         <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">

@@ -125,7 +125,7 @@ function MessageParts({
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-br-md bg-brand-600 px-3.5 py-2 text-sm leading-relaxed text-white shadow-soft">
+        <div className="max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-1.5 text-sm leading-relaxed text-white shadow-soft">
           {message.parts
             .filter((p) => p.type === "text")
             .map((p) => (p.type === "text" ? p.text : ""))
@@ -154,14 +154,14 @@ function MessageParts({
   const hasContent = items.length > 0 || message.content.length > 0;
   return (
     <div className="flex justify-start">
-      <div className="flex max-w-[85%] gap-2.5">
+      <div className="flex max-w-[85%] gap-2">
         <div
-          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-white"
           style={{ backgroundColor: "#4f46e5" }}
         >
-          <Sparkles className="h-3.5 w-3.5" />
+          <Sparkles className="h-3 w-3" />
         </div>
-        <div className="flex flex-col gap-2 rounded-2xl rounded-tl-md border border-default bg-surface px-3.5 py-2 shadow-soft">
+        <div className="flex flex-col gap-1.5 rounded-xl rounded-tl-md border border-default bg-surface px-3 py-1.5 shadow-soft">
           {items.length === 0 && !hasContent && isStreamingLast && (
             <span className="flex items-center gap-1.5 text-sm text-muted-c">
               <span className="flex gap-0.5">
@@ -245,7 +245,7 @@ export function AssistantUIThread({
   isStreaming: boolean;
 }) {
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
+    <div className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-4">
       {messages.map((m, i) => {
         const isLast = i === messages.length - 1;
         const isStreamingLast = isStreaming && isLast && m.role === "assistant";

@@ -91,8 +91,8 @@
     --bg-hover: #1a1a1a;
     --border-default: #262626; /* neutral-800 */
     --border-strong: #404040; /* neutral-700 */
-    --text-primary: #ffffff; /* pure white */
-    --text-secondary: #d4d4d4; /* neutral-300 */
+    --text-primary: #c9c9c9; /* neutral-350, warm gray, easy on eyes */
+    --text-secondary: #a3a3a3; /* neutral-400 */
     --text-muted: #737373; /* neutral-500 */
   }
 
@@ -371,7 +371,7 @@
     cursor: not-allowed;
   }
 
-  /* Send button — 圆形, 主色, 类似 Linear/Cursor */
+  /* Send button — 紫色主色 */
   .btn-send {
     display: inline-flex;
     align-items: center;
@@ -379,29 +379,59 @@
     height: 1.875rem;
     width: 1.875rem;
     border-radius: 0.5rem;
-    background-color: var(--color-brand-600);
+    background-color: #4f46e5;
     color: #ffffff;
     cursor: pointer;
-    transition: background-color 180ms ease, transform 120ms ease,
+    transition: opacity 180ms ease, transform 120ms ease,
       box-shadow 180ms ease;
     box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.08);
   }
   .btn-send:hover:not(:disabled) {
-    background-color: var(--color-brand-500);
+    opacity: 0.85;
   }
   .btn-send:active:not(:disabled) {
     transform: scale(0.96);
   }
   .btn-send:disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: not-allowed;
     box-shadow: none;
   }
   .btn-send.is-stop {
     background-color: rgb(225 29 72);
+    color: #ffffff;
   }
   .btn-send.is-stop:hover {
-    background-color: rgb(244 63 94);
+    opacity: 0.9;
+  }
+
+  /* Toggle switch — 开启状态使用紫色 */
+  .switch-track {
+    position: relative;
+    display: inline-flex;
+    height: 1rem;
+    width: 1.75rem;
+    align-items: center;
+    border-radius: 9999px;
+    background-color: var(--bg-subtle);
+    transition: background-color 200ms ease;
+  }
+  .switch-track[data-checked="true"] {
+    background-color: #4f46e5;
+  }
+  .switch-thumb {
+    display: inline-block;
+    height: 0.75rem;
+    width: 0.75rem;
+    border-radius: 9999px;
+    background-color: #ffffff;
+    transition: transform 200ms ease;
+  }
+  .switch-thumb[data-checked="true"] {
+    transform: translateX(0.875rem);
+  }
+  .switch-thumb[data-checked="false"] {
+    transform: translateX(0.125rem);
   }
 
   /* Shimmer loading bar */
@@ -421,12 +451,12 @@
  * Markdown / prose tweaks for assistant messages
  * ========================================================================== */
 .prose-chat {
-  font-size: 0.875rem;
-  line-height: 1.65;
+  font-size: 0.8125rem;
+  line-height: 1.55;
   color: var(--text-primary);
 }
 .prose-chat p {
-  margin: 0.5rem 0;
+  margin: 0.375rem 0;
 }
 .prose-chat p:first-child {
   margin-top: 0;
@@ -436,8 +466,8 @@
 }
 .prose-chat ul,
 .prose-chat ol {
-  margin: 0.5rem 0;
-  padding-left: 1.25rem;
+  margin: 0.375rem 0;
+  padding-left: 1.125rem;
 }
 .prose-chat ul {
   list-style: disc;
@@ -446,23 +476,23 @@
   list-style: decimal;
 }
 .prose-chat li {
-  margin: 0.25rem 0;
+  margin: 0.125rem 0;
 }
 .prose-chat h1,
 .prose-chat h2,
 .prose-chat h3 {
   font-weight: 600;
-  margin: 0.75rem 0 0.375rem;
+  margin: 0.5rem 0 0.25rem;
   line-height: 1.3;
 }
 .prose-chat h1 {
-  font-size: 1.125rem;
-}
-.prose-chat h2 {
   font-size: 1rem;
 }
-.prose-chat h3 {
+.prose-chat h2 {
   font-size: 0.875rem;
+}
+.prose-chat h3 {
+  font-size: 0.8125rem;
 }
 .prose-chat a {
   color: var(--color-brand-500);
