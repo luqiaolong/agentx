@@ -289,18 +289,17 @@ function SessionGroup({
                       aria-hidden
                     />
                   )}
-                  {active && isStreaming ? (
+                  {active && isStreaming && (
                     <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
                       <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-40" />
                       <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
                     </span>
-                  ) : (
-                    <MessageSquare
-                      className={`h-3.5 w-3.5 shrink-0 ${
-                        active ? "text-brand-500" : "text-muted-c"
-                      }`}
-                    />
                   )}
+                  <MessageSquare
+                    className={`h-3.5 w-3.5 shrink-0 ${
+                      active ? "text-brand-500" : "text-muted-c"
+                    }`}
+                  />
                   <div className="min-w-0 flex-1">
                     <div
                       className={`truncate text-xs font-medium leading-tight ${active ? "text-primary-c" : "text-secondary-c"}`}
