@@ -92,9 +92,9 @@ export function PermissionToggle({
         onClick={() => setOpen((v) => !v)}
         title={current.description}
         className={[
-          // 与左侧 Slash/AtSign/FolderPlus 同款 btn-icon，仅高 1.875rem（30px），
+          // 与左侧 Slash/AtSign/FolderPlus 同款 btn-icon，高 h-7（28px），
           // 文字尺寸 11px 与左侧 text-[11px] 一致，整体 visual rhythm 一致
-          "btn-icon group inline-flex h-[1.875rem] w-auto items-center gap-1 px-1.5",
+          "btn-icon group inline-flex h-7 w-auto items-center gap-1 px-1.5",
           "text-[11px] leading-none",
           open ? "bg-hover-soft" : "",
           isFullTrust
