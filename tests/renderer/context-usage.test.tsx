@@ -135,3 +135,25 @@ describe("ContextUsage 组件", () => {
     expect(el.getAttribute("title")).toMatch(/GPT-4o/);
   });
 });
+
+describe("useContextUsage selector 边界", () => {
+  it("active model contextWindow=0 时降级使用默认 16000", () => {
+    useModelStore.setState({
+      entries: [
+        {
+          id: "m1",
+          label: "ZeroCtx",
+          providerId: "custom",
+          model: "x",
+          baseUrl: "",
+          apiKey: "",
+          createdAt: 0,
+          contextWindow: 0,
+        },
+      ],
+      activeId: "m1",
+    });
+    const { getByTestId } = render(<Probe />);
+    expect(Number(getByTestId("probe").dataset.max)).toBe(16000);
+  });
+});
