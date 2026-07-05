@@ -9,6 +9,7 @@ import pytest
 
 from app.config import UPLOADS_DIR, WORKSPACE_DIR
 from app.utils.security import (
+    ApprovalDecision,
     PathNotAuthorized,
     SessionSandbox,
     get_sandbox,
@@ -222,3 +223,172 @@ def test_authorize_normalizes_trailing_slash(sandbox: SessionSandbox) -> None:
     listed = sandbox.list_authorized("t1")
     # 不带 trailing slash
     assert listed[0][0] == Path("d:/docs").resolve()
+
+
+# ============================================================
+# full_trust 模式 + 临时授权 + is_path_authorized
+# ============================================================
+
+
+def test_full_trust_bypasses_read_auth(sandbox: SessionSandbox) -> None:
+    """full_trust 模式下未授权目录可读。"""
+    sandbox.set_full_trust("t1", True)
+    # 未授权路径在 standard 模式会拒绝，full_trust 下放行
+    sandbox.check_read("t1", "d:/some/random/path/file.txt")
+
+
+def test_full_trust_bypasses_write_auth(sandbox: SessionSandbox) -> None:
+    """full_trust 模式下未授权目录可写。"""
+    sandbox.set_full_trust("t1", True)
+    sandbox.check_write("t1", "d:/some/random/path/out.txt")
+
+
+def test_full_trust_still_rejects_critical_dirs(sandbox: SessionSandbox) -> None:
+    """full_trust 模式仍拒绝系统关键目录。"""
+    sandbox.set_full_trust("t1", True)
+    if sys.platform == "win32":
+        with pytest.raises(PathNotAuthorized):
+            sandbox.check_read("t1", "C:/Windows/System32/drivers/etc/hosts")
+    else:
+        with pytest.raises(PathNotAuthorized):
+            sandbox.check_read("t1", "/etc/passwd")
+
+
+def test_full_trust_toggle_off_restores_auth(sandbox: SessionSandbox) -> None:
+    """关闭 full_trust 后恢复 standard 行为。"""
+    sandbox.set_full_trust("t1", True)
+    sandbox.check_read("t1", "d:/secrets/x")  # 放行
+    sandbox.set_full_trust("t1", False)
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_read("t1", "d:/secrets/x")  # 恢复拒绝
+
+
+def test_is_path_authorized_standard(sandbox: SessionSandbox) -> None:
+    """standard 模式下 is_path_authorized 反映白名单与授权目录。"""
+    assert sandbox.is_path_authorized("t1", str(WORKSPACE_DIR / "x")) is True
+    assert sandbox.is_path_authorized("t1", "d:/unauthorized/x") is False
+    sandbox.authorize("t1", "d:/docs", writable=False)
+    assert sandbox.is_path_authorized("t1", "d:/docs/x") is True
+    assert sandbox.is_path_authorized("t1", "d:/docs/x", writable=True) is False
+
+
+def test_is_path_authorized_full_trust(sandbox: SessionSandbox) -> None:
+    """full_trust 模式下 is_path_authorized 对非关键目录返回 True。"""
+    sandbox.set_full_trust("t1", True)
+    assert sandbox.is_path_authorized("t1", "d:/anywhere/x") is True
+    assert sandbox.is_path_authorized("t1", "d:/anywhere/x", writable=True) is True
+    # 关键目录仍 False
+    if sys.platform == "win32":
+        assert sandbox.is_path_authorized("t1", "C:/Windows/System32/x") is False
+    else:
+        assert sandbox.is_path_authorized("t1", "/etc/passwd") is False
+
+
+def test_authorize_temp_grants_read_without_persisting(sandbox: SessionSandbox) -> None:
+    """authorize_temp 临时授权读，但不污染 authorized_dirs。"""
+    sandbox.authorize_temp("t1", "d:/tmp_docs", writable=False)
+    sandbox.check_read("t1", "d:/tmp_docs/x")
+    # 临时授权不出现在 list_authorized（不持久化）
+    assert sandbox.list_authorized("t1") == []
+    # 写仍拒绝（writable=False）
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_write("t1", "d:/tmp_docs/out.txt")
+
+
+def test_clear_temp_removes_temp_authorization(sandbox: SessionSandbox) -> None:
+    """clear_temp 清空临时授权。"""
+    sandbox.authorize_temp("t1", "d:/tmp_docs")
+    sandbox.check_read("t1", "d:/tmp_docs/x")
+    sandbox.clear_temp("t1")
+    with pytest.raises(PathNotAuthorized):
+        sandbox.check_read("t1", "d:/tmp_docs/x")
+
+
+def test_authorize_temp_rejects_critical_dirs(sandbox: SessionSandbox) -> None:
+    """authorize_temp 拒绝系统关键目录。"""
+    if sys.platform == "win32":
+        with pytest.raises(ValueError):
+            sandbox.authorize_temp("t1", "C:/Windows/System32")
+    else:
+        with pytest.raises(ValueError):
+            sandbox.authorize_temp("t1", "/etc")
+
+
+def test_approval_decision_defaults(sandbox: SessionSandbox) -> None:
+    """ApprovalDecision 默认值兼容旧 bool 语义。"""
+    d = ApprovalDecision(approved=True)
+    assert d.decision == "approve"
+    assert d.path is None
+    assert d.writable is False
+    d2 = ApprovalDecision(approved=False, decision="deny")
+    assert d2.decision == "deny"
+
+
+# ============================================================
+# 持久化双写 + bootstrap（Task 3）
+# ============================================================
+
+from app.memory.sandbox_store import SandboxStore
+
+
+@pytest.fixture
+def store_sandbox(tmp_path: Path) -> SessionSandbox:
+    """带持久化的 sandbox 实例，使用 tmp DB。"""
+    store = SandboxStore(db_path=tmp_path / "test.db")
+    return SessionSandbox(store=store)
+
+
+def test_authorize_persists_to_db(store_sandbox: SessionSandbox) -> None:
+    """authorize 写入内存同时写 DB。"""
+    store_sandbox.authorize("t1", "d:/docs", writable=True)
+    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    assert len(entries) == 1
+    assert entries[0].source == "manual"
+
+
+def test_revoke_deletes_from_db(store_sandbox: SessionSandbox) -> None:
+    """revoke 内存同时删 DB。"""
+    store_sandbox.authorize("t1", "d:/docs", writable=True)
+    store_sandbox.revoke("t1", "d:/docs")
+    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    assert len(entries) == 0
+
+
+def test_clear_deletes_thread_from_db(store_sandbox: SessionSandbox) -> None:
+    """clear 内存同时删 DB 该 thread 所有记录。"""
+    store_sandbox.authorize("t1", "d:/docs", writable=True)
+    store_sandbox.authorize("t1", "d:/book", writable=False)
+    store_sandbox.clear("t1")
+    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    assert len(entries) == 0
+
+
+def test_bootstrap_restores_from_db(tmp_path: Path) -> None:
+    """bootstrap 从 DB 恢复授权到内存。"""
+    store = SandboxStore(db_path=tmp_path / "test.db")
+    store.upsert("t1", "d:/docs", writable=True, source="manual")
+    store.upsert("t1", "d:/book", writable=False, source="chip")
+
+    sandbox = SessionSandbox(store=store)
+    sandbox.bootstrap_from_store()
+
+    listed = sandbox.list_authorized("t1")
+    paths = {str(p) for (p, _w) in listed}
+    assert any("docs" in p for p in paths)
+    assert any("book" in p for p in paths)
+
+
+def test_persistence_disabled_no_db_write(tmp_path: Path) -> None:
+    """sandbox_persistence_enabled=False 时不写 DB。"""
+    from app.config import get_settings
+    settings = get_settings()
+    original = settings.sandbox_persistence_enabled
+    settings.sandbox_persistence_enabled = False
+    try:
+        store = SandboxStore(db_path=tmp_path / "test.db")
+        sandbox = SessionSandbox(store=store)
+        sandbox.authorize("t1", "d:/docs", writable=True)
+        entries = store.list_by_thread("t1")
+        assert len(entries) == 0  # DB 未写入
+    finally:
+        settings.sandbox_persistence_enabled = original
