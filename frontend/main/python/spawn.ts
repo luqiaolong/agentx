@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import type { ChildProcess, SpawnOptions } from "child_process";
 import * as http from "http";
 import { appendLog } from "../logger";
@@ -15,7 +15,12 @@ import type { CustomSubagentsMap, SubagentsConfig, ToolsConfig, McpServerConfig 
 function killTree(pid: number): void {
   try {
     if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+      // 同步等待 taskkill 完成，确保 Electron 退出前 Python 进程已被回收，
+      // 避免孤儿进程继续占用端口导致下次启动失败（Errno 10048）。
+      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        timeout: 5000,
+      });
     } else {
       process.kill(-pid, "SIGTERM");
     }
