@@ -197,7 +197,7 @@ function startPython(): void {
     },
   });
 
-  // 启动握手：轮询 /api/health；超时仅记录，由 onStatus("giving_up") 兜底
+  // 启动握手：轮询 / 根健康端点；超时仅记录，由 onStatus("giving_up") 兜底
   void pythonHandle.waitForReady().then((ok) => {
     if (!ok) {
       appendLog("[main] python waitForReady returned false (timeout or stopped)");
@@ -482,7 +482,7 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle("window:close", () => {
-    mainWindow?.close();
+    app.quit();
   });
   ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 }

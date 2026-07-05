@@ -314,10 +314,10 @@ export function ChatComposer({
   const canSend = input.trim().length > 0 && !isStreaming;
 
   return (
-    <div className="border-t border-default bg-surface px-4 py-3">
+    <div className="border-t border-default bg-surface px-4 py-2">
       <div className="mx-auto max-w-3xl">
         <div
-          className={`chat-composer relative px-3 py-2.5 ${
+          className={`chat-composer relative px-3 pb-2 pt-1.5 ${
             dragOver ? "is-drop-target" : ""
           }`}
           onDragOver={handleDragOver}
@@ -336,14 +336,14 @@ export function ChatComposer({
             value={input}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            rows={1}
+            rows={2}
             placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
             aria-label="消息输入框"
-            className="input-borderless block max-h-40 min-h-[1.5rem] w-full pr-1"
+            className="input-borderless block h-12 w-full resize-none pr-1"
             style={{ height: `${textareaHeight}px` }}
           />
 
-          <div className="mt-1.5 flex items-center justify-between gap-2">
+          <div className="mt-1 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1 text-[11px] text-muted-c">
               <button
                 type="button"

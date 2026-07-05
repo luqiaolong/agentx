@@ -1,18 +1,11 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useRef } from "react";
 
 /**
- * textarea 自动撑高 — 跟随内容从 1 行 (24px) 到 6 行 (≈144px)。
- * 返回 textarea ref 与当前高度（px）。
+ * textarea 固定两行高度（48px），不随输入内容改变。
+ * 返回 textarea ref 与固定高度（px）。
  */
-export function useAutoResizeTextarea(input: string) {
+export function useAutoResizeTextarea(_input: string) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [textareaHeight, setTextareaHeight] = useState(24);
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const next = Math.min(144, Math.max(24, el.scrollHeight));
-    setTextareaHeight(next);
-  }, [input]);
+  const textareaHeight = 48; // 固定两行高度
   return { textareaRef, textareaHeight };
 }
