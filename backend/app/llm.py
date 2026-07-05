@@ -38,25 +38,31 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
         if not settings.deepseek_api_key:
             raise ValueError(f"default_model={model!r} 需要 AGENTX_DEEPSEEK_API_KEY")
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=model,
-            api_key=settings.deepseek_api_key,
-            base_url="https://api.deepseek.com",
-            temperature=temperature,
-            streaming=streaming,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": settings.deepseek_api_key,
+            "base_url": "https://api.deepseek.com",
+            "temperature": temperature,
+            "streaming": streaming,
+        }
+        if settings.max_output_tokens:
+            kwargs["max_tokens"] = settings.max_output_tokens
+        return ChatOpenAI(**kwargs)
 
     # OpenAI 系列：gpt-* / o1-* / o3-*
     if model.startswith(("gpt", "o1", "o3")):
         if not settings.openai_api_key:
             raise ValueError(f"default_model={model!r} 需要 AGENTX_OPENAI_API_KEY")
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
-            model=model,
-            api_key=settings.openai_api_key,
-            temperature=temperature,
-            streaming=streaming,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "api_key": settings.openai_api_key,
+            "temperature": temperature,
+            "streaming": streaming,
+        }
+        if settings.max_output_tokens:
+            kwargs["max_tokens"] = settings.max_output_tokens
+        return ChatOpenAI(**kwargs)
 
     # 兜底：若有 openai_api_key 则按 OpenAI 兼容处理（支持自定义 base_url）
     # 适用场景：MiniMax Token Plan / 其他 OpenAI 兼容中转服务
@@ -70,6 +76,8 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
         }
         if settings.openai_base_url:
             kwargs["base_url"] = settings.openai_base_url
+        if settings.max_output_tokens:
+            kwargs["max_tokens"] = settings.max_output_tokens
         return ChatOpenAI(**kwargs)
 
     raise ValueError(
