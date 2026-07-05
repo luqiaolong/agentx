@@ -253,14 +253,18 @@ agentx/
 
 | event | data 类型 | 说明 |
 |---|---|---|
-| `token` | 纯字符串 | 增量 token（已剥离 ...） |
+| `token` | 纯字符串 | 增量 token（visible text，已剥离 `<think>` 块） |
+| `reasoning` | JSON `{"content": str, "source": str}` | 思考过程 chunk（chat-rendering-trace-v2：由 ThinkFilter retain_think 模式从 token 流分离） |
+| `tool_call` | JSON `{"id","name","args","source"}` | 工具调用开始（id 供前端配对 tool_result；subagent 用 astream_events v2 run_id） |
+| `tool_result` | JSON `{"id","name","result","source","error?"}` | 工具调用结束 |
+| `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
 | `todo_update` | JSON `{"todos": [{text, done, args?}]}` | DeepAgent 任务进度 |
 | `approval_request` | JSON `{"thread_id","tool_name","args","preview"}` | 危险工具审批请求 |
 | `done` | `"{}"` | 流结束 |
 | `error` | 错误消息字符串 | 错误 |
 
 > 修改任一事件类型或字段名，**必须**同步更新
-> [main.py](file:///d:/java/agentprojects/agentx/backend/app/main.py#L425-L479)、
+> [main.py](file:///d:/java/agentprojects/agentx/backend/app/main.py#L515-L530)、
 > [preload/index.ts](file:///d:/java/agentprojects/agentx/frontend/preload/index.ts#L44-L111)、
 > [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts) 三处。
 
