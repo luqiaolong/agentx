@@ -1,12 +1,12 @@
-"""Milvus 客户端单测：mock pymilvus，不依赖真实 Milvus 连接�?
-覆盖�?1. ingest 成功 �?partition_name=source_type，返�?id 列表
-2. search 成功 �?(text, source, score) 降序，无 partition_name
-3. delete_by_source_type �?drop_partition + Partition 重建
-4. delete_by_source �?Collection.delete(filter=...)
-5. healthcheck 凭证缺失 �?no_credentials
-6. healthcheck 鉴权失败 �?auth_failed
-7. healthcheck DB 不存�?�?db_not_found
-8. ingest 超长文本 �?on_skip 调用，被跳过文本不入�?9. search 失败 �?�?MilvusUnavailable
+"""Milvus 客户端单测：mock pymilvus，不依赖真实 Milvus 连接
+覆盖1. ingest 成功 ?partition_name=source_type，返id 列表
+2. search 成功 ?(text, source, score) 降序，无 partition_name
+3. delete_by_source_type ?drop_partition + Partition 重建
+4. delete_by_source ?Collection.delete(filter=...)
+5. healthcheck 凭证缺失 ?no_credentials
+6. healthcheck 鉴权失败 ?auth_failed
+7. healthcheck DB 不存db_not_found
+8. ingest 超长文本 ?on_skip 调用，被跳过文本不入9. search 失败 ??MilvusUnavailable
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from app.vectorstore.milvus_client import (
 
 @pytest.fixture(autouse=True)
 def _isolate_settings_and_singleton():
-    """每个用例前后清理 settings lru_cache + MilvusClient 单例，避免污染�?""
+    """每个用例前后清理 settings lru_cache + MilvusClient 单例，避免污染"""
     get_settings.cache_clear()
     import app.vectorstore.milvus_client as mod
     mod._client = None
@@ -38,7 +38,7 @@ def _isolate_settings_and_singleton():
 
 
 def _make_client_with_collection() -> MilvusClient:
-    """构造一个已连接（_collection=MagicMock）的 MilvusClient，供 ingest/search/delete 用例使用�?""
+    """构造一个已连接（_collection=MagicMock）的 MilvusClient，供 ingest/search/delete 用例使用"""
     client = MilvusClient()
     client._collection = MagicMock()
     client._connected = True
@@ -46,7 +46,7 @@ def _make_client_with_collection() -> MilvusClient:
 
 
 def _fake_hit(text: str, source: str, score: float) -> MagicMock:
-    """构造一个模拟的 Milvus search hit�?""
+    """构造一个模拟的 Milvus search hit?"""
     hit = MagicMock()
     hit.score = score
     hit.distance = score
@@ -82,14 +82,14 @@ async def test_ingest_success_returns_ids_and_uses_partition():
         )
 
     assert ids == [101, 102]
-    # insert 调用必须�?partition_name="file"
+    # insert 调用必须partition_name="file"
     client._collection.insert.assert_called_once()
     call_kwargs = client._collection.insert.call_args.kwargs
     assert call_kwargs["partition_name"] == "file"
-    # data 第一组应�?kept_texts
+    # data 第一组应kept_texts
     data = call_kwargs["data"]
     assert data[0] == ["hello world", "foo bar"]
-    assert data[2] == ["file", "file"]  # source_type �?
+    assert data[2] == ["file", "file"]  # source_type ?
 
 # ---------------- 2. search 成功 ----------------
 
@@ -102,7 +102,8 @@ async def test_search_success_returns_sorted_tuples_without_partition_name():
         "app.vectorstore.milvus_client.embed_text",
         new=AsyncMock(return_value=fake_query_vec),
     ):
-        # Milvus search 返回 [[hit, hit, ...]]；故意打乱顺序验证降�?        hits = [
+        # Milvus search 返回 [[hit, hit, ...]]；故意打乱顺序验证降
+        hits = [
             _fake_hit("text_b", "src_b", 0.75),
             _fake_hit("text_a", "src_a", 0.95),
             _fake_hit("text_c", "src_c", 0.85),
@@ -141,9 +142,9 @@ async def test_delete_by_source_type_drops_and_recreates_partition():
     with patch("app.vectorstore.milvus_client.Partition", new=fake_partition_cls):
         await client.delete_by_source_type("web")
 
-    # drop_partition 必须�?"web" 调用
+    # drop_partition 必须"web" 调用
     client._collection.drop_partition.assert_called_once_with("web")
-    # Partition 必须�?(collection, "web") 重建
+    # Partition 必须(collection, "web") 重建
     fake_partition_cls.assert_called_once_with(client._collection, "web")
 
 
@@ -166,7 +167,7 @@ async def test_delete_by_source_calls_delete_with_filter_expr():
 
 @pytest.mark.asyncio
 async def test_delete_by_source_escapes_quotes_safely():
-    """source 含双引号时必须转义，避免 filter 注入�?""
+    """source 含双引号时必须转义，避免 filter 注入"""
     client = _make_client_with_collection()
     mutation_result = MagicMock()
     mutation_result.delete_count = 0
@@ -183,7 +184,7 @@ async def test_delete_by_source_escapes_quotes_safely():
 
 @pytest.mark.asyncio
 async def test_healthcheck_no_credentials(monkeypatch):
-    # 清空凭证环境变量，auth �?enabled（默认）
+    # 清空凭证环境变量，auth ?enabled（默认）
     monkeypatch.delenv("AGENTX_MILVUS_USER", raising=False)
     monkeypatch.delenv("AGENTX_MILVUS_PASSWORD", raising=False)
     monkeypatch.delenv("AGENTX_MILVUS_AUTH_ENABLED", raising=False)
@@ -201,7 +202,8 @@ async def test_healthcheck_no_credentials(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_healthcheck_auth_disabled_skips_credentials(monkeypatch):
-    # auth disabled 时不需要凭�?    monkeypatch.delenv("AGENTX_MILVUS_USER", raising=False)
+    # auth disabled 时不需要凭
+    monkeypatch.delenv("AGENTX_MILVUS_USER", raising=False)
     monkeypatch.delenv("AGENTX_MILVUS_PASSWORD", raising=False)
     monkeypatch.setenv("AGENTX_MILVUS_AUTH_ENABLED", "false")
     get_settings.cache_clear()
@@ -243,7 +245,7 @@ async def test_healthcheck_auth_failed(monkeypatch):
     assert "auth failed" in result["error"].lower()
 
 
-# ---------------- 7. healthcheck DB 不存�?----------------
+# ---------------- 7. healthcheck DB 不存----------------
 
 @pytest.mark.asyncio
 async def test_healthcheck_db_not_found(monkeypatch):
@@ -268,7 +270,7 @@ async def test_healthcheck_db_not_found(monkeypatch):
     assert "attu" in result["error"].lower() or "create_database" in result["error"].lower()
 
 
-# ---------------- 健康检�?healthy 路径（额外覆盖） ----------------
+# ---------------- 健康检healthy 路径（额外覆盖） ----------------
 
 @pytest.mark.asyncio
 async def test_healthcheck_healthy(monkeypatch):
@@ -299,7 +301,8 @@ async def test_ingest_skips_too_long_text_via_on_skip():
     captured_on_skip = {}
 
     async def _fake_embed_texts(texts, on_skip=None):
-        # 模拟 TEI 客户端契约：on_skip(text, err) �?2 个参�?        from app.embedding import TextTooLongError
+        # 模拟 TEI 客户端契约：on_skip(text, err) ?2 个参
+        from app.embedding import TextTooLongError
         vectors = []
         for idx, text in enumerate(texts):
             if len(text) > 24000:
@@ -332,18 +335,18 @@ async def test_ingest_skips_too_long_text_via_on_skip():
             source_type="file",
         )
 
-    # �?2 条短文本入库
+    # ?2 条短文本入库
     assert ids == [201, 202]
     client._collection.insert.assert_called_once()
     call_kwargs = client._collection.insert.call_args.kwargs
     data = call_kwargs["data"]
-    # data[0] �?text 列表，应只有 2 条（不含长文本）
+    # data[0] ?text 列表，应只有 2 条（不含长文本）
     assert data[0] == ["short1", "short2"]
     # partition 仍是 file
     assert call_kwargs["partition_name"] == "file"
 
 
-# ---------------- 9. search 失败�?MilvusUnavailable ----------------
+# ---------------- 9. search 失败MilvusUnavailable ----------------
 
 @pytest.mark.asyncio
 async def test_search_raises_milvus_unavailable_on_failure():
@@ -374,7 +377,7 @@ async def test_ingest_rejects_invalid_source_type():
         )
 
 
-# ---------------- 额外：ingest 文本与元数据长度不匹�?----------------
+# ---------------- 额外：ingest 文本与元数据长度不匹----------------
 
 @pytest.mark.asyncio
 async def test_ingest_rejects_length_mismatch():
@@ -387,7 +390,7 @@ async def test_ingest_rejects_length_mismatch():
         )
 
 
-# ---------------- 额外：未连接时调�?ingest �?MilvusUnavailable ----------------
+# ---------------- 额外：未连接时调ingest ?MilvusUnavailable ----------------
 
 @pytest.mark.asyncio
 async def test_ingest_raises_when_not_connected():
@@ -424,7 +427,8 @@ async def test_module_level_ingest_delegates_to_singleton():
         "app.vectorstore.milvus_client.embed_texts",
         new=AsyncMock(return_value=fake_vectors),
     ):
-        # 替换单例为一个已连接�?mock 客户�?        singleton_client = _make_client_with_collection()
+        # 替换单例为一个已连接mock 客户
+        singleton_client = _make_client_with_collection()
         mutation_result = MagicMock()
         mutation_result.primary_keys = [999]
         singleton_client._collection.insert = MagicMock(return_value=mutation_result)
@@ -450,7 +454,7 @@ async def test_delete_by_source_type_rejects_invalid_type():
         await client.delete_by_source_type("invalid")
 
 
-# ---------------- 额外：所有合�?source_type 可被 delete_by_source_type ----------------
+# ---------------- 额外：所有合source_type 可被 delete_by_source_type ----------------
 
 @pytest.mark.asyncio
 async def test_delete_by_source_type_accepts_all_valid_types():
