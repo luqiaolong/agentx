@@ -233,6 +233,65 @@ async def _is_interrupted(agent: Any, config: dict) -> bool:
     return "tools" in state.next
 
 
+async def _inject_tool_error_messages(agent: Any, config: dict, error_text: str) -> None:
+    """为未完成的 tool_calls 注入 ToolMessage，防止 INVALID_CHAT_HISTORY。
+
+    当 ``interrupt_before=["tools"]`` 中断后，如果恢复执行时抛异常（如 tool 失败、
+    进程崩溃），checkpoint 中 AIMessage 有 ``tool_calls`` 但没有对应的 ``ToolMessage``。
+    用户再次发消息时，LangGraph 校验历史消息会抛出 ``INVALID_CHAT_HISTORY``。
+
+    本函数在异常退出前调用：读取 state 中最后一条 AIMessage 的 ``tool_calls``，
+    为每个缺失的 tool_call 构造 ``ToolMessage(content=error_text, tool_call_id=...)``，
+    通过 ``aupdate_state`` 追加到 messages 列表，保持配对关系。
+
+    Args:
+        agent: 编译后的 CompiledStateGraph。
+        config: 含 ``configurable.thread_id`` 的字典。
+        error_text: ToolMessage 的 content，描述失败原因。
+    """
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    try:
+        state = await agent.aget_state(config)
+        if not state or not state.values:
+            return
+        messages = list(state.values.get("messages", []))
+        if not messages:
+            return
+
+        last_msg = messages[-1]
+        if not isinstance(last_msg, AIMessage):
+            return
+        tool_calls = getattr(last_msg, "tool_calls", None) or []
+        if not tool_calls:
+            return
+
+        # 收集已有 ToolMessage 的 tool_call_id
+        existing_ids = {
+            getattr(m, "tool_call_id", None)
+            for m in messages
+            if isinstance(m, ToolMessage)
+        }
+
+        new_messages = []
+        for tc in tool_calls:
+            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+            if tc_id and tc_id not in existing_ids:
+                new_messages.append(
+                    ToolMessage(content=error_text, tool_call_id=tc_id)
+                )
+
+        if new_messages:
+            await agent.aupdate_state(config, {"messages": new_messages})
+            logger.info(
+                "injected_tool_error_messages",
+                thread_id=config.get("configurable", {}).get("thread_id", ""),
+                count=len(new_messages),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("inject_tool_error_messages failed", error=str(exc))
+
+
 def _redact_args(tool_name: str, args: dict) -> dict:
     """对危险工具的参数做 redaction（隐藏文件内容等敏感字段）。"""
     if not isinstance(args, dict):
@@ -583,6 +642,7 @@ async def run_deep_path(
             yield sse
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.exception("deep agent stream failed", thread_id=thread_id)
+        await _inject_tool_error_messages(agent, config, f"DeepAgent 执行失败: {exc}")
         yield {"event": "error", "data": f"DeepAgent 执行失败: {exc}"}
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
@@ -615,6 +675,7 @@ async def run_deep_path(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("deep agent resume failed", thread_id=thread_id)
+                await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
                 yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -688,6 +749,7 @@ async def run_deep_path(
                 yield sse
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.exception("deep agent resume failed", thread_id=thread_id)
+            await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
             yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
             sandbox.set_full_trust(thread_id, False)
             return
