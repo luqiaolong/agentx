@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import "@testing-library/jest-dom/vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { act } from "react";
 
@@ -151,5 +152,33 @@ describe("ChatComposer 切会话行为", () => {
     expect(picker.open).toBe(false);
     expect(picker.query).toBe("");
     expect(picker.anchor).toBeNull();
+  });
+});
+
+describe("ChatComposer 底部 Toolbar", () => {
+  it("非流式态包含「发送消息」按钮", () => {
+    useChatStore.getState().createSession();
+    const { getByRole } = render(
+      <ChatComposer
+        isStreaming={false}
+        setDropError={() => {}}
+        onSend={() => {}}
+        onAbort={() => {}}
+      />,
+    );
+    expect(getByRole("button", { name: "发送消息" })).toBeInTheDocument();
+  });
+
+  it("流式态包含「中止生成」按钮", () => {
+    useChatStore.getState().createSession();
+    const { getByRole } = render(
+      <ChatComposer
+        isStreaming={true}
+        setDropError={() => {}}
+        onSend={() => {}}
+        onAbort={() => {}}
+      />,
+    );
+    expect(getByRole("button", { name: "中止生成" })).toBeInTheDocument();
   });
 });
