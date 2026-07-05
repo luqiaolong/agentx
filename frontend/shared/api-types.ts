@@ -2,14 +2,42 @@
 // preload 和 renderer 共享的 window.api 类型声明
 // 改动此文件后，preload 和 renderer 会自动同步，无需维护双份声明
 
-export interface ChatEvent {
-  type: string;
-  thread_id?: string;
-  tool_name?: string;
-  args?: unknown;
-  preview?: string;
-  [k: string]: unknown;
-}
+/**
+ * SSE 事件契约（AGENTS.md §13 三处同步：main.py + preload/index.ts + useChatStream.ts）。
+ *
+ * Discriminated union on `type` 字段。token 事件 data 是纯字符串；
+ * reasoning/tool_call/tool_result/delegation 事件 payload 是 JSON 对象，
+ * preload 解析后展开到事件顶层。
+ *
+ * 注意：preload 构造 ChatEvent 时 eventType 是动态 string，对象字面量无法
+ * 直接赋值给 union，需用 `as unknown as ChatEvent` 断言。
+ */
+export type ChatEvent =
+  // token 事件：data 是纯字符串（不变）
+  | { type: "token"; data: string }
+  // reasoning 事件：thinking 流式 chunk
+  | { type: "reasoning"; content: string; source: string }
+  // tool_call 事件：子代理/主 agent 调用工具
+  | { type: "tool_call"; id: string; name: string; args: unknown; source: string }
+  // tool_result 事件：工具返回结果（error 时带 error 字段）
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      result: unknown;
+      source: string;
+      error?: string;
+    }
+  // delegation 事件：Router 静态分类或 DeepAgent 动态委派
+  | { type: "delegation"; target: string; source: string; message: string }
+  // todo_update 事件：DeepAgent 任务级 todo 列表（保留不变）
+  | { type: "todo_update"; todos: unknown }
+  // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
+  | { type: "approval_request"; [k: string]: unknown }
+  // done 事件：流式结束
+  | { type: "done"; data?: unknown }
+  // error 事件：流式出错（data 和 error 字段均可能携带信息）
+  | { type: "error"; data?: unknown; error?: string };
 
 export type ApprovalKind = "dangerous_tool" | "directory_extension";
 
@@ -23,7 +51,7 @@ export interface ApprovalRequest {
   writable?: boolean;           // directory_extension 时填
 }
 
-export type PermissionMode = "standard" | "full_trust";
+export type PermissionMode = "workspace" | "full_trust";
 
 export type ApprovalDecision = "approve" | "once" | "session" | "deny";
 

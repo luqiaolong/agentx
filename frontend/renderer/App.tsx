@@ -97,7 +97,7 @@ export default function App() {
           </span>
           {/* 场景切换器：Work / Coding，影响 system prompt 注入 */}
           <div
-            className="ml-2 inline-flex items-center rounded-md border border-default bg-surface"
+            className="app-no-drag ml-2 inline-flex items-center rounded-md border border-default bg-surface"
             role="tablist"
             aria-label="场景切换"
           >

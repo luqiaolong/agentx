@@ -39,13 +39,24 @@ export interface UseChatStreamArgs {
 
 /**
  * 订阅 SSE 事件与审批请求（仅在挂载时绑定一次）。
- * token 事件追加到 pending 消息；done/error 结束流式并更新任务状态；
- * todo_update 同步任务进度条。
+ *
+ * 按 event.type 分发到 part 操作（chat-rendering-trace-v2 D3）：
+ * - token → appendPartText(pending, "text", data)
+ * - reasoning → appendPartText(pending, "reasoning", content)
+ * - tool_call → addPart(pending, {type:"tool-call", ...})
+ * - tool_result → addPart(pending, {type:"tool-result", ...})
+ * - delegation → addPart(pending, {type:"delegation", ...})
+ * - done → markReasoningDone(pending) + 结束流式
+ * - todo_update → 保留底部 TodoProgress 逻辑（任务级进度，与 tool_call 并存）
+ * - approval_request → 保留 ApprovalDialog 逻辑
+ * - error → 保留错误处理
  */
 export function useChatStream(args: UseChatStreamArgs) {
   const { pendingIdRef, currentTaskIdRef, lastUserQueryRef, setTodos, setErrorMsg } = args;
 
-  const appendMessageContent = useChatStore((s) => s.appendMessageContent);
+  const appendPartText = useChatStore((s) => s.appendPartText);
+  const addPart = useChatStore((s) => s.addPart);
+  const markReasoningDone = useChatStore((s) => s.markReasoningDone);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
   const addTask = useTasksStore((s) => s.addTask);
@@ -53,44 +64,96 @@ export function useChatStream(args: UseChatStreamArgs) {
 
   useEffect(() => {
     const unsubEvents = window.api.chat.onEvent((e: ChatEvent) => {
-      if (e.type === "token") {
-        appendMessageContent(pendingIdRef.current, String(e.data ?? ""));
-      } else if (e.type === "done") {
-        setStreaming(false);
-        // 标记当前任务完成
-        const tid = currentTaskIdRef.current;
-        if (tid) {
-          updateTask(tid, { status: "done" });
-          currentTaskIdRef.current = null;
+      switch (e.type) {
+        case "token": {
+          // token 事件 data 是纯字符串
+          appendPartText(pendingIdRef.current, "text", String(e.data ?? ""));
+          break;
         }
-      } else if (e.type === "error") {
-        setStreaming(false);
-        const errData = e.data ?? e.error;
-        setErrorMsg(typeof errData === "string" ? errData : "请求出错");
-        // 标记当前任务失败
-        const tid = currentTaskIdRef.current;
-        if (tid) {
-          updateTask(tid, { status: "failed" });
-          currentTaskIdRef.current = null;
+        case "reasoning": {
+          appendPartText(pendingIdRef.current, "reasoning", e.content);
+          break;
         }
-      } else if (e.type === "todo_update") {
-        const next = normalizeTodos(e.todos);
-        setTodos(next);
-        const tid = currentTaskIdRef.current;
-        if (tid) {
-          updateTask(tid, { todos: next });
-        } else {
-          const newId = `task-${crypto.randomUUID()}`;
-          currentTaskIdRef.current = newId;
-          const title =
-            lastUserQueryRef.current.trim().slice(0, 40) || "深度任务";
-          addTask({
-            id: newId,
-            title,
+        case "tool_call": {
+          addPart(pendingIdRef.current, {
+            type: "tool-call",
+            id: e.id,
+            toolName: e.name,
+            args: e.args,
+            source: e.source,
             status: "running",
-            todos: next,
-            createdAt: Date.now(),
           });
+          break;
+        }
+        case "tool_result": {
+          addPart(pendingIdRef.current, {
+            type: "tool-result",
+            id: e.id,
+            toolName: e.name,
+            result: e.result,
+            source: e.source,
+            ...(e.error !== undefined ? { error: e.error } : {}),
+          });
+          break;
+        }
+        case "delegation": {
+          addPart(pendingIdRef.current, {
+            type: "delegation",
+            id: crypto.randomUUID(),
+            target: e.target,
+            source: e.source,
+            message: e.message,
+          });
+          break;
+        }
+        case "done": {
+          // 标记 reasoning parts 完成（触发自动收缩）
+          markReasoningDone(pendingIdRef.current);
+          setStreaming(false);
+          // 标记当前任务完成
+          const tid = currentTaskIdRef.current;
+          if (tid) {
+            updateTask(tid, { status: "done" });
+            currentTaskIdRef.current = null;
+          }
+          break;
+        }
+        case "error": {
+          setStreaming(false);
+          const errData = e.data ?? e.error;
+          setErrorMsg(typeof errData === "string" ? errData : "请求出错");
+          // 标记当前任务失败
+          const tid = currentTaskIdRef.current;
+          if (tid) {
+            updateTask(tid, { status: "failed" });
+            currentTaskIdRef.current = null;
+          }
+          break;
+        }
+        case "todo_update": {
+          const next = normalizeTodos(e.todos);
+          setTodos(next);
+          const tid = currentTaskIdRef.current;
+          if (tid) {
+            updateTask(tid, { todos: next });
+          } else {
+            const newId = `task-${crypto.randomUUID()}`;
+            currentTaskIdRef.current = newId;
+            const title =
+              lastUserQueryRef.current.trim().slice(0, 40) || "深度任务";
+            addTask({
+              id: newId,
+              title,
+              status: "running",
+              todos: next,
+              createdAt: Date.now(),
+            });
+          }
+          break;
+        }
+        default: {
+          // 未知事件类型：忽略（兜底分支，避免破坏流式）
+          break;
         }
       }
     });

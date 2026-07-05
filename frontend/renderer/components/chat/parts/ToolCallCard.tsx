@@ -1,0 +1,138 @@
+import { useState } from "react";
+import { ChevronDown, Wrench, Check, X, Loader2 } from "lucide-react";
+
+/** result JSON 截断阈值：超出显示「... truncated」 */
+const RESULT_MAX_CHARS = 1000;
+
+/** args 预览截断阈值 */
+const ARGS_PREVIEW_MAX_CHARS = 50;
+
+/** 从 args 对象提取第一个标量字段值作为预览。 */
+function getArgsPreview(args: unknown): string {
+  if (args == null) return "";
+  if (typeof args === "string") return args;
+  if (typeof args !== "object") return String(args);
+  const obj = args as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+      const str = String(val);
+      return str.length > ARGS_PREVIEW_MAX_CHARS
+        ? `${str.slice(0, ARGS_PREVIEW_MAX_CHARS)}…`
+        : str;
+    }
+  }
+  return "";
+}
+
+function formatJson(value: unknown): string {
+  try {
+    const str = JSON.stringify(value, null, 2);
+    if (str == null) return String(value);
+    return str.length > RESULT_MAX_CHARS
+      ? `${str.slice(0, RESULT_MAX_CHARS)}\n... truncated`
+      : str;
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * ToolCallCard：tool-call part 和 tool-result part 按 id 配对合并为单个卡片。
+ *
+ * 三态展示：
+ * - running（无配对 tool-result）：⏳ + 工具名 + args 预览
+ * - complete（有配对 tool-result 且无 error）：✓ + 工具名 + args 预览
+ * - error（tool-result 有 error 字段）：✗ + 工具名 + args 预览
+ *
+ * 默认折叠单行，点击展开 args/result JSON。
+ */
+export function ToolCallCard({
+  toolName,
+  args,
+  status,
+  result,
+  error,
+}: {
+  toolName: string;
+  args: unknown;
+  status: "running" | "complete" | "error";
+  result?: unknown;
+  error?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const argsPreview = getArgsPreview(args);
+
+  return (
+    <div className="rounded-md border border-default bg-surface text-xs">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left transition-colors hover:bg-muted-c/5"
+      >
+        <Wrench className="h-3 w-3 shrink-0 text-muted-c" />
+        <span className="font-mono text-muted-c">{toolName}</span>
+        {argsPreview && (
+          <span className="truncate font-mono text-muted-c/70">({argsPreview})</span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {status === "running" && (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+              <span className="text-amber-600 dark:text-amber-400">运行中</span>
+            </>
+          )}
+          {status === "complete" && (
+            <>
+              <Check className="h-3 w-3 text-emerald-500" />
+              <span className="text-emerald-600 dark:text-emerald-400">完成</span>
+            </>
+          )}
+          {status === "error" && (
+            <>
+              <X className="h-3 w-3 text-rose-500" />
+              <span className="text-rose-600 dark:text-rose-400">失败</span>
+            </>
+          )}
+        </span>
+        <ChevronDown
+          className={`h-3 w-3 shrink-0 text-muted-c transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <div className="border-t border-default px-2.5 py-2">
+          {args != null && (
+            <div className="mb-2">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
+                Args
+              </div>
+              <pre className="overflow-auto rounded bg-muted-c/10 p-2 font-mono text-[11px]">
+                {formatJson(args)}
+              </pre>
+            </div>
+          )}
+          {result != null && (
+            <div className="mb-2">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
+                Result
+              </div>
+              <pre className="overflow-auto rounded bg-muted-c/10 p-2 font-mono text-[11px]">
+                {formatJson(result)}
+              </pre>
+            </div>
+          )}
+          {error && (
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-rose-500">
+                Error
+              </div>
+              <pre className="overflow-auto rounded bg-rose-500/10 p-2 font-mono text-[11px] text-rose-600 dark:text-rose-400">
+                {error}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

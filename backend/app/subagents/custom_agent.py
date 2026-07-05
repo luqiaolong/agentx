@@ -172,8 +172,11 @@ async def run_custom_agent(
 
     事件类型:
     - ``{"type": "token", "content": str}``: 模型流式输出 token
-    - ``{"type": "tool_call", "name": str, "args": dict}``: 工具调用开始
-    - ``{"type": "tool_result", "name": str, "result": Any}``: 工具调用结束
+    - ``{"type": "tool_call", "id": str, "name": str, "args": dict}``: 工具调用开始
+    - ``{"type": "tool_result", "id": str, "name": str, "result": Any}``: 工具调用结束
+
+    ``id`` 来自 astream_events v2 的 ``run_id``，同一 tool run 的 start/end 共享，
+    供前端按 id 配对（chat-rendering-trace-v2 D5）。
 
     Args:
         key: 自定义子代理 key。
@@ -184,18 +187,32 @@ async def run_custom_agent(
     agent = build_custom_agent(key, thread_id)
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
+    source = f"custom-{key}"
     async for event in agent.astream_events(inputs, version="v2"):
         kind = event["event"]
         name = event.get("name", "")
         data = event.get("data", {}) or {}
+        run_id = event.get("run_id", "")
         if kind == "on_chat_model_stream":
             content = _extract_text(data.get("chunk"))
             if content:
                 yield {"type": "token", "content": content}
         elif kind == "on_tool_start":
-            yield {"type": "tool_call", "name": name, "args": data.get("input")}
+            yield {
+                "type": "tool_call",
+                "id": run_id,
+                "name": name,
+                "args": data.get("input"),
+                "source": source,
+            }
         elif kind == "on_tool_end":
-            yield {"type": "tool_result", "name": name, "result": data.get("output")}
+            yield {
+                "type": "tool_result",
+                "id": run_id,
+                "name": name,
+                "result": data.get("output"),
+                "source": source,
+            }
 
 
 def _extract_text(chunk: Any) -> str:

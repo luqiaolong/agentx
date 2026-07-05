@@ -171,6 +171,21 @@ describe("App 标题栏场景切换器", () => {
     expect(screen.getByTitle("编程场景")).toBeTruthy();
   });
 
+  it("场景切换器 tablist 标记为 no-drag，保证按钮可点击", async () => {
+    await act(async () => {
+      render(
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>,
+      );
+      await Promise.resolve();
+    });
+    const tablist = screen.getByRole("tablist", { name: "场景切换" });
+    // Electron 无边框窗口下，整个 header 是 -webkit-app-region: drag，
+    // 交互元素必须显式 app-no-drag 才能被点击，否则按钮事件被 OS 拖拽吞掉。
+    expect(tablist.className).toContain("app-no-drag");
+  });
+
   it("默认 Work 按钮为激活态（aria-selected=true）", async () => {
     await act(async () => {
       render(

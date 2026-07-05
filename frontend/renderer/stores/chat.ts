@@ -1,19 +1,52 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
+import type { ApprovalRequest } from "../../shared/api-types";
+
+/**
+ * parts-based 消息模型（chat-rendering-trace-v2 D3）。
+ *
+ * 一条 ChatMessage 按 parts 数组顺序表达时间轴：
+ * reasoning → tool-call → tool-result → ... → text（最终回答）。
+ *
+ * 兼容字段 `content`：渲染组件（MessageBubble/MessageList）尚未迁移到 parts
+ * 渲染时使用，由 store actions 从 parts 中的 text part 派生维护。
+ * 新代码应使用 parts。T9-T11 渲染层迁移完成后可移除 content。
+ */
+export type MessagePart =
+  | { type: "text"; id: string; text: string }
+  | { type: "reasoning"; id: string; text: string; done: boolean }
+  | {
+      type: "tool-call";
+      id: string;
+      toolName: string;
+      args: unknown;
+      source: string;
+      status: "running" | "complete" | "error";
+    }
+  | {
+      type: "tool-result";
+      id: string;
+      toolName: string;
+      result: unknown;
+      source: string;
+      error?: string;
+    }
+  | { type: "delegation"; id: string; target: string; source: string; message: string };
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
-  content: string;
+  parts: MessagePart[];
   ts: number;
+  /**
+   * 兼容字段：从 parts 中的 text part 派生（取所有 text part 文本拼接）。
+   * 渲染组件未迁移到 parts 渲染时使用；新代码用 parts。
+   */
+  content: string;
 }
 
-export interface ApprovalRequest {
-  threadId: string;
-  toolName: string;
-  args: unknown;
-  preview: string;
-}
+// 复用 shared/api-types.ts 的 ApprovalRequest（含 kind/requestedPath/writable），
+// 避免 preload 与 renderer 类型双份维护。
 
 export interface Session {
   id: string;
@@ -55,7 +88,51 @@ interface ChatState {
   moveSessionToWorkspace: (id: string, workspacePath: string | null) => void;
   setHomeWorkspacePath: (p: string | null) => void;
   // 当前会话消息操作（作用于 sessions[currentId]）
-  addMessage: (msg: ChatMessage) => void;
+  /**
+   * 添加消息。兼容旧 content 字段：
+   * - 传 `parts`：直接使用，content 从 text part 派生
+   * - 传 `content`：转为 `[{type:"text", id, text: content}]`
+   * - 都不传：空 parts 数组 + 空 content
+   */
+  addMessage: (
+    msg: {
+      id: string;
+      role: "user" | "assistant" | "tool";
+      ts: number;
+      parts?: MessagePart[];
+      content?: string;
+    },
+  ) => void;
+  /**
+   * 追加文本到指定 message 的最后一个指定 type 的 part（text/reasoning 通用）。
+   * 若无对应 part 则新建 text part（type==="text"）或 reasoning part（type==="reasoning"）。
+   * 同步更新兼容字段 content（仅 text part）。
+   */
+  appendPartText: (
+    messageId: string,
+    partType: "text" | "reasoning",
+    text: string,
+  ) => void;
+  /**
+   * 向指定 message 添加新 part。
+   * 若 part 是 text 类型，同步追加到 content。
+   */
+  addPart: (messageId: string, part: MessagePart) => void;
+  /**
+   * 更新指定 part（按 partId 定位）。合并 updates 到原 part。
+   * 若更新涉及 text 字段，同步刷新 content。
+   */
+  updatePart: (
+    messageId: string,
+    partId: string,
+    updates: Partial<MessagePart>,
+  ) => void;
+  /**
+   * 标记指定 message 的所有 reasoning part 的 done=true。
+   * 触发前端自动收缩。
+   */
+  markReasoningDone: (messageId: string) => void;
+  /** 兼容旧 API：等价于 appendPartText(messageId, "text", content)。 */
   appendMessageContent: (id: string, content: string) => void;
   clearMessages: () => void;
   setStreaming: (v: boolean) => void;
@@ -72,6 +149,34 @@ function createSessionRecord(id: string, workspacePath: string | null = null): S
     createdAt: Date.now(),
     workspacePath,
   };
+}
+
+/**
+ * 从 parts 派生兼容字段 content：取所有 text part 的 text 拼接。
+ * 渲染组件（MessageBubble/MessageList）未迁移到 parts 渲染时使用。
+ */
+function deriveContent(parts: MessagePart[]): string {
+  return parts
+    .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+/**
+ * 在 sessions 中按 messageId 定位所属 session id（不依赖 currentId）。
+ * 流式 token 追加期间会话切换/删除可能让 currentId 漂移，需按 id 跨会话查找。
+ */
+function findSessionIdByMessageId(
+  sessions: Record<string, Session>,
+  messageId: string,
+): string | null {
+  for (const sid of Object.keys(sessions)) {
+    const candidate = sessions[sid];
+    if (candidate && candidate.messages.some((m) => m.id === messageId)) {
+      return sid;
+    }
+  }
+  return null;
 }
 
 // 迁移：v0（单会话 {messages, threadId}） -> v1（多会话 {sessions, currentId}）
@@ -110,6 +215,62 @@ function migrateV1toV2(persisted: unknown): Partial<ChatState> {
       id: typeof raw.id === "string" ? raw.id : id,
       title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
       messages: Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : [],
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      workspacePath:
+        typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
+          ? raw.workspacePath
+          : null,
+    };
+  }
+  return {
+    sessions,
+    currentId: typeof p.currentId === "string" ? p.currentId : null,
+  };
+}
+
+/**
+ * v2 -> v3：ChatMessage 从扁平 `{content: string}` 升级为 parts-based。
+ *
+ * 旧消息 `content: string` → `parts: [{type:"text", id: uuid, text: content}]`，
+ * 同时保留 content 字段（兼容渲染组件）。
+ * 已经是 parts 结构的消息（理论上 v2 不会有）做幂等处理。
+ */
+function migrateV2toV3(persisted: unknown): Partial<ChatState> {
+  const p = (persisted ?? {}) as Record<string, unknown>;
+  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
+  const sessions: Record<string, Session> = {};
+  for (const [id, raw] of Object.entries(rawSessions)) {
+    if (!raw || typeof raw !== "object") continue;
+    const oldMessages = Array.isArray(raw.messages)
+      ? (raw.messages as Array<Record<string, unknown>>)
+      : [];
+    const newMessages: ChatMessage[] = oldMessages.map((m) => {
+      const msgId = typeof m.id === "string" ? m.id : crypto.randomUUID();
+      const role = (m.role as "user" | "assistant" | "tool") ?? "assistant";
+      const ts = typeof m.ts === "number" ? m.ts : Date.now();
+      // 已经是 parts 结构（数组且非空且首项有 type 字段）：保留 parts，派生 content
+      if (
+        Array.isArray(m.parts) &&
+        m.parts.length > 0 &&
+        typeof (m.parts[0] as Record<string, unknown> | undefined)?.type === "string"
+      ) {
+        const parts = m.parts as MessagePart[];
+        return { id: msgId, role, parts, ts, content: deriveContent(parts) };
+      }
+      // 旧扁平结构：content 转 parts
+      const text = String(m.content ?? "");
+      return {
+        id: msgId,
+        role,
+        parts: [{ type: "text", id: crypto.randomUUID(), text }],
+        ts,
+        content: text,
+      };
+    });
+    sessions[id] = {
+      id: typeof raw.id === "string" ? raw.id : id,
+      title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
+      messages: newMessages,
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       workspacePath:
         typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
@@ -271,10 +432,26 @@ export const useChatStore = create<ChatState>()(
             const cid = s.currentId;
             if (!cid || !s.sessions[cid]) return s;
             const sess = s.sessions[cid];
-            const messages = [...sess.messages, msg];
+            // parts 优先；否则 content 转 parts；否则空 parts
+            let parts: MessagePart[];
+            if (msg.parts && msg.parts.length > 0) {
+              parts = msg.parts;
+            } else if (typeof msg.content === "string") {
+              parts = [{ type: "text", id: crypto.randomUUID(), text: msg.content }];
+            } else {
+              parts = [];
+            }
+            const newMsg: ChatMessage = {
+              id: msg.id,
+              role: msg.role,
+              parts,
+              ts: msg.ts,
+              content: deriveContent(parts),
+            };
+            const messages = [...sess.messages, newMsg];
             let title = sess.title;
             if (title === DEFAULT_TITLE && msg.role === "user") {
-              title = msg.content.slice(0, 20).trim() || DEFAULT_TITLE;
+              title = newMsg.content.slice(0, 20).trim() || DEFAULT_TITLE;
             }
             const sessions = {
               ...s.sessions,
@@ -284,27 +461,138 @@ export const useChatStore = create<ChatState>()(
           });
         },
 
-        appendMessageContent: (id, content) => {
+        appendPartText: (messageId, partType, text) => {
           set((s) => {
-            // 按 message id 定位所属 session，而非依赖 currentId。
-            // 即便会话切换/删除导致 currentId 漂移（如 deleteSession 无 isStreaming 守卫），
-            // 流式 token 仍能追加到正确的消息上，避免静默丢失。
-            let targetCid: string | null = null;
-            for (const sid of Object.keys(s.sessions)) {
-              // s.sessions[sid] 在 noUncheckedIndexedAccess 下是 Session | undefined，显式收口。
-              const candidate = s.sessions[sid];
-              if (candidate && candidate.messages.some((m) => m.id === id)) {
-                targetCid = sid;
-                break;
-              }
-            }
+            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
-            // targetCid 是合法 session id，但 TS 不携带该不变量，再次收口防御性兜底。
             if (!sess) return s;
-            const messages = sess.messages.map((m) =>
-              m.id === id ? { ...m, content: m.content + content } : m,
-            );
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const parts = [...m.parts];
+              // 找最后一个指定 type 的 part
+              let lastIdx = -1;
+              for (let i = parts.length - 1; i >= 0; i--) {
+                if (parts[i]?.type === partType) {
+                  // reasoning part 仅匹配 done===false 的
+                  if (partType === "reasoning") {
+                    const rp = parts[i] as { type: "reasoning"; done: boolean };
+                    if (!rp.done) {
+                      lastIdx = i;
+                      break;
+                    }
+                  } else {
+                    lastIdx = i;
+                    break;
+                  }
+                }
+              }
+              if (lastIdx >= 0) {
+                const target = parts[lastIdx]!;
+                if (target.type === "text" || target.type === "reasoning") {
+                  parts[lastIdx] = { ...target, text: target.text + text };
+                }
+              } else {
+                // 新建 part
+                if (partType === "text") {
+                  parts.push({ type: "text", id: crypto.randomUUID(), text });
+                } else {
+                  parts.push({
+                    type: "reasoning",
+                    id: crypto.randomUUID(),
+                    text,
+                    done: false,
+                  });
+                }
+              }
+              return { ...m, parts, content: deriveContent(parts) };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        addPart: (messageId, part) => {
+          set((s) => {
+            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const parts = [...m.parts, part];
+              return { ...m, parts, content: deriveContent(parts) };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        updatePart: (messageId, partId, updates) => {
+          set((s) => {
+            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const parts = m.parts.map((p) =>
+                p.id === partId ? ({ ...p, ...updates } as MessagePart) : p,
+              );
+              return { ...m, parts, content: deriveContent(parts) };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        markReasoningDone: (messageId) => {
+          set((s) => {
+            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const parts = m.parts.map((p) =>
+                p.type === "reasoning" && !p.done ? { ...p, done: true } : p,
+              );
+              return { ...m, parts };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        appendMessageContent: (id, content) => {
+          // 兼容旧 API：等价于 appendPartText(id, "text", content)
+          set((s) => {
+            const targetCid = findSessionIdByMessageId(s.sessions, id);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== id) return m;
+              const parts = [...m.parts];
+              // 找最后一个 text part append
+              let lastIdx = -1;
+              for (let i = parts.length - 1; i >= 0; i--) {
+                if (parts[i]?.type === "text") {
+                  lastIdx = i;
+                  break;
+                }
+              }
+              if (lastIdx >= 0) {
+                const target = parts[lastIdx]!;
+                if (target.type === "text") {
+                  parts[lastIdx] = { ...target, text: target.text + content };
+                }
+              } else {
+                parts.push({ type: "text", id: crypto.randomUUID(), text: content });
+              }
+              const newContent = deriveContent(parts);
+              return { ...m, parts, content: newContent };
+            });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
           });
@@ -327,7 +615,7 @@ export const useChatStore = create<ChatState>()(
       {
         name: "agentx-chat",
         storage: createJSONStorage(() => createQuotaGuardedStorage()),
-        version: 2,
+        version: 3,
         migrate: (persisted, version) => {
           let state: Partial<ChatState> = persisted as Partial<ChatState>;
           if (version < 1) {
@@ -335,6 +623,9 @@ export const useChatStore = create<ChatState>()(
           }
           if (version < 2) {
             state = migrateV1toV2(state);
+          }
+          if (version < 3) {
+            state = migrateV2toV3(state);
           }
           return state;
         },
