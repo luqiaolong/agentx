@@ -18,6 +18,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
+from uuid import uuid4
 
 from langgraph.prebuilt import create_react_agent
 
@@ -325,6 +326,38 @@ def _make_todo_event(text: str, done: bool = False) -> dict[str, str]:
     }
 
 
+def _make_tool_call_event(tc_id: str, name: str, args: Any) -> dict[str, str]:
+    """构造 tool_call SSE 事件（source 固定为 "deep"）。"""
+    return {
+        "event": "tool_call",
+        "data": json.dumps(
+            {
+                "id": tc_id,
+                "name": name,
+                "args": args if args is not None else {},
+                "source": "deep",
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
+def _make_tool_result_event(tc_id: str, name: str, result: Any) -> dict[str, str]:
+    """构造 tool_result SSE 事件（source 固定为 "deep"）。"""
+    return {
+        "event": "tool_result",
+        "data": json.dumps(
+            {
+                "id": tc_id,
+                "name": name,
+                "result": result,
+                "source": "deep",
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
 async def _stream_agent_events(
     agent: Any, inputs: Any, config: dict
 ) -> AsyncIterator[dict[str, str]]:
@@ -333,13 +366,15 @@ async def _stream_agent_events(
     ``astream_events`` 不尊重 ``interrupt_before``（会直接执行工具），
     MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
 
-    SSE 事件映射:
-    - AIMessage with tool_calls → todo_update（工具调用开始，done=False）
-    - AIMessage without tool_calls → token（最终回复，strip_think 后一次性 yield）
-    - ToolMessage → todo_update（工具完成，done=True）
+    SSE 事件映射（spec D1 + T5 扩展）:
+    - AIMessage with tool_calls → ``tool_call`` SSE（含 id/name/args/source="deep"）
+      + ``todo_update``（任务级进度，与 tool_call 事件并存，语义不同）
+    - AIMessage without tool_calls → ``token``（最终回复，strip_think 后一次性 yield）
+    - ToolMessage → ``tool_result`` SSE（含 id/name/result/source="deep"）
+      + ``todo_update``（标记完成）
 
     在 ``interrupt_before=["tools"]`` 处暂停时，最后一个 state 的 messages[-1]
-    是 AIMessage（含 tool_calls），此处 yield todo_update 后流结束，
+    是 AIMessage（含 tool_calls），此处 yield tool_call + todo_update 后流结束，
     调用方 ``_is_interrupted`` 返回 True 进入审批流程。
     """
     from langchain_core.messages import AIMessage, ToolMessage
@@ -352,14 +387,33 @@ async def _stream_agent_events(
         last_msg = messages[-1]
 
         if isinstance(last_msg, ToolMessage):
-            # 工具执行完成
-            yield _make_todo_event(f"工具 {last_msg.name} 完成", done=True)
+            # 工具执行完成 → tool_result SSE + todo_update（任务级进度）
+            tool_name = getattr(last_msg, "name", "") or ""
+            tool_call_id = getattr(last_msg, "tool_call_id", "") or str(uuid4())
+            content = getattr(last_msg, "content", "")
+            if isinstance(content, list):
+                content = "".join(
+                    block if isinstance(block, str)
+                    else block.get("text", "") if isinstance(block, dict)
+                    else ""
+                    for block in content
+                )
+            yield _make_tool_result_event(tool_call_id, tool_name, content)
+            yield _make_todo_event(f"工具 {tool_name} 完成", done=True)
 
         elif isinstance(last_msg, AIMessage):
             if getattr(last_msg, "tool_calls", None):
-                # AIMessage with tool_calls → 工具调用开始
+                # AIMessage with tool_calls → tool_call SSE + todo_update
                 for tc in last_msg.tool_calls:
-                    tc_name = tc.get("name", tc.get("tool", "unknown")) if isinstance(tc, dict) else "unknown"
+                    if isinstance(tc, dict):
+                        tc_name = tc.get("name", tc.get("tool", "unknown"))
+                        tc_args = tc.get("args", {}) or {}
+                        tc_id = tc.get("id") or str(uuid4())
+                    else:
+                        tc_name = getattr(tc, "name", "unknown")
+                        tc_args = getattr(tc, "args", {}) or {}
+                        tc_id = getattr(tc, "id", None) or str(uuid4())
+                    yield _make_tool_call_event(tc_id, tc_name, tc_args)
                     yield _make_todo_event(f"调用工具: {tc_name}", done=False)
             elif getattr(last_msg, "content", ""):
                 # AIMessage without tool_calls → 最终回复
@@ -408,7 +462,7 @@ async def run_deep_path(
         message: 用户消息。
         profile_prompt: 用户画像前缀，拼到 DeepAgent system prompt 前。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
-        permission_mode: 权限模式，"standard"（默认）或 "full_trust"。
+        permission_mode: 权限模式，"workspace"（默认，仅当前工作区）或 "full_trust"。
         scene_prompt: 可选场景 prompt，透传给 build_deep_agent。
 
     Yields:

@@ -25,11 +25,61 @@ __THINK_BLOCK_RE = re.compile(
 _LOOKBEHIND = len(THINK_OPEN)
 
 
+def split_think(content: str) -> tuple[str, str]:
+    """分离 think 块：返回 ``(reasoning, visible_text)`` 元组。
+
+    - 用 ``__THINK_BLOCK_RE`` 提取所有 ``THINK_OPEN..THINK_CLOSE`` 块的内容，
+      拼接为 reasoning（块之间以换行分隔）。
+    - 剩余文本（移除 think 块后）去除两侧空白作为 visible_text。
+    - 纯文本无 think 标签时返回 ``("", text)``（text 原样返回，不 strip）。
+    - 空字符串返回 ``("", "")``。
+
+    Args:
+        content: LLM 输出的原始文本，可能含 ``<think>...</think>`` 块。
+
+    Returns:
+        ``(reasoning, visible_text)`` 元组：
+        - reasoning: think 块内的内容（多块按顺序拼接，块间以 ``"\\n"`` 分隔）
+        - visible_text: 移除 think 块后的纯文本（strip 首尾空白）
+
+    Examples:
+        >>> split_think("hello world")
+        ('', 'hello world')
+        >>> split_think("<think>分析</think>回答")
+        ('分析', '回答')
+        >>> split_think("<think>a</think>X<think>b</think>Y")
+        ('a\\nb', 'XY')
+        >>> split_think("")
+        ('', '')
+    """
+    if not content:
+        return ("", "")
+    reasoning_parts: list[str] = []
+    visible_parts: list[str] = []
+    cursor = 0
+    for match in __THINK_BLOCK_RE.finditer(content):
+        # think 块之前的可见文本
+        visible_parts.append(content[cursor:match.start()])
+        # think 块内容（去掉首尾空白，避免推理块前后换行污染）
+        reasoning_parts.append(match.group(0)[len(THINK_OPEN):-len(THINK_CLOSE)])
+        cursor = match.end()
+    # 末尾剩余可见文本
+    visible_parts.append(content[cursor:])
+    reasoning = "\n".join(r for r in reasoning_parts if r)
+    visible_text = "".join(visible_parts).strip()
+    return (reasoning, visible_text)
+
+
 def strip_think(text: str) -> str:
-    """剥离 推理块（THINK_OPEN..THINK_CLOSE），返回纯净回复文本。"""
+    """[Deprecated] 剥离 推理块（THINK_OPEN..THINK_CLOSE），返回纯净回复文本。
+
+    .. deprecated::
+        新代码应使用 ``split_think(text)[1]`` 获取可见文本并取得 reasoning。
+        本函数保留为向后兼容 wrapper，等价于 ``split_think(text)[1]``。
+    """
     if not text:
-        return text
-    return __THINK_BLOCK_RE.sub("", text).strip()
+        return text  # None / "" 透传，保持与历史行为一致
+    return split_think(text)[1]
 
 
 class ThinkFilter:
@@ -170,4 +220,4 @@ def extract_chunk_text(chunk: Any) -> str:
     return ""
 
 
-__all__ = ["strip_think", "extract_chunk_text", "ThinkFilter", "THINK_OPEN", "THINK_CLOSE"]
+__all__ = ["split_think", "strip_think", "extract_chunk_text", "ThinkFilter", "THINK_OPEN", "THINK_CLOSE"]

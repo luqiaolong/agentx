@@ -201,8 +201,8 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="用户消息（/reset 触发会话重置）")
     thread_id: str = Field(..., description="会话 ID")
     permission_mode: str = Field(
-        default="standard",
-        description='权限模式：standard（审批流）或 full_trust（会话内全量放行）',
+        default="workspace",
+        description='权限模式：workspace（仅当前工作区，越界/危险操作审批）或 full_trust（会话内全量放行）',
     )
     system_prompt: str | None = Field(
         default=None,
@@ -515,8 +515,14 @@ async def _clear_thread_state(thread_id: str) -> None:
 async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
     """SSE 事件生成器：/reset 清空状态，其他消息走 Router 三路径分发。
 
-    事件契约（与前端 preload 一致）：
-    - ``token``         — 增量 token。
+    事件契约（与前端 preload 一致，chat-rendering-trace-v2 扩展）：
+    - ``token``         — 增量 token（visible text，已剥离 ``<think>`` 块）。
+    - ``reasoning``     — 思考过程 chunk（data 为 JSON ``{"content": str, "source": str}``，
+                          由 ThinkFilter retain_think 模式从 token 流分离）。
+    - ``tool_call``     — 工具调用开始（data 为 JSON ``{"id","name","args","source"}``，
+                          id 用于前端配对 tool_result）。
+    - ``tool_result``   — 工具调用结束（data 为 JSON ``{"id","name","result","source","error?"}``）。
+    - ``delegation``    — 子代理委派标记（data 为 JSON ``{"target","source","message"}``）。
     - ``todo_update``   — DeepAgent 任务列表更新。
     - ``approval_request`` — 危险工具审批请求（含 tool_name / args / preview）。
     - ``done``          — 流结束。
@@ -566,12 +572,9 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 async def chat(req: ChatRequest) -> EventSourceResponse:
     """SSE 流式聊天端点。
 
-    事件契约：
-    - ``token``         — 增量 token。
-    - ``todo_update``   — DeepAgent 任务列表更新。
-    - ``approval_request`` — 危险工具审批请求（含 tool_name / args / preview）。
-    - ``done``          — 流结束。
-    - ``error``         — 错误（含消息）。
+    事件契约（chat-rendering-trace-v2 扩展，详见 ``_event_generator`` docstring）：
+    - ``token`` / ``reasoning`` / ``tool_call`` / ``tool_result`` / ``delegation``
+    - ``todo_update`` / ``approval_request`` / ``done`` / ``error``
     """
     return EventSourceResponse(_event_generator(req))
 

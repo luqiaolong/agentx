@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, AsyncIterator
+from uuid import uuid4
 
 from langgraph.graph import END, StateGraph
 
@@ -201,11 +202,19 @@ def _sse(event: str, data: Any) -> dict[str, str]:
     """构造标准 SSE 事件 dict。
 
     - token: data 为纯字符串
-    - todo_update / approval_request: data 为 JSON 字符串
+    - todo_update / approval_request / reasoning / tool_call / tool_result / delegation:
+      data 为 JSON 字符串（dict 会被 json 序列化）
     - done: data 为 "{}"
     - error: data 为错误消息字符串
     """
-    if event in ("todo_update", "approval_request"):
+    if event in (
+        "todo_update",
+        "approval_request",
+        "reasoning",
+        "tool_call",
+        "tool_result",
+        "delegation",
+    ):
         if isinstance(data, str):
             return {"event": event, "data": data}
         return {"event": event, "data": json.dumps(data, ensure_ascii=False)}
@@ -288,8 +297,11 @@ async def _run_tool_path(
         scene_prompt: 可选场景 prompt，回退路径 A 时透传。
 
     Note:
-        子代理 token 事件经 ``ThinkFilter`` 过滤 ``<think>...</think>`` 块后再 yield，
-        与路径 A 行为对齐（claude.md §5 SSE 契约：token 必须已剥离 think 块）。
+        - 入口 yield ``delegation`` SSE 事件标识委派目标（spec D6）。
+        - 子代理 token 事件经 ``ThinkFilter(retain_think=True)`` 分离：
+          reasoning chunk 走 ``reasoning`` SSE 事件，visible text 走 ``token`` SSE 事件。
+        - 子代理 tool_call/tool_result 标准化事件透传为同名 SSE 事件（含 source 字段），
+          不再压扁为 todo_update（spec D1）。
     """
     agent_type = _select_subagent(message)
     if agent_type is None:
@@ -305,7 +317,20 @@ async def _run_tool_path(
             yield sse
         return
 
-    logger.info("router.tool_path", agent=agent_type, thread_id=thread_id)
+    # 计算 source 字段：内置子代理用 agent_type，自定义子代理用 "custom-<key>"
+    if agent_type in ("web", "rag", "code"):
+        source = agent_type
+    else:
+        source = f"custom-{agent_type}"
+
+    # 路径 B 入口：yield delegation 事件标识委派目标（spec D6）
+    yield _sse("delegation", {
+        "target": source,
+        "source": "router",
+        "message": f"委派给 {source} 子代理",
+    })
+
+    logger.info("router.tool_path", agent=agent_type, source=source, thread_id=thread_id)
     if agent_type == "web":
         runner = run_web_agent
     elif agent_type == "rag":
@@ -314,11 +339,13 @@ async def _run_tool_path(
         runner = run_code_agent
     else:
         # 自定义子代理：runner 需要 key 参数，单独处理
-        think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
+        think_filter = ThinkFilter(
+            max_hold=get_settings().think_filter_max_hold,
+            retain_think=True,
+        )
         try:
             async for event in run_custom_agent(agent_type, thread_id, message, history=history):
-                sse = _convert_subagent_event(event, think_filter)
-                if sse:
+                for sse in _convert_subagent_event(event, think_filter, source=source):
                     yield sse
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.warning("custom subagent failed", key=agent_type, error=str(exc))
@@ -329,11 +356,13 @@ async def _run_tool_path(
                 yield _sse("token", tail)
         return
 
-    think_filter = ThinkFilter(max_hold=get_settings().think_filter_max_hold)
+    think_filter = ThinkFilter(
+        max_hold=get_settings().think_filter_max_hold,
+        retain_think=True,
+    )
     try:
         async for event in runner(thread_id, message, history=history):
-            sse = _convert_subagent_event(event, think_filter)
-            if sse:
+            for sse in _convert_subagent_event(event, think_filter, source=source):
                 yield sse
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("tool path subagent failed", error=str(exc))
@@ -351,7 +380,7 @@ async def _run_deep_path(
     state: RouterState,
     profile_prompt: str = "",
     history: list | None = None,
-    permission_mode: str = "standard",
+    permission_mode: str = "workspace",
     scene_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 C：DeepAgent + 危险工具中断审批。
@@ -362,7 +391,7 @@ async def _run_deep_path(
         state: Router 状态。
         profile_prompt: 用户画像前缀，由 ``run_router`` 注入到 DeepAgent system prompt。
         history: 历史 messages 列表（已截断），传给 DeepAgent 拼到 inputs 前。
-        permission_mode: 权限模式，"standard" 或 "full_trust"。
+        permission_mode: 权限模式，"workspace" 或 "full_trust"。
         scene_prompt: 可选场景 prompt，透传给 run_deep_path。
     """
     try:
@@ -378,55 +407,86 @@ async def _run_deep_path(
 
 
 def _convert_subagent_event(
-    event: dict[str, Any], think_filter: ThinkFilter | None = None
-) -> dict[str, str] | None:
-    """将子代理标准化事件转为 SSE 格式。
+    event: dict[str, Any],
+    think_filter: ThinkFilter | None = None,
+    source: str = "",
+) -> list[dict[str, str]]:
+    """将子代理标准化事件转为 SSE 事件列表（一次可能产出多个，如 reasoning + token）。
 
     子代理事件: {type: "token"/"tool_call"/"tool_result", ...}
-    SSE 事件: {event: "token"/"todo_update", data: ...}
+    SSE 事件: {event: "token"/"reasoning"/"tool_call"/"tool_result", data: ...}
 
-    - token → token（经 ThinkFilter 过滤 ``<think>`` 块后再输出，对齐 claude.md §5 契约）
-    - tool_call → todo_update（工具调用进度）
-    - tool_result → todo_update（工具调用完成）
+    - token → 经 ``ThinkFilter`` 分离：reasoning chunk 走 ``reasoning`` SSE，
+      visible text 走 ``token`` SSE（spec D2）
+    - tool_call → 透传为 ``tool_call`` SSE（含 id/name/args/source，spec D1）
+    - tool_result → 透传为 ``tool_result`` SSE（含 id/name/result/source/error?，spec D1）
 
     Args:
         event: 子代理标准化事件 dict。
-        think_filter: 可选的流式 think 过滤器。若提供则 token 内容经 ``feed`` 过滤；
-            若不提供（向后兼容）则直接透传（仅供单元测试 mock 使用）。
+        think_filter: 可选的流式 think 过滤器。若提供且 ``retain_think=True``，
+            则 token 内容经 ``feed`` 过滤后，``take_think`` 取 reasoning chunk。
+            若不提供则直接透传 token（仅供单元测试 mock 使用）。
+        source: 子代理类型标识（"code"/"rag"/"web"/"custom-xxx"），
+            用于 reasoning/tool_call/tool_result 事件的 source 字段。
+            若 event 自带 source 字段（T3 子代理已补），优先用 event 的 source。
+
+    Returns:
+        SSE 事件 dict 列表（可能为空，如空 token 被过滤后）。
     """
+    out: list[dict[str, str]] = []
     etype = event.get("type", "")
     if etype == "token":
         content = event.get("content", "")
         if not content:
-            return None
+            return out
         if think_filter is not None:
             cleaned = think_filter.feed(content)
-            if not cleaned:
-                return None
-            return _sse("token", cleaned)
-        return _sse("token", content)
+            # retain_think 模式：take_think 取本次 feed 累积的 reasoning chunk
+            if getattr(think_filter, "_retain_think", False):
+                reasoning = think_filter.take_think()
+                if reasoning:
+                    out.append(
+                        _sse("reasoning", {"content": reasoning, "source": source})
+                    )
+            if cleaned:
+                out.append(_sse("token", cleaned))
+        else:
+            out.append(_sse("token", content))
+        return out
     if etype == "tool_call":
         name = event.get("name", "")
         args = event.get("args", {})
-        return _sse(
-            "todo_update",
-            {
-                "todos": [
-                    {"text": f"调用工具: {name}", "done": False, "args": args},
-                ]
-            },
+        # 优先用 event 自带 source（T3 子代理已补），兜底用 caller 传入的 source
+        ev_source = event.get("source") or source
+        tc_id = event.get("id") or str(uuid4())
+        out.append(
+            _sse(
+                "tool_call",
+                {
+                    "id": tc_id,
+                    "name": name,
+                    "args": args,
+                    "source": ev_source,
+                },
+            )
         )
+        return out
     if etype == "tool_result":
         name = event.get("name", "")
-        return _sse(
-            "todo_update",
-            {
-                "todos": [
-                    {"text": f"工具 {name} 完成", "done": True},
-                ]
-            },
-        )
-    return None
+        result = event.get("result", "")
+        ev_source = event.get("source") or source
+        tc_id = event.get("id") or str(uuid4())
+        data: dict[str, Any] = {
+            "id": tc_id,
+            "name": name,
+            "result": result,
+            "source": ev_source,
+        }
+        if event.get("error"):
+            data["error"] = event["error"]
+        out.append(_sse("tool_result", data))
+        return out
+    return out
 
 
 # ============================================================
