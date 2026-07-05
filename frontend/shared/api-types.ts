@@ -95,6 +95,8 @@ export interface AuthorizedDir {
   writable: boolean;
 }
 
+export type SandboxSource = "manual" | "chip";
+
 // ---- T11/T12/T13 子代理 + 工具 + 记忆 ----
 
 export interface SubagentConfig {
@@ -251,7 +253,7 @@ export interface ElectronAPI {
     onApprovalRequest: (handler: (req: ApprovalRequest) => void) => () => void;
   };
   sandbox: {
-    authorize: (threadId: string, p: string, writable?: boolean) => Promise<unknown>;
+    authorize: (threadId: string, p: string, writable?: boolean, source?: SandboxSource) => Promise<unknown>;
     revoke: (threadId: string, p: string) => Promise<unknown>;
     listAuthorized: (threadId: string) => Promise<AuthorizedDir[]>;
   };

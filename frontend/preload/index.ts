@@ -169,11 +169,16 @@ const api: ElectronAPI = {
   sandbox: {
     // spec filesystem-sandbox 要求 Renderer 调 POST /api/sandbox/authorize（HTTP），
     // 而非 IPC。Main 进程不注册 sandbox IPC handler，统一走后端 HTTP 端点。
-    authorize: async (threadId, p, writable) => {
+    authorize: async (threadId, p, writable, source) => {
       const r = await fetch(`${API_BASE}/api/sandbox/authorize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread_id: threadId, path: p, writable: writable ?? false }),
+        body: JSON.stringify({
+          thread_id: threadId,
+          path: p,
+          writable: writable ?? false,
+          source: source ?? "manual",
+        }),
       });
       return r.json();
     },
