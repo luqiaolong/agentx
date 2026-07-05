@@ -73,7 +73,7 @@ async function streamChat(
     body: JSON.stringify({
       message: msg.content,
       thread_id: opts?.threadId ?? "",
-      permission_mode: opts?.permissionMode ?? "standard",
+      permission_mode: opts?.permissionMode ?? "workspace",
       system_prompt: opts?.systemPrompt ?? null,
     }),
   });
@@ -112,12 +112,15 @@ async function streamChat(
           payload = dataStr; // 解析失败保留原始字符串
         }
       }
-      const evt: ChatEvent = {
+      // ChatEvent 是 discriminated union（type 字段为字面量），
+      // 但 eventType 是动态 string，对象字面量无法直接赋值给 union，
+      // 用 `as unknown as ChatEvent` 断言。
+      const evt = {
         type: eventType,
         ...(typeof payload === "object" && payload !== null
           ? (payload as Record<string, unknown>)
           : { data: payload }),
-      };
+      } as unknown as ChatEvent;
       eventHandlers.forEach((h) => h(evt));
       if (eventType === "approval_request") {
         const obj =
