@@ -52,7 +52,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       />,
     );
     const trigger = container.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     expect(trigger).not.toBeNull();
     // 短标签可见
@@ -72,7 +72,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       />,
     );
     const trigger = container.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     expect(trigger.textContent).not.toContain("…");
     expect(trigger.textContent).not.toContain("workspace-folder-name");
@@ -83,7 +83,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       <PermissionToggle workspacePath={null} homeWorkspacePath={null} />,
     );
     const trigger = container.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     expect(trigger.textContent).not.toContain("Home");
   });
@@ -96,7 +96,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       />,
     );
     const trigger = container.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     await act(async () => {
       trigger.click();
@@ -117,7 +117,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       />,
     );
     const trigger = document.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     await act(async () => {
       trigger.click();
@@ -127,10 +127,11 @@ describe("PermissionToggle 紧凑命令栏", () => {
     expect(queryByText("当前工作区")).not.toBeNull();
     expect(queryByText("完全授权")).not.toBeNull();
     expect(queryByText("权限模式 · 当前生效")).not.toBeNull();
-    // scope 字符串在 panel header（badge）和两个 option 的 kbd 中都会出现，
-    // 因此用 queryAllByText + len > 0 验证存在性而非唯一性
+    // scope 字符串：panel header 显示 "scope: <currentMode.scope>"，
+    // 两个 option 的 kbd 仅显示 scope 名（"workspace"/"session"）。两边都至少存在。
     expect(document.body.textContent ?? "").toContain("scope: workspace");
-    expect(document.body.textContent ?? "").toContain("scope: session");
+    expect(document.body.textContent ?? "").toContain("workspace");
+    expect(document.body.textContent ?? "").toContain("session");
   });
 
   it("点击 option 切换 store 状态并关闭面板", async () => {
@@ -141,7 +142,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       />,
     );
     const trigger = document.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     await act(async () => {
       trigger.click();
@@ -164,7 +165,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
       />,
     );
     const trigger = document.querySelector(
-      'button[id="permission-mode-trigger"]',
+      'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
     await act(async () => {
       trigger.click();
