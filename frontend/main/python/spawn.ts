@@ -45,6 +45,8 @@ export interface PythonCredentials {
   approvalMaxWait?: number;
   maxUploadBytes?: number;
   thinkFilterMaxHold?: number;
+  /** ModelProviderSettings 设置面板填入的 maxOutputTokens（实际 token 数，非 k） */
+  maxOutputTokens?: number | null;
   // 知识库配置
   milvusHost?: string;
   milvusPort?: number;
@@ -104,6 +106,7 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
   if (c.approvalMaxWait !== undefined) env.AGENTX_APPROVAL_MAX_WAIT = String(c.approvalMaxWait);
   if (c.maxUploadBytes !== undefined) env.AGENTX_MAX_UPLOAD_BYTES = String(c.maxUploadBytes);
   if (c.thinkFilterMaxHold !== undefined) env.AGENTX_THINK_FILTER_MAX_HOLD = String(c.thinkFilterMaxHold);
+  if (c.maxOutputTokens !== undefined && c.maxOutputTokens !== null && c.maxOutputTokens > 0) env.AGENTX_MAX_OUTPUT_TOKENS = String(c.maxOutputTokens);
   if (c.milvusHost) env.AGENTX_MILVUS_HOST = c.milvusHost;
   if (c.milvusPort !== undefined) env.AGENTX_MILVUS_PORT = String(c.milvusPort);
   if (c.milvusDb) env.AGENTX_MILVUS_DB = c.milvusDb;
