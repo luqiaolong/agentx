@@ -124,7 +124,7 @@ async def _load_mcp_tools() -> tuple[list, set[str]]:
         return [], set()
 
 
-def build_deep_agent(
+async def build_deep_agent(
     thread_id: str,
     tools: list | None = None,
     profile_prompt: str = "",
@@ -142,7 +142,7 @@ def build_deep_agent(
             ``run_deep_path`` 可先构建工具集，复用于 dangerous 判断。
         profile_prompt: 可选，用户画像前缀，拼到 ``_DEEP_SYSTEM_PROMPT`` 前。
         checkpointer: 可选，共享的 LangGraph checkpointer。若未传则用
-            ``get_async_checkpointer()`` 获取全局 ``AsyncSqliteSaver`` 单例。
+            ``await get_async_checkpointer()`` 获取全局 ``AsyncSqliteSaver`` 单例。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -151,7 +151,9 @@ def build_deep_agent(
     if tools is None:
         tools = _make_deep_tools(thread_id)
     if checkpointer is None:
-        checkpointer = get_async_checkpointer()
+        # MUST await：get_async_checkpointer 是 async def，不 await 会传入 coroutine
+        # 导致 create_react_agent 报 "Invalid checkpointer ... Received coroutine"
+        checkpointer = await get_async_checkpointer()
     # T9：画像前缀拼到默认 system prompt 前（遵循与路径 A 一致的"画像优先"约定）
     system_prompt = _DEEP_SYSTEM_PROMPT
     if profile_prompt:
@@ -358,7 +360,7 @@ async def run_deep_path(
                 count=len(mcp_tools),
                 untrusted=len(mcp_untrusted_names),
             )
-        agent = build_deep_agent(thread_id, tools=agent_tools, profile_prompt=profile_prompt)
+        agent = await build_deep_agent(thread_id, tools=agent_tools, profile_prompt=profile_prompt)
     except ValueError as exc:
         yield {"event": "error", "data": f"LLM 不可用: {exc}"}
         return
