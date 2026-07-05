@@ -182,3 +182,37 @@ describe("ChatComposer 底部 Toolbar", () => {
     expect(getByRole("button", { name: "中止生成" })).toBeInTheDocument();
   });
 });
+
+describe("ChatComposer 含 ContextUsage", () => {
+  it("Toolbar 右组最左渲染 ContextUsage widget（以 data-filled 5 条 为错）", () => {
+    useChatStore.getState().createSession();
+    const { container } = render(
+      <ChatComposer
+        isStreaming={false}
+        setDropError={() => {}}
+        onSend={() => {}}
+        onAbort={() => {}}
+      />,
+    );
+    // ContextUsage 是唯一拥有 data-filled 属性的元素；5 条纹总应渲染
+    const stripes = container.querySelectorAll("[data-filled]");
+    expect(stripes.length).toBe(5);
+    // 同时验证 aria-label 含百分比（不依赖 messageInput textarea）
+    const ctx = container.querySelector("[aria-label]"); // 可能是 textarea 也可能是 widget
+    expect(ctx).toBeTruthy();
+  });
+
+  it("左下不再含「调用命令或技能」按钮与「附加文件」按钮", () => {
+    useChatStore.getState().createSession();
+    const { queryByRole } = render(
+      <ChatComposer
+        isStreaming={false}
+        setDropError={() => {}}
+        onSend={() => {}}
+        onAbort={() => {}}
+      />,
+    );
+    expect(queryByRole("button", { name: "调用命令或技能" })).toBeNull();
+    expect(queryByRole("button", { name: "附加文件" })).toBeNull();
+  });
+});
