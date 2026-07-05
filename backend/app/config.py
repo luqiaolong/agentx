@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录（pyproject.toml 所在目录）
@@ -63,9 +64,13 @@ class CustomSubagentEntry(BaseModel):
     """自定义子代理条目（含展示元数据）。
 
     与 ``SubagentSettings`` 的差异：额外含 ``name`` / ``description`` 用于 UI 展示。
+
+    ``key`` 字段严格校验：仅允许 ``[a-zA-Z0-9_-]{1,64}``（与前端
+    ``frontend/main/store.ts::sanitizeCustomEntry::CUSTOM_KEY_RE`` 一致）。
+    防止 env JSON 序列化、shell 注入、URL 路径解析等下游环节出错。
     """
 
-    key: str
+    key: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     name: str
     description: str = ""
     enabled: bool = True
@@ -144,19 +149,40 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
     """从 env JSON 解析自定义子代理 dict，过滤非法字段与危险工具。
 
     - raw 必须是 dict，每个 value 也是 dict
-    - key 必须是非空字符串且不与内置 key 冲突
+    - key 必须是非空字符串、不与内置 key 冲突、且符合 ``[a-zA-Z0-9_-]{1,64}``
     - 工具列表经 _sanitize_custom_tools 过滤
+    - 非法 key / 非法 value 字段跳过并记 warning（不抛异常，保持向后兼容）
     """
+    from app.observability.logger import logger
+
+    # key 格式必须与前端 sanitizeCustomEntry 的 CUSTOM_KEY_RE 完全一致
+    _CUSTOM_KEY_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
     if not isinstance(raw, dict):
         return {}
     result: dict[str, CustomSubagentEntry] = {}
     for key, val in raw.items():
         if not isinstance(key, str) or not key:
+            logger.warning("custom subagent key 空或非字符串，已跳过", key=repr(key))
             continue
         if key in BUILTIN_SUBAGENT_KEYS:
             # 不允许自定义 key 与内置冲突
+            logger.warning(
+                "custom subagent key 与内置冲突，已跳过", key=key,
+                builtin=list(BUILTIN_SUBAGENT_KEYS),
+            )
+            continue
+        if not _CUSTOM_KEY_RE.match(key):
+            # 防御性预校验：与 CustomSubagentEntry.key pattern 保持一致
+            # 避免后续 pydantic ValidationError 静默吞掉，难以排查
+            logger.warning(
+                "custom subagent key 格式非法，已跳过",
+                key=key,
+                pattern=_CUSTOM_KEY_RE.pattern,
+            )
             continue
         if not isinstance(val, dict):
+            logger.warning("custom subagent value 非 dict，已跳过", key=key)
             continue
         try:
             entry = CustomSubagentEntry(
@@ -169,7 +195,12 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
                 tools=_sanitize_custom_tools(list(val.get("tools", []))),
                 keywords=str(val.get("keywords", "")),
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, ValidationError) as exc:
+            logger.warning(
+                "custom subagent entry 构造失败，已跳过",
+                key=key,
+                error=str(exc),
+            )
             continue
         # 温度 clamp（pydantic 已校验，但防御性再 clamp）
         entry.temperature = max(0.0, min(2.0, entry.temperature))
@@ -227,7 +258,17 @@ class Settings(BaseSettings):
     approval_max_wait: float = 300.0  # 0=无限等待
 
     # ---- 系统提示词（T7）----
-    default_system_prompt: str = "你是个人助理。简洁友好地回答用户问题。"
+    default_system_prompt: str = (
+        "你是个人助理。简洁友好地回答用户问题。\n\n"
+        "格式规范：\n"
+        "1. 使用标准 Markdown 语法：标题用 #，列表用 - 或 1.，代码块用 ```\n"
+        "2. 表格必须使用规范格式，每行单独一行，示例：\n"
+        "   | 列A | 列B |\n"
+        "   |-----|-----|\n"
+        "   | 值1 | 值2 |\n"
+        "3. 禁止将表格所有内容挤在一行，每行必须以换行符分隔\n"
+        "4. 保持段落间空一行，提高可读性"
+    )
 
     # ---- 上传限制（T7）----
     max_upload_bytes: int = 52428800  # 50MB
