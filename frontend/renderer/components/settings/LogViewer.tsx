@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, FileText } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw, FileText, ArrowDown } from "lucide-react";
+
+const POLL_INTERVAL_MS = 2000;
 
 export function LogViewer() {
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  const preRef = useRef<HTMLPreElement | null>(null);
+  const autoScrollRef = useRef(true);
+  const intervalRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -19,16 +26,49 @@ export function LogViewer() {
     }
   }, []);
 
+  // 挂载即拉一次 + 启动 2s 轮询；卸载时清理
   useEffect(() => {
     void refresh();
+    intervalRef.current = window.setInterval(() => void refresh(), POLL_INTERVAL_MS);
+    return () => {
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [refresh]);
+
+  // 新数据到来时，若 autoScroll 开启则滚到底
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el) return;
+    if (autoScrollRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [lines]);
+
+  const handleScroll = () => {
+    const el = preRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+    autoScrollRef.current = atBottom;
+    setAutoScroll(atBottom);
+  };
+
+  const jumpToBottom = () => {
+    const el = preRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    autoScrollRef.current = true;
+    setAutoScroll(true);
+  };
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="inline-flex items-center gap-1.5 text-xs text-muted-c">
+      <div className="flex items-center justify-between text-[11px] text-muted-c">
+        <span className="inline-flex items-center gap-1.5">
           <FileText className="h-3.5 w-3.5" />
-          最近 200 行
+          实时日志 · 每 2 秒刷新
         </span>
         <button
           type="button"
@@ -46,9 +86,27 @@ export function LogViewer() {
           {err}
         </div>
       )}
-      <pre className="max-h-96 overflow-auto rounded-lg border border-default bg-[#0a0a0a] p-2.5 font-mono text-[11px] leading-relaxed text-neutral-300">
-        {lines.length === 0 ? "暂无日志" : lines.join("\n")}
-      </pre>
+      <div className="relative">
+        <pre
+          ref={preRef}
+          onScroll={handleScroll}
+          className="max-h-[calc(100vh-220px)] overflow-auto rounded-md border border-default/50 bg-[#0a0a0a] px-2.5 py-2 font-mono text-[11px] leading-snug text-neutral-300"
+        >
+          {lines.length === 0 ? "暂无日志" : lines.join("\n")}
+        </pre>
+        {!autoScroll && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md border border-default/60 bg-surface/95 px-2 py-1 text-[11px] font-medium text-primary-c shadow-pop backdrop-blur hover:bg-hover-soft"
+            aria-label="跳到底部"
+            title="跳到底部"
+          >
+            <ArrowDown className="h-3 w-3" />
+            跳到底部
+          </button>
+        )}
+      </div>
     </div>
   );
 }
