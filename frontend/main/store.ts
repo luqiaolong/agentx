@@ -1,5 +1,6 @@
 import Store from "electron-store";
 import { safeStorage } from "electron";
+import type { ModelEntry } from "../shared/api-types";
 
 const store = new Store();
 
@@ -584,19 +585,8 @@ export function setMcpServersConfig(servers: McpServerConfig[]): void {
 
 export type ModelProviderId = "openai" | "deepseek" | "minimax" | "custom";
 
-export interface ModelEntry {
-  id: string;
-  label: string;
-  providerId: ModelProviderId;
-  model: string;
-  baseUrl: string;
-  /** 加密后的 API Key（enc:... 或 plain:...），renderer 视为不透明字符串 */
-  apiKey: string;
-  createdAt: number;
-  /** 模型单次响应输出 token 上限（透传到 ChatOpenAI.max_tokens）；
-   *  undefined / null → 不设上限（langchain-openai 走模型默认） */
-  maxOutputTokens?: number | null;
-}
+// ModelEntry 现复用 frontend/shared/api-types.ts 中的定义（含 contextWindow + maxOutputTokens），
+// 单一事实源避免 main / renderer / preload 三处声明漂移。
 
 const MODEL_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 

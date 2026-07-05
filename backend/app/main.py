@@ -330,6 +330,7 @@ class ConfigReloadRequest(BaseModel):
     openai_base_url: str | None = None
     deepseek_api_key: str | None = None
     tavily_api_key: str | None = None
+    max_output_tokens: int | None = None
     # 审批
     approval_max_wait: float | None = None
     max_upload_bytes: int | None = None
@@ -999,6 +1000,8 @@ async def config_reload(req: ConfigReloadRequest) -> dict[str, Any]:
         env_overrides["AGENTX_DEEPSEEK_API_KEY"] = req.deepseek_api_key
     if req.tavily_api_key is not None:
         env_overrides["AGENTX_TAVILY_API_KEY"] = req.tavily_api_key
+    if req.max_output_tokens is not None:
+        env_overrides["AGENTX_MAX_OUTPUT_TOKENS"] = str(req.max_output_tokens)
     if req.approval_max_wait is not None:
         env_overrides["AGENTX_APPROVAL_MAX_WAIT"] = str(req.approval_max_wait)
     if req.max_upload_bytes is not None:
