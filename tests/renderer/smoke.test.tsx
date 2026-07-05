@@ -44,8 +44,8 @@ const mockApi = {
       embeddingUrl: "",
       milvusHost: "127.0.0.1",
       milvusPort: 19530,
-      milvusDb: "agent_py",
-      milvusCollection: "agent_py_docs",
+      milvusDb: "agentx",
+      milvusCollection: "AGENTX_docs",
       milvusAuthEnabled: false,
     }),
     setKnowledgeConfig: vi.fn().mockResolvedValue({ ok: true }),
@@ -159,7 +159,7 @@ describe("App smoke", () => {
     });
     // 再 waitFor 一次确保所有 React 状态更新都已落盘
     await waitFor(() => {
-      expect(container.textContent).toContain("AgentPy");
+      expect(container.textContent).toContain("AgentX");
     });
     expect(container).toBeTruthy();
   });

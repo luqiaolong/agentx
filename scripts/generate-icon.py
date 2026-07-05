@@ -2,7 +2,7 @@ from PIL import Image, ImageDraw
 import os
 import sys
 
-# 生成 AgentPy 应用图标：圆角方块 + 机器人脸，与 UI 左上角风格保持一致
+# 生成 AgentX 应用图标：圆角方块 + 机器人脸，与 UI 左上角风格保持一致
 BG = (79, 70, 229)  # brand-600 (#4f46e5)
 WHITE = (255, 255, 255)
 RADIUS_RATIO = 48 / 256  # 圆角半径与尺寸的比例

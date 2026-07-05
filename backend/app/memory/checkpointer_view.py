@@ -1,6 +1,6 @@
 """Checkpointer 只读视图 + 单会话清理。
 
-直接查 ``data/agent_py.db``（LangGraph SqliteSaver 创建的 ``checkpoints`` 表），
+直接查 ``data/agentx.db``（LangGraph SqliteSaver 创建的 ``checkpoints`` 表），
 提供 thread 列表与按 thread_id 删除能力，供「记忆」tab 的 Checkpointer 子模块使用。
 
 安全约束：
@@ -120,7 +120,7 @@ async def list_threads() -> list[dict[str, Any]]:
 
 
 async def get_db_size() -> int:
-    """返回 ``data/agent_py.db`` 文件大小（字节）。
+    """返回 ``data/agentx.db`` 文件大小（字节）。
 
     文件不存在时返回 0。
     """

@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 /**
- * 按日滚动日志：写入 `app.getPath("userData")/logs/agent-py-{YYYYMMDD}.log`。
+ * 按日滚动日志：写入 `app.getPath("userData")/logs/agentx-{YYYYMMDD}.log`。
  * 用 userData 而非 app.getAppPath()，因为打包后 getAppPath() 指向只读 asar。
  *
  * 写入策略：异步 appendFile + 微队列保序，避免同步 IO 阻塞主进程
@@ -36,7 +36,7 @@ function ensureLogDir(): void {
 
 function logFilePath(date?: string): string {
   const dateStr = date ?? formatDate(new Date());
-  return path.join(getLogDir(), `agent-py-${dateStr}.log`);
+  return path.join(getLogDir(), `agentx-${dateStr}.log`);
 }
 
 // 异步写入微队列：串行化 appendFile 调用，保证日志顺序 + 不阻塞主进程
@@ -84,7 +84,7 @@ export function cleanOldLogs(maxDays: number = 7): void {
     const now = Date.now();
     const cutoff = maxDays * 24 * 60 * 60 * 1000;
     for (const entry of entries) {
-      if (!/^agent-py-\d{8}\.log$/.test(entry)) continue;
+      if (!/^agentx-\d{8}\.log$/.test(entry)) continue;
       const fp = path.join(dir, entry);
       try {
         const stat = fs.statSync(fp);

@@ -316,7 +316,7 @@ async def test_router_reset_clears_checkpoint(
     from app.main import ChatRequest, _event_generator
 
     # 设置 persist_authorized_dirs = False
-    monkeypatch.setenv("AGENT_PY_PERSIST_AUTHORIZED_DIRS", "false")
+    monkeypatch.setenv("AGENTX_PERSIST_AUTHORIZED_DIRS", "false")
     get_settings.cache_clear()
 
     # Mock get_async_checkpointer 返回带 adelete_thread 的 mock
@@ -359,7 +359,7 @@ async def test_router_reset_preserves_authorized_dirs(
     from app.main import ChatRequest, _event_generator
 
     # 设置 persist_authorized_dirs = True（默认）
-    monkeypatch.setenv("AGENT_PY_PERSIST_AUTHORIZED_DIRS", "true")
+    monkeypatch.setenv("AGENTX_PERSIST_AUTHORIZED_DIRS", "true")
     get_settings.cache_clear()
 
     # Mock get_async_checkpointer

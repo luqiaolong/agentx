@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 将 AgentPy 图标嵌入到 electron.exe 的资源中，
+ * 将 AgentX 图标嵌入到 electron.exe 的资源中，
  * 解决 Windows 任务栏在 dev 模式下始终显示 Electron 默认图标的问题。
  *
  * 必须在 electron.exe 未运行时执行（rcedit 会尝试独占写）。

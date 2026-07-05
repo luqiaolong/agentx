@@ -97,7 +97,7 @@ def test_list_threads_empty_when_db_not_exists(tmp_path: Path) -> None:
 
 def test_list_threads_returns_aggregated(tmp_path: Path) -> None:
     """list_threads 返回 thread_id + checkpoint_count + last_updated + size_bytes。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
         [
@@ -128,7 +128,7 @@ def test_list_threads_returns_aggregated(tmp_path: Path) -> None:
 
 def test_list_threads_empty_when_no_table(tmp_path: Path) -> None:
     """数据库存在但无 checkpoints 表时返回空列表。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # 创建空数据库（无表）
     conn = sqlite3.connect(str(db_path))
@@ -153,7 +153,7 @@ def test_get_db_size_returns_zero_when_not_exists(tmp_path: Path) -> None:
 
 def test_get_db_size_returns_file_size(tmp_path: Path) -> None:
     """返回数据库文件大小。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(db_path, [("t1", "id1", b"blob")])
 
     import asyncio
@@ -170,7 +170,7 @@ def test_get_db_size_returns_file_size(tmp_path: Path) -> None:
 
 def test_delete_thread_removes_checkpoints(tmp_path: Path) -> None:
     """删除指定 thread 的所有 checkpoint。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
         [
@@ -194,7 +194,7 @@ def test_delete_thread_removes_checkpoints(tmp_path: Path) -> None:
 
 def test_delete_thread_nonexistent_returns_zero(tmp_path: Path) -> None:
     """删除不存在的 thread 返回 0。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(db_path, [("t1", "id1", b"blob")])
 
     import asyncio
@@ -225,7 +225,7 @@ def test_delete_thread_db_error_raises(tmp_path: Path) -> None:
     """DB 错误（如 writes 表缺失）应抛 sqlite3.Error，而非静默返回 0。"""
     import asyncio
 
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     # 只创建 checkpoints 表（不创建 writes），触发 DELETE FROM writes 失败
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -257,7 +257,7 @@ def test_delete_thread_db_error_raises(tmp_path: Path) -> None:
 
 def test_delete_thread_also_clears_writes(tmp_path: Path) -> None:
     """delete_thread 同时清理 writes 表（外键关联）。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(db_path, [("t1", "id1", b"blob")])
 
     # 手动插入 writes 记录
@@ -287,7 +287,7 @@ def test_delete_thread_also_clears_writes(tmp_path: Path) -> None:
 
 async def test_list_threads_async(tmp_path: Path) -> None:
     """asyncio_mode=auto 下直接 await。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(db_path, [("t_async", "id1", b"x")])
 
     result = await list_threads()
@@ -297,7 +297,7 @@ async def test_list_threads_async(tmp_path: Path) -> None:
 
 async def test_delete_thread_async(tmp_path: Path) -> None:
     """异步删除。"""
-    db_path = tmp_path / "agent_py.db"
+    db_path = tmp_path / "agentx.db"
     _create_test_db(db_path, [("t_async_del", "id1", b"x")])
 
     deleted = await delete_thread("t_async_del")

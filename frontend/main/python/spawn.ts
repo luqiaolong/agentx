@@ -80,44 +80,44 @@ const REQUIRED_CONSECUTIVE_OK = 2;
 function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    AGENT_PY_HOST: "127.0.0.1",
-    AGENT_PY_PORT: String(opts.port),
+    AGENTX_HOST: "127.0.0.1",
+    AGENTX_PORT: String(opts.port),
   };
   const c = opts.credentials;
-  if (c.openaiApiKey) env.AGENT_PY_OPENAI_API_KEY = c.openaiApiKey;
-  if (c.anthropicApiKey) env.AGENT_PY_ANTHROPIC_API_KEY = c.anthropicApiKey;
-  if (c.milvusUser) env.AGENT_PY_MILVUS_USER = c.milvusUser;
-  if (c.milvusPassword) env.AGENT_PY_MILVUS_PASSWORD = c.milvusPassword;
-  if (c.embeddingUrl) env.AGENT_PY_EMBEDDING_URL = c.embeddingUrl;
+  if (c.openaiApiKey) env.AGENTX_OPENAI_API_KEY = c.openaiApiKey;
+  if (c.anthropicApiKey) env.AGENTX_ANTHROPIC_API_KEY = c.anthropicApiKey;
+  if (c.milvusUser) env.AGENTX_MILVUS_USER = c.milvusUser;
+  if (c.milvusPassword) env.AGENTX_MILVUS_PASSWORD = c.milvusPassword;
+  if (c.embeddingUrl) env.AGENTX_EMBEDDING_URL = c.embeddingUrl;
   if (c.langsmithApiKey) env.LANGSMITH_API_KEY = c.langsmithApiKey;
-  if (c.deepseekApiKey) env.AGENT_PY_DEEPSEEK_API_KEY = c.deepseekApiKey;
-  if (c.tavilyApiKey) env.AGENT_PY_TAVILY_API_KEY = c.tavilyApiKey;
+  if (c.deepseekApiKey) env.AGENTX_DEEPSEEK_API_KEY = c.deepseekApiKey;
+  if (c.tavilyApiKey) env.AGENTX_TAVILY_API_KEY = c.tavilyApiKey;
   // T7 扩展凭证
-  if (c.defaultModel) env.AGENT_PY_DEFAULT_MODEL = c.defaultModel;
-  if (c.openaiBaseUrl) env.AGENT_PY_OPENAI_BASE_URL = c.openaiBaseUrl;
-  if (c.systemPrompt) env.AGENT_PY_DEFAULT_SYSTEM_PROMPT = c.systemPrompt;
-  if (c.approvalMaxWait !== undefined) env.AGENT_PY_APPROVAL_MAX_WAIT = String(c.approvalMaxWait);
-  if (c.maxUploadBytes !== undefined) env.AGENT_PY_MAX_UPLOAD_BYTES = String(c.maxUploadBytes);
-  if (c.thinkFilterMaxHold !== undefined) env.AGENT_PY_THINK_FILTER_MAX_HOLD = String(c.thinkFilterMaxHold);
-  if (c.milvusHost) env.AGENT_PY_MILVUS_HOST = c.milvusHost;
-  if (c.milvusPort !== undefined) env.AGENT_PY_MILVUS_PORT = String(c.milvusPort);
-  if (c.milvusDb) env.AGENT_PY_MILVUS_DB = c.milvusDb;
-  if (c.milvusCollection) env.AGENT_PY_MILVUS_COLLECTION = c.milvusCollection;
-  if (c.milvusAuthEnabled !== undefined) env.AGENT_PY_MILVUS_AUTH_ENABLED = String(c.milvusAuthEnabled);
+  if (c.defaultModel) env.AGENTX_DEFAULT_MODEL = c.defaultModel;
+  if (c.openaiBaseUrl) env.AGENTX_OPENAI_BASE_URL = c.openaiBaseUrl;
+  if (c.systemPrompt) env.AGENTX_DEFAULT_SYSTEM_PROMPT = c.systemPrompt;
+  if (c.approvalMaxWait !== undefined) env.AGENTX_APPROVAL_MAX_WAIT = String(c.approvalMaxWait);
+  if (c.maxUploadBytes !== undefined) env.AGENTX_MAX_UPLOAD_BYTES = String(c.maxUploadBytes);
+  if (c.thinkFilterMaxHold !== undefined) env.AGENTX_THINK_FILTER_MAX_HOLD = String(c.thinkFilterMaxHold);
+  if (c.milvusHost) env.AGENTX_MILVUS_HOST = c.milvusHost;
+  if (c.milvusPort !== undefined) env.AGENTX_MILVUS_PORT = String(c.milvusPort);
+  if (c.milvusDb) env.AGENTX_MILVUS_DB = c.milvusDb;
+  if (c.milvusCollection) env.AGENTX_MILVUS_COLLECTION = c.milvusCollection;
+  if (c.milvusAuthEnabled !== undefined) env.AGENTX_MILVUS_AUTH_ENABLED = String(c.milvusAuthEnabled);
   // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取配置通过 JSON 字符串注入，
   // 后端 pydantic-settings 会用 field_validator 反序列化并与默认值字段级合并
-  if (c.subagentsConfig) env.AGENT_PY_SUBAGENTS_CONFIG = JSON.stringify(c.subagentsConfig);
-  if (c.customSubagentsConfig) env.AGENT_PY_CUSTOM_SUBAGENTS_CONFIG = JSON.stringify(c.customSubagentsConfig);
-  if (c.toolsConfig) env.AGENT_PY_TOOLS_CONFIG = JSON.stringify(c.toolsConfig);
-  if (c.profileAutoExtract !== undefined) env.AGENT_PY_PROFILE_AUTO_EXTRACT = String(c.profileAutoExtract);
+  if (c.subagentsConfig) env.AGENTX_SUBAGENTS_CONFIG = JSON.stringify(c.subagentsConfig);
+  if (c.customSubagentsConfig) env.AGENTX_CUSTOM_SUBAGENTS_CONFIG = JSON.stringify(c.customSubagentsConfig);
+  if (c.toolsConfig) env.AGENTX_TOOLS_CONFIG = JSON.stringify(c.toolsConfig);
+  if (c.profileAutoExtract !== undefined) env.AGENTX_PROFILE_AUTO_EXTRACT = String(c.profileAutoExtract);
   // MCP server 配置：JSON 数组，后端 pydantic-settings 解析为 list[McpServerConfig]
-  if (c.mcpServersConfig) env.AGENT_PY_MCP_SERVERS_CONFIG = JSON.stringify(c.mcpServersConfig);
+  if (c.mcpServersConfig) env.AGENTX_MCP_SERVERS_CONFIG = JSON.stringify(c.mcpServersConfig);
   return env;
 }
 
 /**
  * 启动 Python 后端 (`uv run python -m app.main`，缺失 uv 时回退 `python -m app.main`)。
- * 凭证通过进程 env 注入（AGENT_PY_ 前缀），MUST NOT 打印凭证。
+ * 凭证通过进程 env 注入（AGENTX_ 前缀），MUST NOT 打印凭证。
  * - 启动握手：spawn 后 waitForReady() 轮询 /api/health
  * - 崩溃退避重试：非零退出指数退避（1s/2s/4s）最多 3 次
  * - 日志落盘：stdout/stderr 写入 logger

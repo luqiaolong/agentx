@@ -42,7 +42,7 @@ def test_checkpointer_singleton() -> None:
 
 # ---- 2. checkpointer 创建 db 文件 ----
 def test_checkpointer_creates_db_file(tmp_path: Path) -> None:
-    db_file = tmp_path / "agent_py.db"
+    db_file = tmp_path / "agentx.db"
     assert not db_file.exists()
     get_checkpointer()
     assert db_file.exists()

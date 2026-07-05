@@ -85,8 +85,8 @@ def _make_custom_tools(thread_id: str, tool_names: list[str]) -> list:
         import asyncio
         import os
 
-        _TAVILY_KEY_ENV = "AGENT_PY_TAVILY_API_KEY"
-        _NO_KEY_MSG = "web_search 不可用：未配置 AGENT_PY_TAVILY_API_KEY"
+        _TAVILY_KEY_ENV = "AGENTX_TAVILY_API_KEY"
+        _NO_KEY_MSG = "web_search 不可用：未配置 AGENTX_TAVILY_API_KEY"
 
         def _format_tavily(result: dict) -> str:
             lines: list[str] = []

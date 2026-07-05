@@ -2,7 +2,7 @@
 
 - 使用 ``langgraph.checkpoint.sqlite.SqliteSaver``（同步）作为主单例
 - 异步场景使用 ``AsyncSqliteSaver``（基于 aiosqlite）
-- 数据库路径: ``data/agent_py.db``（由 ``config.DATA_DIR / "agent_py.db"`` 构造）
+- 数据库路径: ``data/agentx.db``（由 ``config.DATA_DIR / "agentx.db"`` 构造）
 - 提供 ``get_checkpointer()`` 单例 + ``get_async_checkpointer()`` 异步单例
 - 首次调用时自动创建 ``data/`` 目录与表结构
 - ``close_checkpointer()`` 在应用关闭时释放连接
@@ -24,7 +24,7 @@ from app.config import DATA_DIR
 from app.observability.logger import logger
 
 # SQLite 数据库文件名（位于 DATA_DIR 下）
-_DB_FILENAME = "agent_py.db"
+_DB_FILENAME = "agentx.db"
 
 
 def _db_path() -> Path:

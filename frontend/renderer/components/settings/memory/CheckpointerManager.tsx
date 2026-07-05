@@ -72,7 +72,7 @@ export function CheckpointerManager() {
         <div className="flex items-center gap-1.5">
           <Database className="h-3.5 w-3.5 text-muted-c" />
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            Checkpointer（data/agent_py.db）
+            Checkpointer（data/agentx.db）
           </h4>
         </div>
         <button

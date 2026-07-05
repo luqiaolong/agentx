@@ -33,7 +33,7 @@ def _non_critical_path(label: str) -> str:
 
     从 PROJECT_ROOT 父目录派生，避开 home / Windows / Program Files 等关键目录。
     """
-    base = PROJECT_ROOT.parent / f"agent_py_sandbox_test_{label}_{uuid.uuid4().hex[:8]}"
+    base = PROJECT_ROOT.parent / f"AGENTX_sandbox_test_{label}_{uuid.uuid4().hex[:8]}"
     return str(base)
 
 

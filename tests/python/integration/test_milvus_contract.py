@@ -1,9 +1,9 @@
 """Milvus 向量库契约测试：直连 myserver Milvus（``192.168.1.4:19530``）。
 
 - ``@pytest.mark.integration`` + ``@pytest.mark.requires_myserver``
-- 凭证（``AGENT_PY_MILVUS_USER`` / ``AGENT_PY_MILVUS_PASSWORD``）需在环境变量中预置，
-  或设置 ``AGENT_PY_MILVUS_AUTH_ENABLED=false``（myserver auth disabled 模式）。
-  由于 conftest 的 autouse fixture 会清除 ``AGENT_PY_*`` 变量，此处模块级捕获原始
+- 凭证（``AGENTX_MILVUS_USER`` / ``AGENTX_MILVUS_PASSWORD``）需在环境变量中预置，
+  或设置 ``AGENTX_MILVUS_AUTH_ENABLED=false``（myserver auth disabled 模式）。
+  由于 conftest 的 autouse fixture 会清除 ``AGENTX_*`` 变量，此处模块级捕获原始
   凭证/配置，测试内通过 ``monkeypatch.setenv`` 重新注入并刷新 ``get_settings`` 缓存。
 - myserver 不可达或凭证缺失时跳过。
 - 测试流程：healthcheck healthy → ingest 1 doc → search 命中 → delete_by_source 清理。
@@ -21,9 +21,9 @@ from app.config import get_settings
 from app.vectorstore import MilvusUnavailable, delete_by_source, get_milvus_client, ingest, search
 
 # 模块级捕获原始凭证/配置（在 autouse fixture 清除环境变量之前执行）。
-_MILVUS_USER = os.environ.get("AGENT_PY_MILVUS_USER")
-_MILVUS_PASSWORD = os.environ.get("AGENT_PY_MILVUS_PASSWORD")
-_MILVUS_AUTH_ENABLED = os.environ.get("AGENT_PY_MILVUS_AUTH_ENABLED", "true")
+_MILVUS_USER = os.environ.get("AGENTX_MILVUS_USER")
+_MILVUS_PASSWORD = os.environ.get("AGENTX_MILVUS_PASSWORD")
+_MILVUS_AUTH_ENABLED = os.environ.get("AGENTX_MILVUS_AUTH_ENABLED", "true")
 
 
 def _skip_if_no_credentials() -> None:
@@ -31,7 +31,7 @@ def _skip_if_no_credentials() -> None:
     if _MILVUS_AUTH_ENABLED.lower() == "false":
         return
     if not _MILVUS_USER or not _MILVUS_PASSWORD:
-        pytest.skip("AGENT_PY_MILVUS_USER/PASSWORD 未设置，跳过 Milvus 契约测试")
+        pytest.skip("AGENTX_MILVUS_USER/PASSWORD 未设置，跳过 Milvus 契约测试")
 
 
 @pytest.fixture
@@ -39,10 +39,10 @@ def milvus_settings(monkeypatch: pytest.MonkeyPatch):
     """重新注入 Milvus 凭证/配置并返回刷新后的 Settings。"""
     _skip_if_no_credentials()
     if _MILVUS_AUTH_ENABLED.lower() == "false":
-        monkeypatch.setenv("AGENT_PY_MILVUS_AUTH_ENABLED", "false")
+        monkeypatch.setenv("AGENTX_MILVUS_AUTH_ENABLED", "false")
     else:
-        monkeypatch.setenv("AGENT_PY_MILVUS_USER", _MILVUS_USER)  # type: ignore[arg-type]
-        monkeypatch.setenv("AGENT_PY_MILVUS_PASSWORD", _MILVUS_PASSWORD)  # type: ignore[arg-type]
+        monkeypatch.setenv("AGENTX_MILVUS_USER", _MILVUS_USER)  # type: ignore[arg-type]
+        monkeypatch.setenv("AGENTX_MILVUS_PASSWORD", _MILVUS_PASSWORD)  # type: ignore[arg-type]
     get_settings.cache_clear()
     return get_settings()
 
@@ -75,8 +75,8 @@ async def test_milvus_ingest_search_delete_roundtrip(milvus_settings) -> None:
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"Milvus 连接异常，跳过: {exc}")
 
-    source = f"agent-py-test-{uuid.uuid4()}"
-    text = "agent-py milvus contract test 端到端往返内容"
+    source = f"agentx-test-{uuid.uuid4()}"
+    text = "agentx milvus contract test 端到端往返内容"
     metadata = {
         "source": source,
         "chunk_idx": 0,

@@ -1,4 +1,4 @@
-"""应用配置：通过 ``AGENT_PY_`` 前缀环境变量加载，MUST NOT 从 .env 文件读取凭证。
+"""应用配置：通过 ``AGENTX_`` 前缀环境变量加载，MUST NOT 从 .env 文件读取凭证。
 
 凭证（LLM API Key / Milvus user/password）由 Electron Main 进程从
 ``electron-store``（safeStorage 解密）后通过 ``subprocess.Popen(env=...)`` 注入。
@@ -148,10 +148,10 @@ def _default_tools_enabled() -> dict[str, bool]:
 
 
 class Settings(BaseSettings):
-    """应用配置。前缀 ``AGENT_PY_``，凭证字段缺失时不阻止启动（降级）。"""
+    """应用配置。前缀 ``AGENTX_``，凭证字段缺失时不阻止启动（降级）。"""
 
     model_config = SettingsConfigDict(
-        env_prefix="AGENT_PY_",
+        env_prefix="AGENTX_",
         env_file=None,  # 显式禁用 .env 文件加载，凭证仅从进程 env 注入
         extra="ignore",
     )
@@ -180,8 +180,8 @@ class Settings(BaseSettings):
     milvus_port: int = 19530
     milvus_user: str | None = None
     milvus_password: str | None = None
-    milvus_db: str = "agent_py"  # MUST 用户手动预创建
-    milvus_collection: str = "agent_py_knowledge"
+    milvus_db: str = "agentx"  # MUST 用户手动预创建
+    milvus_collection: str = "agentx_knowledge"
     milvus_auth_enabled: bool = True  # False 时跳过凭证校验（myserver Milvus auth disabled）
 
     # ---- 危险操作审批 ----
@@ -202,7 +202,7 @@ class Settings(BaseSettings):
 
     # ---- LangSmith ----
     langsmith_api_key: str | None = None
-    langsmith_project: str = "agent-py"
+    langsmith_project: str = "agentx"
     langsmith_tracing: bool = False
 
     # ---- 沙箱 ----
@@ -210,16 +210,16 @@ class Settings(BaseSettings):
     persist_authorized_dirs: bool = True
 
     # ---- 子代理与工具配置（T1：从 electron-store 注入 env，重启生效）----
-    # AGENT_PY_SUBAGENTS_CONFIG: JSON 字符串，如 {"code":{"enabled":false,"temperature":0.5,...}}
+    # AGENTX_SUBAGENTS_CONFIG: JSON 字符串，如 {"code":{"enabled":false,"temperature":0.5,...}}
     subagents_config: dict[str, Any] = Field(default_factory=dict)
-    # AGENT_PY_CUSTOM_SUBAGENTS_CONFIG: JSON 字符串，自定义子代理
+    # AGENTX_CUSTOM_SUBAGENTS_CONFIG: JSON 字符串，自定义子代理
     # 形如 {"my_agent":{"key":"my_agent","name":"我的代理","description":"...","enabled":true,...}}
     custom_subagents_config: dict[str, Any] = Field(default_factory=dict)
-    # AGENT_PY_TOOLS_CONFIG: JSON 字符串，如 {"web_search": false}
+    # AGENTX_TOOLS_CONFIG: JSON 字符串，如 {"web_search": false}
     tools_config: dict[str, bool] = Field(default_factory=dict)
-    # AGENT_PY_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
+    # AGENTX_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
     profile_auto_extract: bool = True
-    # AGENT_PY_MCP_SERVERS_CONFIG: JSON 字符串，MCP server 配置数组
+    # AGENTX_MCP_SERVERS_CONFIG: JSON 字符串，MCP server 配置数组
     # 见 app.mcp.config.McpServerConfig，由 Electron Main 从 electron-store 注入
     mcp_servers_config: list[Any] = Field(default_factory=list)
 

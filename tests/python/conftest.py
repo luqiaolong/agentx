@@ -1,7 +1,7 @@
 """pytest 共享 fixtures 与 markers 注册。
 
 - 注册 ``integration`` / ``requires_myserver`` markers（pyproject 已声明，此处冗余注册保险）
-- autouse fixture：清除 ``AGENT_PY_*`` 环境变量泄漏 + 清空 ``get_settings`` lru_cache
+- autouse fixture：清除 ``AGENTX_*`` 环境变量泄漏 + 清空 ``get_settings`` lru_cache
 - ``settings`` fixture：返回全新 ``Settings`` 实例，供需要覆盖配置的测试使用
 """
 
@@ -24,10 +24,10 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_agent_py_env(monkeypatch: pytest.MonkeyPatch):
-    """防止 ``AGENT_PY_*`` 环境变量在测试间泄漏，并清空 ``get_settings`` 缓存。"""
+def _isolate_agentx_env(monkeypatch: pytest.MonkeyPatch):
+    """防止 ``AGENTX_*`` 环境变量在测试间泄漏，并清空 ``get_settings`` 缓存。"""
     for key in list(os.environ.keys()):
-        if key.startswith("AGENT_PY_"):
+        if key.startswith("AGENTX_"):
             monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
     yield

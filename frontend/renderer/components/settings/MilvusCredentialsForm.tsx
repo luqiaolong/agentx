@@ -21,8 +21,8 @@ export function MilvusCredentialsForm() {
   // 默认值须与 main/store.ts getKnowledgeConfig() 保持一致，避免后端未就绪时显示错位
   const [host, setHost] = useState("192.168.1.4");
   const [port, setPort] = useState("19530");
-  const [db, setDb] = useState("agent_py");
-  const [collection, setCollection] = useState("agent_py_knowledge");
+  const [db, setDb] = useState("agentx");
+  const [collection, setCollection] = useState("AGENTX_knowledge");
   const [embeddingUrl, setEmbeddingUrl] = useState("");
   const [authEnabled, setAuthEnabled] = useState(false);
 
@@ -32,8 +32,8 @@ export function MilvusCredentialsForm() {
         const cfg = await window.api.settings.getKnowledgeConfig();
         setHost(cfg.milvusHost ?? "192.168.1.4");
         setPort(String(cfg.milvusPort ?? 19530));
-        setDb(cfg.milvusDb ?? "agent_py");
-        setCollection(cfg.milvusCollection ?? "agent_py_knowledge");
+        setDb(cfg.milvusDb ?? "agentx");
+        setCollection(cfg.milvusCollection ?? "agentx_knowledge");
         setEmbeddingUrl(cfg.embeddingUrl ?? "");
         if (typeof cfg.milvusAuthEnabled === "boolean") setAuthEnabled(cfg.milvusAuthEnabled);
         // 用 electron-store 实际凭证状态校正前端标志，避免 localStorage 与后端漂移

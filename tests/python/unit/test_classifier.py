@@ -247,9 +247,9 @@ async def test_llm_classify_fallback_to_chat_on_no_key(monkeypatch) -> None:
 
     用 monkeypatch 清除 API key 环境变量，让真实 get_chat_model 走无 key 路径。
     """
-    monkeypatch.delenv("AGENT_PY_OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("AGENT_PY_DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setenv("AGENT_PY_DEFAULT_MODEL", "gpt-4o-mini")
+    monkeypatch.delenv("AGENTX_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENTX_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("AGENTX_DEFAULT_MODEL", "gpt-4o-mini")
     get_settings.cache_clear()
 
     result = await _llm_classify("请问今天天气怎么样？")
@@ -311,9 +311,9 @@ async def test_classify_message_falls_through_to_llm() -> None:
 @pytest.mark.asyncio
 async def test_classify_message_no_key_falls_back_to_chat(monkeypatch) -> None:
     """无 API key → 规则未命中 → LLM 降级 CHAT。"""
-    monkeypatch.delenv("AGENT_PY_OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("AGENT_PY_DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setenv("AGENT_PY_DEFAULT_MODEL", "gpt-4o-mini")
+    monkeypatch.delenv("AGENTX_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENTX_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("AGENTX_DEFAULT_MODEL", "gpt-4o-mini")
     get_settings.cache_clear()
 
     result = await classify_message("请问今天天气怎么样？")

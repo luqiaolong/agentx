@@ -150,7 +150,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="agent-py",
+    title="agentx",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -253,7 +253,7 @@ class McpServerTestRequest(BaseModel):
 @app.get("/")
 async def root() -> dict[str, str]:
     """应用根健康检查。"""
-    return {"app": "agent-py", "version": "0.1.0", "status": "ok"}
+    return {"app": "agentx", "version": "0.1.0", "status": "ok"}
 
 
 @app.get("/api/health")
@@ -675,7 +675,7 @@ async def memory_checkpointer_delete(thread_id: str) -> dict[str, Any]:
 # ============================================================
 #
 # MCP server 配置由 Electron Main 从 electron-store 读取后通过
-# ``AGENT_PY_MCP_SERVERS_CONFIG`` 环境变量注入。后端启动时解析配置，
+# ``AGENTX_MCP_SERVERS_CONFIG`` 环境变量注入。后端启动时解析配置，
 # 首次 ``GET /api/mcp/servers`` 或 ``GET /api/mcp/tools`` 时懒连接所有启用的 server。
 # 配置变更（前端增删改）需重启后端生效，``POST /api/mcp/refresh`` 可强制重连
 # （仅适用于未改配置的重连场景，配置变更必须重启）。

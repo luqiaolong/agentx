@@ -75,7 +75,7 @@ async def test_fs_tools_bind_thread_id(
 async def test_web_search_no_key_returns_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("AGENT_PY_TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("AGENTX_TAVILY_API_KEY", raising=False)
 
     tools = web_agent_mod._make_web_tools("t1")
     assert len(tools) == 1
@@ -84,4 +84,4 @@ async def test_web_search_no_key_returns_error(
     result = await web_search.ainvoke({"query": "hello"})
     assert isinstance(result, str)
     assert "不可用" in result
-    assert "AGENT_PY_TAVILY_API_KEY" in result
+    assert "AGENTX_TAVILY_API_KEY" in result

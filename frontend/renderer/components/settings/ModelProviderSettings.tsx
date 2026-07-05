@@ -22,8 +22,8 @@ import type { ModelEntry, ModelProviderId } from "@/lib/utils";
 
 // 服务商预设：默认模型名 / Base URL / 文档链接
 // 与 backend/app/llm.py 路由逻辑对齐：
-// - deepseek*  → AGENT_PY_DEEPSEEK_API_KEY
-// - gpt*/o1*/o3* → AGENT_PY_OPENAI_API_KEY
+// - deepseek*  → AGENTX_DEEPSEEK_API_KEY
+// - gpt*/o1*/o3* → AGENTX_OPENAI_API_KEY
 // - 其他 + openai_base_url → OpenAI 兼容兜底（minimax / custom 走此分支）
 const PROVIDER_PRESETS: Record<
   Exclude<ModelProviderId, "custom">,

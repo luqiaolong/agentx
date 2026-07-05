@@ -351,7 +351,7 @@ function registerIpc(): void {
     return { ok: true };
   });
   // MCP server 配置 IPC handler：renderer 通过 window.api.settings 读写 electron-store，
-  // 后端启动时从 AGENT_PY_MCP_SERVERS_CONFIG env 注入
+  // 后端启动时从 AGENTX_MCP_SERVERS_CONFIG env 注入
   ipcMain.handle("settings:getMcpServersConfig", () => getMcpServersConfig());
   ipcMain.handle(
     "settings:setMcpServersConfig",
@@ -406,7 +406,7 @@ function registerIpc(): void {
 // Windows 任务栏：必须设置 AppUserModelID，否则任务栏会从 electron.exe 取默认图标
 // 必须在 app.whenReady() 之前调用
 if (process.platform === "win32") {
-  app.setAppUserModelId("com.agentpy.desktop");
+  app.setAppUserModelId("com.agentx.desktop");
 }
 
 app.whenReady().then(() => {
@@ -423,10 +423,10 @@ app.whenReady().then(() => {
             items: [
               {
                 type: "task",
-                title: "AgentPy",
+                title: "AgentX",
                 program: process.execPath,
                 args: "--new-window",
-                description: "打开 AgentPy",
+                description: "打开 AgentX",
                 iconPath: process.execPath,
                 iconIndex: 0,
               },

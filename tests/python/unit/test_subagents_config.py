@@ -96,7 +96,7 @@ def test_subagent_settings_defaults() -> None:
 
 
 def test_subagents_default_when_no_env() -> None:
-    """不设 AGENT_PY_SUBAGENTS_CONFIG env，返回默认值（code/rag/web 三键齐全）。"""
+    """不设 AGENTX_SUBAGENTS_CONFIG env，返回默认值（code/rag/web 三键齐全）。"""
     # conftest autouse fixture 已清 env + cache
     settings = get_settings()
     subagents = settings.subagents
@@ -126,7 +126,7 @@ def test_subagents_default_when_no_env() -> None:
 def test_subagents_env_partial_override(monkeypatch: pytest.MonkeyPatch) -> None:
     """env JSON 只设 code.temperature=0.5，其他字段保持默认值（字段级合并）。"""
     monkeypatch.setenv(
-        "AGENT_PY_SUBAGENTS_CONFIG",
+        "AGENTX_SUBAGENTS_CONFIG",
         json.dumps({"code": {"temperature": 0.5}}),
     )
     get_settings.cache_clear()
@@ -149,7 +149,7 @@ def test_subagents_env_partial_override(monkeypatch: pytest.MonkeyPatch) -> None
 def test_subagents_env_full_override(monkeypatch: pytest.MonkeyPatch) -> None:
     """env JSON 设全部 code 配置，验证覆盖。"""
     monkeypatch.setenv(
-        "AGENT_PY_SUBAGENTS_CONFIG",
+        "AGENTX_SUBAGENTS_CONFIG",
         json.dumps({
             "code": {
                 "enabled": False,
@@ -184,7 +184,7 @@ def test_subagents_env_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     期望行为：无效 JSON → _parse_json_env 返回空 dict → subagents 返回默认值。
     实际行为：pydantic-settings 在 validator 之前抛 SettingsError（xfail）。
     """
-    monkeypatch.setenv("AGENT_PY_SUBAGENTS_CONFIG", "not-a-valid-json{{{")
+    monkeypatch.setenv("AGENTX_SUBAGENTS_CONFIG", "not-a-valid-json{{{")
     get_settings.cache_clear()
 
     settings = get_settings()
@@ -356,7 +356,7 @@ def test_make_fs_tools_filters_disabled_tools(
     from app.subagents.code_agent import _make_fs_tools
 
     monkeypatch.setenv(
-        "AGENT_PY_TOOLS_CONFIG",
+        "AGENTX_TOOLS_CONFIG",
         json.dumps({"glob": False}),
     )
     get_settings.cache_clear()
@@ -376,7 +376,7 @@ def test_make_rag_tools_filters_when_rag_disabled(
     from app.subagents.rag_agent import _make_rag_tools
 
     monkeypatch.setenv(
-        "AGENT_PY_TOOLS_CONFIG",
+        "AGENTX_TOOLS_CONFIG",
         json.dumps({"rag_retrieve": False}),
     )
     get_settings.cache_clear()

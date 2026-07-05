@@ -54,7 +54,7 @@ def test_tools_enabled_field_names() -> None:
 def test_tools_enabled_partial_override(monkeypatch: pytest.MonkeyPatch) -> None:
     """env JSON 只设 {"web_search": false}，其他保持 true。"""
     monkeypatch.setenv(
-        "AGENT_PY_TOOLS_CONFIG",
+        "AGENTX_TOOLS_CONFIG",
         json.dumps({"web_search": False}),
     )
     get_settings.cache_clear()
@@ -81,7 +81,7 @@ def test_tools_enabled_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     期望行为：无效 JSON → _parse_json_env 返回空 dict → tools_enabled 全 true。
     实际行为：pydantic-settings 在 validator 之前抛 SettingsError（xfail）。
     """
-    monkeypatch.setenv("AGENT_PY_TOOLS_CONFIG", "invalid-json{{{")
+    monkeypatch.setenv("AGENTX_TOOLS_CONFIG", "invalid-json{{{")
     get_settings.cache_clear()
 
     settings = get_settings()
@@ -101,7 +101,7 @@ def test_tools_enabled_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
 def test_make_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """tools_enabled.web_search=false，_make_deep_tools 返回的列表不含 web_search。"""
     monkeypatch.setenv(
-        "AGENT_PY_TOOLS_CONFIG",
+        "AGENTX_TOOLS_CONFIG",
         json.dumps({"web_search": False}),
     )
     get_settings.cache_clear()
@@ -133,7 +133,7 @@ def test_make_deep_tools_all_disabled_returns_empty(
 ) -> None:
     """全禁用，返回空列表。"""
     monkeypatch.setenv(
-        "AGENT_PY_TOOLS_CONFIG",
+        "AGENTX_TOOLS_CONFIG",
         json.dumps({
             "read_file": False, "list_dir": False, "glob": False, "grep": False,
             "write_file": False, "edit_file": False,
@@ -167,7 +167,7 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
     （enabled_tool_names 来自 _make_deep_tools 返回的工具名集合）。
     """
     monkeypatch.setenv(
-        "AGENT_PY_TOOLS_CONFIG",
+        "AGENTX_TOOLS_CONFIG",
         json.dumps({"edit_file": False}),
     )
     get_settings.cache_clear()

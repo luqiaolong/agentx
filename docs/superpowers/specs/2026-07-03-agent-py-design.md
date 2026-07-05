@@ -167,7 +167,7 @@ graph TB
 ## 5. 目录结构
 
 ```
-agent-py/
+agentx/
 ├── package.json                # Node/Electron 依赖
 ├── pyproject.toml              # Python 依赖（单一，根目录）
 ├── electron.vite.config.ts     # electron-vite 配置（入口指 frontend/）
@@ -208,7 +208,7 @@ agent-py/
 │   └── app/                    # Python 包（保留 app 命名空间）
 │       ├── __init__.py
 │       ├── main.py             # FastAPI 入口
-│       ├── config.py           # Pydantic Settings (AGENT_PY_ 前缀)
+│       ├── config.py           # Pydantic Settings (AGENTX_ 前缀)
 │       ├── router/             # LangGraph Router
 │       ├── paths/              # 路径 A/B/C
 │       ├── tools/              # filesystem/rag_retrieve/...
@@ -222,7 +222,7 @@ agent-py/
 ├── data/                       # 运行时（gitignored）
 │   ├── workspace/              # agent 沙箱（默认可写）
 │   ├── uploads/                # 用户拖入文件（默认可写）
-│   └── agent-py.db             # SQLite Checkpoint
+│   └── agentx.db             # SQLite Checkpoint
 │
 ├── tests/
 │   ├── python/                 # pytest
@@ -317,7 +317,7 @@ interface ElectronAPI {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  [≡] AgentPy            🔍 搜索            ⚙ 设置  👤   │  顶栏
+│  [≡] AgentX            🔍 搜索            ⚙ 设置  👤   │  顶栏
 ├──────────┬──────────────────────────────┬─────────────────┤
 │          │                              │                 │
 │  会话     │   Chat Panel                 │   Workspace     │
@@ -399,7 +399,7 @@ interface ElectronAPI {
 - **路径白名单**：DeepAgent 沙箱白名单 = `data/workspace/` + `data/uploads/` + 用户会话级授权目录（通过 dialog 显式授权，默认只读）
 - **命令白名单**：受控 shell 命令列表（git status/diff/log/commit 等）
 - **API Key 管理**：通过 Electron 内置 `safeStorage` 加密后存 `electron-store`；不入 .env 明文、不入 git
-- **危险操作**：`edit_file` / `write_file` / 任何 shell 命令前 `interrupt_on` 无限期暂停直至用户操作（可选 `AGENT_PY_AUTO_APPROVE_AFTER_SECONDS` 配置倒计时自动批准，默认 0=禁用）
+- **危险操作**：`edit_file` / `write_file` / 任何 shell 命令前 `interrupt_on` 无限期暂停直至用户操作（可选 `AGENTX_AUTO_APPROVE_AFTER_SECONDS` 配置倒计时自动批准，默认 0=禁用）
 
 ---
 
@@ -442,7 +442,7 @@ interface ElectronAPI {
 - [ ] E2E playwright 测试
 - [ ] 飞书/钉钉入口（M2 末尾可选）
 
-**PyInstaller spec 约定**：spec 文件 `backend/agent-py.spec`，`pathex=['backend']` + `hiddenimports=['app.embedding.tei_client', 'app.vectorstore.milvus_client', 'app.utils.security']`，M2 阶段需验证打包后 `import app.*` 链路正常、TEI/Milvus 客户端与沙箱模块均被正确收集。
+**PyInstaller spec 约定**：spec 文件 `backend/agentx.spec`，`pathex=['backend']` + `hiddenimports=['app.embedding.tei_client', 'app.vectorstore.milvus_client', 'app.utils.security']`，M2 阶段需验证打包后 `import app.*` 链路正常、TEI/Milvus 客户端与沙箱模块均被正确收集。
 
 ---
 
@@ -456,7 +456,7 @@ interface ElectronAPI {
 | Q4 | 日志保留策略？ | 默认 7 天，10MB 滚动 |
 | Q5 | 是否支持自定义 system prompt？ | 支持（设置页可编辑） |
 | Q6 | 是否暴露 OpenAI 兼容 HTTP API（给其他工具调用）？ | M2 评估 |
-| Q7 | 应用名称？默认建议 "AgentPy" | 待用户确认 |
+| Q7 | 应用名称？默认建议 "AgentX" | 待用户确认 |
 
 ---
 
@@ -539,15 +539,15 @@ npm test
 
 ### 16.3 后续文档
 
-- 实施计划：`docs/superpowers/plans/2026-07-03-agent-py.md`（由 `writing-plans` 技能生成）
+- 实施计划：`docs/superpowers/plans/2026-07-03-agentx.md`（由 `writing-plans` 技能生成）
 - API 契约：随实施过程产出
 - 用户手册：M2 末尾产出
 - myserver 基础设施依赖：`docs/superpowers/specs/2026-07-03-myserver-dependency.md`（TEI/Milvus 服务清单、端口要求、DB 预创建、离线降级、凭证注入、首次启动检查清单）
 
 ### 16.4 本次 change 新增配置项
 
-adjust-m1-stack-and-structure 引入以下 `AGENT_PY_*` 环境变量（详见根目录 `.env.example`，运行时由 Electron Main 进程从 `electron-store` 解密后注入 Python 子进程，应用 MUST NOT 读取 `.env` 文件）：
+adjust-m1-stack-and-structure 引入以下 `AGENTX_*` 环境变量（详见根目录 `.env.example`，运行时由 Electron Main 进程从 `electron-store` 解密后注入 Python 子进程，应用 MUST NOT 读取 `.env` 文件）：
 
-- **嵌入服务（TEI）**：`AGENT_PY_EMBEDDING_URL` / `AGENT_PY_EMBEDDING_MODEL` / `AGENT_PY_EMBEDDING_TIMEOUT` / `AGENT_PY_EMBEDDING_MAX_BATCH` / `AGENT_PY_EMBEDDING_MAX_CHARS`
-- **向量库（Milvus）**：`AGENT_PY_MILVUS_HOST` / `AGENT_PY_MILVUS_PORT` / `AGENT_PY_MILVUS_USER` / `AGENT_PY_MILVUS_PASSWORD` / `AGENT_PY_MILVUS_DB` / `AGENT_PY_MILVUS_COLLECTION`
-- **危险操作审批**：`AGENT_PY_AUTO_APPROVE_AFTER_SECONDS`（0=禁用，无限期暂停；>0 时倒计时归零自动批准）
+- **嵌入服务（TEI）**：`AGENTX_EMBEDDING_URL` / `AGENTX_EMBEDDING_MODEL` / `AGENTX_EMBEDDING_TIMEOUT` / `AGENTX_EMBEDDING_MAX_BATCH` / `AGENTX_EMBEDDING_MAX_CHARS`
+- **向量库（Milvus）**：`AGENTX_MILVUS_HOST` / `AGENTX_MILVUS_PORT` / `AGENTX_MILVUS_USER` / `AGENTX_MILVUS_PASSWORD` / `AGENTX_MILVUS_DB` / `AGENTX_MILVUS_COLLECTION`
+- **危险操作审批**：`AGENTX_AUTO_APPROVE_AFTER_SECONDS`（0=禁用，无限期暂停；>0 时倒计时归零自动批准）

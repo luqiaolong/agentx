@@ -1,5 +1,5 @@
 [project]
-name = "agent-py"
+name = "agentx"
 version = "0.1.0"
 description = "本地优先的个人助理桌面应用 (Electron + React + FastAPI + LangGraph)"
 requires-python = ">=3.11"

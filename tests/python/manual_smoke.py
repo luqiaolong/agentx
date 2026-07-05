@@ -104,7 +104,7 @@ def main() -> int:
         with httpx.Client(timeout=10.0) as c:
             r = c.post(
                 f"{BASE}/api/sandbox/authorize",
-                json={"thread_id": "sandbox-1", "path": "D:/java/agentprojects/agent-py/data/workspace", "writable": True},
+                json={"thread_id": "sandbox-1", "path": "D:/java/agentprojects/agentx/data/workspace", "writable": True},
             )
             assert r.status_code == 200, f"authorize status={r.status_code} body={r.text}"
             data = r.json()

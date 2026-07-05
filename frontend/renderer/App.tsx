@@ -84,7 +84,7 @@ export default function App() {
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white shadow-soft">
             <Bot className="h-4 w-4" strokeWidth={2.5} />
           </div>
-          <span className="text-sm font-semibold tracking-tight">AgentPy</span>
+          <span className="text-sm font-semibold tracking-tight">AgentX</span>
           <span className="ml-1 rounded-full bg-subtle px-2 py-0.5 text-[10px] font-medium text-secondary-c">
             v0.1
           </span>

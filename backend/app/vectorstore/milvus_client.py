@@ -76,7 +76,7 @@ class MilvusUnavailable(Exception):
 _VALID_SOURCE_TYPES: tuple[str, ...] = ("file", "web", "manual")
 
 # Milvus 连接 alias（全局唯一，避免重复 connect 警告）
-_ALIAS = "agent_py"
+_ALIAS = "agentx"
 
 # 鉴权失败关键字（用于错误信息分类）
 _AUTH_KEYWORDS: tuple[str, ...] = (
@@ -137,7 +137,7 @@ class MilvusClient:
         settings = self._settings
         if not settings.milvus_credentials_configured:
             raise MilvusUnavailable(
-                "Milvus credentials missing (AGENT_PY_MILVUS_USER/PASSWORD not set)"
+                "Milvus credentials missing (AGENTX_MILVUS_USER/PASSWORD not set)"
             )
         if connections is None:  # pragma: no cover
             raise MilvusUnavailable("pymilvus not installed")
@@ -237,7 +237,7 @@ class MilvusClient:
             FieldSchema("created_at", DataType.INT64),
             FieldSchema("vector", DataType.FLOAT_VECTOR, dim=1024),
         ]
-        return CollectionSchema(fields=fields, description="AgentPy knowledge base")
+        return CollectionSchema(fields=fields, description="AgentX knowledge base")
 
     async def disconnect(self) -> None:
         """断开 Milvus 连接。"""
@@ -511,7 +511,7 @@ class MilvusClient:
             return {
                 "status": "unhealthy",
                 "error_code": "no_credentials",
-                "error": "AGENT_PY_MILVUS_USER/PASSWORD not set",
+                "error": "AGENTX_MILVUS_USER/PASSWORD not set",
             }
         if connections is None:  # pragma: no cover
             return {

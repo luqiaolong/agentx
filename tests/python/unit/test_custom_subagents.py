@@ -178,7 +178,7 @@ def test_parse_custom_subagents_non_dict_returns_empty() -> None:
 
 
 def test_custom_subagents_default_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """不设 AGENT_PY_CUSTOM_SUBAGENTS_CONFIG env，custom_subagents 返回空 dict。"""
+    """不设 AGENTX_CUSTOM_SUBAGENTS_CONFIG env，custom_subagents 返回空 dict。"""
     # conftest autouse 已清 env + cache
     get_settings.cache_clear()
     settings = get_settings()
@@ -200,7 +200,7 @@ def test_custom_subagents_env_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
         }
     }
     monkeypatch.setenv(
-        "AGENT_PY_CUSTOM_SUBAGENTS_CONFIG", json.dumps(raw)
+        "AGENTX_CUSTOM_SUBAGENTS_CONFIG", json.dumps(raw)
     )
     get_settings.cache_clear()
 
@@ -223,7 +223,7 @@ def test_custom_subagents_env_dangerous_tools_filtered(
         }
     }
     monkeypatch.setenv(
-        "AGENT_PY_CUSTOM_SUBAGENTS_CONFIG", json.dumps(raw)
+        "AGENTX_CUSTOM_SUBAGENTS_CONFIG", json.dumps(raw)
     )
     get_settings.cache_clear()
 

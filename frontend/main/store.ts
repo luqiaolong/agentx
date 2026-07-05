@@ -144,8 +144,8 @@ export function getKnowledgeConfig(): {
     // myserver Milvus 部署在 192.168.1.4:19530（authorizationEnabled=false）
     milvusHost: getString("knowledge.milvusHost", "192.168.1.4"),
     milvusPort: getNumber("knowledge.milvusPort", 19530),
-    milvusDb: getString("knowledge.milvusDb", "agent_py"),
-    milvusCollection: getString("knowledge.milvusCollection", "agent_py_knowledge"),
+    milvusDb: getString("knowledge.milvusDb", "agentx"),
+    milvusCollection: getString("knowledge.milvusCollection", "agentx_knowledge"),
     // myserver auth disabled，默认 false 跳过凭证校验
     milvusAuthEnabled: getBoolean("knowledge.milvusAuthEnabled", false),
   };
@@ -295,7 +295,7 @@ export function setProfileAutoExtract(v: boolean): void {
 
 // ---- 自定义子代理（CRUD，与内置 subagents 配置独立持久化）----
 // 与 backend/app/config.py CustomSubagentEntry 字段一致。
-// env 注入由 spawn.ts buildEnv 完成，后端 pydantic-settings 解析 AGENT_PY_CUSTOM_SUBAGENTS_CONFIG。
+// env 注入由 spawn.ts buildEnv 完成，后端 pydantic-settings 解析 AGENTX_CUSTOM_SUBAGENTS_CONFIG。
 
 export interface CustomSubagentEntry {
   key: string;
@@ -464,7 +464,7 @@ export function removeCustomSubagent(key: string): { ok: boolean; key: string } 
 
 // ---- MCP server 配置 ----
 // 与 backend/app/mcp/config.McpServerConfig 字段一致，存储为 JSON 数组。
-// env 注入由 spawn.ts buildEnv 完成，后端 pydantic-settings 解析 AGENT_PY_MCP_SERVERS_CONFIG。
+// env 注入由 spawn.ts buildEnv 完成，后端 pydantic-settings 解析 AGENTX_MCP_SERVERS_CONFIG。
 
 export interface McpServerConfig {
   name: string;

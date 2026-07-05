@@ -37,7 +37,7 @@ export const useTasksStore = create<TasksState>()(
           set((s) => ({ tasks: s.tasks.filter((t) => t.status !== "done") })),
       }),
       {
-        name: "agent-py-tasks",
+        name: "agentx-tasks",
         storage: createJSONStorage(() => localStorage),
         version: 1,
         migrate: (persisted, version) => {

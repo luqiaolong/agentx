@@ -1,9 +1,9 @@
 {
-  "name": "agent-py",
+  "name": "agentx",
   "version": "0.1.0",
   "description": "本地优先的个人助理桌面应用",
   "main": "out/main/index.js",
-  "author": "agent-py",
+  "author": "agentx",
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
@@ -60,8 +60,8 @@
     "vitest": "^2.1.0"
   },
   "build": {
-    "appId": "com.agentpy.desktop",
-    "productName": "AgentPy",
+    "appId": "com.agentx.desktop",
+    "productName": "AgentX",
     "directories": {
       "buildResources": "build"
     },

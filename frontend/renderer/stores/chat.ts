@@ -254,7 +254,7 @@ export const useChatStore = create<ChatState>()(
         setApprovalRequest: (req) => set({ approvalRequest: req }),
       }),
       {
-        name: "agent-py-chat",
+        name: "agentx-chat",
         storage: createJSONStorage(() => localStorage),
         version: 2,
         migrate: (persisted, version) => {

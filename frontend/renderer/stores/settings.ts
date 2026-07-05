@@ -47,7 +47,7 @@ export const useSettingsStore = create<SettingsState>()(
         setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
       }),
       {
-        name: "agent-py-settings",
+        name: "agentx-settings",
         storage: createJSONStorage(() => localStorage),
         // isSettingsOpen 是 UI 临时状态，不应持久化（避免重启后弹窗自动打开）
         partialize: (s) => ({

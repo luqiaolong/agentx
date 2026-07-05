@@ -5,7 +5,7 @@
 - ``deepseek-*`` → DeepSeek（OpenAI 兼容，``base_url=https://api.deepseek.com``）
 - 其他前缀且 ``openai_api_key`` 可用 → 兜底走 OpenAI 兼容（支持 ``openai_base_url`` 自定义端点）
 
-通过兜底分支 + ``AGENT_PY_OPENAI_BASE_URL`` 可接入 MiniMax Token Plan 等
+通过兜底分支 + ``AGENTX_OPENAI_BASE_URL`` 可接入 MiniMax Token Plan 等
 OpenAI 兼容服务：设置 ``default_model=MiniMax-Text-01`` +
 ``openai_base_url=https://api.minimaxi.com/v1`` + ``openai_api_key=sk-cp-...``。
 
@@ -36,7 +36,7 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     # DeepSeek：OpenAI 兼容接口
     if model.startswith("deepseek"):
         if not settings.deepseek_api_key:
-            raise ValueError(f"default_model={model!r} 需要 AGENT_PY_DEEPSEEK_API_KEY")
+            raise ValueError(f"default_model={model!r} 需要 AGENTX_DEEPSEEK_API_KEY")
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=model,
@@ -49,7 +49,7 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     # OpenAI 系列：gpt-* / o1-* / o3-*
     if model.startswith(("gpt", "o1", "o3")):
         if not settings.openai_api_key:
-            raise ValueError(f"default_model={model!r} 需要 AGENT_PY_OPENAI_API_KEY")
+            raise ValueError(f"default_model={model!r} 需要 AGENTX_OPENAI_API_KEY")
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=model,
@@ -74,7 +74,7 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
 
     raise ValueError(
         f"无法为 model={model!r} 找到可用的 API key，"
-        f"请设置 AGENT_PY_OPENAI_API_KEY 或 AGENT_PY_DEEPSEEK_API_KEY"
+        f"请设置 AGENTX_OPENAI_API_KEY 或 AGENTX_DEEPSEEK_API_KEY"
     )
 
 

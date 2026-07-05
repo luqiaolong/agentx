@@ -2,7 +2,7 @@
 # 这样 Windows 任务栏会从我们指定的 ico 文件读取图标，而不是从 exe 资源
 $ErrorActionPreference = "Stop"
 
-$appId = "com.agentpy.desktop"
+$appId = "com.agentx.desktop"
 $icoPath = Join-Path $PSScriptRoot "..\build\icon.ico"
 $icoPath = (Resolve-Path $icoPath).Path
 
@@ -16,7 +16,7 @@ if (-not (Test-Path $keyPath)) {
 }
 
 # 写入 DisplayName
-Set-ItemProperty -Path $keyPath -Name "DisplayName" -Value "AgentPy" -Type String
+Set-ItemProperty -Path $keyPath -Name "DisplayName" -Value "AgentX" -Type String
 
 # 写入 IconUrl / IconBackgroundColor 触发 Windows 重新读取图标
 # 在 HKCU\Software\Classes\AppUserModelId\<appId>\ 下创建 Icon 子键

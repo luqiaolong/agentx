@@ -1,6 +1,6 @@
 """MCP server 配置模型与解析。
 
-配置通过 ``AGENT_PY_MCP_SERVERS_CONFIG`` 环境变量注入（JSON 字符串），
+配置通过 ``AGENTX_MCP_SERVERS_CONFIG`` 环境变量注入（JSON 字符串），
 与 ``subagents_config`` / ``tools_config`` 一致，由 Electron Main 从
 ``electron-store`` 读取后通过 ``subprocess.Popen(env=...)`` 注入。
 
@@ -95,7 +95,7 @@ class McpServerConfig(BaseModel):
 
 
 def parse_mcp_servers_config(raw: Any) -> list[McpServerConfig]:
-    """解析 ``AGENT_PY_MCP_SERVERS_CONFIG`` 环境变量值（JSON 字符串或已解析 list）。
+    """解析 ``AGENTX_MCP_SERVERS_CONFIG`` 环境变量值（JSON 字符串或已解析 list）。
 
     容错策略：
     - 字符串 → JSON 解析，失败返回空列表
@@ -108,7 +108,7 @@ def parse_mcp_servers_config(raw: Any) -> list[McpServerConfig]:
         try:
             raw = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
-            logger.warning("AGENT_PY_MCP_SERVERS_CONFIG JSON 解析失败，忽略 MCP 配置")
+            logger.warning("AGENTX_MCP_SERVERS_CONFIG JSON 解析失败，忽略 MCP 配置")
             return []
     if not isinstance(raw, list):
         return []

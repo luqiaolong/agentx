@@ -16,9 +16,9 @@ from app.config import get_settings
 from app.llm import get_chat_model
 
 # Tavily API Key 环境变量名（config.py 未声明该字段，从 env 读取）
-_TAVILY_KEY_ENV = "AGENT_PY_TAVILY_API_KEY"
+_TAVILY_KEY_ENV = "AGENTX_TAVILY_API_KEY"
 # 缺 key 时的统一错误提示
-_NO_KEY_MSG = "web_search 不可用：未配置 AGENT_PY_TAVILY_API_KEY"
+_NO_KEY_MSG = "web_search 不可用：未配置 AGENTX_TAVILY_API_KEY"
 
 
 def _get_tavily_key() -> str | None:
