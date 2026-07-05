@@ -10,6 +10,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsModal } from "./components/settings/SettingsModal";
 import { useSettingsStore } from "./stores/settings";
 import { useChatStore } from "./stores/chat";
+import { useSceneStore } from "./stores/scene";
 
 type PythonStatus = "starting" | "ready" | "crashed" | "giving_up" | null;
 
@@ -18,6 +19,8 @@ export default function App() {
   const [isMaximized, setIsMaximized] = useState(false);
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
+  const scene = useSceneStore((s) => s.scene);
+  const setScene = useSceneStore((s) => s.setScene);
 
   // 订阅 Python 后端启动状态
   useEffect(() => {
@@ -84,13 +87,38 @@ export default function App() {
           <div
             className="flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-soft"
             style={{ backgroundColor: "#4f46e5" }}
+            aria-hidden
           >
-            <Bot className="h-4 w-4" strokeWidth={2.5} />
+            <Bot className="h-5 w-5" strokeWidth={2.5} />
           </div>
           <span className="text-sm font-semibold tracking-tight">AgentX</span>
           <span className="ml-1 rounded-full bg-subtle px-2 py-0.5 text-[10px] font-medium text-secondary-c">
             v0.1
           </span>
+          {/* 场景切换器：Work / Coding，影响 system prompt 注入 */}
+          <div
+            className="ml-2 inline-flex items-center rounded-md border border-default bg-surface"
+            role="tablist"
+            aria-label="场景切换"
+          >
+            {(["work", "coding"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="tab"
+                aria-selected={scene === s}
+                onClick={() => setScene(s)}
+                className={`h-6 px-2.5 text-[11px] font-medium transition-colors ${
+                  scene === s
+                    ? "bg-brand-600 text-white"
+                    : "text-secondary-c hover:text-primary-c"
+                }`}
+                title={s === "work" ? "工作场景" : "编程场景"}
+              >
+                {s === "work" ? "Work" : "Coding"}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="app-no-drag flex items-center gap-2">
