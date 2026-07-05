@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Cpu,
   Eye,
@@ -17,7 +17,7 @@ import {
   RefreshCw,
   ExternalLink,
   Server,
-  SlidersHorizontal,
+  Ruler,
   ArrowDownToLine,
 } from "lucide-react";
 import type { ModelEntry, ModelProviderId } from "@/lib/utils";
@@ -310,6 +310,22 @@ function ModelEditor({
     if (isCustom && !draft.label.trim()) e.label = "自定义服务商必须填写显示名称";
     // 新建时必须输入密钥；编辑时若未输入新密钥则保留旧密钥
     if (isNew && !keyInput.trim()) e.apiKey = "API Key 不能为空";
+    // 上下文容量 / 输出 token 上限：仅在显式设置了 ≤0 的脏值时报错
+    // （正常的空值由 onChange 设为 null，正常路径不报错）
+    if (
+      draft.contextWindow !== null &&
+      draft.contextWindow !== undefined &&
+      draft.contextWindow <= 0
+    ) {
+      e.contextWindow = "上下文容量必须为正整数";
+    }
+    if (
+      draft.maxOutputTokens !== null &&
+      draft.maxOutputTokens !== undefined &&
+      draft.maxOutputTokens <= 0
+    ) {
+      e.maxOutputTokens = "输出 token 上限必须为正整数";
+    }
     setErrs(e);
     return Object.keys(e).length === 0;
   };
@@ -470,7 +486,7 @@ function ModelEditor({
       {/* 上下文容量（k tokens = 实际 token × 1000 存储）*/}
       <div>
         <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
-          <SlidersHorizontal className="h-3 w-3 text-muted-c" />
+          <Ruler className="h-3 w-3 text-muted-c" />
           上下文容量
           <span className="text-muted-c">（k tokens，输入上限）</span>
         </label>
@@ -498,6 +514,12 @@ function ModelEditor({
             ≈ {draft.contextWindow.toLocaleString()} tokens · 决定右下角
             ContextUsage widget 的分母
           </p>
+        )}
+        {!draft.contextWindow && (
+          <p className="mt-1 text-[10px] text-muted-c">留空使用默认值 16000 tokens</p>
+        )}
+        {errs.contextWindow && (
+          <p className="mt-1 text-[10px] text-rose-500">{errs.contextWindow}</p>
         )}
       </div>
 
@@ -527,9 +549,10 @@ function ModelEditor({
           placeholder={preset ? String(preset.defaultOutputK) : "例：4 / 8 / 16"}
           className="input-field font-mono text-[11px]"
         />
-        <p className="mt-1 text-[10px] text-muted-c">
-          激活后经 AGENTX_MAX_OUTPUT_TOKENS 传给后端 ChatOpenAI；留空不限制
-        </p>
+        <p className="mt-1 text-[10px] text-muted-c">激活后传给后端 ChatOpenAI；留空不限制</p>
+        {errs.maxOutputTokens && (
+          <p className="mt-1 text-[10px] text-rose-500">{errs.maxOutputTokens}</p>
+        )}
       </div>
 
       {/* 获取密钥链接 + 提示 */}
