@@ -352,6 +352,7 @@ async def _run_deep_path(
     profile_prompt: str = "",
     history: list | None = None,
     permission_mode: str = "standard",
+    scene_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 C：DeepAgent + 危险工具中断审批。
 
@@ -362,11 +363,12 @@ async def _run_deep_path(
         profile_prompt: 用户画像前缀，由 ``run_router`` 注入到 DeepAgent system prompt。
         history: 历史 messages 列表（已截断），传给 DeepAgent 拼到 inputs 前。
         permission_mode: 权限模式，"standard" 或 "full_trust"。
+        scene_prompt: 可选场景 prompt，透传给 run_deep_path。
     """
     try:
         async for event in run_deep_path(
             state, message, profile_prompt=profile_prompt, history=history,
-            permission_mode=permission_mode,
+            permission_mode=permission_mode, scene_prompt=scene_prompt,
         ):
             yield event
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
@@ -587,6 +589,7 @@ async def run_router(
                 profile_prompt=profile_prompt,
                 history=history,
                 permission_mode=permission_mode,
+                scene_prompt=scene_prompt,
             ):
                 yield sse
 

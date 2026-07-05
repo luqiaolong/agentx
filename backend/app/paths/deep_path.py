@@ -7,12 +7,16 @@
 - 审批恢复: ``_await_approval`` 轮询 ``_pending_approvals``，通过后以
   ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_before`` 的标准恢复方式）
 - 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer，支持跨轮次历史 + interrupt/resume
+- 权限模式：
+  - ``standard``（默认）：危险工具走审批；只读 fs 工具访问未授权目录时弹扩展授权弹窗
+  - ``full_trust``：会话内全量放行，不弹任何审批弹窗（系统关键目录仍拒绝）
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from langgraph.prebuilt import create_react_agent
@@ -24,6 +28,7 @@ from app.observability.logger import logger
 from app.subagents.code_agent import _make_fs_tools
 from app.subagents.rag_agent import _make_rag_tools
 from app.subagents.web_agent import _make_web_tools
+from app.utils.security import ApprovalDecision, get_sandbox
 
 if TYPE_CHECKING:
     # RouterState 仅用于类型注解（``from __future__ import annotations`` 使注解
@@ -129,6 +134,7 @@ async def build_deep_agent(
     tools: list | None = None,
     profile_prompt: str = "",
     checkpointer: Any = None,
+    scene_prompt: str | None = None,
 ) -> Any:
     """构造真实 DeepAgent 图。
 
@@ -143,10 +149,15 @@ async def build_deep_agent(
         profile_prompt: 可选，用户画像前缀，拼到 ``_DEEP_SYSTEM_PROMPT`` 前。
         checkpointer: 可选，共享的 LangGraph checkpointer。若未传则用
             ``await get_async_checkpointer()`` 获取全局 ``AsyncSqliteSaver`` 单例。
+        scene_prompt: 可选场景 prompt，非空时覆盖 ``_DEEP_SYSTEM_PROMPT``。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
     """
+    # 延迟 import 避免与 app.router.graph 形成循环导入
+    # （graph.py 顶部 from app.paths.deep_path import run_deep_path）
+    from app.router.graph import resolve_system_prompt
+
     model = get_chat_model(temperature=0.3, streaming=True)
     if tools is None:
         tools = _make_deep_tools(thread_id)
@@ -154,10 +165,12 @@ async def build_deep_agent(
         # MUST await：get_async_checkpointer 是 async def，不 await 会传入 coroutine
         # 导致 create_react_agent 报 "Invalid checkpointer ... Received coroutine"
         checkpointer = await get_async_checkpointer()
-    # T9：画像前缀拼到默认 system prompt 前（遵循与路径 A 一致的"画像优先"约定）
-    system_prompt = _DEEP_SYSTEM_PROMPT
-    if profile_prompt:
-        system_prompt = f"{profile_prompt}\n{system_prompt}"
+    # T9：画像前缀拼到最前；scene_prompt 覆盖 _DEEP_SYSTEM_PROMPT（场景切换器注入）
+    system_prompt = resolve_system_prompt(
+        default=_DEEP_SYSTEM_PROMPT,
+        scene_prompt=scene_prompt,
+        skill_extra=profile_prompt or None,
+    )
     return create_react_agent(
         model,
         tools,
@@ -209,20 +222,35 @@ def _redact_args(tool_name: str, args: dict) -> dict:
     return redacted
 
 
-def _make_approval_event(tool_call: dict, thread_id: str) -> dict[str, str]:
+def _make_approval_event(
+    tool_call: dict,
+    thread_id: str,
+    kind: str = "dangerous_tool",
+    requested_path: str | None = None,
+    writable: bool = False,
+) -> dict[str, str]:
     """构造 approval_request SSE 事件。
 
     MUST 包含 ``thread_id``：前端 ApprovalDialog 据此调
     ``POST /api/chat/approve {thread_id, approval}``，后端 ``_pending_approvals``
     按 thread_id 索引。缺失 thread_id 会导致审批提交后无法被 DeepAgent 消费，
     危险操作链路彻底断开。
+
+    Args:
+        tool_call: 工具调用 dict（含 name/args）。
+        thread_id: 会话 ID。
+        kind: 审批类型，"dangerous_tool"（默认）或 "directory_extension"。
+        requested_path: directory_extension 时填，目标路径。
+        writable: directory_extension 时填，是否需要写入。
     """
     name = tool_call.get("name", "unknown")
     args = tool_call.get("args", {})
     redacted_args = _redact_args(name, args if isinstance(args, dict) else {})
 
     # 生成预览描述
-    if name == "write_file":
+    if kind == "directory_extension":
+        preview = f"AI 想访问目录: {requested_path}"
+    elif name == "write_file":
         path = args.get("path", "?") if isinstance(args, dict) else "?"
         preview = f"将写入文件: {path}"
     elif name == "edit_file":
@@ -233,18 +261,57 @@ def _make_approval_event(tool_call: dict, thread_id: str) -> dict[str, str]:
     else:
         preview = f"将执行工具: {name}"
 
+    data: dict[str, Any] = {
+        "thread_id": thread_id,
+        "tool_name": name,
+        "args": redacted_args,
+        "preview": preview,
+        "kind": kind,
+    }
+    if kind == "directory_extension":
+        data["requestedPath"] = requested_path or ""
+        data["writable"] = writable
+
     return {
         "event": "approval_request",
-        "data": json.dumps(
-            {
-                "thread_id": thread_id,
-                "tool_name": name,
-                "args": redacted_args,
-                "preview": preview,
-            },
-            ensure_ascii=False,
-        ),
+        "data": json.dumps(data, ensure_ascii=False),
     }
+
+
+# 只读 fs 工具名集合（用于 directory_extension 预检查）
+_READ_ONLY_FS_TOOLS: frozenset[str] = frozenset(
+    {"read_file", "list_dir", "glob_files", "grep_files", "glob", "grep"}
+)
+
+
+def _extract_paths_from_tool_call(tool_call: dict) -> list[str]:
+    """从工具调用参数中提取路径字符串（用于 directory_extension 预检查）。
+
+    支持的工具：
+    - read_file / write_file / edit_file / list_dir / grep: args["path"]
+    - glob / glob_files: args["pattern"] → 取 _glob_base
+    """
+    from app.tools.filesystem import _glob_base
+
+    name = tool_call.get("name", "")
+    args = tool_call.get("args", {})
+    if not isinstance(args, dict):
+        return []
+    if name in ("read_file", "write_file", "edit_file", "list_dir", "grep", "grep_files"):
+        p = args.get("path")
+        return [str(p)] if p else []
+    if name in ("glob", "glob_files"):
+        pattern = args.get("pattern", "")
+        if not pattern:
+            return []
+        base = _glob_base(str(pattern))
+        return [base] if base else []
+    return []
+
+
+def _is_read_only_fs_tool(name: str) -> bool:
+    """是否为只读 fs 工具（用于 directory_extension 预检查）。"""
+    return name in _READ_ONLY_FS_TOOLS
 
 
 def _make_todo_event(text: str, done: bool = False) -> dict[str, str]:
@@ -315,31 +382,47 @@ async def run_deep_path(
     message: str,
     profile_prompt: str = "",
     history: list | None = None,
+    permission_mode: str = "standard",
+    scene_prompt: str | None = None,
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器（真实实现）。
 
     流程:
     1. 构建 DeepAgent（含 ``interrupt_before=["tools"]``）
-    2. ``astream_events`` 驱动图执行，流式产出 token / todo_update 事件
-    3. 流结束后检查是否在 tools 前中断
-    4. 若中断：检查待执行工具是否危险
-       - 危险 → yield approval_request → ``_await_approval`` → 通过则恢复 / 拒绝则终止
-       - 安全 → 自动恢复
-    5. 恢复后继续流式，循环直至图完成（``state.next`` 为空）
-    6. T10：若 ``profile_auto_extract`` 开启，异步调 LLM 抽取画像并写入 profile.json
-       （失败仅 warning，不阻塞 ``done`` 事件）
+    2. 若 ``permission_mode == "full_trust"``：``sandbox.set_full_trust(thread_id, True)``
+    3. ``astream_events`` 驱动图执行，流式产出 token / todo_update 事件
+    4. 流结束后检查是否在 tools 前中断
+    5. 若中断：按权限模式处理待执行工具
+       - full_trust：直接放行所有工具（包括危险工具）
+       - standard：
+         - 危险工具 → yield approval_request(kind=dangerous_tool) → 等待审批
+         - 只读 fs 工具访问未授权目录 → yield approval_request(kind=directory_extension)
+           → 等待决策（once/session/deny）
+         - 其他 → 自动放行
+    6. 恢复后继续流式，循环直至图完成（``state.next`` 为空）
+    7. 清理：``sandbox.set_full_trust(thread_id, False)`` + ``sandbox.clear_temp(thread_id)``
+    8. T10：若 ``profile_auto_extract`` 开启，异步调 LLM 抽取画像并写入 profile.json
 
     Args:
         state: Router 状态（含 thread_id）。
         message: 用户消息。
         profile_prompt: 用户画像前缀，拼到 DeepAgent system prompt 前。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
+        permission_mode: 权限模式，"standard"（默认）或 "full_trust"。
+        scene_prompt: 可选场景 prompt，透传给 build_deep_agent。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
     """
     thread_id = state.get("thread_id", "")
     config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
+    sandbox = get_sandbox()
+    is_full_trust = permission_mode == "full_trust"
+
+    # full_trust 模式：设置 sandbox 标志，fs 工具自动放行
+    if is_full_trust:
+        sandbox.set_full_trust(thread_id, True)
+        logger.info("deep agent full_trust mode enabled", thread_id=thread_id)
 
     # 构建完整 inputs：history + 当前消息
     # history 已是 BaseMessage 列表，create_react_agent 的 messages channel 接受 BaseMessage
@@ -360,13 +443,22 @@ async def run_deep_path(
                 count=len(mcp_tools),
                 untrusted=len(mcp_untrusted_names),
             )
-        agent = await build_deep_agent(thread_id, tools=agent_tools, profile_prompt=profile_prompt)
+        agent = await build_deep_agent(
+            thread_id,
+            tools=agent_tools,
+            profile_prompt=profile_prompt,
+            scene_prompt=scene_prompt,
+        )
     except ValueError as exc:
         yield {"event": "error", "data": f"LLM 不可用: {exc}"}
+        if is_full_trust:
+            sandbox.set_full_trust(thread_id, False)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("build_deep_agent failed", thread_id=thread_id)
         yield {"event": "error", "data": f"DeepAgent 初始化失败: {exc}"}
+        if is_full_trust:
+            sandbox.set_full_trust(thread_id, False)
         return
 
     # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集
@@ -384,6 +476,8 @@ async def run_deep_path(
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.exception("deep agent stream failed", thread_id=thread_id)
         yield {"event": "error", "data": f"DeepAgent 执行失败: {exc}"}
+        if is_full_trust:
+            sandbox.set_full_trust(thread_id, False)
         return
 
     # 3. 中断/恢复循环
@@ -404,17 +498,32 @@ async def run_deep_path(
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
 
+        # full_trust 模式：所有工具直接放行，不弹审批
+        if is_full_trust:
+            # 清理 once 临时授权（防御性，full_trust 模式理论上不用 temp）
+            sandbox.clear_temp(thread_id)
+            try:
+                async for sse in _stream_agent_events(agent, None, config):
+                    yield sse
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("deep agent resume failed", thread_id=thread_id)
+                yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
+                sandbox.set_full_trust(thread_id, False)
+                return
+            continue
+
+        # standard 模式：按工具类型处理
         # 检查是否有危险工具（运行时集合 = DANGEROUS_TOOLS ∩ 已启用工具）
         dangerous_calls = [
             tc for tc in pending_calls if tc.get("name") in runtime_dangerous
         ]
 
         if dangerous_calls:
-            # 4a. 危险工具 → yield approval_request，等待审批
+            # 4a. 危险工具 → yield approval_request(dangerous_tool)，等待审批
             tool_call = dangerous_calls[0]
-            yield _make_approval_event(tool_call, thread_id)
+            yield _make_approval_event(tool_call, thread_id, kind="dangerous_tool")
 
-            approval = await _await_approval(
+            decision = await _await_approval(
                 thread_id,
                 poll_interval=_APPROVAL_POLL_INTERVAL,
                 max_wait=float("inf")
@@ -422,11 +531,9 @@ async def run_deep_path(
                 else get_settings().approval_max_wait,
             )
 
-            if approval is False:
+            if decision is None or not decision.approved:
                 yield {"event": "error", "data": "用户拒绝执行危险操作"}
-                return
-            if approval is None:
-                yield {"event": "error", "data": "审批等待被中断，操作未执行"}
+                sandbox.set_full_trust(thread_id, False)
                 return
 
             # 审批通过，继续恢复执行
@@ -435,7 +542,21 @@ async def run_deep_path(
                 thread_id=thread_id,
                 tool=tool_call.get("name"),
             )
-        # 4b. 安全工具 → 自动放行，无需审批
+        else:
+            # 4b. 非危险工具：检查只读 fs 工具是否越界（directory_extension）
+            extension_handled = await _handle_directory_extension(
+                pending_calls, thread_id, sandbox
+            )
+            for evt in extension_handled.events:
+                yield evt
+            if extension_handled.denied:
+                yield {"event": "error", "data": "用户拒绝访问该目录"}
+                sandbox.set_full_trust(thread_id, False)
+                return
+            if extension_handled.timed_out:
+                yield {"event": "error", "data": "目录授权等待被中断，操作未执行"}
+                sandbox.set_full_trust(thread_id, False)
+                return
 
         # 5. 恢复执行：用 None 输入续跑（LangGraph interrupt_before 标准恢复方式）
         try:
@@ -444,12 +565,21 @@ async def run_deep_path(
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.exception("deep agent resume failed", thread_id=thread_id)
             yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
+            sandbox.set_full_trust(thread_id, False)
             return
+
+        # 6. 清理 once 临时授权（每次工具调用恢复后清理）
+        sandbox.clear_temp(thread_id)
 
     if iteration >= max_iterations:
         logger.warning("deep agent hit max iterations", thread_id=thread_id)
         yield {"event": "error", "data": "DeepAgent 达到最大迭代上限"}
+        sandbox.set_full_trust(thread_id, False)
         return
+
+    # 7. 清理 full_trust 标志（防御性）
+    if is_full_trust:
+        sandbox.set_full_trust(thread_id, False)
 
     # T10：路径 C 流式结束后，若开关开启则异步触发画像抽取（失败仅 warning，不报错）
     # 不阻塞 done 事件：fire-and-forget（spec memory-management R10）
@@ -532,16 +662,15 @@ async def _extract_profile_via_llm(message: str, assistant_reply: str) -> list[d
         return []
 
 
-async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> bool | None:
-    """轮询 ``app.main._pending_approvals[thread_id]``，返回审批决定（单次非阻塞查询）。
+async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> ApprovalDecision | None:
+    """轮询 ``app.main._pending_approvals[thread_id]``，返回审批决策（单次非阻塞查询）。
 
     Args:
         thread_id: 会话 ID。
         timeout: 保留参数（单次查询不阻塞）。
 
     Returns:
-        - ``True``：用户批准。
-        - ``False``：用户拒绝。
+        - ``ApprovalDecision``：用户已决策。
         - ``None``：尚未决定。
 
     Note:
@@ -549,7 +678,7 @@ async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> bool | None
     """
     from app import main  # noqa: WPS433 — 延迟 import 破环
 
-    pending: dict[str, bool] = getattr(main, "_pending_approvals", {})
+    pending: dict[str, ApprovalDecision] = getattr(main, "_pending_approvals", {})
     if thread_id in pending:
         return pending.pop(thread_id)
     return None
@@ -559,10 +688,10 @@ async def _await_approval(
     thread_id: str,
     poll_interval: float = 0.3,
     max_wait: float = 300.0,
-) -> bool | None:
-    """阻塞轮询直至收到审批决定或达到 max_wait。
+) -> ApprovalDecision | None:
+    """阻塞轮询直至收到审批决策或达到 max_wait。
 
-    - 收到 True/False → 返回该值。
+    - 收到决策 → 返回 ``ApprovalDecision``。
     - 达到 max_wait 仍未决定 → 返回 None（调用方按"中断"处理，安全失败不放行）。
     - 检测到 abort 标志（``app.main._abort_flags``）→ 返回 None。
     """
@@ -576,9 +705,90 @@ async def _await_approval(
         abort_flags: dict[str, bool] = getattr(main, "_abort_flags", {})
         if abort_flags.get(thread_id):
             return None
-        pending: dict[str, bool] = getattr(main, "_pending_approvals", {})
+        pending: dict[str, ApprovalDecision] = getattr(main, "_pending_approvals", {})
         if thread_id in pending:
             return pending.pop(thread_id)
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
     return None
+
+
+@dataclass
+class _ExtensionResult:
+    """``_handle_directory_extension`` 的返回值。"""
+
+    events: list[dict[str, str]]
+    denied: bool = False
+    timed_out: bool = False
+
+
+async def _handle_directory_extension(
+    pending_calls: list[dict],
+    thread_id: str,
+    sandbox: Any,
+) -> _ExtensionResult:
+    """处理只读 fs 工具的目录越界扩展授权。
+
+    遍历 pending_calls，对每个只读 fs 工具提取路径，检查是否已授权。
+    未授权的工具调用 yield approval_request(kind=directory_extension)，等待用户决策：
+    - once：``sandbox.authorize_temp`` 临时授权
+    - session：``sandbox.authorize`` 持久授权
+    - deny：返回 denied=True
+
+    Args:
+        pending_calls: 待执行的工具调用列表。
+        thread_id: 会话 ID。
+        sandbox: SessionSandbox 实例。
+
+    Returns:
+        _ExtensionResult：含 events（需 yield 的 SSE 事件）+ denied/timed_out 标志。
+    """
+    events: list[dict[str, str]] = []
+    for tc in pending_calls:
+        name = tc.get("name", "")
+        if not _is_read_only_fs_tool(name):
+            continue
+        paths = _extract_paths_from_tool_call(tc)
+        if not paths:
+            continue
+        for path in paths:
+            if sandbox.is_path_authorized(thread_id, path, writable=False):
+                continue
+            # 越界 → 弹扩展授权
+            events.append(
+                _make_approval_event(
+                    tc, thread_id, kind="directory_extension",
+                    requested_path=path, writable=False,
+                )
+            )
+            decision = await _await_approval(
+                thread_id,
+                poll_interval=_APPROVAL_POLL_INTERVAL,
+                max_wait=float("inf")
+                if get_settings().approval_max_wait == 0
+                else get_settings().approval_max_wait,
+            )
+            if decision is None:
+                return _ExtensionResult(events=events, timed_out=True)
+            if decision.decision == "deny" or not decision.approved:
+                return _ExtensionResult(events=events, denied=True)
+            if decision.decision == "once":
+                try:
+                    sandbox.authorize_temp(thread_id, path, writable=False)
+                except ValueError as exc:
+                    logger.warning("authorize_temp failed", path=path, error=str(exc))
+                    return _ExtensionResult(events=events, denied=True)
+            elif decision.decision == "session":
+                try:
+                    sandbox.authorize(thread_id, path, writable=False)
+                except ValueError as exc:
+                    logger.warning("authorize session failed", path=path, error=str(exc))
+                    return _ExtensionResult(events=events, denied=True)
+            # approve（旧 dangerous_tool 决策类型）不应当出现在 directory_extension，
+            # 防御性按 once 处理
+            elif decision.decision == "approve":
+                try:
+                    sandbox.authorize_temp(thread_id, path, writable=False)
+                except ValueError:
+                    pass
+    return _ExtensionResult(events=events)
