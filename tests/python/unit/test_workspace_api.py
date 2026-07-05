@@ -45,7 +45,7 @@ def test_workspace_list_returns_entries(
         {"name": "subdir", "type": "dir", "size": 0, "mtime": 1700000001.0},
     ]
 
-    async def _fake_list_workspace(path: str) -> list[dict]:
+    async def _fake_list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
         return fake_entries
 
     monkeypatch.setattr("app.main.list_workspace", _fake_list_workspace)
@@ -66,7 +66,7 @@ def test_workspace_list_default_path(
     """path 缺省时默认 data/workspace。"""
     captured_path: list[str] = []
 
-    async def _fake_list_workspace(path: str) -> list[dict]:
+    async def _fake_list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
         captured_path.append(path)
         return []
 
@@ -82,7 +82,7 @@ def test_workspace_list_rejects_non_whitelisted(
 ) -> None:
     """非白名单路径 → 400。"""
 
-    async def _fake_list_workspace(path: str) -> list[dict]:
+    async def _fake_list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
         raise ValueError(f"路径不在白名单内: {path}")
 
     monkeypatch.setattr("app.main.list_workspace", _fake_list_workspace)

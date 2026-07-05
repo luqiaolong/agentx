@@ -233,14 +233,68 @@ async def _is_interrupted(agent: Any, config: dict) -> bool:
     return "tools" in state.next
 
 
+def _collect_unpaired_tool_call_ids(messages: list) -> list[str]:
+    """扫描消息列表，返回所有未配对 tool_call 的 id。
+
+    遍历全部 AIMessage 的 ``tool_calls``，与已有 ``ToolMessage.tool_call_id``
+    比对，返回缺失配对的 id 列表。用于在 checkpoint 异常残留或 inputs
+    含历史未配对 tool_calls 时，补齐 ToolMessage 以通过 LangGraph 的
+    ``_validate_chat_history`` 校验。
+
+    MUST 扫描全部消息——只看最后一条会漏掉历史中更早的未配对 AIMessage
+    （例如中断后 checkpoint 已写入新 HumanMessage，但前面的 AIMessage
+    仍未配对）。
+    """
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    existing_ids = {
+        getattr(m, "tool_call_id", None)
+        for m in messages
+        if isinstance(m, ToolMessage)
+    }
+    missing: list[str] = []
+    for msg in messages:
+        if not isinstance(msg, AIMessage):
+            continue
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        for tc in tool_calls:
+            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+            if tc_id and tc_id not in existing_ids:
+                missing.append(tc_id)
+    return missing
+
+
+def _sanitize_message_history(messages: list, error_text: str) -> list:
+    """为消息列表中所有未配对的 tool_calls 补齐 ToolMessage。
+
+    用于在 ``agent.astream(inputs, ...)`` 前净化 inputs：当 checkpoint
+    被 DELETE 清空、或历史含中断残留的未配对 AIMessage 时，
+    ``_inject_tool_error_messages``（作用于 checkpoint state）无法覆盖，
+    需要在此直接对 inputs 做修复，确保 ``_validate_chat_history`` 通过。
+    """
+    from langchain_core.messages import ToolMessage
+
+    missing_ids = _collect_unpaired_tool_call_ids(messages)
+    if not missing_ids:
+        return messages
+    return [
+        *messages,
+        *(
+            ToolMessage(content=error_text, tool_call_id=tc_id)
+            for tc_id in missing_ids
+        ),
+    ]
+
+
 async def _inject_tool_error_messages(agent: Any, config: dict, error_text: str) -> None:
-    """为未完成的 tool_calls 注入 ToolMessage，防止 INVALID_CHAT_HISTORY。
+    """为 checkpoint 中未配对的 tool_calls 注入 ToolMessage，防止 INVALID_CHAT_HISTORY。
 
     当 ``interrupt_before=["tools"]`` 中断后，如果恢复执行时抛异常（如 tool 失败、
     进程崩溃），checkpoint 中 AIMessage 有 ``tool_calls`` 但没有对应的 ``ToolMessage``。
     用户再次发消息时，LangGraph 校验历史消息会抛出 ``INVALID_CHAT_HISTORY``。
 
-    本函数在异常退出前调用：读取 state 中最后一条 AIMessage 的 ``tool_calls``，
+    本函数在异常退出前调用：扫描 state 中**全部** AIMessage 的 ``tool_calls``
+    （不只为最后一条，因为中断后可能已有新 HumanMessage 追加到末尾），
     为每个缺失的 tool_call 构造 ``ToolMessage(content=error_text, tool_call_id=...)``，
     通过 ``aupdate_state`` 追加到 messages 列表，保持配对关系。
 
@@ -249,7 +303,7 @@ async def _inject_tool_error_messages(agent: Any, config: dict, error_text: str)
         config: 含 ``configurable.thread_id`` 的字典。
         error_text: ToolMessage 的 content，描述失败原因。
     """
-    from langchain_core.messages import AIMessage, ToolMessage
+    from langchain_core.messages import ToolMessage
 
     try:
         state = await agent.aget_state(config)
@@ -259,35 +313,20 @@ async def _inject_tool_error_messages(agent: Any, config: dict, error_text: str)
         if not messages:
             return
 
-        last_msg = messages[-1]
-        if not isinstance(last_msg, AIMessage):
-            return
-        tool_calls = getattr(last_msg, "tool_calls", None) or []
-        if not tool_calls:
+        missing_ids = _collect_unpaired_tool_call_ids(messages)
+        if not missing_ids:
             return
 
-        # 收集已有 ToolMessage 的 tool_call_id
-        existing_ids = {
-            getattr(m, "tool_call_id", None)
-            for m in messages
-            if isinstance(m, ToolMessage)
-        }
-
-        new_messages = []
-        for tc in tool_calls:
-            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-            if tc_id and tc_id not in existing_ids:
-                new_messages.append(
-                    ToolMessage(content=error_text, tool_call_id=tc_id)
-                )
-
-        if new_messages:
-            await agent.aupdate_state(config, {"messages": new_messages})
-            logger.info(
-                "injected_tool_error_messages",
-                thread_id=config.get("configurable", {}).get("thread_id", ""),
-                count=len(new_messages),
-            )
+        new_messages = [
+            ToolMessage(content=error_text, tool_call_id=tc_id)
+            for tc_id in missing_ids
+        ]
+        await agent.aupdate_state(config, {"messages": new_messages})
+        logger.info(
+            "injected_tool_error_messages",
+            thread_id=config.get("configurable", {}).get("thread_id", ""),
+            count=len(new_messages),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("inject_tool_error_messages failed", error=str(exc))
 
@@ -502,8 +541,11 @@ async def _stream_agent_events(
                         for block in content
                     )
                 plan_text = str(content) if content else ""
-                # 提取 think 块作为 reasoning 展示，剩余内容作为计划文本
-                from app.utils.text import split_think
+                # 防御性剥离：部分 OpenAI 兼容推理模型（典型如 MiniMax-M3）在
+                # tool_calls 字段已正确填充时，仍会在 content 中重复输出 XML 格式
+                # 工具调用文本。剥离后再 split_think，避免 XML 块泄露到 reasoning 事件。
+                from app.utils.text import split_think, strip_tool_call_xml
+                plan_text = strip_tool_call_xml(plan_text)
                 reasoning, visible = split_think(plan_text)
                 # 优先展示 reasoning（think 块内），其次展示 visible（非 think 内容）
                 display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
@@ -540,6 +582,9 @@ async def _stream_agent_events(
                         for block in content
                     )
                 text = strip_think(content if isinstance(content, str) else str(content))
+                # 防御性剥离：避免 XML 格式工具调用文本泄露到最终回复 token 流。
+                from app.utils.text import strip_tool_call_xml
+                text = strip_tool_call_xml(text)
                 if text:
                     yield {"event": "token", "data": text}
 
@@ -635,6 +680,22 @@ async def run_deep_path(
         _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
     }
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+
+    # 1b. 防御性清理：若之前异常退出导致 checkpoint 中残留未配对的
+    # tool_calls，首次 astream 会因 _validate_chat_history 抛 INVALID_CHAT_HISTORY。
+    # 此处提前注入 ToolMessage 修复，确保历史消息一致性。
+    await _inject_tool_error_messages(
+        agent, config, "上次操作未正常完成，已自动清理状态"
+    )
+
+    # 1c. 净化 inputs：当 checkpoint 被 DELETE 清空（用户清空历史）或
+    # history 含中断残留的未配对 AIMessage 时，_inject_tool_error_messages
+    # 因 state 为空直接返回，但 inputs["messages"] 仍含未配对 tool_calls，
+    # _validate_chat_history 仍会抛 INVALID_CHAT_HISTORY。此处直接对 inputs
+    # 补齐 ToolMessage，确保 astream 不会因校验失败而中断。
+    inputs["messages"] = _sanitize_message_history(
+        inputs["messages"], "上次操作未正常完成，已自动清理状态"
+    )
 
     # 2. 初始流式运行（可能中断在 tools 前）
     try:

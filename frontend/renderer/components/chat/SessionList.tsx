@@ -240,9 +240,6 @@ function SessionGroup({
       <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wider">
         {label}
       </span>
-      <span className="shrink-0 rounded bg-subtle px-1 py-px text-[9px] font-medium text-muted-c">
-        {items.length}
-      </span>
     </button>
   );
 

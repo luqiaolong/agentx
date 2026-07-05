@@ -177,7 +177,7 @@ async def _llm_select_subagent(message: str) -> str | None:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             continue
-        trigger = cfg.keywords
+        trigger = ", ".join(cfg.keywords) if cfg.keywords else ""
         available.append(f"- {name}: {trigger}")
 
     custom = settings.custom_subagents
@@ -188,7 +188,7 @@ async def _llm_select_subagent(message: str) -> str | None:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             continue
-        trigger = cfg.keywords
+        trigger = ", ".join(cfg.keywords) if cfg.keywords else ""
         custom_available.append(f"- {key}: {trigger}")
 
     all_available = available + custom_available
@@ -267,8 +267,8 @@ def _keyword_select_subagent(message: str) -> str | None:
         cfg = subagents[agent_name]
         if not cfg.enabled:
             continue
-        # 检查触发条件描述命中（空字符串不匹配任何子代理）
-        if cfg.keywords and cfg.keywords not in message:
+        # 检查触发条件描述命中（空列表不匹配任何子代理）
+        if cfg.keywords is not None and not any(kw in message for kw in cfg.keywords):
             continue
         # 检查绑定的工具是否全部被禁用
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
@@ -282,7 +282,7 @@ def _keyword_select_subagent(message: str) -> str | None:
         cfg = custom[key]
         if not cfg.enabled:
             continue
-        if cfg.keywords and cfg.keywords not in message:
+        if cfg.keywords is not None and not any(kw in message for kw in cfg.keywords):
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             logger.warning(
@@ -299,15 +299,13 @@ def _keyword_select_subagent(message: str) -> str | None:
 
 
 def _select_subagent(message: str) -> str | None:
-    """根据消息内容选择路径 B 的子代理（仅使用 LLM 语义分析）。
+    """根据消息内容选择路径 B 的子代理（关键词匹配回退）。
 
     Returns:
         "code" / "rag" / "web" / 自定义子代理 key / None
-        - None 表示 LLM 不可用或返回无效，退回路径 A
+        - None 表示无可用子代理，退回路径 A
     """
-    # 同步调用异步 LLM 路由：由 run_router 在 async 上下文中调用
-    # 实际调用方应使用 _llm_select_subagent，本函数保留兼容签名
-    return None
+    return _keyword_select_subagent(message)
 
 
 def _sse(event: str, data: Any) -> dict[str, str]:

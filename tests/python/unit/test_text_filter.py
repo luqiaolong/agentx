@@ -10,7 +10,13 @@
 
 from __future__ import annotations
 
-from app.utils.text import ThinkFilter, extract_chunk_text, split_think, strip_think
+from app.utils.text import (
+    ThinkFilter,
+    extract_chunk_text,
+    split_think,
+    strip_think,
+    strip_tool_call_xml,
+)
 
 
 def _consume(filter_: ThinkFilter, *chunks: str) -> str:
@@ -362,3 +368,49 @@ def test_think_filter_retain_think_after_block_preserves_separator() -> None:
     reasoning, visible = _consume_split(f, f"{THINK_OPEN}r{THINK_CLOSE}\n\nhi")
     assert reasoning == "r"
     assert visible == "\n\nhi"
+
+
+# ============================================================
+# strip_tool_call_xml — 剥离 XML 格式工具调用块
+# ============================================================
+
+
+def test_strip_tool_call_xml_plain_text() -> None:
+    assert strip_tool_call_xml('hello world') == 'hello world'
+
+
+def test_strip_tool_call_xml_empty() -> None:
+    assert strip_tool_call_xml('') == ''
+
+
+def test_strip_tool_call_xml_none() -> None:
+    assert strip_tool_call_xml(None) is None  # type: ignore[arg-type]
+
+
+def test_strip_tool_call_xml_simple_block() -> None:
+    text = 'hi' + '<tool_call>' + '<invoke name="a" />' + '</tool_call>' + 'bye'
+    assert strip_tool_call_xml(text) == 'hibye'
+
+
+def test_strip_tool_call_xml_multiple_blocks() -> None:
+    text = '<tool_call>' + 'x' + '</tool_call>' + 'mid' + '<tool_call>' + 'y' + '</tool_call>'
+    assert strip_tool_call_xml(text) == 'mid'
+
+
+def test_strip_tool_call_xml_multiline_block() -> None:
+    text = (
+        '<tool_call>' + '\n' + '<invoke name="write_file">' + '\n' + '<parameter name="path">x</parameter>' + '\n'
+        + '<parameter name="content">' + '<![CDATA[' + 'html body' + ']]>' + '</parameter>' + '\n'
+        + '</invoke>' + '\n' + '</tool_call>' + 'done'
+    )
+    assert strip_tool_call_xml(text) == 'done'
+
+
+def test_strip_tool_call_xml_unclosed_kept_as_text() -> None:
+    text = '<tool_call>' + 'incomplete'
+    assert strip_tool_call_xml(text) == text
+
+
+def test_strip_tool_call_xml_strips_surrounding_whitespace() -> None:
+    text = '  hi' + '<tool_call>' + 'x' + '</tool_call>' + '  '
+    assert strip_tool_call_xml(text) == 'hi'

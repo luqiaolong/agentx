@@ -25,6 +25,45 @@ __THINK_BLOCK_RE = re.compile(
 _LOOKBEHIND = len(THINK_OPEN)
 
 
+# 某些 OpenAI 兼容推理模型（典型如 MiniMax-M3）在 tool_calls 字段已正确填充时，
+# 仍会在 content 中重复输出 XML 格式的工具调用文本（Hermes/Qwen 风格）：
+#     <tool_call>
+#     <invoke name="write_file">
+#     <parameter name="path">x</parameter>
+#     </invoke>
+#     </tool_call>
+# 这种重复输出的 XML 块对前端是噪声（SSE reasoning / token 事件透传到聊天框后
+# 会以乱码形式展现），MUST 在 yield 前剥离。仅处理完整闭合的块，跨 chunk 的
+# 不完整标签视为普通文本（流式场景下极少切到标签前缀，与 ThinkFilter 取舍一致）。
+__TOOL_CALL_BLOCK_RE = re.compile(
+    re.escape('<tool_call>') + r".*?" + re.escape('</tool_call>'),
+    re.DOTALL,
+)
+
+
+def strip_tool_call_xml(text: str) -> str:
+    """剥离 LLM 在 content 中重复输出的 XML 格式工具调用块。
+
+    适用于 OpenAI 兼容推理模型（典型如 MiniMax-M3）在原生 tool_calls 字段已
+    填充的情况下，仍在 content 中重复输出 XML 风格工具调用块的场景。SSE 推送
+    前（尤其 reasoning / token 事件）调用本函数，避免 XML 标签泄露到前端
+    聊天框显示为乱码。
+
+    Args:
+        text: 原始 LLM 输出文本。
+
+    Returns:
+        移除所有完整闭合块后的文本（首尾 strip）。None / 空字符串原样透传。
+
+    Examples:
+        >>> strip_tool_call_xml('hi' + chr(60) + 'tool_call' + chr(62) + 'x' + chr(60) + '/tool_call' + chr(62))
+        'hi'
+    """
+    if not text:
+        return text  # None / "" 透传，保持与历史行为一致
+    return __TOOL_CALL_BLOCK_RE.sub("", text).strip()
+
+
 def split_think(content: str) -> tuple[str, str]:
     """分离 think 块：返回 ``(reasoning, visible_text)`` 元组。
 
@@ -232,4 +271,4 @@ def extract_chunk_text(chunk: Any, *, strip: bool = True) -> str:
     return ""
 
 
-__all__ = ["split_think", "strip_think", "extract_chunk_text", "ThinkFilter", "THINK_OPEN", "THINK_CLOSE"]
+__all__ = ["split_think", "strip_think", "strip_tool_call_xml", "extract_chunk_text", "ThinkFilter", "THINK_OPEN", "THINK_CLOSE"]

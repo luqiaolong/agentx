@@ -106,7 +106,7 @@ def test_subagents_default_when_no_env() -> None:
     assert subagents["code"].enabled is True
     assert subagents["code"].temperature == 0.2
     assert subagents["code"].tools == ["read_file", "list_dir", "glob", "grep"]
-    assert subagents["code"].keywords == []
+    assert subagents["code"].keywords == ["代码", "文件", "目录", "报错", "函数", "类", "import", "依赖", "技术", "实现", "审查", "重构"]
 
     # rag 默认值
     assert subagents["rag"].enabled is True
@@ -137,9 +137,10 @@ def test_subagents_env_partial_override(monkeypatch: pytest.MonkeyPatch) -> None
     assert subagents["code"].temperature == 0.5
     # code 其他字段保持默认（字段级合并）
     assert subagents["code"].enabled is True
-    assert subagents["code"].system_prompt == ""
+    # system_prompt 有默认长文本，不校验具体内容
+    assert subagents["code"].system_prompt != ""
     assert subagents["code"].tools == ["read_file", "list_dir", "glob", "grep"]
-    assert subagents["code"].keywords == []
+    assert subagents["code"].keywords == ["代码", "文件", "目录", "报错", "函数", "类", "import", "依赖", "技术", "实现", "审查", "重构"]
 
     # rag/web 不受影响
     assert subagents["rag"].temperature == 0.2

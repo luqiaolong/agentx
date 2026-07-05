@@ -715,8 +715,8 @@ export const useChatStore = create<ChatState>()(
 
         deleteMessagesAfter: (messageId) => {
           let lastUserContent: string | null = null;
+          const cid = get().currentId;
           set((s) => {
-            const cid = s.currentId;
             if (!cid || !s.sessions[cid]) return s;
             const sess = s.sessions[cid];
             const idx = sess.messages.findIndex((m) => m.id === messageId);
@@ -731,6 +731,17 @@ export const useChatStore = create<ChatState>()(
             const sessions = { ...s.sessions, [cid]: { ...sess, messages: kept } };
             return { sessions };
           });
+          // 同步清空后端 checkpoint，防止重新编辑后历史消息中的 tool_calls 残留
+          // 导致 LangGraph INVALID_CHAT_HISTORY（best-effort，失败不阻塞前端）
+          if (cid) {
+            try {
+              window.api.memory.deleteThread(cid).catch(() => {
+                /* 后端不可用或 thread 不存在时静默忽略 */
+              });
+            } catch {
+              /* preload API 不可用时静默忽略 */
+            }
+          }
           return lastUserContent;
         },
 

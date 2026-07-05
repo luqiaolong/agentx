@@ -417,26 +417,45 @@ def test_convert_subagent_event_fallback_uuid_when_no_id():
 # ---- 6. 路径 B subagent 选择 ----
 
 
-def test_select_subagent_web_keywords():
+def test_select_subagent_web_keywords(monkeypatch: pytest.MonkeyPatch):
     """含 web 关键词 → web 子代理。"""
     from app.router.graph import _select_subagent
+    from app.config import _default_subagents
+
+    # mock settings 使用默认子代理配置
+    mock = MagicMock()
+    mock.subagents = _default_subagents()
+    mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
+    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
 
     assert _select_subagent("帮我搜索网页信息") == "web"
     assert _select_subagent("联网查一下") == "web"
     assert _select_subagent("search the web") == "web"
 
 
-def test_select_subagent_rag_keywords():
+def test_select_subagent_rag_keywords(monkeypatch: pytest.MonkeyPatch):
     """含 RAG 关键词 → rag 子代理。"""
     from app.router.graph import _select_subagent
+    from app.config import _default_subagents
+
+    mock = MagicMock()
+    mock.subagents = _default_subagents()
+    mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
+    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
 
     assert _select_subagent("从知识库检索文档") == "rag"
     assert _select_subagent("查文档库") == "rag"
 
 
-def test_select_subagent_defaults_to_code():
+def test_select_subagent_defaults_to_code(monkeypatch: pytest.MonkeyPatch):
     """无关键词命中 → code 子代理（默认）。"""
     from app.router.graph import _select_subagent
+    from app.config import _default_subagents
+
+    mock = MagicMock()
+    mock.subagents = _default_subagents()
+    mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
+    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
 
     assert _select_subagent("读取这个文件") == "code"
     assert _select_subagent("hello") == "code"

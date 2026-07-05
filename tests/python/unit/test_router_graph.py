@@ -64,14 +64,18 @@ async def _collect_events(gen: AsyncIterator[dict]) -> list[dict]:
 
 
 def _make_fake_llm(tokens: list[str]) -> MagicMock:
-    """构造 mock LLM，astream 返回含指定 token 的 chunk 流。"""
+    """构造 mock LLM，astream 返回含指定 token 的 chunk 流；ainvoke 返回第一个 token。"""
 
     async def _fake_astream(messages: Any) -> AsyncIterator:
         for text in tokens:
             yield SimpleNamespace(content=text)
 
+    async def _fake_ainvoke(messages: Any) -> Any:
+        return SimpleNamespace(content=tokens[0] if tokens else "")
+
     mock_llm = MagicMock()
     mock_llm.astream = _fake_astream
+    mock_llm.ainvoke = _fake_ainvoke
     return mock_llm
 
 
@@ -151,6 +155,9 @@ async def test_router_tool_path(
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+
     # mock run_code_agent yield 标准化事件（T3 后子代理已带 source 字段）
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "文件内容"}
@@ -209,6 +216,9 @@ async def test_router_tool_path_yields_delegation(
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "ok"}
 
@@ -236,6 +246,9 @@ async def test_router_tool_path_delegation_for_web_agent(
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["web"]))
+
     async def _fake_run_web_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "web result"}
 
@@ -258,6 +271,9 @@ async def test_router_tool_path_source_fallback(
         return "SINGLE_TOOL"
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     # mock yield 旧格式事件（无 source 字段）
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
@@ -286,6 +302,9 @@ async def test_router_tool_path_reasoning_separation(
         return "SINGLE_TOOL"
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         # 模拟推理模型输出：think 块 + 正文
@@ -324,6 +343,9 @@ async def test_router_tool_path_selects_web_agent(
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["web"]))
+
     web_called = False
 
     async def _fake_run_web_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
@@ -359,6 +381,9 @@ async def test_router_tool_path_strips_think_blocks(
         return "SINGLE_TOOL"
 
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
+    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         # 模拟 MiniMax-M3 推理模型输出：think 块 + 正文

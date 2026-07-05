@@ -27,9 +27,9 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 _DEFAULT_CODE_TOOLS = ["read_file", "list_dir", "glob", "grep"]
 _DEFAULT_RAG_TOOLS = ["rag_retrieve"]
 _DEFAULT_WEB_TOOLS = ["web_search"]
-_DEFAULT_CODE_KEYWORDS = "用户问题涉及代码文件、项目目录、程序报错、函数/类定义、import依赖、技术实现细节、代码审查或重构建议时触发。"
-_DEFAULT_RAG_KEYWORDS = "用户问题需要引用内部知识库、技术文档、API手册、产品规范或历史资料时触发。"
-_DEFAULT_WEB_KEYWORDS = "用户问题需要获取互联网实时信息、最新新闻、当前版本号、市场价格、事件动态或外部资料时触发。"
+_DEFAULT_CODE_KEYWORDS = ["代码", "文件", "目录", "报错", "函数", "类", "import", "依赖", "技术", "实现", "审查", "重构"]
+_DEFAULT_RAG_KEYWORDS = ["知识库", "文档库", "检索", "向量", "rag", "知识", "文档"]
+_DEFAULT_WEB_KEYWORDS = ["搜索", "网页", "联网", "查一下", "search", "web", "google", "百度"]
 
 # 全部工具清单（tools_enabled 默认值）
 _ALL_TOOLS = [
@@ -46,7 +46,7 @@ class SubagentSettings(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    keywords: str = ""
+    keywords: list[str] = Field(default_factory=list)
     description: str = ""
 
 
@@ -77,7 +77,7 @@ class CustomSubagentEntry(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    keywords: str = ""
+    keywords: list[str] = Field(default_factory=list)
 
 
 # 内置子代理默认描述
@@ -193,7 +193,7 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
                 temperature=float(val.get("temperature", 0.2)),
                 system_prompt=str(val.get("system_prompt", "")),
                 tools=_sanitize_custom_tools(list(val.get("tools", []))),
-                keywords=str(val.get("keywords", "")),
+                keywords=list(val.get("keywords", [])) if isinstance(val.get("keywords"), list) else [str(val.get("keywords", ""))] if val.get("keywords") else [],
             )
         except (TypeError, ValueError, ValidationError) as exc:
             logger.warning(

@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, useCallback, useRef, useEffect } from "react";
-import { Sparkles, Pencil } from "lucide-react";
+import { Sparkles, Pencil, Send } from "lucide-react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
@@ -194,19 +194,30 @@ function MessageParts({
     if (isEditing) {
       return (
         <div className="flex justify-end">
-          <div className="max-w-[80%] w-full">
+          <div className="max-w-[80%] w-full relative">
             <textarea
               ref={editRef}
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
               onKeyDown={handleEditKeyDown}
+              onBlur={() => setIsEditing(false)}
               rows={2}
-              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-600 px-3 py-2 text-sm leading-relaxed text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-600 px-3 py-2 pr-24 pb-8 text-sm leading-relaxed text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
               style={{ minHeight: "48px" }}
             />
-            {/* 模型切换按钮：textarea 下侧 */}
-            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+            {/* 模型选择 + 发送按钮：编辑框右下角 */}
+            <div className="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-1">
               <ModelToggle />
+              <button
+                type="button"
+                onClick={handleEditSubmit}
+                disabled={!editText.trim()}
+                className="btn-send"
+                aria-label="发送消息"
+                title="发送 (Enter)"
+              >
+                <Send className="h-3.5 w-3.5" />
+              </button>
             </div>
           </div>
         </div>
