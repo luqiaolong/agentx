@@ -4,6 +4,8 @@ import { useChatStore } from "@/stores/chat";
 import type { ChatMessage } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import { useSettingsStore } from "@/stores/settings";
+import { usePermissionStore } from "@/stores/permission";
+import { SCENE_PROMPTS, useSceneStore } from "@/stores/scene";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { MessageList } from "./MessageList";
@@ -279,7 +281,14 @@ export function ChatView() {
     setErrorMsg(null);
 
     try {
-      await window.api.chat.send({ role: "user", content }, { threadId: tid });
+      // 从 permission store 读取会话级权限模式（不订阅，避免无谓重渲）
+      const permissionMode = usePermissionStore.getState().mode;
+      // 从 scene store 读取当前场景 prompt（不订阅，避免无谓重渲）
+      const scene = useSceneStore.getState().scene;
+      await window.api.chat.send(
+        { role: "user", content },
+        { threadId: tid, permissionMode, systemPrompt: SCENE_PROMPTS[scene] },
+      );
     } catch {
       setStreaming(false);
       setErrorMsg("发送失败，请检查后端是否运行");
