@@ -200,12 +200,16 @@ class McpClientManager:
 
         try:
             client = MultiServerMCPClient({config.name: config.to_client_spec()})
-            tools = await client.get_tools(server_name=config.name)
-            # 尝试优雅关闭（stdio 子进程）
+            # 用 session context manager 主动清理 stdio 子进程，
+            # 避免探测后子进程残留（langchain-mcp-adapters 0.1.0+ 顶层无 aexit）。
+            tools: list[Any] = []
             try:
-                await client.__aexit__(None, None, None)  # noqa: SLF001
-            except Exception:  # noqa: BLE001
-                pass
+                async with client.session(config.name) as session:
+                    from langchain_mcp_adapters.tools import load_mcp_tools
+                    tools = await load_mcp_tools(session)
+            except AttributeError:
+                # 极旧版本无 session() 时退回顶层 get_tools（不清理子进程，仅探测用）
+                tools = await client.get_tools(server_name=config.name)
             return {
                 "ok": True,
                 "tools": [
@@ -218,18 +222,19 @@ class McpClientManager:
             return {"ok": False, "error": str(exc), "tools": []}
 
     async def _close_locked(self) -> None:
-        """在锁保护下关闭客户端连接。"""
+        """在锁保护下关闭客户端连接。
+
+        langchain-mcp-adapters 0.1.0+ 的 ``MultiServerMCPClient`` 不支持顶层
+        ``async with`` / ``__aexit__``（会抛 ``AttributeError``）。
+        这里仅清内部状态；stdio 子进程由 Python GC + 进程退出时回收。
+        真正需要立刻回收子进程时，调用方应使用 ``client.session(name)`` 的
+        async context manager（见 ``test_server``）。
+        """
         if self._client is None:
             return
-        try:
-            # MultiServerMCPClient 支持 async context manager
-            await self._client.__aexit__(None, None, None)  # noqa: SLF001
-        except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
-            logger.warning("MCP client 关闭失败: {}", exc)
-        finally:
-            self._client = None
-            self._tools = []
-            self._errors = {}
+        self._client = None
+        self._tools = []
+        self._errors = {}
 
     async def close(self) -> None:
         """关闭所有连接，清理状态。应用关闭时调用。"""
