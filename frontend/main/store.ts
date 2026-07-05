@@ -593,6 +593,9 @@ export interface ModelEntry {
   /** 加密后的 API Key（enc:... 或 plain:...），renderer 视为不透明字符串 */
   apiKey: string;
   createdAt: number;
+  /** 模型单次响应输出 token 上限（透传到 ChatOpenAI.max_tokens）；
+   *  undefined / null → 不设上限（langchain-openai 走模型默认） */
+  maxOutputTokens?: number | null;
 }
 
 const MODEL_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -612,7 +615,12 @@ function sanitizeModelEntry(raw: unknown): ModelEntry | null {
   const apiKey = typeof r.apiKey === "string" ? r.apiKey : "";
   const label = typeof r.label === "string" && r.label.trim() ? r.label.trim() : "";
   const createdAt = typeof r.createdAt === "number" ? r.createdAt : Date.now();
-  return { id, label, providerId, model, baseUrl, apiKey, createdAt };
+  // maxOutputTokens 接受正整数；非正数/null/undefined 统一规整为 undefined，避免把 0/负数/字符串 传到后端
+  const maxOutputTokens =
+    typeof r.maxOutputTokens === "number" && r.maxOutputTokens > 0
+      ? r.maxOutputTokens
+      : undefined;
+  return { id, label, providerId, model, baseUrl, apiKey, createdAt, maxOutputTokens };
 }
 
 export function getModelEntries(): ModelEntry[] {

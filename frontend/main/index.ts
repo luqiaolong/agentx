@@ -150,6 +150,20 @@ function createWindow(): void {
   }
 }
 
+/**
+ * 读取当前激活 model entry 的 maxOutputTokens；若为正整数则返回，否则返回 undefined。
+ * 用于 spawn 与 reload 路径共享的「active model extra fields」读取逻辑。
+ */
+function getActiveModelMaxOutputTokens(): number | undefined {
+  const activeId = getActiveModelId();
+  if (!activeId) return undefined;
+  const entries = getModelEntries();
+  const entry = entries.find((e) => e.id === activeId);
+  if (!entry) return undefined;
+  const v = entry.maxOutputTokens;
+  return typeof v === "number" && v > 0 ? v : undefined;
+}
+
 function startPython(): void {
   if (quitting) return;
   const milvus = getMilvusCredentials();
@@ -190,6 +204,7 @@ function startPython(): void {
       toolsConfig,
       profileAutoExtract,
       mcpServersConfig,
+      maxOutputTokens: getActiveModelMaxOutputTokens(),
     },
     onStatus: (status) => {
       appendLog(`[main] python status: ${status}`);
@@ -341,6 +356,9 @@ function registerIpc(): void {
     payload.max_upload_bytes = approval.maxUploadBytes;
     payload.auto_approve_after_seconds = approval.autoApproveAfterSeconds;
     if (systemPrompt) payload.default_system_prompt = systemPrompt;
+    // max_output_tokens (来自 active model entry，与 spawn 路径同步读取)
+    const maxOut = getActiveModelMaxOutputTokens();
+    if (maxOut !== undefined) payload.max_output_tokens = maxOut;
     payload.subagents_config = subagentsConfig;
     payload.custom_subagents_config = customSubagentsConfig;
     payload.tools_config = toolsConfig;
