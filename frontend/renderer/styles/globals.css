@@ -355,8 +355,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 1.875rem;
-    width: 1.875rem;
+    height: 1.75rem;
+    width: 1.75rem;
     border-radius: 0.5rem;
     color: var(--text-muted);
     cursor: pointer;
@@ -376,8 +376,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 1.875rem;
-    width: 1.875rem;
+    height: 1.75rem;
+    width: 1.75rem;
     border-radius: 0.5rem;
     background-color: #4f46e5;
     color: #ffffff;
