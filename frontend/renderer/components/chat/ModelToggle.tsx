@@ -105,7 +105,7 @@ export function ModelToggle() {
         onClick={() => setOpen((v) => !v)}
         title={triggerTitle}
         className={[
-          "btn-icon group inline-flex h-[1.875rem] w-auto items-center gap-1 px-1.5",
+          "btn-icon group inline-flex h-7 w-auto items-center gap-1 px-1.5",
           "text-[11px] leading-none",
           open ? "bg-hover-soft text-primary-c" : "",
         ].join(" ")}
