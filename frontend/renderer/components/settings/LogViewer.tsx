@@ -90,7 +90,7 @@ export function LogViewer() {
         <pre
           ref={preRef}
           onScroll={handleScroll}
-          className="max-h-[calc(100vh-220px)] overflow-auto rounded-md border border-default/50 bg-[#0a0a0a] px-2.5 py-2 font-mono text-[11px] leading-snug text-neutral-300"
+          className="max-h-[calc(100vh-220px)] overflow-auto rounded-md border border-default/50 bg-app px-2.5 py-2 font-mono text-[11px] leading-snug text-primary-c"
         >
           {lines.length === 0 ? "暂无日志" : lines.join("\n")}
         </pre>
