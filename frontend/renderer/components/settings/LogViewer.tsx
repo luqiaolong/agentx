@@ -46,7 +46,7 @@ export function LogViewer() {
           {err}
         </div>
       )}
-      <pre className="max-h-96 overflow-auto rounded-lg border border-default bg-[#0d1117] p-2.5 font-mono text-[11px] leading-relaxed text-slate-300">
+      <pre className="max-h-96 overflow-auto rounded-lg border border-default bg-[#0a0a0a] p-2.5 font-mono text-[11px] leading-relaxed text-neutral-300">
         {lines.length === 0 ? "暂无日志" : lines.join("\n")}
       </pre>
     </div>
