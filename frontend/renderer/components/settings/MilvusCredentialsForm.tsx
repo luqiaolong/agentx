@@ -22,7 +22,7 @@ export function MilvusCredentialsForm() {
   const [host, setHost] = useState("192.168.1.4");
   const [port, setPort] = useState("19530");
   const [db, setDb] = useState("agentx");
-  const [collection, setCollection] = useState("AGENTX_knowledge");
+  const [collection, setCollection] = useState("agentx_knowledge");
   const [embeddingUrl, setEmbeddingUrl] = useState("");
   const [authEnabled, setAuthEnabled] = useState(false);
 
