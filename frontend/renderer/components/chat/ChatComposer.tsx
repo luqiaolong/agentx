@@ -5,6 +5,7 @@ import {
   Paperclip,
   Slash,
   AtSign,
+  Folder,
   FolderPlus,
   X,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { useSkillsStore } from "@/stores/skills";
 import { useChatStore } from "@/stores/chat";
 import { usePermissionStore } from "@/stores/permission";
 import { PermissionToggle } from "./PermissionToggle";
+import { ModelToggle } from "./ModelToggle";
 
 /**
  * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）。
@@ -363,10 +365,14 @@ export function ChatComposer({
               </button>
               {showWorkspaceChip && workspacePath ? (
                 <span
-                  className="inline-flex max-w-[160px] items-center gap-0.5 rounded-md bg-brand-600/10 px-1.5 py-0.5 text-[11px] font-medium text-brand-500"
+                  className="group/ws inline-flex max-w-[220px] items-center gap-1 rounded-md border border-brand-500/25 bg-brand-600/10 pl-1.5 pr-1 py-0.5 text-[11px] font-medium text-brand-500 transition-colors hover:bg-brand-600/15"
                   title={workspaceChipTitle}
                 >
-                  <span className="max-w-[110px] truncate">
+                  <Folder
+                    className="h-3 w-3 shrink-0 text-brand-500/80"
+                    aria-hidden="true"
+                  />
+                  <span className="max-w-[120px] truncate">
                     {workspacePath.split(/[\\/]/).pop() || workspacePath}
                   </span>
                   <button
@@ -405,6 +411,7 @@ export function ChatComposer({
               )}
             </div>
             <div className="flex items-center gap-1.5">
+              <ModelToggle />
               <PermissionToggle
                 workspacePath={workspacePath}
                 homeWorkspacePath={homeWorkspacePath}

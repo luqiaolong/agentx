@@ -88,6 +88,35 @@ describe("PermissionToggle 紧凑命令栏", () => {
     expect(trigger.textContent).not.toContain("Home");
   });
 
+  it("无 workspace 时 popover header 显示 Home", async () => {
+    render(
+      <PermissionToggle workspacePath={null} homeWorkspacePath={null} />,
+    );
+    const trigger = document.querySelector(
+      'button[aria-haspopup="listbox"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      trigger.click();
+    });
+    expect(document.body.textContent ?? "").toContain("Home");
+  });
+
+  it("有 workspace 时 popover header 显示完整路径", async () => {
+    render(
+      <PermissionToggle
+        workspacePath="D:\\projects\\agentx"
+        homeWorkspacePath={null}
+      />,
+    );
+    const trigger = document.querySelector(
+      'button[aria-haspopup="listbox"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      trigger.click();
+    });
+    expect(document.body.textContent ?? "").toContain("agentx");
+  });
+
   it("点击 trigger 展开面板，再次点击关闭", async () => {
     const { container, queryByRole } = render(
       <PermissionToggle
