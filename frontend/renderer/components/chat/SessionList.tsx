@@ -9,6 +9,7 @@ import {
   Folder,
   ChevronDown,
   ChevronRight,
+  ScrollText,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { Session } from "@/stores/chat";
@@ -32,6 +33,12 @@ export function SessionList() {
   const switchSession = useChatStore((s) => s.switchSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
+  const setPendingSettingsTab = useSettingsStore((s) => s.setPendingSettingsTab);
+
+  const openLogsModal = () => {
+    setPendingSettingsTab("logs");
+    setSettingsOpen(true);
+  };
 
   // 分组：Home + 所有出现过的 workspace
   const groups = useMemo(() => {
@@ -154,17 +161,27 @@ export function SessionList() {
         )}
       </div>
 
-      {/* 底部设置入口 —— 固定在左下角 */}
-      <div className="mt-1 shrink-0 border-t border-default pt-1">
+      {/* 底部入口：设置 + 日志（固定在左下角，左右并排） */}
+      <div className="mt-1 flex shrink-0 items-center gap-1 border-t border-default pt-1.5">
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+          className="flex flex-1 items-center gap-1.5 rounded-lg px-2 py-1.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
           aria-label="打开设置"
           title="设置"
         >
           <Settings className="h-3.5 w-3.5 text-muted-c" />
           <span className="text-xs font-medium">设置</span>
+        </button>
+        <button
+          type="button"
+          onClick={openLogsModal}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+          aria-label="查看日志"
+          title="查看日志"
+        >
+          <ScrollText className="h-3.5 w-3.5 text-muted-c" />
+          <span className="text-xs font-medium">日志</span>
         </button>
       </div>
     </div>
