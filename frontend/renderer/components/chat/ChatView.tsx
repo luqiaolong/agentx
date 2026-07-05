@@ -8,7 +8,7 @@ import { usePermissionStore } from "@/stores/permission";
 import { SCENE_PROMPTS, useSceneStore } from "@/stores/scene";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
-import { MessageList } from "./MessageList";
+import { AssistantUIThread } from "./AssistantUIThread";
 import { EmptyState } from "./EmptyState";
 import { TodoProgress } from "./TodoProgress";
 import { ChatComposer } from "./ChatComposer";
@@ -326,7 +326,7 @@ export function ChatView() {
         {messages.length === 0 ? (
           <EmptyState />
         ) : (
-          <MessageList messages={messages} isStreaming={isStreaming} />
+          <AssistantUIThread messages={messages} isStreaming={isStreaming} />
         )}
         <div ref={bottomRef} />
       </div>
