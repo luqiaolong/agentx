@@ -34,7 +34,30 @@ from app.router.state import RouterState
 from app.subagents import run_code_agent, run_custom_agent, run_rag_agent, run_web_agent
 from app.utils.text import ThinkFilter, extract_chunk_text as _extract_chunk_text
 
-__all__ = ["build_router_graph", "run_router", "_parse_skill_tag"]
+__all__ = ["build_router_graph", "resolve_system_prompt", "run_router", "_parse_skill_tag"]
+
+
+def resolve_system_prompt(
+    default: str,
+    scene_prompt: str | None,
+    skill_extra: str | None,
+) -> str:
+    """合并三层 system prompt，优先级：skill_extra > scene_prompt > default。
+
+    - ``scene_prompt`` 非空时覆盖 ``default``（场景切换器注入）。
+    - ``skill_extra`` 非空时拼在最前（画像 / @skill content，遵循 spec R9 画像优先约定）。
+    - ``scene_prompt`` 为空字符串视为未设置（防御 pydantic 边界）。
+
+    Examples:
+        >>> resolve_system_prompt("d", None, None)
+        'd'
+        >>> resolve_system_prompt("d", "scene", None)
+        'scene'
+        >>> resolve_system_prompt("d", "scene", "skill")
+        'skill\\nscene'
+    """
+    base = scene_prompt if scene_prompt else default
+    return f"{skill_extra}\n{base}" if skill_extra else base
 
 
 # ============================================================
@@ -319,6 +342,7 @@ async def _run_deep_path(
     state: RouterState,
     profile_prompt: str = "",
     history: list | None = None,
+    permission_mode: str = "standard",
 ) -> AsyncIterator[dict[str, str]]:
     """路径 C：DeepAgent + 危险工具中断审批。
 
@@ -328,10 +352,12 @@ async def _run_deep_path(
         state: Router 状态。
         profile_prompt: 用户画像前缀，由 ``run_router`` 注入到 DeepAgent system prompt。
         history: 历史 messages 列表（已截断），传给 DeepAgent 拼到 inputs 前。
+        permission_mode: 权限模式，"standard" 或 "full_trust"。
     """
     try:
         async for event in run_deep_path(
-            state, message, profile_prompt=profile_prompt, history=history
+            state, message, profile_prompt=profile_prompt, history=history,
+            permission_mode=permission_mode,
         ):
             yield event
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
@@ -446,6 +472,7 @@ async def run_router(
     message: str,
     thread_id: str,
     checkpointer: Any = None,
+    permission_mode: str = "standard",
 ) -> AsyncIterator[dict[str, str]]:
     """运行 Router，yield SSE 事件。
 
@@ -460,6 +487,8 @@ async def run_router(
         message: 用户消息。
         thread_id: 会话 ID。
         checkpointer: 可选的 LangGraph checkpointer，用于加载历史 messages。
+        permission_mode: 权限模式，"standard"（审批流）或 "full_trust"（会话内全量放行）。
+            仅影响路径 C（DeepAgent）的危险工具审批与目录越界扩展授权。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -543,6 +572,7 @@ async def run_router(
                 state,
                 profile_prompt=profile_prompt,
                 history=history,
+                permission_mode=permission_mode,
             ):
                 yield sse
 

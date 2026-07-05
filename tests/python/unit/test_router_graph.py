@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.router.graph import build_router_graph, run_router
+from app.router.graph import build_router_graph, resolve_system_prompt, run_router
 
 
 # ============================================================
@@ -388,3 +388,38 @@ async def test_router_reset_preserves_authorized_dirs(
     token_events = [e for e in events if e["event"] == "token"]
     assert len(token_events) == 1
     assert "持久化" in token_events[0]["data"]
+
+
+# ============================================================
+# 6. resolve_system_prompt 工具函数
+# ============================================================
+
+
+def test_resolve_system_prompt_default_only() -> None:
+    """无 scene_prompt 也无 skill_extra → 返回 default。"""
+    assert resolve_system_prompt("default", None, None) == "default"
+
+
+def test_resolve_system_prompt_scene_overrides_default() -> None:
+    """scene_prompt 非空 → 覆盖 default。"""
+    assert resolve_system_prompt("default", "coding-prompt", None) == "coding-prompt"
+
+
+def test_resolve_system_prompt_skill_prepended() -> None:
+    """skill_extra 始终拼在最前（即使 scene_prompt 也存在）。"""
+    result = resolve_system_prompt("default", "coding-prompt", "skill-content")
+    assert result == "skill-content\ncoding-prompt"
+
+
+def test_resolve_system_prompt_skill_only() -> None:
+    """只有 skill_extra → 拼到 default 前。"""
+    result = resolve_system_prompt("default", None, "skill-content")
+    assert result == "skill-content\ndefault"
+
+
+def test_resolve_system_prompt_empty_scene_falls_back() -> None:
+    """scene_prompt 为空字符串（非 None）→ 视为未设置，回退 default。
+
+    防御 pydantic 把 "" 当 falsy 处理的边界情况。
+    """
+    assert resolve_system_prompt("default", "", None) == "default"
