@@ -203,9 +203,12 @@ export interface ModelEntry {
   /** 加密后的 API Key（enc:... 或 plain:...），renderer 视为不透明字符串 */
   apiKey: string;
   createdAt: number;
-  /** 模型最大上下文 token 上限（用户在「设置 → 模型」可选填入）；
+  /** 输入上下文 token 上限（用户在「设置 → 模型」可选填入）；
    *  undefined / null → useContextUsage 降级使用默认 16000 */
   contextWindow?: number | null;
+  /** 模型单次响应输出 token 上限（透传到 ChatOpenAI.max_tokens）；
+   *  undefined / null → 不设上限（langchain-openai 走模型默认） */
+  maxOutputTokens?: number | null;
 }
 
 export interface McpServerConfig {
