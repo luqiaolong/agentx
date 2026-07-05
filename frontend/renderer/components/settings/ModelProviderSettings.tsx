@@ -17,6 +17,8 @@ import {
   RefreshCw,
   ExternalLink,
   Server,
+  SlidersHorizontal,
+  ArrowDownToLine,
 } from "lucide-react";
 import type { ModelEntry, ModelProviderId } from "@/lib/utils";
 
@@ -463,6 +465,71 @@ function ModelEditor({
         {errs.apiKey && (
           <p className="mt-1 text-[10px] text-rose-500">{errs.apiKey}</p>
         )}
+      </div>
+
+      {/* 上下文容量（k tokens = 实际 token × 1000 存储）*/}
+      <div>
+        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+          <SlidersHorizontal className="h-3 w-3 text-muted-c" />
+          上下文容量
+          <span className="text-muted-c">（k tokens，输入上限）</span>
+        </label>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={
+            draft.contextWindow && draft.contextWindow > 0
+              ? String(Math.round(draft.contextWindow / 1000))
+              : ""
+          }
+          onChange={(e) => {
+            const k = e.target.value ? Number(e.target.value) : null;
+            setDraft((s) => ({
+              ...s,
+              contextWindow: k && k > 0 ? k * 1000 : null,
+            }));
+          }}
+          placeholder={preset ? String(preset.defaultContextK) : "例：128"}
+          className="input-field font-mono text-[11px]"
+        />
+        {draft.contextWindow && draft.contextWindow > 0 && (
+          <p className="mt-1 text-[10px] text-muted-c">
+            ≈ {draft.contextWindow.toLocaleString()} tokens · 决定右下角
+            ContextUsage widget 的分母
+          </p>
+        )}
+      </div>
+
+      {/* 输出 token 上限 */}
+      <div>
+        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+          <ArrowDownToLine className="h-3 w-3 text-muted-c" />
+          输出 token 上限
+          <span className="text-muted-c">（k tokens，单次响应）</span>
+        </label>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={
+            draft.maxOutputTokens && draft.maxOutputTokens > 0
+              ? String(Math.round(draft.maxOutputTokens / 1000))
+              : ""
+          }
+          onChange={(e) => {
+            const k = e.target.value ? Number(e.target.value) : null;
+            setDraft((s) => ({
+              ...s,
+              maxOutputTokens: k && k > 0 ? k * 1000 : null,
+            }));
+          }}
+          placeholder={preset ? String(preset.defaultOutputK) : "例：4 / 8 / 16"}
+          className="input-field font-mono text-[11px]"
+        />
+        <p className="mt-1 text-[10px] text-muted-c">
+          激活后经 AGENTX_MAX_OUTPUT_TOKENS 传给后端 ChatOpenAI；留空不限制
+        </p>
       </div>
 
       {/* 获取密钥链接 + 提示 */}
