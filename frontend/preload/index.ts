@@ -3,8 +3,10 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   ChatEvent,
   ApprovalRequest,
+  ApprovalDecision,
   CompactResult,
   MilvusCredentialResult,
+  PermissionMode,
   SkillSummary,
   WorkspaceEntry,
   AuthorizedDir,
@@ -31,7 +33,9 @@ import type {
 export type {
   ChatEvent,
   ApprovalRequest,
+  ApprovalDecision,
   MilvusCredentialResult,
+  PermissionMode,
   SkillSummary,
   WorkspaceEntry,
   SubagentConfig,
@@ -60,13 +64,18 @@ const approvalHandlers = new Set<(req: ApprovalRequest) => void>();
 
 async function streamChat(
   msg: { role: string; content: string },
-  opts?: { threadId?: string },
+  opts?: { threadId?: string; permissionMode?: PermissionMode; systemPrompt?: string },
 ): Promise<void> {
-  // 后端 ChatRequest: { message: str, thread_id: str }（thread_id 必填，非 null）
+  // 后端 ChatRequest: { message, thread_id, permission_mode, system_prompt }
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: msg.content, thread_id: opts?.threadId ?? "" }),
+    body: JSON.stringify({
+      message: msg.content,
+      thread_id: opts?.threadId ?? "",
+      permission_mode: opts?.permissionMode ?? "standard",
+      system_prompt: opts?.systemPrompt ?? null,
+    }),
   });
   const body = res.body;
   if (!body) return;
@@ -120,6 +129,9 @@ async function streamChat(
           toolName: String(obj.tool_name ?? ""),
           args: obj.args,
           preview: String(obj.preview ?? ""),
+          kind: obj.kind === "directory_extension" ? "directory_extension" : "dangerous_tool",
+          requestedPath: typeof obj.requestedPath === "string" ? obj.requestedPath : undefined,
+          writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
         };
         approvalHandlers.forEach((h) => h(req));
       }
@@ -219,11 +231,17 @@ const api: ElectronAPI = {
     revealInFolder: (p) => ipcRenderer.invoke("shell:revealInFolder", p),
   },
   approve: {
-    submit: (threadId, approval) =>
+    submit: (threadId, approval, decision, path, writable) =>
       fetch(`${API_BASE}/api/chat/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thread_id: threadId, approval }),
+        body: JSON.stringify({
+          thread_id: threadId,
+          approval,
+          decision: decision ?? "approve",
+          path: path ?? null,
+          writable: writable ?? false,
+        }),
       }).then(() => undefined),
   },
   health: {

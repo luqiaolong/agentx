@@ -11,12 +11,21 @@ export interface ChatEvent {
   [k: string]: unknown;
 }
 
+export type ApprovalKind = "dangerous_tool" | "directory_extension";
+
 export interface ApprovalRequest {
   threadId: string;
   toolName: string;
   args: unknown;
   preview: string;
+  kind?: ApprovalKind;          // 缺省 = dangerous_tool（向后兼容）
+  requestedPath?: string;       // directory_extension 时填
+  writable?: boolean;           // directory_extension 时填
 }
+
+export type PermissionMode = "standard" | "full_trust";
+
+export type ApprovalDecision = "approve" | "once" | "session" | "deny";
 
 export interface MilvusCredentialResult {
   user: string | null;
@@ -204,7 +213,10 @@ export interface CompactResult {
 
 export interface ElectronAPI {
   chat: {
-    send: (msg: { role: string; content: string }, opts?: { threadId?: string }) => Promise<void>;
+    send: (
+      msg: { role: string; content: string },
+      opts?: { threadId?: string; permissionMode?: PermissionMode; systemPrompt?: string },
+    ) => Promise<void>;
     abort: (threadId: string) => Promise<void>;
     compact: (threadId: string) => Promise<CompactResult>;
     onEvent: (handler: (e: ChatEvent) => void) => () => void;
@@ -237,7 +249,15 @@ export interface ElectronAPI {
   shell: {
     revealInFolder: (p: string) => Promise<void>;
   };
-  approve: { submit: (threadId: string, approval: boolean) => Promise<void> };
+  approve: {
+    submit: (
+      threadId: string,
+      approval: boolean,
+      decision?: ApprovalDecision,
+      path?: string,
+      writable?: boolean,
+    ) => Promise<void>;
+  };
   health: { check: () => Promise<HealthStatus> };
   settings: {
     setMilvusCredentials: (user: string, password: string) => Promise<unknown>;
