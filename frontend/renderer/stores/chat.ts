@@ -61,6 +61,12 @@ export interface Session {
    * 所有会话必须挂载在某个 workspace 下（Home 也是 workspace）。
    */
   workspacePath: string | null;
+  /**
+   * 用户手动 revoke 过的路径集合（用于阻止 chip 隐式授权覆盖）。
+   * 用户重新手动 authorize 同一路径时会从此集合移除。
+   * 持久化到 localStorage（跨重启保留）。
+   */
+  manuallyRevokedPaths: string[];
 }
 
 interface ChatState {
@@ -86,6 +92,10 @@ interface ChatState {
    * 把会话迁到指定 workspace。null 表示迁回 Home。
    */
   moveSessionToWorkspace: (id: string, workspacePath: string | null) => void;
+  /** 手动撤销授权并标记，阻止 chip 隐式授权覆盖。 */
+  revokeAndMark: (sessionId: string, path: string) => Promise<void>;
+  /** 手动授权并清除 revoked 标记（handleAttachWorkspace 复用）。 */
+  authorizeAndUnmark: (sessionId: string, path: string, writable?: boolean) => Promise<void>;
   setHomeWorkspacePath: (p: string | null) => void;
   // 当前会话消息操作（作用于 sessions[currentId]）
   /**
@@ -148,6 +158,7 @@ function createSessionRecord(id: string, workspacePath: string | null = null): S
     messages: [],
     createdAt: Date.now(),
     workspacePath,
+    manuallyRevokedPaths: [],
   };
 }
 
@@ -200,6 +211,7 @@ function migrateV0toV1(persisted: unknown): Partial<ChatState> {
     messages: oldMessages,
     createdAt: firstMsg ? firstMsg.ts : Date.now(),
     workspacePath: null,
+    manuallyRevokedPaths: [],
   };
   return { sessions: { [id]: session }, currentId: id };
 }
@@ -220,6 +232,8 @@ function migrateV1toV2(persisted: unknown): Partial<ChatState> {
         typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
           ? raw.workspacePath
           : null,
+      manuallyRevokedPaths:
+        Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
     };
   }
   return {
@@ -276,6 +290,8 @@ function migrateV2toV3(persisted: unknown): Partial<ChatState> {
         typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
           ? raw.workspacePath
           : null,
+      manuallyRevokedPaths:
+        Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
     };
   }
   return {
@@ -358,7 +374,7 @@ function createQuotaGuardedStorage(): {
 export const useChatStore = create<ChatState>()(
   devtools(
     persist(
-      (set) => ({
+      (set, get) => ({
         sessions: {},
         currentId: null,
         homeWorkspacePath: null,
@@ -375,6 +391,14 @@ export const useChatStore = create<ChatState>()(
             const currentId = id;
             return { sessions, currentId };
           });
+          // 隐式授权：workspacePath 非空时自动调 authorize（source=chip）
+          // optional chaining 防御测试环境 window.api 缺失；失败静默不阻塞 UI
+          if (workspacePath) {
+            const sess = get().sessions[id];
+            if (sess && !sess.manuallyRevokedPaths.includes(workspacePath)) {
+              window.api?.sandbox?.authorize?.(id, workspacePath, true, "chip")?.catch?.(() => {});
+            }
+          }
           return id;
         },
 
@@ -420,6 +444,51 @@ export const useChatStore = create<ChatState>()(
             const sessions = {
               ...s.sessions,
               [id]: { ...sess, workspacePath },
+            };
+            return { sessions };
+          });
+          // 隐式授权：workspacePath 非空且未被 revoke 时自动调 authorize（source=chip）
+          // optional chaining 防御测试环境 window.api 缺失；失败静默不阻塞 UI
+          if (workspacePath) {
+            const sess = get().sessions[id];
+            if (sess && !sess.manuallyRevokedPaths.includes(workspacePath)) {
+              window.api?.sandbox?.authorize?.(id, workspacePath, true, "chip")?.catch?.(() => {});
+            }
+          }
+        },
+
+        revokeAndMark: async (sessionId, path) => {
+          // 先调后端 revoke
+          await window.api.sandbox.revoke(sessionId, path);
+          // 再写入 manuallyRevokedPaths
+          set((s) => {
+            const sess = s.sessions[sessionId];
+            if (!sess) return s;
+            if (sess.manuallyRevokedPaths.includes(path)) return s;
+            const sessions = {
+              ...s.sessions,
+              [sessionId]: {
+                ...sess,
+                manuallyRevokedPaths: [...sess.manuallyRevokedPaths, path],
+              },
+            };
+            return { sessions };
+          });
+        },
+
+        authorizeAndUnmark: async (sessionId, path, writable = true) => {
+          // 先调后端 authorize（source=manual）
+          await window.api.sandbox.authorize(sessionId, path, writable, "manual");
+          // 再从 manuallyRevokedPaths 移除
+          set((s) => {
+            const sess = s.sessions[sessionId];
+            if (!sess) return s;
+            const sessions = {
+              ...s.sessions,
+              [sessionId]: {
+                ...sess,
+                manuallyRevokedPaths: sess.manuallyRevokedPaths.filter((p) => p !== path),
+              },
             };
             return { sessions };
           });

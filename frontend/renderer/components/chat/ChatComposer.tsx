@@ -233,7 +233,7 @@ export function ChatComposer({
       store.moveSessionToWorkspace(tid, dirPath);
     }
     try {
-      await window.api.sandbox.authorize(tid, dirPath, true);
+      await useChatStore.getState().authorizeAndUnmark(tid, dirPath, true);
     } catch (err) {
       setDropError(
         `授权目录「${dirPath}」失败：${err instanceof Error ? err.message : String(err)}`,
