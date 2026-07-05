@@ -7,7 +7,8 @@
 - 使用 ``sqlite3`` 同步连接（``SessionSandbox.authorize/revoke/clear`` 是同步方法）
 - 每次操作 ``with sqlite3.connect(...)`` 建立短连接，避免连接生命周期管理
 - ``source`` 字段 UPSERT 优先级：``manual`` > ``chip`` > ``legacy``
-- 所有写操作 best-effort：DB 失败仅 log warning，不抛异常（内存优先）
+- 本层为纯 CRUD，异常直接抛给调用方；best-effort 双写由 ``SessionSandbox._persist_*``
+  承担（详见 design.md D4）
 """
 
 from __future__ import annotations
