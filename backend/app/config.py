@@ -296,6 +296,9 @@ class Settings(BaseSettings):
     def milvus_uri(self) -> str:
         return f"http://{self.milvus_host}:{self.milvus_port}"
 
+    sandbox_persistence_enabled: bool = True
+    """沙箱授权持久化开关。关闭时所有双写降级为内存-only（故障注入/调试用）。"""
+
     def ensure_runtime_dirs(self) -> None:
         """确保运行时目录存在。"""
         for d in (WORKSPACE_DIR, UPLOADS_DIR, DATA_DIR):
