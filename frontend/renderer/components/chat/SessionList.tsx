@@ -33,11 +33,10 @@ export function SessionList() {
   const switchSession = useChatStore((s) => s.switchSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
-  const setPendingSettingsTab = useSettingsStore((s) => s.setPendingSettingsTab);
+  const setLogsModalOpen = useSettingsStore((s) => s.setLogsModalOpen);
 
   const openLogsModal = () => {
-    setPendingSettingsTab("logs");
-    setSettingsOpen(true);
+    setLogsModalOpen(true);
   };
 
   // 分组：Home + 所有出现过的 workspace
@@ -161,8 +160,8 @@ export function SessionList() {
         )}
       </div>
 
-      {/* 底部入口：设置 + 日志（固定在左下角，左右并排） */}
-      <div className="mt-1 flex shrink-0 items-center gap-1 border-t border-default pt-1.5">
+      {/* 底部入口：设置常驻，日志按钮默认隐藏，鼠标划过整条时显示 */}
+      <div className="group mt-1 flex shrink-0 items-center gap-1 border-t border-default pt-1.5">
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
@@ -176,12 +175,14 @@ export function SessionList() {
         <button
           type="button"
           onClick={openLogsModal}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+          className="flex max-w-0 overflow-hidden opacity-0 transition-all duration-200 ease-out group-hover:max-w-[6rem] group-hover:opacity-100 group-focus-within:max-w-[6rem] group-focus-within:opacity-100 hover:bg-hover-soft rounded-lg text-secondary-c hover:text-primary-c"
           aria-label="查看日志"
           title="查看日志"
         >
-          <ScrollText className="h-3.5 w-3.5 text-muted-c" />
-          <span className="text-xs font-medium">日志</span>
+          <span className="flex shrink-0 items-center gap-1.5 px-2 py-1.5">
+            <ScrollText className="h-3.5 w-3.5 text-muted-c" />
+            <span className="whitespace-nowrap text-xs font-medium">日志</span>
+          </span>
         </button>
       </div>
     </div>
@@ -288,11 +289,18 @@ function SessionGroup({
                       aria-hidden
                     />
                   )}
-                  <MessageSquare
-                    className={`h-3.5 w-3.5 shrink-0 ${
-                      active ? "text-brand-500" : "text-muted-c"
-                    }`}
-                  />
+                  {active && isStreaming ? (
+                    <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-40" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
+                    </span>
+                  ) : (
+                    <MessageSquare
+                      className={`h-3.5 w-3.5 shrink-0 ${
+                        active ? "text-brand-500" : "text-muted-c"
+                      }`}
+                    />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div
                       className={`truncate text-xs font-medium leading-tight ${active ? "text-primary-c" : "text-secondary-c"}`}

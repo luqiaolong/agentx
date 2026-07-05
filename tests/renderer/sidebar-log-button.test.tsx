@@ -35,17 +35,19 @@ describe("侧边栏日志按钮", () => {
   beforeEach(() => {
     useSettingsStore.setState({
       isSettingsOpen: false,
+      isLogsModalOpen: false,
       pendingSettingsTab: null,
     });
   });
 
-  it("点击「日志」按钮触发跳转（日志 tab + 打开设置弹窗）", () => {
+  it("点击「日志」按钮只打开独立日志窗口（不再走设置弹窗）", () => {
     render(<SessionList />);
     const btn = screen.getByRole("button", { name: "查看日志" });
     fireEvent.click(btn);
     const s = useSettingsStore.getState();
-    expect(s.pendingSettingsTab).toBe("logs");
-    expect(s.isSettingsOpen).toBe(true);
+    expect(s.isLogsModalOpen).toBe(true);
+    expect(s.isSettingsOpen).toBe(false);
+    expect(s.pendingSettingsTab).toBeNull();
   });
 
   it("仍然存在「设置」按钮", () => {

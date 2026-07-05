@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2 } from "lucide-react";
-import { StatusIndicator } from "./components/StatusIndicator";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
 import { ChatView } from "./components/chat/ChatView";
 import { SessionList } from "./components/chat/SessionList";
 import { WorkspacePanel } from "./components/workspace/WorkspacePanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsModal } from "./components/settings/SettingsModal";
+import { LogsModal } from "./components/settings/LogsModal";
 import { useSettingsStore } from "./stores/settings";
 import { useChatStore } from "./stores/chat";
 import { useSceneStore } from "./stores/scene";

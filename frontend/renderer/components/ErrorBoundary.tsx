@@ -40,9 +40,8 @@ export class ErrorBoundary extends Component<Props, State> {
               type="button"
               className="btn-secondary"
               onClick={() => {
-                // 打开设置面板并跳转到"日志"tab，便于用户排查渲染错误
-                useSettingsStore.getState().setPendingSettingsTab("logs");
-                useSettingsStore.getState().setSettingsOpen(true);
+                // 打开独立日志窗口，便于用户排查渲染错误
+                useSettingsStore.getState().setLogsModalOpen(true);
               }}
             >
               <FileText className="h-3.5 w-3.5" />

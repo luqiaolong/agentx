@@ -3,7 +3,16 @@ import { RefreshCw, FileText, ArrowDown } from "lucide-react";
 
 const POLL_INTERVAL_MS = 2000;
 
-export function LogViewer() {
+interface LogViewerProps {
+  /**
+   * 为 true 时让 <pre> 用 flex-1 撑满父容器，父容器需为 flex 列布局 + min-h-0，
+   * 此时整个区域共用一个滚动条（LogsModal 用）。默认 false 时用 max-h 兜底，
+   * 滚动由父容器提供（SettingsModal 的 tabpanel 用）。
+   */
+  fillParent?: boolean;
+}
+
+export function LogViewer({ fillParent = false }: LogViewerProps = {}) {
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -64,7 +73,7 @@ export function LogViewer() {
   };
 
   return (
-    <div className="space-y-2">
+    <div className={`flex min-h-0 flex-col space-y-2 ${fillParent ? "h-full" : ""}`}>
       <div className="flex items-center justify-between text-[11px] text-muted-c">
         <span className="inline-flex items-center gap-1.5">
           <FileText className="h-3.5 w-3.5" />
@@ -86,11 +95,13 @@ export function LogViewer() {
           {err}
         </div>
       )}
-      <div className="relative">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <pre
           ref={preRef}
           onScroll={handleScroll}
-          className="max-h-[calc(100vh-220px)] overflow-auto rounded-md border border-default/50 bg-app px-2.5 py-2 font-mono text-[11px] leading-snug text-primary-c"
+          className={`relative overflow-auto rounded-md border border-default/50 bg-app px-2.5 py-2 font-mono text-[11px] leading-snug text-primary-c ${
+            fillParent ? "min-h-0 flex-1" : "max-h-[calc(100vh-220px)]"
+          }`}
         >
           {lines.length === 0 ? "暂无日志" : lines.join("\n")}
         </pre>
