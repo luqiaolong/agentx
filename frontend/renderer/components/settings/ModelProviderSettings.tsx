@@ -279,23 +279,36 @@ function ModelEditor({
   const isCustom = draft.providerId === "custom";
   const preset = draft.providerId !== "custom" ? PROVIDER_PRESETS[draft.providerId] : null;
 
-  // 切换 provider 时，若是预设则自动填充默认 model + baseUrl（仅当用户未自定义时）
+  // 切换 provider 时，若是预设则自动填充默认 model + baseUrl + contextWindow + maxOutputTokens（仅当用户未自定义时）
   const handleProviderChange = (id: ModelProviderId): void => {
     setDraft((s) => {
       if (id !== "custom") {
         const p = PROVIDER_PRESETS[id];
-        // 若当前 model/baseUrl 为空或等于其他预设的默认值，则替换为新预设的默认值
+        // 若当前 model/baseUrl/contextWindow/maxOutputTokens 为空或等于其他预设的默认值，则替换
         const modelIsDefault =
           !s.model ||
           Object.values(PROVIDER_PRESETS).some((pp) => pp.defaultModel === s.model);
         const urlIsDefault =
           !s.baseUrl ||
           Object.values(PROVIDER_PRESETS).some((pp) => pp.defaultBaseUrl === s.baseUrl);
+        // k tokens × 1000 → 实际 token 数；任一预设的 k*1000 都视为"默认"
+        const contextKOptions = Object.values(PROVIDER_PRESETS).map(
+          (pp) => pp.defaultContextK * 1000,
+        );
+        const outputKOptions = Object.values(PROVIDER_PRESETS).map(
+          (pp) => pp.defaultOutputK * 1000,
+        );
+        const contextIsDefault =
+          !s.contextWindow || contextKOptions.includes(s.contextWindow);
+        const outputIsDefault =
+          !s.maxOutputTokens || outputKOptions.includes(s.maxOutputTokens);
         return {
           ...s,
           providerId: id,
           model: modelIsDefault ? p.defaultModel : s.model,
           baseUrl: urlIsDefault ? p.defaultBaseUrl : s.baseUrl,
+          contextWindow: contextIsDefault ? p.defaultContextK * 1000 : s.contextWindow,
+          maxOutputTokens: outputIsDefault ? p.defaultOutputK * 1000 : s.maxOutputTokens,
         };
       }
       return { ...s, providerId: id };
