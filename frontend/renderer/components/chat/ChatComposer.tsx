@@ -8,6 +8,7 @@ import {
   Folder,
   FolderPlus,
   X,
+  Send,
 } from "lucide-react";
 import { CommandPicker } from "./CommandPicker";
 import { useAutoResizeTextarea } from "@/hooks/useAutoResizeTextarea";
@@ -341,10 +342,10 @@ export function ChatComposer({
   const canSend = input.trim().length > 0 && !isStreaming;
 
   return (
-    <div className="border-t border-default bg-surface px-4 py-2">
+    <div className="border-t border-default bg-surface px-4 py-1.5">
       <div className="mx-auto max-w-3xl">
         <div
-          className={`chat-composer relative px-3 pb-2 pt-1.5 ${
+          className={`chat-composer relative px-3 pb-1.5 pt-2 ${
             dragOver ? "is-drop-target" : ""
           }`}
           onDragOver={handleDragOver}
@@ -367,108 +368,117 @@ export function ChatComposer({
               rows={2}
               placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
               aria-label="消息输入框"
-              className="input-borderless relative z-20 block h-12 w-full resize-none pr-36"
+              className="input-borderless relative z-20 block w-full resize-none pb-2"
               style={{ height: `${textareaHeight}px` }}
             />
 
-            {/* 模型选择 + 发送按钮：定位在 textarea 右下角 */}
-            <div className="absolute bottom-1.5 right-1 z-30 flex items-center gap-1.5">
-              <ModelToggle />
-              <PermissionToggle
-                workspacePath={workspacePath}
-                homeWorkspacePath={homeWorkspacePath}
-              />
-              {isStreaming ? (
-                <button
-                  type="button"
-                  onClick={onAbort}
-                  className="btn-send is-stop"
-                  aria-label="中止生成"
-                  title="中止"
-                >
-                  <Square className="h-3 w-3 fill-current" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSubmit}
-                  disabled={!canSend}
-                  className="btn-send"
-                  aria-label="发送消息"
-                  title="发送 (Enter)"
-                >
-                  <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-1 flex items-center gap-2">
-            <div className="flex items-center gap-1 text-[11px] text-muted-c">
-              <button
-                type="button"
-                className="btn-icon"
-                onClick={openCommandPickerManually}
-                title="调用命令或技能 (/ 命令)"
-                aria-label="调用命令或技能"
-              >
-                <Slash className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                className="btn-icon"
-                onClick={() => void handleAttachFile()}
-                title="附加文件 (@)"
-                aria-label="附加文件"
-              >
-                <AtSign className="h-3.5 w-3.5" />
-              </button>
-              {showWorkspaceChip && workspacePath ? (
-                <span
-                  className="group/ws inline-flex max-w-[220px] items-center gap-1 rounded-md border border-brand-500/25 bg-brand-600/10 pl-1.5 pr-1 py-0.5 text-[11px] font-medium text-brand-500 transition-colors hover:bg-brand-600/15"
-                  title={workspaceChipTitle}
-                >
-                  <Folder
-                    className="h-3 w-3 shrink-0 text-brand-500/80"
-                    aria-hidden="true"
-                  />
-                  <span className="max-w-[120px] truncate">
-                    {workspacePath.split(/[\\/]/).pop() || workspacePath}
-                  </span>
-                  <button
-                    type="button"
-                    className="ml-0.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-brand-500/70 transition-colors hover:bg-brand-500/20 hover:text-brand-500"
-                    onClick={handleRemoveWorkspace}
-                    title="迁回 Home"
-                    aria-label="迁回 Home"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-brand-500/70 transition-colors hover:bg-brand-500/20 hover:text-brand-500"
-                    onClick={() => void handleAttachWorkspace()}
-                    title="更换 workspace"
-                    aria-label="更换 workspace"
-                  >
-                    <FolderPlus className="h-2.5 w-2.5" />
-                  </button>
-                </span>
-              ) : (
+            {/* 底部 Toolbar：左 = 触发类 [/][@][workspace]，右 = 状态类 + 动作类 */}
+            <div className="mt-1.5 flex items-center justify-between gap-1 border-t border-default pt-1.5">
+              {/* LEFT — 触发类 */}
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   className="btn-icon"
-                  onClick={() => void handleAttachWorkspace()}
-                  title={
-                    homeWorkspacePath
-                      ? `选择 workspace（Home = ${homeWorkspacePath}）`
-                      : "选择 workspace 目录"
-                  }
-                  aria-label="选择 workspace 目录"
+                  onClick={openCommandPickerManually}
+                  title="调用命令或技能 (/ 命令)"
+                  aria-label="调用命令或技能"
                 >
-                  <FolderPlus className="h-3.5 w-3.5" />
+                  <Slash className="h-3.5 w-3.5" />
                 </button>
-              )}
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => void handleAttachFile()}
+                  title="附加文件 (@)"
+                  aria-label="附加文件"
+                >
+                  <AtSign className="h-3.5 w-3.5" />
+                </button>
+                {showWorkspaceChip && workspacePath ? (
+                  <span
+                    className="group/ws inline-flex max-w-[160px] items-center gap-1 rounded-md border border-brand-500/25 bg-brand-600/10 pl-1.5 pr-1 py-0.5 text-[10.5px] font-medium text-brand-500 transition-colors hover:bg-brand-600/15"
+                    title={workspaceChipTitle}
+                  >
+                    <Folder
+                      className="h-3 w-3 shrink-0 text-brand-500/80"
+                      aria-hidden="true"
+                    />
+                    <span className="max-w-[88px] truncate">
+                      {workspacePath.split(/[\\/]/).pop() || workspacePath}
+                    </span>
+                    <button
+                      type="button"
+                      className="ml-0.5 inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-brand-500/70 transition-colors hover:bg-brand-500/20 hover:text-brand-500"
+                      onClick={handleRemoveWorkspace}
+                      title="迁回 Home"
+                      aria-label="迁回 Home"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-brand-500/70 transition-colors hover:bg-brand-500/20 hover:text-brand-500"
+                      onClick={() => void handleAttachWorkspace()}
+                      title="更换 workspace"
+                      aria-label="更换 workspace"
+                    >
+                      <FolderPlus className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    onClick={() => void handleAttachWorkspace()}
+                    title={
+                      homeWorkspacePath
+                        ? `选择 workspace（Home = ${homeWorkspacePath}）`
+                        : "选择 workspace 目录"
+                    }
+                    aria-label="选择 workspace 目录"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* SPACER */}
+              <div className="flex-1" />
+
+              {/* RIGHT — 状态 + 动作 */}
+              <div className="flex items-center gap-1">
+                <div className="flex items-center">
+                  <ModelToggle />
+                </div>
+                <div className="flex items-center">
+                  <PermissionToggle
+                    workspacePath={workspacePath}
+                    homeWorkspacePath={homeWorkspacePath}
+                  />
+                </div>
+                {isStreaming ? (
+                  <button
+                    type="button"
+                    onClick={onAbort}
+                    className="btn-send is-stop"
+                    aria-label="中止生成"
+                    title="中止"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={!canSend}
+                    className="btn-send"
+                    aria-label="发送消息"
+                    title="发送 (Enter)"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
