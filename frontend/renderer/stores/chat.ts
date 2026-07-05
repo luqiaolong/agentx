@@ -145,6 +145,11 @@ interface ChatState {
   /** 兼容旧 API：等价于 appendPartText(messageId, "text", content)。 */
   appendMessageContent: (id: string, content: string) => void;
   clearMessages: () => void;
+  /**
+   * 删除指定消息及其之后的所有消息（用于重新编辑后重发）。
+   * 返回被删除的消息中最后一条 user 消息的 content（用于回填输入框）。
+   */
+  deleteMessagesAfter: (messageId: string) => string | null;
   setStreaming: (v: boolean) => void;
   setApprovalRequest: (req: ApprovalRequest | null) => void;
 }
@@ -706,6 +711,27 @@ export const useChatStore = create<ChatState>()(
             const sessions = { ...s.sessions, [cid]: { ...sess, messages: [] } };
             return { sessions };
           });
+        },
+
+        deleteMessagesAfter: (messageId) => {
+          let lastUserContent: string | null = null;
+          set((s) => {
+            const cid = s.currentId;
+            if (!cid || !s.sessions[cid]) return s;
+            const sess = s.sessions[cid];
+            const idx = sess.messages.findIndex((m) => m.id === messageId);
+            if (idx === -1) return s;
+            const kept = sess.messages.slice(0, idx);
+            // 记录被删除段中最后一条 user 消息的 content（用于回填输入框）
+            const removed = sess.messages.slice(idx);
+            const lastUser = removed.reverse().find((m) => m.role === "user");
+            if (lastUser) {
+              lastUserContent = lastUser.content;
+            }
+            const sessions = { ...s.sessions, [cid]: { ...sess, messages: kept } };
+            return { sessions };
+          });
+          return lastUserContent;
         },
 
         setStreaming: (v) => set({ isStreaming: v }),

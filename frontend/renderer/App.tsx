@@ -122,8 +122,6 @@ export default function App() {
         </div>
 
         <div className="app-no-drag flex items-center gap-2">
-          <StatusIndicator />
-          <div className="mx-1 h-4 w-px" style={{ backgroundColor: "var(--border-default)" }} />
           <button
             type="button"
             onClick={toggleTheme}
@@ -196,6 +194,8 @@ export default function App() {
       <ApprovalDialog />
       {/* 设置弹窗 —— 由左下角按钮触发，全局承载 */}
       <SettingsModal />
+      {/* 独立日志窗口 —— 由侧边栏「日志」按钮或 ErrorBoundary 跳转触发 */}
+      <LogsModal />
 
       {/* 启动中遮罩 */}
       {showStartingMask && (
@@ -244,7 +244,7 @@ function WindowControlButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-c transition-colors ${hoverColor}`}
+      className={`btn-ghost h-7 w-7 ${hoverColor}`}
       {...rest}
     >
       {children}

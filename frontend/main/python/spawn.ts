@@ -232,7 +232,7 @@ export function spawnPython(opts: PythonSpawnOptions): PythonHandle {
           resolve(false);
           return;
         }
-        const req = http.get(`http://127.0.0.1:${opts.port}/api/health`, (res) => {
+        const req = http.get(`http://127.0.0.1:${opts.port}/`, (res) => {
           res.resume();
           if (res.statusCode === 200) {
             consecutive += 1;

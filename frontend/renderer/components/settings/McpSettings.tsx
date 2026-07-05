@@ -441,16 +441,11 @@ function ServerEditor({
             type="button"
             role="switch"
             aria-checked={draft.enabled}
+            data-checked={draft.enabled}
             onClick={() => setDraft((s) => ({ ...s, enabled: !s.enabled }))}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-              draft.enabled ? "bg-brand-600" : "bg-subtle"
-            }`}
+            className="switch-track"
           >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                draft.enabled ? "translate-x-3.5" : "translate-x-0.5"
-              }`}
-            />
+            <span className="switch-thumb" data-checked={draft.enabled} />
           </button>
         </div>
         <div className="flex items-center gap-2">
@@ -461,16 +456,11 @@ function ServerEditor({
             type="button"
             role="switch"
             aria-checked={draft.trusted}
+            data-checked={draft.trusted}
             onClick={() => setDraft((s) => ({ ...s, trusted: !s.trusted }))}
-            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-              draft.trusted ? "bg-brand-600" : "bg-subtle"
-            }`}
+            className="switch-track"
           >
-            <span
-              className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                draft.trusted ? "translate-x-3.5" : "translate-x-0.5"
-              }`}
-            />
+            <span className="switch-thumb" data-checked={draft.trusted} />
           </button>
         </div>
       </div>
@@ -699,7 +689,7 @@ export function McpSettings(): JSX.Element {
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
-          <button type="button" className="btn-primary px-2.5 py-1.5" onClick={startNew}>
+          <button type="button" className="btn-primary" onClick={startNew}>
             <Plus className="h-3.5 w-3.5" />
             新建
           </button>

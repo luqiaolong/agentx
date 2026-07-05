@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ShieldAlert, Check, X } from "lucide-react";
+import { ShieldAlert, Check, X, Clock, ShieldCheck } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
+import type { ApprovalDecision } from "../../../shared/api-types";
 
+/**
+ * 操作审批弹窗。
+ *
+ * 两种形态（spec §4.3）：
+ * - dangerous_tool：原审批弹窗，倒计时自动批准可启用，按钮 [拒绝 / 批准]
+ * - directory_extension：越界访问授权请求，**不自动批准**，按钮 [拒绝 / 本次允许 / 会话内允许]
+ *
+ * 自动批准策略：仅 dangerous_tool 在 autoApproveAfterSeconds > 0 时倒计时归零自动 approve；
+ * directory_extension 必须用户显式选择 once/session/deny，避免静默扩张授权范围。
+ */
 export function ApprovalDialog() {
   const approvalRequest = useChatStore((s) => s.approvalRequest);
   const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
@@ -12,8 +23,12 @@ export function ApprovalDialog() {
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // dangerous_tool 且启用倒计时时才自动批准
+  const isDangerous = approvalRequest?.kind !== "directory_extension";
+  const autoApproveEnabled = isDangerous && autoApproveAfterSeconds > 0;
+
   useEffect(() => {
-    if (!approvalRequest || autoApproveAfterSeconds <= 0) return;
+    if (!approvalRequest || !autoApproveEnabled) return;
     setRemaining(autoApproveAfterSeconds);
     timerRef.current = setInterval(() => {
       setRemaining((r) => {
@@ -31,19 +46,29 @@ export function ApprovalDialog() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [approvalRequest, autoApproveAfterSeconds, setApprovalRequest]);
+  }, [approvalRequest, autoApproveEnabled, autoApproveAfterSeconds, setApprovalRequest]);
 
-  const submit = async (approved: boolean) => {
+  // 通用提交：dangerous_tool 走 (true,false) 旧路径；directory_extension 走 decision/path/writable
+  const submit = async (
+    approved: boolean,
+    decision: ApprovalDecision = approved ? "approve" : "deny",
+  ) => {
     if (!approvalRequest) return;
     setError(null);
     if (timerRef.current) clearInterval(timerRef.current);
     try {
-      await window.api.approve.submit(approvalRequest.threadId, approved);
+      await window.api.approve.submit(
+        approvalRequest.threadId,
+        approved,
+        decision,
+        approvalRequest.requestedPath,
+        approvalRequest.writable ?? false,
+      );
       setApprovalRequest(null);
     } catch (err) {
       // 提交失败时保留对话框，让用户可重试；恢复倒计时定时器
       setError(err instanceof Error ? err.message : String(err));
-      if (autoApproveAfterSeconds > 0) {
+      if (autoApproveEnabled) {
         setRemaining(autoApproveAfterSeconds);
         timerRef.current = setInterval(() => {
           setRemaining((r) => {
@@ -84,12 +109,23 @@ export function ApprovalDialog() {
                 <ShieldAlert className="h-4 w-4" />
               </div>
               <div className="flex-1">
-                <div className="text-sm font-semibold text-primary-c">操作审批</div>
+                <div className="text-sm font-semibold text-primary-c">
+                  {isDangerous ? "操作审批" : "目录访问授权"}
+                </div>
                 <div className="text-xs text-muted-c">
                   工具：<code className="font-mono text-accent-500">{approvalRequest.toolName}</code>
+                  {approvalRequest.requestedPath && (
+                    <div
+                      className="mt-0.5 truncate font-mono text-[11px] text-amber-600 dark:text-amber-400"
+                      title={approvalRequest.requestedPath}
+                    >
+                      {approvalRequest.requestedPath}
+                      {approvalRequest.writable ? "（可写）" : "（只读）"}
+                    </div>
+                  )}
                 </div>
               </div>
-              {autoApproveAfterSeconds > 0 && (
+              {autoApproveEnabled && (
                 <div className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
                   {remaining}s
@@ -110,24 +146,57 @@ export function ApprovalDialog() {
               </div>
             )}
 
-            {/* 操作按钮 */}
+            {/* 操作按钮：dangerous_tool 二按钮 / directory_extension 三按钮 */}
             <div className="flex justify-end gap-2 border-t border-default px-4 py-3">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => submit(false)}
-              >
-                <X className="h-3.5 w-3.5" />
-                拒绝
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
-                onClick={() => submit(true)}
-              >
-                <Check className="h-3.5 w-3.5" />
-                批准
-              </button>
+              {isDangerous ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => void submit(false, "deny")}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    拒绝
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+                    onClick={() => void submit(true, "approve")}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    批准
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => void submit(false, "deny")}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    拒绝
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500"
+                    onClick={() => void submit(true, "once")}
+                    title="本次允许访问该路径，调用结束后失效"
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    本次允许
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+                    onClick={() => void submit(true, "session")}
+                    title="本会话内允许访问该路径"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    会话内允许
+                  </button>
+                </>
+              )}
             </div>
           </motion.div>
         </motion.div>

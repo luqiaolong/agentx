@@ -156,9 +156,12 @@ def _save(store: ProfileStore) -> None:
     tmp.replace(_PROFILE_FILE)
 
 
-def get_all() -> list[ProfileEntry]:
-    """返回全部画像条目。"""
-    return _load().entries
+def get_all(category: str | None = None) -> list[ProfileEntry]:
+    """返回全部画像条目；可选按 category 过滤。"""
+    entries = _load().entries
+    if category is not None and category in _VALID_CATEGORIES:
+        return [e for e in entries if e.category == category]
+    return entries
 
 
 def get(key: str) -> ProfileEntry | None:

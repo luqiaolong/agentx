@@ -140,7 +140,7 @@ export function SkillsManager() {
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
-          <button type="button" className="btn-primary px-2.5 py-1.5" onClick={startNew}>
+          <button type="button" className="btn-primary" onClick={startNew}>
             <Plus className="h-3.5 w-3.5" />
             新建
           </button>

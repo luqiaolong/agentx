@@ -64,11 +64,11 @@ export function ToolCallCard({
   const argsPreview = getArgsPreview(args);
 
   return (
-    <div className="rounded-md border border-default bg-surface text-xs">
+    <div className="w-full text-xs">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left transition-colors hover:bg-muted-c/5"
+        className="flex w-full items-center gap-1.5 px-2 py-0.5 text-left transition-colors hover:bg-muted-c/5"
       >
         <Wrench className="h-3 w-3 shrink-0 text-muted-c" />
         <span className="font-mono text-muted-c">{toolName}</span>
@@ -100,33 +100,33 @@ export function ToolCallCard({
         />
       </button>
       {expanded && (
-        <div className="border-t border-default px-2.5 py-2">
+        <div className="w-full px-2 py-1">
           {args != null && (
-            <div className="mb-2">
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
+            <div className="mb-1">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
                 Args
               </div>
-              <pre className="overflow-auto rounded bg-muted-c/10 p-2 font-mono text-[11px]">
+              <pre className="overflow-auto bg-muted-c/5 p-1 font-mono text-[11px]">
                 {formatJson(args)}
               </pre>
             </div>
           )}
           {result != null && (
-            <div className="mb-2">
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
+            <div className="mb-1">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
                 Result
               </div>
-              <pre className="overflow-auto rounded bg-muted-c/10 p-2 font-mono text-[11px]">
+              <pre className="overflow-auto bg-muted-c/5 p-1 font-mono text-[11px]">
                 {formatJson(result)}
               </pre>
             </div>
           )}
           {error && (
             <div>
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-rose-500">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-500">
                 Error
               </div>
-              <pre className="overflow-auto rounded bg-rose-500/10 p-2 font-mono text-[11px] text-rose-600 dark:text-rose-400">
+              <pre className="overflow-auto bg-rose-500/5 p-1 font-mono text-[11px] text-rose-600 dark:text-rose-400">
                 {error}
               </pre>
             </div>

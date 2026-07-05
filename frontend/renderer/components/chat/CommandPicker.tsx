@@ -198,7 +198,7 @@ function CommandRow({
         <div
           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${
             entry.kind === "builtin"
-              ? "bg-brand-600/10 text-brand-500"
+              ? "bg-[rgba(79,70,229,0.1)] text-[#4f46e5]"
               : "bg-accent-500/10 text-accent-500"
           }`}
         >

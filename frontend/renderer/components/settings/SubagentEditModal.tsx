@@ -232,16 +232,11 @@ export function SubagentEditModal({
               type="button"
               role="switch"
               aria-checked={data.enabled}
+              data-checked={data.enabled}
               onClick={() => update({ enabled: !data.enabled })}
-              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-                data.enabled ? "bg-brand-600" : "bg-subtle"
-              }`}
+              className="switch-track"
             >
-              <span
-                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                  data.enabled ? "translate-x-3.5" : "translate-x-0.5"
-                }`}
-              />
+              <span className="switch-thumb" data-checked={data.enabled} />
             </button>
           </div>
 
@@ -280,6 +275,23 @@ export function SubagentEditModal({
             />
           </div>
 
+          {/* 触发关键词 — 放在系统提示词下方，作为降级路由的辅助配置 */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-secondary-c">
+              触发关键词（逗号分隔）
+            </label>
+            <textarea
+              value={keywordText}
+              onChange={(e) => setKeywordText(e.target.value)}
+              rows={2}
+              placeholder="如：知识库, 检索, rag"
+              className="input-field resize-y font-mono text-[11px] leading-relaxed"
+            />
+            <p className="mt-1 text-[11px] text-muted-c">
+              LLM 语义路由失败时的降级匹配关键词。主路由已改为 LLM 分析子代理功能描述，此字段仅作为备用。
+            </p>
+          </div>
+
           {/* 工具复选框 */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-secondary-c">
@@ -304,23 +316,6 @@ export function SubagentEditModal({
                 );
               })}
             </div>
-          </div>
-
-          {/* 关键词 */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
-              触发关键词（逗号分隔）
-            </label>
-            <textarea
-              value={keywordText}
-              onChange={(e) => setKeywordText(e.target.value)}
-              rows={2}
-              placeholder="如：知识库, 检索, rag"
-              className="input-field resize-y font-mono text-[11px] leading-relaxed"
-            />
-            <p className="mt-1 text-[11px] text-muted-c">
-              Router 按这些关键词判断是否路由到该子代理。
-            </p>
           </div>
         </div>
 

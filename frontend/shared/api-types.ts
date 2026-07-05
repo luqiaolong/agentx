@@ -359,7 +359,7 @@ export interface ElectronAPI {
     deleteSkill: (name: string) => Promise<unknown>;
     getCheckpointer: () => Promise<{ db_size: number; threads: ThreadInfo[] }>;
     deleteThread: (thread_id: string) => Promise<{ deleted: number }>;
-    getProfile: () => Promise<{ entries: ProfileEntry[] }>;
+    getProfile: (category?: string) => Promise<{ entries: ProfileEntry[] }>;
     saveProfile: (entry: ProfileEntryRequest) => Promise<unknown>;
     updateProfile: (key: string, content: string, category?: string) => Promise<unknown>;
     deleteProfile: (key: string) => Promise<unknown>;

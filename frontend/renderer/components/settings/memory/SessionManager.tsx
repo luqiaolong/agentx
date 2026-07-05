@@ -27,7 +27,7 @@ function formatTime(iso: string): string {
   }
 }
 
-export function CheckpointerManager() {
+export function SessionManager() {
   const [dbSize, setDbSize] = useState(0);
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -72,7 +72,7 @@ export function CheckpointerManager() {
         <div className="flex items-center gap-1.5">
           <Database className="h-3.5 w-3.5 text-muted-c" />
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            Checkpointer（data/agentx.db）
+            会话状态（data/agentx.db）
           </h4>
         </div>
         <button
@@ -102,7 +102,7 @@ export function CheckpointerManager() {
 
       {threads.length === 0 ? (
         <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
-          暂无 checkpoint 数据
+          暂无会话状态数据
         </p>
       ) : (
         <ul className="space-y-1">

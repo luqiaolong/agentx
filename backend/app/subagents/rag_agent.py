@@ -33,6 +33,13 @@ def _make_rag_tools(thread_id: str) -> list:
     return [t for t in tools if enabled.get(t.name, True)]
 
 
+# 子代理思考过程提示：要求模型在思考时包裹 think 标签，供前端展示 reasoning block
+_THINK_PROMPT_SUFFIX = (
+    "\n\n在调用工具前，请先用 " + chr(60) + "think" + chr(62) + ".." + chr(60) + "/think" + chr(62) + " 标签包裹你的思考过程，"
+    "例如：" + chr(60) + "think" + chr(62) + "我需要检索相关文档来回答这个问题" + chr(60) + "/think" + chr(62) + "。"
+    "这样用户可以看到你的推理过程。"
+)
+
 def build_rag_agent(thread_id: str) -> Any:
     """构建 RAG 子代理 ReAct 子图，返回 CompiledStateGraph。"""
     settings = get_settings()
@@ -40,8 +47,10 @@ def build_rag_agent(thread_id: str) -> Any:
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_rag_tools(thread_id)
     kwargs: dict[str, Any] = {}
-    if cfg.system_prompt:
-        kwargs["prompt"] = cfg.system_prompt
+    # 合并用户配置的 system_prompt 与 think 标签指令
+    prompt = cfg.system_prompt or ""
+    prompt = prompt + _THINK_PROMPT_SUFFIX
+    kwargs["prompt"] = prompt
     return create_react_agent(model, tools, name="rag_agent", **kwargs)
 
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  UserCircle,
+  Heart,
   Trash2,
   Save,
   Plus,
@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import type {
   ProfileEntry,
-  ProfileCategory,
   ProfileEntryRequest,
 } from "@/lib/utils";
 
@@ -21,26 +20,15 @@ const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 // content 上限与后端 _CONTENT_MAX 一致
 const CONTENT_MAX = 500;
 
-// 用户画像 Tab 只保留 fact + custom
-const CATEGORIES: ProfileCategory[] = ["fact", "custom"];
-
-const CATEGORY_LABELS: Record<ProfileCategory, string> = {
-  fact: "事实",
-  custom: "自定义",
-  preference: "偏好",
-  project: "项目",
-};
-
 interface DraftEntry {
   key: string;
-  category: ProfileCategory;
   content: string;
   isNew: boolean;
   originalKey?: string;
 }
 
 function emptyDraft(): DraftEntry {
-  return { key: "", category: "custom", content: "", isNew: true };
+  return { key: "", content: "", isNew: true };
 }
 
 function sourceLabel(source: string): string {
@@ -60,34 +48,24 @@ function formatTime(iso: string): string {
   }
 }
 
-export function ProfileManager() {
+export function PreferenceManager() {
   const [entries, setEntries] = useState<ProfileEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [autoExtract, setAutoExtract] = useState(true);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftEntry | null>(null);
   const [draftErr, setDraftErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [autoExtract, setAutoExtract] = useState(false);
 
   const refresh = useCallback(async () => {
     setErrMsg(null);
     try {
-      // 用户画像 Tab 展示 fact + custom，分别请求后合并
-      const [factResult, customResult] = await Promise.all([
-        window.api.memory.getProfile("fact"),
-        window.api.memory.getProfile("custom"),
+      const [profileResult, autoExtractVal] = await Promise.all([
+        window.api.memory.getProfile("preference"),
+        window.api.settings.getProfileAutoExtract(),
       ]);
-      const all = [
-        ...(factResult.entries ?? []),
-        ...(customResult.entries ?? []),
-      ];
-      // 按 updated_at 降序排列
-      all.sort((a, b) => {
-        const ta = new Date(a.updated_at).getTime();
-        const tb = new Date(b.updated_at).getTime();
-        return tb - ta;
-      });
-      setEntries(all);
+      setEntries(profileResult.entries ?? []);
+      setAutoExtract(autoExtractVal);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -99,6 +77,16 @@ export function ProfileManager() {
     void refresh();
   }, [refresh]);
 
+  const toggleAutoExtract = async (v: boolean): Promise<void> => {
+    setAutoExtract(v);
+    try {
+      await window.api.settings.setProfileAutoExtract(v);
+      await window.api.app.reloadBackendConfig();
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const startNew = (): void => {
     setDraftErr(null);
     setDraft(emptyDraft());
@@ -108,7 +96,6 @@ export function ProfileManager() {
     setDraftErr(null);
     setDraft({
       key: entry.key,
-      category: (entry.category as ProfileCategory) || "custom",
       content: entry.content,
       isNew: false,
       originalKey: entry.key,
@@ -140,7 +127,7 @@ export function ProfileManager() {
       if (draft.isNew) {
         const req: ProfileEntryRequest = {
           key,
-          category: draft.category,
+          category: "preference",
           content: draft.content,
         };
         await window.api.memory.saveProfile(req);
@@ -148,7 +135,7 @@ export function ProfileManager() {
         await window.api.memory.updateProfile(
           draft.originalKey ?? key,
           draft.content,
-          draft.category,
+          "preference",
         );
       }
       setDraft(null);
@@ -177,9 +164,9 @@ export function ProfileManager() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <UserCircle className="h-3.5 w-3.5 text-muted-c" />
+          <Heart className="h-3.5 w-3.5 text-muted-c" />
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            用户画像（事实与自定义）
+            用户偏好（data/config/profile.json）
           </h4>
           <span className="rounded-full bg-subtle px-2 py-0.5 text-[10px] text-secondary-c">
             {entries.length}
@@ -201,10 +188,28 @@ export function ProfileManager() {
             onClick={startNew}
           >
             <Plus className="h-3.5 w-3.5" />
-            新建条目
+            新建偏好
           </button>
         </div>
       </div>
+
+      {/* 自动抽取开关 */}
+      <label className="flex cursor-pointer items-center justify-between rounded-lg border border-default bg-surface px-3 py-2">
+        <span className="flex items-center gap-1.5 text-xs text-secondary-c">
+          <Sparkles className="h-3.5 w-3.5 text-brand-500" />
+          对话结束后自动抽取画像
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoExtract}
+          data-checked={autoExtract}
+          onClick={() => toggleAutoExtract(!autoExtract)}
+          className="switch-track"
+        >
+          <span className="switch-thumb" data-checked={autoExtract} />
+        </button>
+      </label>
 
       {errMsg && (
         <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
@@ -215,7 +220,7 @@ export function ProfileManager() {
 
       {entries.length === 0 && !draft && (
         <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
-          暂无画像条目
+          暂无偏好条目
         </p>
       )}
 
@@ -229,7 +234,7 @@ export function ProfileManager() {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-secondary-c">{entry.key}</span>
                 <span className="rounded-full bg-brand-600/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-500">
-                  {CATEGORY_LABELS[entry.category as ProfileCategory] ?? entry.category}
+                  preference
                 </span>
                 <span className="rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-muted-c">
                   {sourceLabel(entry.source)}
@@ -286,42 +291,20 @@ export function ProfileManager() {
 
       {draft && (
         <div className="space-y-2 rounded-lg border border-default bg-surface p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-secondary-c">
-                Key
-              </label>
-              <input
-                type="text"
-                value={draft.key}
-                onChange={(e) =>
-                  setDraft((s) => (s ? { ...s, key: e.target.value } : s))
-                }
-                placeholder="prefers_concise_reply"
-                className="input-field font-mono text-[11px]"
-                disabled={!draft.isNew}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-secondary-c">
-                分类
-              </label>
-              <select
-                value={draft.category}
-                onChange={(e) =>
-                  setDraft((s) =>
-                    s ? { ...s, category: e.target.value as ProfileCategory } : s,
-                  )
-                }
-                className="input-field text-[11px]"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORY_LABELS[c]} ({c})
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-secondary-c">
+              Key
+            </label>
+            <input
+              type="text"
+              value={draft.key}
+              onChange={(e) =>
+                setDraft((s) => (s ? { ...s, key: e.target.value } : s))
+              }
+              placeholder="prefers_concise_reply"
+              className="input-field font-mono text-[11px]"
+              disabled={!draft.isNew}
+            />
           </div>
           <div>
             <label className="mb-1 flex items-center justify-between text-xs font-medium text-secondary-c">
@@ -336,7 +319,7 @@ export function ProfileManager() {
                 setDraft((s) => (s ? { ...s, content: e.target.value } : s))
               }
               rows={3}
-              placeholder="用户偏好或事实信息"
+              placeholder="例如：用户喜欢简洁回复、偏好中文输出..."
               className="input-field resize-y text-[11px] leading-relaxed"
               maxLength={CONTENT_MAX}
             />

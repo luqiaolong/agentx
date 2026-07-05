@@ -1,46 +1,33 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  UserCircle,
+  Briefcase,
   Trash2,
   Save,
   Plus,
   RefreshCw,
   AlertCircle,
   X,
-  Sparkles,
 } from "lucide-react";
 import type {
   ProfileEntry,
-  ProfileCategory,
   ProfileEntryRequest,
 } from "@/lib/utils";
 
 // key 正则与后端 profile_store._KEY_RE 一致
 const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
-// content 上限与后端 _CONTENT_MAX 一致
-const CONTENT_MAX = 500;
-
-// 用户画像 Tab 只保留 fact + custom
-const CATEGORIES: ProfileCategory[] = ["fact", "custom"];
-
-const CATEGORY_LABELS: Record<ProfileCategory, string> = {
-  fact: "事实",
-  custom: "自定义",
-  preference: "偏好",
-  project: "项目",
-};
+// project 类 content 上限放宽到 2000
+const CONTENT_MAX = 2000;
 
 interface DraftEntry {
   key: string;
-  category: ProfileCategory;
   content: string;
   isNew: boolean;
   originalKey?: string;
 }
 
 function emptyDraft(): DraftEntry {
-  return { key: "", category: "custom", content: "", isNew: true };
+  return { key: "", content: "", isNew: true };
 }
 
 function sourceLabel(source: string): string {
@@ -60,34 +47,19 @@ function formatTime(iso: string): string {
   }
 }
 
-export function ProfileManager() {
+export function ProjectMemoryManager() {
   const [entries, setEntries] = useState<ProfileEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftEntry | null>(null);
   const [draftErr, setDraftErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [autoExtract, setAutoExtract] = useState(false);
 
   const refresh = useCallback(async () => {
     setErrMsg(null);
     try {
-      // 用户画像 Tab 展示 fact + custom，分别请求后合并
-      const [factResult, customResult] = await Promise.all([
-        window.api.memory.getProfile("fact"),
-        window.api.memory.getProfile("custom"),
-      ]);
-      const all = [
-        ...(factResult.entries ?? []),
-        ...(customResult.entries ?? []),
-      ];
-      // 按 updated_at 降序排列
-      all.sort((a, b) => {
-        const ta = new Date(a.updated_at).getTime();
-        const tb = new Date(b.updated_at).getTime();
-        return tb - ta;
-      });
-      setEntries(all);
+      const profileResult = await window.api.memory.getProfile("project");
+      setEntries(profileResult.entries ?? []);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -108,7 +80,6 @@ export function ProfileManager() {
     setDraftErr(null);
     setDraft({
       key: entry.key,
-      category: (entry.category as ProfileCategory) || "custom",
       content: entry.content,
       isNew: false,
       originalKey: entry.key,
@@ -140,7 +111,7 @@ export function ProfileManager() {
       if (draft.isNew) {
         const req: ProfileEntryRequest = {
           key,
-          category: draft.category,
+          category: "project",
           content: draft.content,
         };
         await window.api.memory.saveProfile(req);
@@ -148,7 +119,7 @@ export function ProfileManager() {
         await window.api.memory.updateProfile(
           draft.originalKey ?? key,
           draft.content,
-          draft.category,
+          "project",
         );
       }
       setDraft(null);
@@ -177,9 +148,9 @@ export function ProfileManager() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <UserCircle className="h-3.5 w-3.5 text-muted-c" />
+          <Briefcase className="h-3.5 w-3.5 text-muted-c" />
           <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
-            用户画像（事实与自定义）
+            项目记忆（data/config/profile.json）
           </h4>
           <span className="rounded-full bg-subtle px-2 py-0.5 text-[10px] text-secondary-c">
             {entries.length}
@@ -201,7 +172,7 @@ export function ProfileManager() {
             onClick={startNew}
           >
             <Plus className="h-3.5 w-3.5" />
-            新建条目
+            新建项目
           </button>
         </div>
       </div>
@@ -215,7 +186,7 @@ export function ProfileManager() {
 
       {entries.length === 0 && !draft && (
         <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
-          暂无画像条目
+          暂无项目记忆，点击「新建项目」添加项目背景
         </p>
       )}
 
@@ -229,7 +200,7 @@ export function ProfileManager() {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-secondary-c">{entry.key}</span>
                 <span className="rounded-full bg-brand-600/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-500">
-                  {CATEGORY_LABELS[entry.category as ProfileCategory] ?? entry.category}
+                  project
                 </span>
                 <span className="rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-muted-c">
                   {sourceLabel(entry.source)}
@@ -286,42 +257,20 @@ export function ProfileManager() {
 
       {draft && (
         <div className="space-y-2 rounded-lg border border-default bg-surface p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-secondary-c">
-                Key
-              </label>
-              <input
-                type="text"
-                value={draft.key}
-                onChange={(e) =>
-                  setDraft((s) => (s ? { ...s, key: e.target.value } : s))
-                }
-                placeholder="prefers_concise_reply"
-                className="input-field font-mono text-[11px]"
-                disabled={!draft.isNew}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-secondary-c">
-                分类
-              </label>
-              <select
-                value={draft.category}
-                onChange={(e) =>
-                  setDraft((s) =>
-                    s ? { ...s, category: e.target.value as ProfileCategory } : s,
-                  )
-                }
-                className="input-field text-[11px]"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORY_LABELS[c]} ({c})
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-secondary-c">
+              Key
+            </label>
+            <input
+              type="text"
+              value={draft.key}
+              onChange={(e) =>
+                setDraft((s) => (s ? { ...s, key: e.target.value } : s))
+              }
+              placeholder="agentx_project"
+              className="input-field font-mono text-[11px]"
+              disabled={!draft.isNew}
+            />
           </div>
           <div>
             <label className="mb-1 flex items-center justify-between text-xs font-medium text-secondary-c">
@@ -335,8 +284,8 @@ export function ProfileManager() {
               onChange={(e) =>
                 setDraft((s) => (s ? { ...s, content: e.target.value } : s))
               }
-              rows={3}
-              placeholder="用户偏好或事实信息"
+              rows={6}
+              placeholder="项目背景、技术栈、关键约定等上下文信息..."
               className="input-field resize-y text-[11px] leading-relaxed"
               maxLength={CONTENT_MAX}
             />

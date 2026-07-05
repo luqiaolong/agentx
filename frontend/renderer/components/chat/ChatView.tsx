@@ -41,6 +41,7 @@ export function ChatView() {
   const createSession = useChatStore((s) => s.createSession);
   const addMessage = useChatStore((s) => s.addMessage);
   const clearMessages = useChatStore((s) => s.clearMessages);
+  const deleteMessagesAfter = useChatStore((s) => s.deleteMessagesAfter);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const updateTask = useTasksStore((s) => s.updateTask);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
@@ -49,6 +50,7 @@ export function ChatView() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<{ messageId: string; content: string } | null>(null);
 
   const pendingIdRef = useRef<string>("pending");
   const currentTaskIdRef = useRef<string | null>(null);
@@ -326,7 +328,18 @@ export function ChatView() {
         {messages.length === 0 ? (
           <EmptyState />
         ) : (
-          <AssistantUIThread messages={messages} isStreaming={isStreaming} />
+          <AssistantUIThread
+            messages={messages}
+            isStreaming={isStreaming}
+            onEditMessage={(messageId, content) => {
+              // 点击编辑：删除该消息及之后的所有消息，把内容回填到输入框
+              if (isStreaming) return;
+              deleteMessagesAfter(messageId);
+              setEditTarget({ messageId, content });
+              setTodos([]);
+              setErrorMsg(null);
+            }}
+          />
         )}
         <div ref={bottomRef} />
       </div>
@@ -352,6 +365,8 @@ export function ChatView() {
         setDropError={setDropError}
         onSend={handleSend}
         onAbort={handleAbort}
+        editTarget={editTarget}
+        onEditCancel={() => setEditTarget(null)}
       />
     </div>
   );

@@ -737,11 +737,11 @@ async def memory_skills_delete(name: str) -> dict[str, Any]:
 
 
 @app.get("/api/memory/profile")
-async def memory_profile_list() -> dict[str, Any]:
-    """返回全部画像条目。"""
+async def memory_profile_list(category: str | None = None) -> dict[str, Any]:
+    """返回画像条目；可选按 category 过滤。"""
     from app.memory.profile_store import get_all
 
-    entries = get_all()
+    entries = get_all(category)
     return {"entries": [e.model_dump(mode="json") for e in entries]}
 
 

@@ -153,16 +153,11 @@ function BuiltinCard({ meta, cfg, onEnabledChange, onEdit }: BuiltinCardProps) {
           type="button"
           role="switch"
           aria-checked={cfg.enabled}
+          data-checked={cfg.enabled}
           onClick={() => onEnabledChange(!cfg.enabled)}
-          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${
-            cfg.enabled ? "bg-brand-600" : "bg-subtle"
-          }`}
+          className="switch-track shrink-0"
         >
-          <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-              cfg.enabled ? "translate-x-3.5" : "translate-x-0.5"
-            }`}
-          />
+          <span className="switch-thumb" data-checked={cfg.enabled} />
         </button>
 
         {/* 编辑按钮 */}
@@ -226,8 +221,11 @@ function BuiltinCard({ meta, cfg, onEnabledChange, onEdit }: BuiltinCardProps) {
             </div>
           )}
           {cfg.systemPrompt && (
-            <div className="rounded bg-subtle/40 px-2 py-1 text-[10px] text-muted-c line-clamp-2">
-              {cfg.systemPrompt}
+            <div className="space-y-1">
+              <div className="text-[10px] font-medium text-secondary-c">系统提示词</div>
+              <div className="rounded bg-subtle/40 px-2 py-1 text-[10px] text-muted-c line-clamp-3">
+                {cfg.systemPrompt}
+              </div>
             </div>
           )}
         </div>
@@ -307,16 +305,11 @@ function CustomCard({
           type="button"
           role="switch"
           aria-checked={entry.enabled}
+          data-checked={entry.enabled}
           onClick={() => onEnabledChange(!entry.enabled)}
-          className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors shrink-0 ${
-            entry.enabled ? "bg-brand-600" : "bg-subtle"
-          }`}
+          className="switch-track shrink-0"
         >
-          <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-              entry.enabled ? "translate-x-3.5" : "translate-x-0.5"
-            }`}
-          />
+          <span className="switch-thumb" data-checked={entry.enabled} />
         </button>
 
         {/* 编辑 */}
@@ -391,8 +384,11 @@ function CustomCard({
             </div>
           )}
           {entry.systemPrompt && (
-            <div className="rounded bg-subtle/40 px-2 py-1 text-[10px] text-muted-c line-clamp-2">
-              {entry.systemPrompt}
+            <div className="space-y-1">
+              <div className="text-[10px] font-medium text-secondary-c">系统提示词</div>
+              <div className="rounded bg-subtle/40 px-2 py-1 text-[10px] text-muted-c line-clamp-3">
+                {entry.systemPrompt}
+              </div>
             </div>
           )}
         </div>

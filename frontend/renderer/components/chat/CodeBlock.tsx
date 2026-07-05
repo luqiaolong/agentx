@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { createHighlighter } from "shiki/bundle/web";
 import type { BundledLanguage, Highlighter } from "shiki/bundle/web";
 
@@ -7,6 +7,11 @@ interface CodeBlockProps {
   code: string;
   language?: string;
 }
+
+/** 代码块默认折叠行数阈值 */
+const COLLAPSE_LINE_THRESHOLD = 15;
+/** 折叠后展示的最大行数 */
+const COLLAPSE_SHOW_LINES = 10;
 
 // 预加载的语言集合；其余语言将回退到纯文本展示
 const SUPPORTED_LANGS: BundledLanguage[] = [
@@ -38,11 +43,22 @@ function getHighlighter(): Promise<Highlighter> {
  * 通过 Tailwind 的 dark: 变体控制显隐，主题切换时零 JS 重渲。
  * 高亮完成前以 <pre> 展示原始代码，右上角提供复制按钮。
  */
+function getCollapsedCode(fullCode: string, showLines: number): string {
+  const lines = fullCode.split("\n");
+  if (lines.length <= showLines) return fullCode;
+  return lines.slice(0, showLines).join("\n") + "\n";
+}
+
 export function CodeBlock({ code, language }: CodeBlockProps) {
   const [htmlLight, setHtmlLight] = useState<string | null>(null);
   const [htmlDark, setHtmlDark] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const lineCount = code.split("\n").length;
+  const shouldCollapse = lineCount > COLLAPSE_LINE_THRESHOLD;
+  const displayCode = shouldCollapse && !expanded ? getCollapsedCode(code, COLLAPSE_SHOW_LINES) : code;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,11 +69,11 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
         if (cancelled) return;
         try {
           const lang = (language || "text") as BundledLanguage;
-          const light = hl.codeToHtml(code, {
+          const light = hl.codeToHtml(displayCode, {
             lang,
             theme: "github-light",
           });
-          const dark = hl.codeToHtml(code, {
+          const dark = hl.codeToHtml(displayCode, {
             lang,
             theme: "github-dark",
           });
@@ -98,45 +114,72 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
 
   return (
     <div className="group relative my-2.5 overflow-hidden rounded-lg border border-default bg-[#f8fafc] dark:bg-[#0d1117]">
-      {/* 顶栏：语言标签 + 复制按钮 */}
+      {/* 顶栏：语言标签 + 复制按钮 + 展开/折叠 */}
       <div className="flex items-center justify-between border-b border-default bg-subtle/60 px-3 py-1">
         <span className="font-mono text-[10px] font-medium uppercase tracking-wide text-muted-c">
           {language || "text"}
         </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
-          aria-label="复制代码"
-        >
-          {copied ? (
-            <>
-              <Check className="h-3 w-3 text-emerald-500" />
-              <span className="text-emerald-500">已复制</span>
-            </>
-          ) : (
-            <>
-              <Copy className="h-3 w-3" />
-              <span>复制</span>
-            </>
+        <div className="flex items-center gap-1">
+          {shouldCollapse && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+              aria-label={expanded ? "折叠代码" : "展开代码"}
+            >
+              {expanded ? (
+                <>
+                  <ChevronUp className="h-3 w-3" />
+                  <span>折叠</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-3 w-3" />
+                  <span>展开 ({lineCount} 行)</span>
+                </>
+              )}
+            </button>
           )}
-        </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+            aria-label="复制代码"
+          >
+            {copied ? (
+              <>
+                <Check className="h-3 w-3 text-emerald-500" />
+                <span className="text-emerald-500">已复制</span>
+              </>
+            ) : (
+              <>
+                <Copy className="h-3 w-3" />
+                <span>复制</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      {htmlLight && htmlDark ? (
-        <>
-          <div
-            className="shiki-wrap overflow-x-auto p-3 text-[13px] leading-relaxed dark:hidden"
-            dangerouslySetInnerHTML={{ __html: htmlLight }}
-          />
-          <div
-            className="shiki-wrap hidden overflow-x-auto p-3 text-[13px] leading-relaxed dark:block"
-            dangerouslySetInnerHTML={{ __html: htmlDark }}
-          />
-        </>
-      ) : (
-        <pre className="overflow-x-auto p-3 font-mono text-[13px] leading-relaxed text-secondary-c">
-          <code>{code}</code>
-        </pre>
+      <div className={shouldCollapse && !expanded ? "max-h-64 overflow-auto" : "overflow-auto"}>
+        {htmlLight && htmlDark ? (
+          <>
+            <div
+              className="shiki-wrap overflow-x-auto p-3 text-[13px] leading-relaxed dark:hidden"
+              dangerouslySetInnerHTML={{ __html: htmlLight }}
+            />
+            <div
+              className="shiki-wrap hidden overflow-x-auto p-3 text-[13px] leading-relaxed dark:block"
+              dangerouslySetInnerHTML={{ __html: htmlDark }}
+            />
+          </>
+        ) : (
+          <pre className="overflow-x-auto p-3 font-mono text-[13px] leading-relaxed text-secondary-c">
+            <code>{displayCode}</code>
+          </pre>
+        )}
+      </div>
+      {shouldCollapse && !expanded && (
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[#f8fafc] to-transparent dark:from-[#0d1117]" />
       )}
     </div>
   );

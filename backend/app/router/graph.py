@@ -29,11 +29,12 @@ from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
+from app.llm import get_chat_model
 from app.paths.deep_path import run_deep_path
 from app.router.classifier import classify_message
 from app.router.state import RouterState
 from app.subagents import run_code_agent, run_custom_agent, run_rag_agent, run_web_agent
-from app.utils.text import ThinkFilter, extract_chunk_text as _extract_chunk_text
+from app.utils.text import ThinkFilter, extract_chunk_text as _extract_chunk_text, strip_think
 
 __all__ = ["build_router_graph", "resolve_system_prompt", "run_router", "_parse_skill_tag"]
 
@@ -146,8 +147,102 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 # ============================================================
 
 
-def _select_subagent(message: str) -> str | None:
-    """根据消息内容选择路径 B 的子代理。
+# LLM 子代理路由 system prompt
+_SUBAGENT_ROUTER_PROMPT = (
+    "你是子代理路由决策器。根据用户消息，选择最合适的子代理来处理。\n\n"
+    "可用子代理：\n"
+    "{descriptions}\n\n"
+    "规则：\n"
+    "1. 只输出子代理名称（如 code / rag / web），不要解释\n"
+    "2. 根据每个子代理的功能描述，判断哪个最匹配用户意图\n"
+    "3. 如果都不匹配，选 code 作为默认兜底"
+)
+
+
+async def _llm_select_subagent(message: str) -> str | None:
+    """通过 LLM 语义分析选择最合适的子代理。
+
+    Returns:
+        子代理名称（"code" / "rag" / "web" / 自定义 key）或 None（LLM 不可用）
+    """
+    settings = get_settings()
+    subagents = settings.subagents
+    tools_enabled = settings.tools_enabled
+
+    # 构建可用子代理描述
+    available: list[str] = []
+    for name in ("code", "rag", "web"):
+        cfg = subagents[name]
+        if not cfg.enabled:
+            continue
+        if not any(tools_enabled.get(t, True) for t in cfg.tools):
+            continue
+        desc = cfg.description or name
+        available.append(f"- {name}: {desc}")
+
+    custom = settings.custom_subagents
+    custom_available: list[str] = []
+    for key in sorted(custom.keys()):
+        cfg = custom[key]
+        if not cfg.enabled:
+            continue
+        if not any(tools_enabled.get(t, True) for t in cfg.tools):
+            continue
+        custom_available.append(f"- {key}: {cfg.name}。工具：{', '.join(cfg.tools)}")
+
+    all_available = available + custom_available
+    if not all_available:
+        return None
+
+    # 构建 prompt
+    descriptions = "\n".join(all_available)
+    system_prompt = _SUBAGENT_ROUTER_PROMPT.format(descriptions=descriptions)
+
+    try:
+        llm = get_chat_model(temperature=0.0, streaming=False)
+    except ValueError as exc:
+        logger.warning("LLM 不可用，子代理路由降级为关键词匹配", error=str(exc))
+        return _keyword_select_subagent(message)
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=message),
+        ]
+        result = await llm.ainvoke(messages)
+    except Exception as exc:
+        logger.warning("LLM 子代理路由调用失败，降级为关键词匹配", error=str(exc))
+        return _keyword_select_subagent(message)
+
+    content = getattr(result, "content", "") or ""
+    stripped = strip_think(content) if isinstance(content, str) else ""
+    if not stripped:
+        return _keyword_select_subagent(message)
+
+    label = stripped.splitlines()[0].strip().lower()
+
+    # 验证返回的子代理是否可用
+    builtin_keys = {"code", "rag", "web"}
+    if label in builtin_keys:
+        cfg = subagents[label]
+        if cfg.enabled and any(tools_enabled.get(t, True) for t in cfg.tools):
+            return label
+        return _keyword_select_subagent(message)
+
+    if label in custom:
+        cfg = custom[label]
+        if cfg.enabled and any(tools_enabled.get(t, True) for t in cfg.tools):
+            return label
+        return _keyword_select_subagent(message)
+
+    # 未知标签，降级到关键词匹配
+    return _keyword_select_subagent(message)
+
+
+def _keyword_select_subagent(message: str) -> str | None:
+    """关键词回退：LLM 不可用时使用原有关键词匹配逻辑。
 
     Returns:
         "code" / "rag" / "web" / 自定义子代理 key / None
@@ -198,6 +293,18 @@ def _select_subagent(message: str) -> str | None:
     return None  # code 也禁用，退回路径 A
 
 
+def _select_subagent(message: str) -> str | None:
+    """根据消息内容选择路径 B 的子代理（LLM 语义分析优先，降级关键词匹配）。
+
+    Returns:
+        "code" / "rag" / "web" / 自定义子代理 key / None
+        - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
+    """
+    # 同步调用异步 LLM 路由：由 run_router 在 async 上下文中调用
+    # 实际调用方应使用 _llm_select_subagent，本函数保留兼容签名
+    return _keyword_select_subagent(message)
+
+
 def _sse(event: str, data: Any) -> dict[str, str]:
     """构造标准 SSE 事件 dict。
 
@@ -217,7 +324,7 @@ def _sse(event: str, data: Any) -> dict[str, str]:
     ):
         if isinstance(data, str):
             return {"event": event, "data": data}
-        return {"event": event, "data": json.dumps(data, ensure_ascii=False)}
+        return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
     if event == "done":
         return {"event": "done", "data": "{}"}
     return {"event": event, "data": str(data)}
@@ -303,7 +410,7 @@ async def _run_tool_path(
         - 子代理 tool_call/tool_result 标准化事件透传为同名 SSE 事件（含 source 字段），
           不再压扁为 todo_update（spec D1）。
     """
-    agent_type = _select_subagent(message)
+    agent_type = await _llm_select_subagent(message)
     if agent_type is None:
         # 子代理禁用或工具全禁用，退回路径 A（注入画像）
         logger.info("router.tool_path fallback to CHAT", thread_id=thread_id)

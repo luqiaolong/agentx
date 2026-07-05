@@ -45,6 +45,7 @@ class SubagentSettings(BaseModel):
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
+    description: str = ""
 
 
 # 内置子代理键名集合（与 _default_subagents 一致，用于区分内置/自定义）
@@ -73,20 +74,29 @@ class CustomSubagentEntry(BaseModel):
     keywords: list[str] = Field(default_factory=list)
 
 
+# 内置子代理默认描述
+_DEFAULT_CODE_DESCRIPTION = "代码与文件操作专家：擅长读取、搜索、分析代码文件和目录结构，回答与代码、文件内容、项目结构、HTML/CSS/JS/Python/Java 等技术实现相关的问题。"
+_DEFAULT_RAG_DESCRIPTION = "知识库检索专家：擅长从向量知识库中检索文档、知识点、技术文档，回答需要引用内部知识库资料的问题。"
+_DEFAULT_WEB_DESCRIPTION = "联网搜索专家：擅长搜索互联网上的实时信息、新闻、资料，回答需要最新外部信息的问题。"
+
+
 def _default_subagents() -> dict[str, SubagentSettings]:
     """默认子代理配置（与原硬编码一致）。"""
     return {
         "code": SubagentSettings(
             enabled=True, temperature=0.2, system_prompt="",
             tools=list(_DEFAULT_CODE_TOOLS), keywords=[],
+            description=_DEFAULT_CODE_DESCRIPTION,
         ),
         "rag": SubagentSettings(
             enabled=True, temperature=0.2, system_prompt="",
             tools=list(_DEFAULT_RAG_TOOLS), keywords=list(_DEFAULT_RAG_KEYWORDS),
+            description=_DEFAULT_RAG_DESCRIPTION,
         ),
         "web": SubagentSettings(
             enabled=True, temperature=0.2, system_prompt="",
             tools=list(_DEFAULT_WEB_TOOLS), keywords=list(_DEFAULT_WEB_KEYWORDS),
+            description=_DEFAULT_WEB_DESCRIPTION,
         ),
     }
 

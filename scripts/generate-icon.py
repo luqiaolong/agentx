@@ -13,8 +13,11 @@ BASE_SIZE = 512  # 最高分辨率
 RADIUS = int(RADIUS_RATIO * BASE_SIZE)
 
 
-# 机器人整体相对画布大小的缩放系数（1.0 = 原尺寸），用于和标题栏 Bot 图标视觉对齐
-ROBOT_SCALE = 1.2
+# 机器人相对画布大小的缩放系数，按标题栏 Bot 图标占容器比例对齐。
+# 标题栏：Bot 图标 20px / 容器 28px ≈ 71.4%。
+# 任务栏机器人整体外接矩形也应约占图标短边的 71.4%，因之前过大缩小 20%，
+# 最终 ROBOT_SCALE = 2.75 * 0.8 ≈ 2.2。
+ROBOT_SCALE = 2.2
 
 
 def draw_icon(size: int) -> Image.Image:
@@ -26,7 +29,7 @@ def draw_icon(size: int) -> Image.Image:
     # 圆角矩形背景
     draw.rounded_rectangle([0, 0, size, size], radius=radius, fill=BG)
 
-    # 机器人脸：矩形脸 + 两个圆眼 + 天线
+    # 机器人脸：矩形脸 + 两个圆眼 + 单天线
     # 所有元素以画布中心 (BASE_SIZE/2, BASE_SIZE/2) 为基准向外扩展，保持居中
     center = BASE_SIZE / 2
     face_half_w = 64 * ROBOT_SCALE
@@ -70,9 +73,10 @@ def draw_icon(size: int) -> Image.Image:
         fill=WHITE,
     )
 
-    # 天线：从脸顶部向上延伸，按 ROBOT_SCALE 放大
-    antenna_top_y = center - face_half_h - 24 * ROBOT_SCALE
-    antenna_ball_y = center - face_half_h - 24 * ROBOT_SCALE
+    # 天线：从脸顶部向上延伸，长度缩短使整体白色区域接近方形
+    antenna_stem_len = 16 * ROBOT_SCALE
+    antenna_top_y = center - face_half_h - antenna_stem_len
+    antenna_ball_y = center - face_half_h - antenna_stem_len
     antenna_base_y = center - face_half_h
     draw.line(
         [
@@ -115,13 +119,14 @@ def main() -> int:
         print(f"Saved {path}")
 
     # Windows .ico：包含多尺寸（系统任务栏必需）
+    # 使用 append_images 显式保存每一帧，避免 Pillow 的 sizes 参数只生成单帧。
     ico_path = os.path.join(out_dir, "icon.ico")
-    base_for_ico = draw_icon(256)
-    ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    base_for_ico.save(
+    ico_sizes = [256, 128, 64, 48, 32, 24, 16]
+    ico_images = [draw_icon(s) for s in ico_sizes]
+    ico_images[0].save(
         ico_path,
         format="ICO",
-        sizes=ico_sizes,
+        append_images=ico_images[1:],
     )
     print(f"Saved {ico_path}")
 

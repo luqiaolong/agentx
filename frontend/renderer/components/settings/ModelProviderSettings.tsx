@@ -470,7 +470,7 @@ function ModelEditor({
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="btn-primary px-2.5 py-1.5 text-[11px]"
+          className="btn-primary"
         >
           {saving ? (
             <RefreshCw className="h-3 w-3 animate-spin" />
@@ -482,7 +482,7 @@ function ModelEditor({
         <button
           type="button"
           onClick={onCancel}
-          className="btn-secondary px-2.5 py-1.5 text-[11px]"
+          className="btn-secondary"
         >
           <X className="h-3 w-3" />
           取消
@@ -699,7 +699,7 @@ export function ModelProviderSettings(): JSX.Element {
           </div>
           <button
             type="button"
-            className="btn-primary px-2.5 py-1.5 text-[11px]"
+            className="btn-primary"
             onClick={startNew}
             disabled={editing !== null}
           >
@@ -772,7 +772,7 @@ export function ModelProviderSettings(): JSX.Element {
         <button
           type="button"
           onClick={restart}
-          className="btn-secondary px-2.5 py-1 text-[11px]"
+          className="btn-secondary"
           disabled={restarting}
         >
           <RotateCw className={`h-3 w-3 ${restarting ? "animate-spin" : ""}`} />

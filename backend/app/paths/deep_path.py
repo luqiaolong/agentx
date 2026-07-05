@@ -60,6 +60,23 @@ _APPROVAL_POLL_INTERVAL = 0.3
 # T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
 _extract_tasks: set[asyncio.Task] = set()
 
+def _to_serializable(value: Any) -> Any:
+    """将可能不可 JSON 序列化的值（如 LangChain Message 对象）转为可序列化类型。"""
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_to_serializable(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _to_serializable(v) for k, v in value.items()}
+    # 对 LangChain BaseMessage 对象提取 content（常见不可序列化场景）
+    if hasattr(value, "content"):
+        return _to_serializable(value.content)
+    # 兜底：转字符串
+    return str(value)
+
+
 __all__ = [
     "DANGEROUS_TOOLS",
     "build_deep_agent",
@@ -182,13 +199,19 @@ async def build_deep_agent(
     )
 
 
-def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
+async def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
     """从 agent 状态中提取待执行的工具调用列表。
 
     当图在 ``interrupt_before=["tools"]`` 处暂停时，最后一条消息是 AIMessage，
     其 ``tool_calls`` 属性包含待执行的工具调用。
+
+    MUST 使用 ``aget_state``（异步接口）：agent 的 checkpointer 是
+    ``AsyncSqliteSaver``，在主线程同步调用 ``get_state`` 会抛
+    "Synchronous calls to AsyncSqliteSaver are only allowed from a different thread"
+    （截图 bug 根因）。同步 ``get_state`` 在主线程会阻塞事件循环；切换到
+    ``aget_state`` 走 aiosqlite 异步通道，避免该异常并与其他 SSE 异步逻辑一致。
     """
-    state = agent.get_state(config)
+    state = await agent.aget_state(config)
     if not state or not state.values:
         return []
     messages = state.values.get("messages", [])
@@ -199,9 +222,12 @@ def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
     return list(tool_calls)
 
 
-def _is_interrupted(agent: Any, config: dict) -> bool:
-    """检查 agent 是否在 interrupt 处暂停（next 含 "tools"）。"""
-    state = agent.get_state(config)
+async def _is_interrupted(agent: Any, config: dict) -> bool:
+    """检查 agent 是否在 interrupt 处暂停（next 含 "tools"）。
+
+    MUST 使用 ``aget_state``（异步接口）——见 ``_get_pending_tool_calls`` 注释。
+    """
+    state = await agent.aget_state(config)
     if not state or not state.next:
         return False
     return "tools" in state.next
@@ -344,16 +370,19 @@ def _make_tool_call_event(tc_id: str, name: str, args: Any) -> dict[str, str]:
 
 def _make_tool_result_event(tc_id: str, name: str, result: Any) -> dict[str, str]:
     """构造 tool_result SSE 事件（source 固定为 "deep"）。"""
+    # result 可能是 LangChain ToolMessage / BaseMessage 对象，先转为可序列化类型
+    serializable_result = _to_serializable(result)
     return {
         "event": "tool_result",
         "data": json.dumps(
             {
                 "id": tc_id,
                 "name": name,
-                "result": result,
+                "result": serializable_result,
                 "source": "deep",
             },
             ensure_ascii=False,
+            default=str,
         ),
     }
 
@@ -541,12 +570,12 @@ async def run_deep_path(
     while iteration < max_iterations:
         iteration += 1
 
-        if not _is_interrupted(agent, config):
+        if not await _is_interrupted(agent, config):
             # 图已完成，退出循环
             break
 
         # 获取待执行的工具调用
-        pending_calls = _get_pending_tool_calls(agent, config)
+        pending_calls = await _get_pending_tool_calls(agent, config)
         if not pending_calls:
             # 无待执行工具调用，不应发生但安全退出
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
@@ -640,7 +669,7 @@ async def run_deep_path(
     if get_settings().profile_auto_extract:
         async def _do_extract() -> None:
             try:
-                assistant_reply = _extract_last_assistant_reply(agent, config)
+                assistant_reply = await _extract_last_assistant_reply(agent, config)
                 if assistant_reply:
                     from app.memory.profile_store import upsert_from_llm
 
@@ -657,13 +686,15 @@ async def run_deep_path(
     # done 事件由 run_router 统一 yield，此处不再重复
 
 
-def _extract_last_assistant_reply(agent: Any, config: dict) -> str:
+async def _extract_last_assistant_reply(agent: Any, config: dict) -> str:
     """从 agent state 读取最后一条 AIMessage 的 content。
 
     用于 T10 画像抽取：取最终回复作为 LLM 抽取输入。
     跳过含 tool_calls 的 AIMessage（那些是工具调用而非最终回复）。
+
+    MUST 使用 ``aget_state``（异步接口）——见 ``_get_pending_tool_calls`` 注释。
     """
-    state = agent.get_state(config)
+    state = await agent.aget_state(config)
     if not state or not state.values:
         return ""
     messages = state.values.get("messages", [])

@@ -1,0 +1,9 @@
+feat(sandbox): add full_trust mode + ApprovalDecision + temp_authorized
+
+Preparatory commit before sandbox persistence (Task 3). Adds:
+- ApprovalDecision dataclass (compatible with legacy bool semantics)
+- SessionSandbox.full_trust_threads: bypass auth for trusted threads (still rejects critical dirs)
+- SessionSandbox._temp_authorized: once-decision grants without persisting to checkpoint
+- New methods: set_full_trust / is_full_trust / authorize_temp / clear_temp / is_path_authorized
+- check_read / check_write now respect full_trust + temp_authorized
+- 9 new unit tests covering all new behaviors (33/33 passed)

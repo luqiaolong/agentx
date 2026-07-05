@@ -95,11 +95,11 @@ export function ReasoningBlock({
 
   // 完成或流式有内容：折叠卡片
   return (
-    <div className="rounded-md border border-default bg-muted-c/5">
+    <div className="w-full">
       <button
         type="button"
         onClick={toggleExpanded}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-muted-c transition-colors hover:bg-muted-c/10"
+        className="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-xs text-muted-c transition-colors hover:bg-muted-c/5"
       >
         <Brain className="h-3 w-3 shrink-0" />
         <span className="flex-1">
@@ -110,7 +110,7 @@ export function ReasoningBlock({
         />
       </button>
       {expanded && text.length > 0 && (
-        <div className="border-t border-default px-2.5 py-2 text-xs leading-relaxed text-muted-c">
+        <div className="w-full px-2 py-1 text-xs leading-relaxed text-muted-c">
           <pre className="whitespace-pre-wrap font-mono">{text}</pre>
         </div>
       )}

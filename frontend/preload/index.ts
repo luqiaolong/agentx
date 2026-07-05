@@ -352,8 +352,11 @@ const api: ElectronAPI = {
       );
       return (await r.json()) as { deleted: number };
     },
-    getProfile: async () => {
-      const r = await fetch(`${API_BASE}/api/memory/profile`);
+    getProfile: async (category?: string) => {
+      const url = category
+        ? `${API_BASE}/api/memory/profile?category=${encodeURIComponent(category)}`
+        : `${API_BASE}/api/memory/profile`;
+      const r = await fetch(url);
       return (await r.json()) as { entries: ProfileEntry[] };
     },
     saveProfile: async (entry) => {

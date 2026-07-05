@@ -1,5 +1,5 @@
-import { Fragment, useMemo } from "react";
-import { Sparkles } from "lucide-react";
+import { Fragment, useMemo, useState, useCallback } from "react";
+import { Sparkles, Pencil } from "lucide-react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
@@ -54,15 +54,24 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
   // 第一遍：收集 tool-result 按 id 索引 + tool-call id 集合（用于孤儿检测 O(1)）
   const toolResults = new Map<string, Extract<MessagePart, { type: "tool-result" }>>();
   const toolCallIds = new Set<string>();
+  // 用 Map 去重相同 id 的 tool-call（避免 astream_events 重复事件导致重复渲染）
+  const toolCalls = new Map<string, Extract<MessagePart, { type: "tool-call" }>>();
   for (const p of parts) {
     if (p.type === "tool-result") {
       toolResults.set(p.id, p);
     } else if (p.type === "tool-call") {
       toolCallIds.add(p.id);
+      // 去重：相同 id 只保留第一次出现的 tool-call
+      if (!toolCalls.has(p.id)) {
+        toolCalls.set(p.id, p);
+      }
     }
   }
 
   const items: RenderItem[] = [];
+  // 先收集 text parts，等 tool-call 处理完后再追加（确保工具调用卡片在文本结论之前）
+  const textItems: RenderItem[] = [];
+
   for (const p of parts) {
     switch (p.type) {
       case "delegation":
@@ -72,6 +81,8 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
         items.push({ kind: "reasoning", part: p });
         break;
       case "tool-call": {
+        // 跳过重复 id（非首次出现）
+        if (p !== toolCalls.get(p.id)) continue;
         const result = toolResults.get(p.id);
         const paired: PairedToolCall = {
           type: "tool-call",
@@ -104,32 +115,66 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
         // 已配对的 tool-result 跳过（已在 tool-call case 渲染）
         break;
       case "text":
-        items.push({ kind: "text", part: p });
+        textItems.push({ kind: "text", part: p });
         break;
     }
   }
-  return items;
+  // text parts 追加在所有非 text items 之后，确保工具调用过程先于最终结论展示
+  return [...items, ...textItems];
 }
 
 /** 单条消息的 parts 渲染。 */
 function MessageParts({
   message,
   isStreamingLast,
+  onEdit,
 }: {
   message: ChatMessage;
   isStreamingLast: boolean;
+  onEdit?: (messageId: string, content: string) => void;
 }) {
+  const [hovered, setHovered] = useState(false);
   const items = useMemo(() => buildRenderItems(message.parts), [message.parts]);
 
-  // 用户消息：纯文本气泡
+  // 用户消息：纯文本气泡（支持编辑）
   if (message.role === "user") {
+    const rawText = message.parts
+      .filter((p) => p.type === "text")
+      .map((p) => (p.type === "text" ? p.text : ""))
+      .join("") || message.content;
+    // 将 <workspace>path</workspace> 标签替换为美观的 chip 样式
+    const workspaceMatch = rawText.match(/<workspace>(.*?)<\/workspace>\s?(.*)/);
+    const workspacePath = workspaceMatch?.[1];
+    const userText = workspaceMatch?.[2] ?? rawText;
+    const handleEdit = useCallback(() => {
+      onEdit?.(message.id, rawText);
+    }, [onEdit, message.id, rawText]);
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-1.5 text-sm leading-relaxed text-white shadow-soft">
-          {message.parts
-            .filter((p) => p.type === "text")
-            .map((p) => (p.type === "text" ? p.text : ""))
-            .join("") || message.content}
+      <div
+        className="group flex justify-end"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-1.5 text-sm leading-relaxed text-white shadow-soft">
+          {workspacePath && (
+            <span className="mr-1.5 inline-flex items-center rounded-md bg-white/20 px-1.5 py-0.5 text-xs font-medium text-white">
+              <svg className="mr-0.5 h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              {workspacePath}
+            </span>
+          )}
+          {userText}
+          {/* 编辑按钮：hover 时显示，非流式状态才允许编辑 */}
+          <button
+            type="button"
+            onClick={handleEdit}
+            className={`absolute -left-7 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-md bg-surface text-muted-c shadow-soft transition-opacity hover:text-primary-c ${hovered ? "opacity-100" : "opacity-0"}`}
+            title="重新编辑"
+            aria-label="重新编辑"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
         </div>
       </div>
     );
@@ -154,14 +199,14 @@ function MessageParts({
   const hasContent = items.length > 0 || message.content.length > 0;
   return (
     <div className="flex justify-start">
-      <div className="flex max-w-[85%] gap-2">
+      <div className="flex w-[85%] gap-2">
         <div
           className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-white"
           style={{ backgroundColor: "#4f46e5" }}
         >
           <Sparkles className="h-3 w-3" />
         </div>
-        <div className="flex flex-col gap-1.5 rounded-xl rounded-tl-md border border-default bg-surface px-3 py-1.5 shadow-soft">
+        <div className="flex w-full flex-col gap-1 rounded-xl rounded-tl-md bg-surface px-2 py-1 shadow-soft">
           {items.length === 0 && !hasContent && isStreamingLast && (
             <span className="flex items-center gap-1.5 text-sm text-muted-c">
               <span className="flex gap-0.5">
@@ -240,16 +285,25 @@ function MessageParts({
 export function AssistantUIThread({
   messages,
   isStreaming,
+  onEditMessage,
 }: {
   messages: ChatMessage[];
   isStreaming: boolean;
+  onEditMessage?: (messageId: string, content: string) => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-4">
+    <div className="mx-auto flex max-w-3xl flex-col gap-2 px-4 py-4">
       {messages.map((m, i) => {
         const isLast = i === messages.length - 1;
         const isStreamingLast = isStreaming && isLast && m.role === "assistant";
-        return <MessageParts key={m.id} message={m} isStreamingLast={isStreamingLast} />;
+        return (
+          <MessageParts
+            key={m.id}
+            message={m}
+            isStreamingLast={isStreamingLast}
+            onEdit={onEditMessage}
+          />
+        );
       })}
     </div>
   );

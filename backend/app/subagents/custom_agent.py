@@ -134,6 +134,13 @@ def _make_custom_tools(thread_id: str, tool_names: list[str]) -> list:
     return [t for t in tools if enabled.get(name_map.get(t.name, t.name), True)]
 
 
+# 子代理思考过程提示：要求模型在思考时包裹 think 标签，供前端展示 reasoning block
+_THINK_PROMPT_SUFFIX = (
+    "\n\n在调用工具前，请先用 " + chr(60) + "think" + chr(62) + ".." + chr(60) + "/think" + chr(62) + " 标签包裹你的思考过程，"
+    "例如：" + chr(60) + "think" + chr(62) + "我需要调用工具来获取更多信息" + chr(60) + "/think" + chr(62) + "。"
+    "这样用户可以看到你的推理过程。"
+)
+
 def build_custom_agent(key: str, thread_id: str) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
@@ -157,8 +164,10 @@ def build_custom_agent(key: str, thread_id: str) -> Any:
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_custom_tools(thread_id, cfg.tools)
     kwargs: dict[str, Any] = {"name": f"custom_{key}"}
-    if cfg.system_prompt:
-        kwargs["prompt"] = cfg.system_prompt
+    # 合并用户配置的 system_prompt 与 think 标签指令
+    prompt = cfg.system_prompt or ""
+    prompt = prompt + _THINK_PROMPT_SUFFIX
+    kwargs["prompt"] = prompt
     return create_react_agent(model, tools, **kwargs)
 
 

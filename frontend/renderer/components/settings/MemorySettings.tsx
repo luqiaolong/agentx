@@ -1,12 +1,11 @@
 import { useState } from "react";
-import { Database, UserCircle } from "lucide-react";
-import { CheckpointerManager } from "./memory/CheckpointerManager";
+import { Database, UserCircle, Heart, Briefcase } from "lucide-react";
+import { SessionManager } from "./memory/SessionManager";
 import { ProfileManager } from "./memory/ProfileManager";
+import { PreferenceManager } from "./memory/PreferenceManager";
+import { ProjectMemoryManager } from "./memory/ProjectMemoryManager";
 
-// 技能文件管理已迁移到一级 tab「技能」（SettingsModal.tsx 的 skills tab），
-// 此处仅保留 Checkpointer 与用户画像两个子 tab。
-
-type MemoryTab = "checkpointer" | "profile";
+type MemoryTab = "sessions" | "profile" | "preference" | "project";
 
 interface MemoryTabDef {
   id: MemoryTab;
@@ -17,21 +16,33 @@ interface MemoryTabDef {
 
 const MEMORY_TABS: MemoryTabDef[] = [
   {
-    id: "checkpointer",
-    label: "Checkpointer",
+    id: "sessions",
+    label: "会话管理",
     desc: "会话状态数据库视图",
     Icon: Database,
   },
   {
     id: "profile",
     label: "用户画像",
-    desc: "长期偏好与事实",
+    desc: "事实与自定义画像条目",
     Icon: UserCircle,
+  },
+  {
+    id: "preference",
+    label: "用户偏好",
+    desc: "交互习惯与偏好设置",
+    Icon: Heart,
+  },
+  {
+    id: "project",
+    label: "项目记忆",
+    desc: "项目背景与上下文",
+    Icon: Briefcase,
   },
 ];
 
 export function MemorySettings() {
-  const [active, setActive] = useState<MemoryTab>("checkpointer");
+  const [active, setActive] = useState<MemoryTab>("sessions");
   // MEMORY_TABS 是非空静态数组，[0] 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
   const activeTab = MEMORY_TABS.find((t) => t.id === active) ?? MEMORY_TABS[0]!;
 
@@ -67,8 +78,10 @@ export function MemorySettings() {
 
       <p className="text-[11px] text-muted-c">{activeTab.desc}</p>
 
-      {active === "checkpointer" && <CheckpointerManager />}
+      {active === "sessions" && <SessionManager />}
       {active === "profile" && <ProfileManager />}
+      {active === "preference" && <PreferenceManager />}
+      {active === "project" && <ProjectMemoryManager />}
     </div>
   );
 }

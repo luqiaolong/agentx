@@ -35,14 +35,19 @@ export function ChatComposer({
   setDropError,
   onSend,
   onAbort,
+  editTarget,
+  onEditCancel,
 }: {
   isStreaming: boolean;
   setDropError: (msg: string | null) => void;
   onSend: (content: string) => void;
   onAbort: () => void;
+  editTarget?: { messageId: string; content: string } | null;
+  onEditCancel?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const currentId = useChatStore((s) => s.currentId);
   const currentSession = useChatStore((s) =>
     s.currentId ? s.sessions[s.currentId] ?? null : null,
@@ -54,6 +59,24 @@ export function ChatComposer({
   const workspacePath = currentSession?.workspacePath ?? null;
   const showWorkspaceChip = Boolean(workspacePath);
   const { textareaRef, textareaHeight } = useAutoResizeTextarea(input);
+
+  // 监听 editTarget：当外部触发编辑时，把内容回填到输入框并进入编辑模式
+  useEffect(() => {
+    if (editTarget) {
+      // 提取纯用户文本（去掉 workspace 标签）
+      const match = editTarget.content.match(/<workspace>.*?<\/workspace>\s?(.*)/);
+      const text = match?.[1] ?? editTarget.content;
+      setInput(text);
+      setIsEditing(true);
+      onEditCancel?.();
+      // 回填后聚焦并选中文本（方便直接修改）
+      setTimeout(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.select();
+      }, 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editTarget?.messageId]);
 
   // 切会话时重置本地输入与全局 picker 状态，并把焦点拉回 textarea。
   //
@@ -67,6 +90,7 @@ export function ChatComposer({
   // 5. 用户点 SessionList 后焦点离开 textarea，必须主动 .focus() 拉回。
   useEffect(() => {
     setInput("");
+    setIsEditing(false);
     resetPicker();
     // 切会话时复位权限模式：permission 是会话级状态，
     // 跨会话残留 full_trust 会导致新会话直接放行危险工具。
@@ -176,8 +200,31 @@ export function ChatComposer({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+    } else if (e.key === "ArrowUp" && input.trim() === "" && !isStreaming && !pickerOpen) {
+      // ↑ 键快速编辑上一条用户消息（参考 Cursor）
+      e.preventDefault();
+      const msgs = currentSession?.messages ?? [];
+      const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+      if (lastUser) {
+        const match = lastUser.content.match(/<workspace>.*?<\/workspace>\s?(.*)/);
+        const text = match?.[1] ?? lastUser.content;
+        setInput(text);
+        setIsEditing(true);
+        // 删除上一条用户消息及之后的所有消息（因为即将重新发送）
+        const idx = msgs.findIndex((m) => m.id === lastUser.id);
+        if (idx !== -1) {
+          useChatStore.getState().deleteMessagesAfter(lastUser.id);
+        }
+        setTimeout(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.select();
+        }, 0);
+      }
     } else if (e.key === "Escape" && pickerOpen) {
       handleClosePicker();
+    } else if (e.key === "Escape" && isEditing) {
+      // Escape 取消编辑模式
+      setIsEditing(false);
     }
   };
 
@@ -191,6 +238,7 @@ export function ChatComposer({
       : content;
     onSend(finalContent);
     setInput("");
+    setIsEditing(false);
     handleClosePicker();
   };
 

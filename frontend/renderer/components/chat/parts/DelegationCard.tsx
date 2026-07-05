@@ -37,7 +37,7 @@ export function DelegationCard({
   const Icon = meta.icon;
 
   return (
-    <div className="flex items-center gap-1.5 rounded-md bg-brand-500/10 px-2.5 py-1.5 text-xs text-brand-600 dark:text-brand-400">
+    <div className="flex items-center gap-1.5 px-2 py-0.5 text-xs text-brand-600 dark:text-brand-400">
       <Icon className="h-3.5 w-3.5 shrink-0" />
       <span className="font-medium">由 {meta.label} 执行</span>
       {message && <span className="text-muted-c">· {message}</span>}

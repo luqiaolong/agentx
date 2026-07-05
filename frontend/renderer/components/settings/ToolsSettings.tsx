@@ -237,17 +237,12 @@ export function ToolsSettings() {
                     type="button"
                     role="switch"
                     aria-checked={enabled}
+                    data-checked={enabled}
                     onClick={() => toggle(tool.key)}
                     aria-label={`切换 ${tool.label}`}
-                    className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
-                      enabled ? "bg-brand-600" : "bg-subtle"
-                    }`}
+                    className="switch-track"
                   >
-                    <span
-                      className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                        enabled ? "translate-x-3.5" : "translate-x-0.5"
-                      }`}
-                    />
+                    <span className="switch-thumb" data-checked={enabled} />
                   </button>
                 </div>
               );
@@ -318,7 +313,7 @@ export function ToolsSettings() {
             </div>
             <button
               type="button"
-              className="btn-primary px-2.5"
+              className="btn-primary"
               disabled={!tavilyKey.trim()}
               onClick={saveTavilyKey}
             >
