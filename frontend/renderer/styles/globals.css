@@ -524,6 +524,11 @@
   line-height: 1.65; /* Cursor/ChatGPT standard for readability */
   color: var(--text-primary);
 }
+
+/* Assistant output slightly dimmer than user input for visual hierarchy */
+.dark .prose-chat {
+  color: #e0e0e0; /* slightly dimmer than text-primary (#ececec) */
+}
 .prose-chat p {
   margin: 0.25rem 0;
 }
