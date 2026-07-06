@@ -12,6 +12,16 @@ import type { ApprovalRequest } from "../../shared/api-types";
  * 渲染时使用，由 store actions 从 parts 中的 text part 派生维护。
  * 新代码应使用 parts。T9-T11 渲染层迁移完成后可移除 content。
  */
+export interface TeamAgentState {
+  agent: string;
+  purpose: string;
+  status: "pending" | "running" | "done" | "error";
+  message?: string;
+  summary?: string;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
 export type MessagePart =
   | { type: "text"; id: string; text: string }
   | { type: "reasoning"; id: string; text: string; done: boolean }
@@ -31,7 +41,16 @@ export type MessagePart =
       source: string;
       error?: string;
     }
-  | { type: "delegation"; id: string; target: string; source: string; message: string };
+  | { type: "delegation"; id: string; target: string; source: string; message: string }
+  | {
+      type: "team";
+      id: string;
+      plan: { agent: string; input: string; purpose: string }[];
+      reasoning: string;
+      agents: TeamAgentState[];
+      status: "running" | "done" | "error";
+      doneAt?: number;
+    };
 
 export interface ChatMessage {
   id: string;
@@ -128,6 +147,15 @@ interface ChatState {
    * 若 part 是 text 类型，同步追加到 content。
    */
   addPart: (messageId: string, part: MessagePart) => void;
+  upsertTeamNode: (
+    messageId: string,
+    updaters: {
+      plan?: { agent: string; input: string; purpose: string }[];
+      reasoning?: string;
+      agentUpdate?: { agent: string; patch: Partial<TeamAgentState> };
+      status?: "running" | "done" | "error";
+    },
+  ) => void;
   /**
    * 更新指定 part（按 partId 定位）。合并 updates 到原 part。
    * 若更新涉及 text 字段，同步刷新 content。
@@ -556,7 +584,13 @@ export const useChatStore = create<ChatState>()(
             const messages = [...sess.messages, newMsg];
             let title = sess.title;
             if (title === DEFAULT_TITLE && msg.role === "user") {
-              title = newMsg.content.slice(0, 20).trim() || DEFAULT_TITLE;
+              // 去掉 <workspace>path</workspace> 标签前缀，取纯用户文本
+              let raw = newMsg.content;
+              const wsMatch = raw.match(/<workspace>.*?<\/workspace>\s?/);
+              if (wsMatch) {
+                raw = raw.slice(wsMatch[0].length);
+              }
+              title = raw.slice(0, 20).trim() || DEFAULT_TITLE;
             }
             const sessions = {
               ...s.sessions,
@@ -626,6 +660,65 @@ export const useChatStore = create<ChatState>()(
             const messages = sess.messages.map((m) => {
               if (m.id !== messageId) return m;
               const parts = [...m.parts, part];
+              return { ...m, parts, content: deriveContent(parts) };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        upsertTeamNode: (messageId, updaters) => {
+          set((s) => {
+            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const parts = [...m.parts];
+              const teamIdx = parts.findIndex((p) => p.type === "team");
+              if (teamIdx === -1) {
+                const newPart = {
+                  type: "team" as const,
+                  id: crypto.randomUUID(),
+                  plan: updaters.plan ?? [],
+                  reasoning: updaters.reasoning ?? "",
+                  agents: updaters.agentUpdate
+                    ? [{
+                        agent: updaters.agentUpdate.agent,
+                        purpose: "",
+                        status: "pending" as const,
+                        ...updaters.agentUpdate.patch,
+                      }]
+                    : [],
+                  status: updaters.status ?? ("running" as const),
+                };
+                parts.push(newPart);
+              } else {
+                const existing = parts[teamIdx] as Extract<MessagePart, { type: "team" }>;
+                let newPlan = existing.plan;
+                if (updaters.plan) newPlan = updaters.plan;
+                let newAgents = existing.agents;
+                if (updaters.agentUpdate) {
+                  const { agent, patch } = updaters.agentUpdate;
+                  const idx = newAgents.findIndex((a) => a.agent === agent);
+                  if (idx === -1) {
+                    newAgents = [...newAgents, { agent, purpose: "", status: "pending" as const, ...patch }];
+                  } else {
+                    newAgents = newAgents.map((a, i) => (i === idx ? { ...a, ...patch } : a));
+                  }
+                }
+                const newStatus = updaters.status ?? existing.status;
+                const doneAt = updaters.status === "done" || updaters.status === "error" ? Date.now() : existing.doneAt;
+                parts[teamIdx] = {
+                  ...existing,
+                  plan: newPlan,
+                  agents: newAgents,
+                  status: newStatus,
+                  doneAt,
+                  ...(updaters.reasoning !== undefined ? { reasoning: updaters.reasoning } : {}),
+                };
+              }
               return { ...m, parts, content: deriveContent(parts) };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };

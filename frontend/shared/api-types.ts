@@ -34,6 +34,23 @@ export type ChatEvent =
   | { type: "todo_update"; todos: unknown }
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
   | { type: "approval_request"; [k: string]: unknown }
+  // team_plan 事件：AgentTeam 的 Orchestrator 生成的子任务计划
+  | {
+      type: "team_plan";
+      plan: { agent: string; input: string; purpose: string }[];
+      reasoning: string;
+    }
+  // team_progress 事件：某个子任务状态变化
+  | {
+      type: "team_progress";
+      agent: string;
+      status: "running" | "done" | "error";
+      message?: string;
+    }
+  // team_result 事件：某个子任务完成后写入黑板的结果摘要
+  | { type: "team_result"; agent: string; summary: string }
+  // team_done 事件：AgentTeam 整体执行结束
+  | { type: "team_done"; status?: "error" | "done" }
   // done 事件：流式结束
   | { type: "done"; data?: unknown }
   // error 事件：流式出错（data 和 error 字段均可能携带信息）
@@ -52,6 +69,8 @@ export interface ApprovalRequest {
 }
 
 export type PermissionMode = "workspace" | "full_trust";
+
+export type AgentMode = "agent" | "agent_team";
 
 export type ApprovalDecision = "approve" | "once" | "session" | "deny";
 
@@ -112,6 +131,17 @@ export interface SubagentsConfig {
   code: SubagentConfig;
   rag: SubagentConfig;
   web: SubagentConfig;
+}
+
+// 软件开发团队角色配置（与 backend/app/config.py _default_team_subagents() 一致）
+export interface TeamSubagentsConfig {
+  frontend_dev: SubagentConfig;
+  backend_dev: SubagentConfig;
+  tester: SubagentConfig;
+  architect: SubagentConfig;
+  devops: SubagentConfig;
+  ui_designer: SubagentConfig;
+  product_manager: SubagentConfig;
 }
 
 /**
@@ -252,7 +282,12 @@ export interface ElectronAPI {
   chat: {
     send: (
       msg: { role: string; content: string },
-      opts?: { threadId?: string; permissionMode?: PermissionMode; systemPrompt?: string },
+      opts?: {
+        threadId?: string;
+        permissionMode?: PermissionMode;
+        systemPrompt?: string;
+        agentMode?: AgentMode;
+      },
     ) => Promise<void>;
     abort: (threadId: string) => Promise<void>;
     compact: (threadId: string) => Promise<CompactResult>;
@@ -334,6 +369,9 @@ export interface ElectronAPI {
     // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取
     getSubagentsConfig: () => Promise<SubagentsConfig>;
     setSubagentsConfig: (cfg: SubagentsConfig) => Promise<unknown>;
+    // 软件开发团队角色配置
+    getTeamSubagentsConfig: () => Promise<TeamSubagentsConfig>;
+    setTeamSubagentsConfig: (cfg: TeamSubagentsConfig) => Promise<unknown>;
     // 自定义子代理（CRUD，与内置 subagents 配置独立持久化）
     getCustomSubagents: () => Promise<CustomSubagentsMap>;
     setCustomSubagents: (cfg: CustomSubagentsMap) => Promise<unknown>;

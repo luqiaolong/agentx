@@ -5,6 +5,7 @@ import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
 import { ToolCallCard } from "./parts/ToolCallCard";
 import { DelegationCard } from "./parts/DelegationCard";
+import { TeamNodeCard } from "./parts/TeamNodeCard";
 import { ModelToggle } from "./ModelToggle";
 
 /**
@@ -39,7 +40,8 @@ type RenderItem =
   | { kind: "reasoning"; part: Extract<MessagePart, { type: "reasoning" }> }
   | { kind: "tool-call"; part: PairedToolCall }
   | { kind: "orphan-tool-result"; part: OrphanToolResult }
-  | { kind: "text"; part: Extract<MessagePart, { type: "text" }> };
+  | { kind: "text"; part: Extract<MessagePart, { type: "text" }> }
+  | { kind: "team"; part: Extract<MessagePart, { type: "team" }> };
 
 /**
  * 把 message.parts 配对 tool-call/tool-result，生成按顺序的渲染项列表。
@@ -117,6 +119,9 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
         break;
       case "text":
         textItems.push({ kind: "text", part: p });
+        break;
+      case "team":
+        items.push({ kind: "team", part: p });
         break;
     }
   }
@@ -202,7 +207,7 @@ function MessageParts({
               onKeyDown={handleEditKeyDown}
               onBlur={() => setIsEditing(false)}
               rows={2}
-              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-600 px-3 py-2 pr-24 pb-8 text-sm leading-relaxed text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+              className="block w-full resize-none rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 pr-24 pb-8 text-base leading-relaxed text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
               style={{ minHeight: "48px" }}
             />
             {/* 模型选择 + 发送按钮：编辑框右下角 */}
@@ -230,7 +235,7 @@ function MessageParts({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-1.5 text-sm leading-relaxed text-white shadow-soft">
+        <div className="relative max-w-[80%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 text-base leading-relaxed text-white shadow-soft">
           {userText}
         </div>
         {/* 编辑按钮：消息右侧，hover 时显示 */}
@@ -266,16 +271,16 @@ function MessageParts({
   const hasContent = items.length > 0 || message.content.length > 0;
   return (
     <div className="flex justify-start">
-      <div className="flex w-[85%] gap-2">
+      <div className="flex w-[85%] gap-3">
         <div
-          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-white"
+          className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-white"
           style={{ backgroundColor: "#4f46e5" }}
         >
-          <Sparkles className="h-3 w-3" />
+          <Sparkles className="h-3.5 w-3.5" />
         </div>
-        <div className="flex w-full flex-col gap-1 rounded-xl rounded-tl-md bg-surface px-2 py-1 shadow-soft">
+        <div className="flex w-full flex-col gap-1.5 rounded-2xl rounded-tl-md bg-surface px-3 py-2 shadow-soft">
           {items.length === 0 && !hasContent && isStreamingLast && (
-            <span className="flex items-center gap-1.5 text-sm text-muted-c">
+            <span className="flex items-center gap-1.5 text-base text-muted-c">
               <span className="flex gap-0.5">
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
@@ -332,6 +337,17 @@ function MessageParts({
                   <Fragment key={`x-${item.part.id}`}>
                     <TextPartView text={item.part.text} role="assistant" />
                   </Fragment>
+                );
+              case "team":
+                return (
+                  <TeamNodeCard
+                    key={`team-${item.part.id}`}
+                    plan={item.part.plan}
+                    reasoning={item.part.reasoning}
+                    agents={item.part.agents}
+                    status={item.part.status}
+                    doneAt={item.part.doneAt}
+                  />
                 );
               default:
                 return null;

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { MutableRefObject } from "react";
 import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
+import type { TeamAgentState } from "@/stores/chat";
 import type { ChatEvent } from "@/lib/utils";
 
 export interface TodoItem {
@@ -56,6 +57,7 @@ export function useChatStream(args: UseChatStreamArgs) {
 
   const appendPartText = useChatStore((s) => s.appendPartText);
   const addPart = useChatStore((s) => s.addPart);
+  const upsertTeamNode = useChatStore((s) => s.upsertTeamNode);
   const markReasoningDone = useChatStore((s) => s.markReasoningDone);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
@@ -149,6 +151,54 @@ export function useChatStream(args: UseChatStreamArgs) {
               createdAt: Date.now(),
             });
           }
+          break;
+        }
+        case "team_plan": {
+          const plan = Array.isArray(e.plan) ? e.plan : [];
+          upsertTeamNode(pendingIdRef.current, {
+            plan: plan.map((t) => ({
+              agent: String(t?.agent ?? ""),
+              input: String(t?.input ?? ""),
+              purpose: String(t?.purpose ?? ""),
+            })),
+            reasoning: String(e.reasoning ?? ""),
+          });
+          // 初始化所有 agent 为 pending
+          for (const t of plan) {
+            upsertTeamNode(pendingIdRef.current, {
+              agentUpdate: {
+                agent: String(t?.agent ?? ""),
+                patch: { purpose: String(t?.purpose ?? ""), status: "pending" },
+              },
+            });
+          }
+          break;
+        }
+        case "team_progress": {
+          const agent = String(e.agent ?? "");
+          const status = (e.status === "running" || e.status === "done" || e.status === "error"
+            ? e.status
+            : "running") as "running" | "done" | "error";
+          const patch: Partial<TeamAgentState> = { status };
+          if (e.message !== undefined) patch.message = String(e.message);
+          if (status === "running") patch.startedAt = Date.now();
+          if (status === "done" || status === "error") patch.finishedAt = Date.now();
+          upsertTeamNode(pendingIdRef.current, {
+            agentUpdate: { agent, patch },
+          });
+          break;
+        }
+        case "team_result": {
+          const agent = String(e.agent ?? "");
+          upsertTeamNode(pendingIdRef.current, {
+            agentUpdate: { agent, patch: { summary: String(e.summary ?? "") } },
+          });
+          break;
+        }
+        case "team_done": {
+          upsertTeamNode(pendingIdRef.current, {
+            status: e.status === "error" ? "error" : "done",
+          });
           break;
         }
         default: {
