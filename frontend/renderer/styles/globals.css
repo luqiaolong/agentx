@@ -52,8 +52,8 @@
   --text-3xs: 0.625rem;    /* 10px — badges, timestamps, meta */
   --text-2xs: 0.6875rem;   /* 11px — section headers, labels */
   --text-xs:  0.75rem;     /* 12px — secondary text, descriptions */
-  --text-sm:  0.8125rem;   /* 13px — body text, list items, messages */
-  --text-base: 0.875rem;   /* 14px — composer input, primary actions */
+  --text-sm:  0.875rem;    /* 14px — body text, list items, messages */
+  --text-base: 0.9375rem;   /* 15px — composer input, primary actions */
   --text-lg:  0.9375rem;   /* 15px — modal titles, emphasized headings */
   --text-xl:  1rem;        /* 16px — only for hero/empty states */
 
@@ -151,9 +151,9 @@
     --bg-hover: #242424;
     --border-default: #2a2a2a; /* softer borders */
     --border-strong: #3a3a3a; /* neutral-700 — slightly softer */
-    --text-primary: #c8c8c8; /* neutral-350 — balanced readability and comfort */
-    --text-secondary: #909090; /* neutral-450 — muted */
-    --text-muted: #646464; /* neutral-550 — softer */
+    --text-primary: #e5e5e5; /* neutral-200 — crisp readability matching reference */
+    --text-secondary: #a8a8a8; /* neutral-400 — clear body text */
+    --text-muted: #757575; /* neutral-500 — visible but unobtrusive */
   }
 
   body {
@@ -578,16 +578,17 @@
   color: var(--text-secondary);
 }
 .prose-chat code:not(pre code) {
-  background-color: var(--bg-hover);
-  border: 1px solid var(--border-default);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-strong);
   padding: 0.1rem 0.3rem;
   border-radius: 0.25rem;
   font-family: var(--font-mono);
   font-size: 0.8125em;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 .dark .prose-chat code:not(pre code) {
-  color: var(--text-secondary);
+  background-color: #2a2a2a;
+  color: var(--text-primary);
 }
 .prose-chat table {
   width: 100%;
