@@ -35,8 +35,8 @@ pub fn decrypt_string(encrypted: &str) -> Option<String> {
         // 目前 enc: 值无法解密
         log::warn!("enc: credential decryption not yet implemented, returning None");
         None
-    } else if encrypted.starts_with("plain:") {
-        Some(encrypted[6..].to_string())
+    } else if let Some(stripped) = encrypted.strip_prefix("plain:") {
+        Some(stripped.to_string())
     } else {
         // 裸字符串 - 按明文返回（用于无前缀存储的新凭证）
         Some(encrypted.to_string())

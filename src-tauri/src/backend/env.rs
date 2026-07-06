@@ -155,10 +155,7 @@ fn inject_model_extra(app: &AppHandle, env: &mut HashMap<String, String>) {
         if let Some(entry) = entries.iter().find(|e| e.id == active_id) {
             if let Some(max_tokens) = entry.max_output_tokens {
                 if max_tokens > 0.0 {
-                    env.insert(
-                        "AGENTX_MAX_OUTPUT_TOKENS".into(),
-                        max_tokens.to_string(),
-                    );
+                    env.insert("AGENTX_MAX_OUTPUT_TOKENS".into(), max_tokens.to_string());
                 }
             }
         }

@@ -11,11 +11,7 @@ use crate::logger;
 /// - `date`：YYYYMMDD 格式，None 时返回当天日志
 /// - `max_lines`：返回最后 N 行，默认 200
 #[tauri::command]
-pub fn logs_read(
-    app: AppHandle,
-    date: Option<String>,
-    max_lines: Option<usize>,
-) -> Vec<String> {
+pub fn logs_read(app: AppHandle, date: Option<String>, max_lines: Option<usize>) -> Vec<String> {
     let max = max_lines.unwrap_or(200);
     logger::read_logs(&app, date.as_deref(), max)
 }

@@ -199,7 +199,7 @@ pub fn set_json<T: Serialize>(app: &AppHandle, key: &str, value: &T) {
 /// 删除指定 key 并持久化。
 pub fn delete_key(app: &AppHandle, key: &str) {
     if let Ok(store) = app.store(STORE_NAME) {
-        store.delete(key.to_string());
+        store.delete(key);
         let _ = store.save();
     }
 }
@@ -218,11 +218,7 @@ pub fn get_llm_config(app: &AppHandle) -> LlmConfig {
 
 /// 写入 LLM 配置。
 pub fn set_llm_config(app: &AppHandle, model: &str, base_url: &str) {
-    set_value(
-        app,
-        "llm.defaultModel",
-        Value::String(model.to_string()),
-    );
+    set_value(app, "llm.defaultModel", Value::String(model.to_string()));
     set_value(
         app,
         "llm.openaiBaseUrl",
@@ -512,9 +508,5 @@ pub fn migrate_legacy_llm_config(app: &AppHandle) {
     };
 
     set_json(app, "models.entries", &vec![entry]);
-    set_value(
-        app,
-        "models.activeId",
-        Value::String("migrated".into()),
-    );
+    set_value(app, "models.activeId", Value::String("migrated".into()));
 }

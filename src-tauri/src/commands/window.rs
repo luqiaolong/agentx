@@ -13,14 +13,18 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 /// `window:minimize` → 最小化主窗口。
 #[tauri::command]
 pub fn window_minimize(app: AppHandle) -> Result<(), String> {
-    let main = app.get_webview_window("main").ok_or("main window not found")?;
+    let main = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
     main.minimize().map_err(|e| e.to_string())
 }
 
 /// `window:maximize` → 最大化/还原切换（toggle 语义，与 Electron 实现一致）。
 #[tauri::command]
 pub fn window_maximize(app: AppHandle) -> Result<(), String> {
-    let main = app.get_webview_window("main").ok_or("main window not found")?;
+    let main = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
     if main.is_maximized().unwrap_or(false) {
         main.unmaximize().map_err(|e| e.to_string())
     } else {
@@ -31,7 +35,9 @@ pub fn window_maximize(app: AppHandle) -> Result<(), String> {
 /// `window:close` → 关闭主窗口（应用退出）。
 #[tauri::command]
 pub fn window_close(app: AppHandle) -> Result<(), String> {
-    let main = app.get_webview_window("main").ok_or("main window not found")?;
+    let main = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
     main.close().map_err(|e| e.to_string())
 }
 

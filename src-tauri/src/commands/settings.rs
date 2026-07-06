@@ -58,11 +58,7 @@ pub fn settings_get_milvus_credentials(app: AppHandle) -> MilvusCredentialsResul
 
 /// `settings:setMilvusCredentials` → 写入 Milvus user + password。
 #[tauri::command]
-pub fn settings_set_milvus_credentials(
-    app: AppHandle,
-    user: String,
-    password: String,
-) -> OkResult {
+pub fn settings_set_milvus_credentials(app: AppHandle, user: String, password: String) -> OkResult {
     store::credentials::set_milvus_credentials(&app, &user, &password);
     OkResult::ok()
 }
@@ -122,16 +118,11 @@ pub fn settings_get_approval_config(app: AppHandle) -> ApprovalConfig {
 
 /// `settings:setApprovalConfig` → 写入审批配置（Partial 语义：None 字段保留原值）。
 #[tauri::command]
-pub fn settings_set_approval_config(
-    app: AppHandle,
-    cfg: Value,
-) -> Result<OkResult, String> {
+pub fn settings_set_approval_config(app: AppHandle, cfg: Value) -> Result<OkResult, String> {
     let obj = cfg
         .as_object()
         .ok_or_else(|| "approval config must be an object".to_string())?;
-    let auto_approve_after_seconds = obj
-        .get("autoApproveAfterSeconds")
-        .and_then(|v| v.as_f64());
+    let auto_approve_after_seconds = obj.get("autoApproveAfterSeconds").and_then(|v| v.as_f64());
     let approval_max_wait = obj.get("approvalMaxWait").and_then(|v| v.as_f64());
     let max_upload_bytes = obj.get("maxUploadBytes").and_then(|v| v.as_f64());
     store::set_approval_config_partial(
@@ -155,10 +146,7 @@ pub fn settings_get_knowledge_config(app: AppHandle) -> KnowledgeConfig {
 
 /// `settings:setKnowledgeConfig` → 写入知识库配置（Partial 语义）。
 #[tauri::command]
-pub fn settings_set_knowledge_config(
-    app: AppHandle,
-    cfg: Value,
-) -> Result<OkResult, String> {
+pub fn settings_set_knowledge_config(app: AppHandle, cfg: Value) -> Result<OkResult, String> {
     let obj = cfg
         .as_object()
         .ok_or_else(|| "knowledge config must be an object".to_string())?;

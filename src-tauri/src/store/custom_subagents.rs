@@ -115,15 +115,12 @@ fn sanitize_custom_entry(raw: &Value, fallback_key: Option<&str>) -> Option<Cust
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| key.to_string());
-    let enabled = obj
-        .get("enabled")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let enabled = obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
     let temperature = obj
         .get("temperature")
         .and_then(|v| v.as_f64())
         .filter(|v| v.is_finite())
-        .map(|v| v.min(2.0).max(0.0))
+        .map(|v| v.clamp(0.0, 2.0))
         .unwrap_or(0.2);
     let system_prompt = obj
         .get("systemPrompt")
@@ -213,14 +210,18 @@ pub fn add_custom_subagent(
         temperature: input
             .temperature
             .filter(|v| v.is_finite())
-            .map(|v| v.min(2.0).max(0.0))
+            .map(|v| v.clamp(0.0, 2.0))
             .unwrap_or(0.2),
         system_prompt: input.system_prompt.clone().unwrap_or_default(),
         tools: sanitize_custom_tools(
             &input
                 .tools
                 .as_ref()
-                .map(|t| t.iter().map(|s| Value::String(s.clone())).collect::<Vec<_>>())
+                .map(|t| {
+                    t.iter()
+                        .map(|s| Value::String(s.clone()))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default(),
         ),
         trigger_description: input.trigger_description.clone().unwrap_or_default(),

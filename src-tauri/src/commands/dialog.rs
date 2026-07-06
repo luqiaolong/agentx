@@ -70,7 +70,9 @@ pub async fn dialog_open_file(
     app: AppHandle,
     opts: Option<OpenDialogOptions>,
 ) -> Result<OpenDialogResult, String> {
-    let main_window = app.get_webview_window("main").ok_or("main window not found")?;
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
     let mut builder = main_window.dialog().file().add_filter("All Files", &["*"]);
     if let Some(opts) = opts {
         if let Some(title) = opts.title {
@@ -102,7 +104,9 @@ pub async fn dialog_open_file(
 /// `dialog:openFolder` → 打开目录选择对话框。
 #[tauri::command]
 pub async fn dialog_open_folder(app: AppHandle) -> Result<OpenDialogResult, String> {
-    let main_window = app.get_webview_window("main").ok_or("main window not found")?;
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
     match main_window.dialog().file().blocking_pick_folder() {
         Some(folder_path) => Ok(OpenDialogResult {
             canceled: false,
@@ -121,7 +125,9 @@ pub async fn dialog_save_file(
     app: AppHandle,
     opts: Option<SaveDialogOptions>,
 ) -> Result<SaveDialogResult, String> {
-    let main_window = app.get_webview_window("main").ok_or("main window not found")?;
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
     let mut builder = main_window.dialog().file();
     if let Some(opts) = opts {
         if let Some(title) = opts.title {
@@ -188,9 +194,12 @@ pub async fn dialog_save_dropped_file(
     ];
     if system_prefixes
         .iter()
-        .any(|p| lower_src.starts_with(p) || lower_src == &p[..p.len() - 1])
+        .any(|p| lower_src.starts_with(p) || lower_src == p[..p.len() - 1])
     {
-        log::warn!("saveDroppedFile rejected system path: {}", resolved_src.display());
+        log::warn!(
+            "saveDroppedFile rejected system path: {}",
+            resolved_src.display()
+        );
         return Err("不允许读取系统目录文件".into());
     }
 
@@ -211,8 +220,7 @@ pub async fn dialog_save_dropped_file(
     // 获取后端工作目录
     let backend_cwd = resolve_backend_cwd(&app);
     let upload_dir = backend_cwd.join("data").join("uploads");
-    fs::create_dir_all(&upload_dir)
-        .map_err(|e| format!("无法创建上传目录: {}", e))?;
+    fs::create_dir_all(&upload_dir).map_err(|e| format!("无法创建上传目录: {}", e))?;
 
     // 文件名清洗：取 basename，防路径穿越
     let safe_name = Path::new(&file_name)
@@ -225,8 +233,7 @@ pub async fn dialog_save_dropped_file(
     let id = Uuid::new_v4();
     let dest_name = format!("{}_{}", id, safe_name);
     let dest_path = upload_dir.join(&dest_name);
-    fs::copy(&file_path, &dest_path)
-        .map_err(|e| format!("复制文件失败: {}", e))?;
+    fs::copy(&file_path, &dest_path).map_err(|e| format!("复制文件失败: {}", e))?;
 
     let relative = format!("data/uploads/{}", dest_name);
     log::info!("saveDroppedFile saved {} -> {}", safe_name, relative);

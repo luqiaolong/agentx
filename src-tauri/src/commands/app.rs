@@ -211,10 +211,7 @@ pub async fn app_reload_backend_config(app: AppHandle) -> Result<Value, String> 
         Value::from(approval.auto_approve_after_seconds),
     );
     if !system_prompt.is_empty() {
-        payload.insert(
-            "default_system_prompt".into(),
-            Value::String(system_prompt),
-        );
+        payload.insert("default_system_prompt".into(), Value::String(system_prompt));
     }
     // max_output_tokens（来自 active model entry，正整数才注入）
     if let Some(max_out) = get_active_model_max_output_tokens(&app) {
