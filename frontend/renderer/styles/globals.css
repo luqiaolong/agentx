@@ -52,10 +52,10 @@
   --text-3xs: 0.625rem;    /* 10px — badges, timestamps, meta */
   --text-2xs: 0.6875rem;   /* 11px — section headers, labels */
   --text-xs:  0.75rem;     /* 12px — secondary text, descriptions */
-  --text-sm:  0.875rem;    /* 14px — body text, list items, messages */
-  --text-base: 0.9375rem;   /* 15px — composer input, primary actions */
-  --text-lg:  0.9375rem;   /* 15px — modal titles, emphasized headings */
-  --text-xl:  1rem;        /* 16px — only for hero/empty states */
+  --text-sm:  1rem;        /* 16px — body text, list items, messages (Cursor/ChatGPT standard) */
+  --text-base: 1rem;        /* 16px — composer input, primary actions */
+  --text-lg:  1.125rem;     /* 18px — modal titles, emphasized headings */
+  --text-xl:  1.25rem;      /* 20px — only for hero/empty states */
 
   /* Module-specific font-size tokens — single source of truth */
   /* Header bar */
@@ -69,13 +69,13 @@
   --fs-sidebar-meta:    var(--text-2xs);  /* 11px - session timestamp */
   --fs-sidebar-action:  var(--text-xs);   /* 12px - 设置/日志 button */
   /* Chat messages */
-  --fs-msg-user:     var(--text-sm);      /* 13px — user bubble text */
-  --fs-msg-assist:   var(--text-sm);      /* 13px — assistant text / prose */
-  --fs-msg-heading:  var(--text-base);    /* 14px — h1 in markdown */
-  --fs-msg-h2:       var(--text-sm);      /* 13px — h2 in markdown */
-  --fs-msg-h3:       var(--text-xs);      /* 12px — h3 in markdown */
-  --fs-msg-code:     var(--text-xs);      /* 12px — inline code */
-  --fs-msg-tool:     var(--text-3xs);     /* 10px — tool-call labels */
+  --fs-msg-user:     var(--text-sm);      /* 16px — user bubble text */
+  --fs-msg-assist:   var(--text-sm);      /* 16px — assistant text / prose */
+  --fs-msg-heading:  var(--text-lg);      /* 18px — h1 in markdown */
+  --fs-msg-h2:       var(--text-base);    /* 16px — h2 in markdown */
+  --fs-msg-h3:       var(--text-sm);      /* 16px — h3 in markdown */
+  --fs-msg-code:     var(--text-xs);      /* 14px — inline code */
+  --fs-msg-tool:     var(--text-2xs);     /* 12px — tool-call labels */
   /* Chat composer */
   --fs-composer-placeholder: var(--text-base); /* 14px */
   --fs-composer-toolbar:     var(--text-2xs);  /* 11px — model/permission/send */
@@ -145,15 +145,15 @@
   }
 
   .dark {
-    --bg-app: #0c0c0c; /* neutral-950 — softer than pure black */
-    --bg-surface: #141414; /* slightly lifted for depth */
-    --bg-subtle: #1c1c1c; /* neutral-900 */
-    --bg-hover: #242424;
-    --border-default: #2a2a2a; /* softer borders */
-    --border-strong: #3a3a3a; /* neutral-700 — slightly softer */
-    --text-primary: #e5e5e5; /* neutral-200 — crisp readability matching reference */
-    --text-secondary: #a8a8a8; /* neutral-400 — clear body text */
-    --text-muted: #757575; /* neutral-500 — visible but unobtrusive */
+    --bg-app: #111111; /* Cursor-inspired: slightly lifted from pure black */
+    --bg-surface: #1a1a1a; /* elevated surfaces */
+    --bg-subtle: #242424; /* neutral-900, warmer */
+    --bg-hover: #2e2e2e;
+    --border-default: #333333; /* softer, more visible borders */
+    --border-strong: #444444; /* neutral-600 */
+    --text-primary: #ececec; /* neutral-200 — Cursor-style crisp readability */
+    --text-secondary: #b0b0b0; /* neutral-400 — clearer body text */
+    --text-muted: #808080; /* neutral-500 — visible but unobtrusive */
   }
 
   body {
@@ -521,7 +521,7 @@
  * ========================================================================== */
 .prose-chat {
   font-size: var(--fs-msg-assist);
-  line-height: 1.55;
+  line-height: 1.65; /* Cursor/ChatGPT standard for readability */
   color: var(--text-primary);
 }
 .prose-chat p {
