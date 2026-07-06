@@ -313,6 +313,9 @@ const api: ElectronAPI = {
       ipcRenderer.invoke("settings:setModelEntries", entries),
     getActiveModelId: () => ipcRenderer.invoke("settings:getActiveModelId"),
     activateModel: (id) => ipcRenderer.invoke("settings:activateModel", id),
+    // 解密指定 ModelEntry 的 api key，返回明文或 null（renderer 不应持久化）
+    revealApiKey: (id: string) =>
+      ipcRenderer.invoke("settings:revealApiKey", id) as Promise<string | null>,
   },
   mcp: {
     // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由

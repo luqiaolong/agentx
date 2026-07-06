@@ -333,6 +333,8 @@ class ConfigReloadRequest(BaseModel):
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     deepseek_api_key: str | None = None
+    kimi_api_key: str | None = None
+    glm_api_key: str | None = None
     tavily_api_key: str | None = None
     max_output_tokens: int | None = None
     # 审批
@@ -1011,6 +1013,10 @@ async def config_reload(req: ConfigReloadRequest) -> dict[str, Any]:
         env_overrides["AGENTX_OPENAI_BASE_URL"] = req.openai_base_url
     if req.deepseek_api_key is not None:
         env_overrides["AGENTX_DEEPSEEK_API_KEY"] = req.deepseek_api_key
+    if req.kimi_api_key is not None:
+        env_overrides["AGENTX_KIMI_API_KEY"] = req.kimi_api_key
+    if req.glm_api_key is not None:
+        env_overrides["AGENTX_GLM_API_KEY"] = req.glm_api_key
     if req.tavily_api_key is not None:
         env_overrides["AGENTX_TAVILY_API_KEY"] = req.tavily_api_key
     if req.max_output_tokens is not None:

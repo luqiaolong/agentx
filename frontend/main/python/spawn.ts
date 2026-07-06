@@ -37,6 +37,8 @@ export interface PythonCredentials {
   langsmithApiKey?: string;
   embeddingUrl?: string;
   deepseekApiKey?: string;
+  kimiApiKey?: string;
+  glmApiKey?: string;
   tavilyApiKey?: string;
   // T7 新增
   defaultModel?: string;
@@ -99,6 +101,8 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
   if (c.embeddingUrl) env.AGENTX_EMBEDDING_URL = c.embeddingUrl;
   if (c.langsmithApiKey) env.LANGSMITH_API_KEY = c.langsmithApiKey;
   if (c.deepseekApiKey) env.AGENTX_DEEPSEEK_API_KEY = c.deepseekApiKey;
+  if (c.kimiApiKey) env.AGENTX_KIMI_API_KEY = c.kimiApiKey;
+  if (c.glmApiKey) env.AGENTX_GLM_API_KEY = c.glmApiKey;
   if (c.tavilyApiKey) env.AGENTX_TAVILY_API_KEY = c.tavilyApiKey;
   // T7 扩展凭证
   if (c.defaultModel) env.AGENTX_DEFAULT_MODEL = c.defaultModel;

@@ -354,6 +354,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     dashscope_api_key: str | None = None
     deepseek_api_key: str | None = None
+    kimi_api_key: str | None = None
+    glm_api_key: str | None = None
     default_model: str = "minimax-m3"
     # 单次响应最大 token 数；None = 不限制（依赖模型默认）
     # 从 AGENTX_MAX_OUTPUT_TOKENS env 读取；用户在 ModelProviderSettings 设置面板填写

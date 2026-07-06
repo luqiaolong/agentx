@@ -219,11 +219,38 @@ export type McpTransport = "stdio" | "sse" | "streamable_http";
 
 // ---- 模型条目（Model Entries）----
 // 用户可保存多个 LLM 模型配置，"激活"某条目时写入 legacy 槽位由后端 spawn 时读取
-export type ModelProviderId = "openai" | "deepseek" | "minimax" | "custom";
+export type ModelProviderId =
+  | "openai"
+  | "deepseek"
+  | "kimi"
+  | "minimax"
+  | "glm"
+  | "custom";
+
+/** 单个 preset 模型的展示信息（提供下拉补全 + 描述） */
+export interface ModelPreset {
+  value: string;
+  desc: string;
+}
+
+/** 服务商预设的完整元信息（驱动 ModelProviderSettings 下拉 / datalist / 默认值） */
+export interface ModelCatalogEntry {
+  label: string;
+  docs: string;
+  baseUrl: string;
+  models: ModelPreset[];
+  defaultContextK: number;
+  defaultOutputK: number;
+}
+
+/** 排除 custom 的预设服务商（custom 需要用户自定义 baseUrl/模型） */
+export type ModelPresetProviderId = Exclude<ModelProviderId, "custom">;
+export type ModelCatalog = Record<ModelPresetProviderId, ModelCatalogEntry>;
 
 export interface ModelEntry {
   id: string;
-  label: string;
+  /** 显示名称（可选，仅作向后兼容；UI 默认按 provider + model 拼接展示） */
+  label?: string;
   providerId: ModelProviderId;
   model: string;
   baseUrl: string;
@@ -428,6 +455,9 @@ export interface ElectronAPI {
     setModelEntries: (entries: ModelEntry[]) => Promise<unknown>;
     getActiveModelId: () => Promise<string | null>;
     activateModel: (id: string) => Promise<unknown>;
+    /** 解密指定 ModelEntry 的 api key（safeStorage），返回明文或 null。
+     *  仅供「点击眼睛图标 → 真实回显」使用，renderer 不应持久化该返回值。 */
+    revealApiKey: (id: string) => Promise<string | null>;
   };
   mcp: {
     // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由

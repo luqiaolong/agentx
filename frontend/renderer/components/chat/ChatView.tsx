@@ -13,6 +13,7 @@ import { AssistantUIThread } from "./AssistantUIThread";
 import { EmptyState } from "./EmptyState";
 import { TodoProgress } from "./TodoProgress";
 import { ChatComposer } from "./ChatComposer";
+import { modelDisplayName } from "@/lib/modelCatalog";
 import {
   BUILTIN_COMMANDS,
   findBuiltinCommand,
@@ -174,13 +175,15 @@ export function ChatView() {
         }
         try {
           const entries = await window.api.settings.getModelEntries();
-          // 优先精确匹配 id，其次大小写不敏感匹配 label
+          // 优先精确匹配 id，其次大小写不敏感匹配展示名（label 或 model 名称本身）
           const target =
             entries.find((e) => e.id === args) ??
-            entries.find((e) => e.label.toLowerCase() === args.toLowerCase());
+            entries.find(
+              (e) => modelDisplayName(e).toLowerCase() === args.toLowerCase(),
+            );
           if (!target) {
             const available = entries
-              .map((e) => `${e.label}（id: ${e.id}）`)
+              .map((e) => `${modelDisplayName(e)}（id: ${e.id}）`)
               .join("、");
             appendCommandResult({
               kind: "error",
@@ -194,7 +197,7 @@ export function ChatView() {
           await window.api.app.reloadBackendConfig();
           appendCommandResult({
             kind: "info",
-            text: `已激活模型「${target.label}」，配置已即时生效。`,
+            text: `已激活模型「${modelDisplayName(target)}」，配置已即时生效。`,
           });
         } catch (err) {
           appendCommandResult({

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Check } from "lucide-react";
 import { useModelStore } from "@/stores/model";
+import { modelDisplayName, providerLabel } from "@/lib/modelCatalog";
 
 /**
  * 模型切换按钮 —— 与 ChatComposer 左侧 btn-icon 同款 minimal 风格。
@@ -28,7 +29,10 @@ export function useModelLabel(): string {
   const activeId = useModelStore((s) => s.activeId);
   const defaultModel = useModelStore((s) => s.defaultModel);
   const activeEntry = entries.find((e) => e.id === activeId) ?? null;
-  return activeEntry?.label || defaultModel || "未选";
+  // label 可选：未设置时按 `Provider · Model` 拼接；都没有则显示 defaultModel 兜底
+  return activeEntry
+    ? modelDisplayName(activeEntry)
+    : defaultModel || "未选";
 }
 
 /** 纯展示用的模型标签（无交互，用于编辑区域等只读场景） */
@@ -77,13 +81,18 @@ export function ModelToggle() {
   // 用户在设置中配的"激活条目"（含友好 label）
   const activeEntry = entries.find((e) => e.id === activeId) ?? null;
 
-  // trigger 展示：label > defaultModel；空则显式"未选"（区别于"已选但未命名"）
-  const triggerLabel = activeEntry?.label || defaultModel || "未选";
+  // trigger 展示：entry（label/Provider · Model）→ defaultModel；空则显式"未选"
+  const triggerLabel = activeEntry
+    ? modelDisplayName(activeEntry)
+    : defaultModel || "未选";
   // provider 用于 popover header 与 fallback tooltip
   const provider = activeEntry?.providerId ?? inferProvider(defaultModel);
+  const providerText = activeEntry
+    ? providerLabel(activeEntry.providerId)
+    : provider;
   // 给"未添加条目但 defaultModel 有值"的情况一个清晰的 fallback tooltip
   const triggerTitle = defaultModel
-    ? `模型：${triggerLabel}${provider ? `（${provider}）` : ""}`
+    ? `模型：${triggerLabel}${providerText ? `（${providerText}）` : ""}`
     : "选择模型";
 
   const choose = async (id: string) => {
@@ -127,7 +136,7 @@ export function ModelToggle() {
             exit={{ opacity: 0, y: 4, scale: 0.98 }}
             transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
             className={[
-              "absolute bottom-full right-0 z-50 mb-1.5 w-[160px]",
+              "absolute bottom-full right-0 z-50 mb-1.5 min-w-[160px] max-w-[220px]",
               "overflow-hidden rounded-md border border-default bg-surface shadow-pop",
             ].join(" ")}
           >
@@ -142,16 +151,25 @@ export function ModelToggle() {
                   const ctx = entry.contextWindow
                     ? `${(entry.contextWindow / 1000).toFixed(0)}k`
                     : "";
+                  // 选项 title：包含 model id + provider + ctx，用于 hover tooltip，
+                  // 弹窗列表主体只展示 modelDisplayName + 右侧 ctx，provider 不进主体。
+                  const optionTitle = [
+                    entry.model,
+                    providerLabel(entry.providerId),
+                    ctx || "默认 context",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
                   return (
                     <button
                       key={entry.id}
                       type="button"
                       role="option"
                       aria-selected={isActive}
-                      title={`${entry.model} · ${entry.providerId}`}
+                      title={optionTitle}
                       onClick={() => void choose(entry.id)}
                       className={[
-                        "group flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left",
+                        "group flex w-full items-center gap-1.5 rounded-sm px-2 py-1 leading-snug text-left",
                         "transition-colors duration-100 outline-none",
                         isActive
                           ? "bg-brand-500/10"
@@ -167,15 +185,15 @@ export function ModelToggle() {
                         ].join(" ")}
                         aria-hidden="true"
                       />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium text-primary-c leading-snug" style={{ fontSize: 'var(--fs-popover-item)' }}>
-                          {entry.label}
-                        </div>
-                        <div className="truncate text-muted-c leading-snug" style={{ fontSize: 'var(--fs-popover-hint)' }}>
-                          {entry.model}
-                          {ctx ? ` · ${ctx}` : ""}
-                        </div>
-                      </div>
+                      {/* 单行：模型名 + 上下文大小（与 ModeToggle / PermissionToggle option 同行紧凑布局一致） */}
+                      <span className="min-w-0 flex-1 truncate font-medium leading-snug text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
+                        {modelDisplayName(entry)}
+                      </span>
+                      {ctx && (
+                        <span className="shrink-0 tabular-nums leading-snug text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
+                          {ctx}
+                        </span>
+                      )}
                       {isActive && (
                         <Check
                           className="h-3 w-3 shrink-0 text-brand-500"

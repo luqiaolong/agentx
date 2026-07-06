@@ -45,6 +45,7 @@ import {
   setModelEntries,
   getActiveModelId,
   activateModelEntry,
+  revealModelApiKey,
   migrateLegacyLLMConfig,
 } from "./store";
 import { appendLog, readLogs, cleanOldLogs } from "./logger";
@@ -191,6 +192,8 @@ function startPython(): void {
       milvusUser: milvus.user ?? undefined,
       milvusPassword: milvus.password ?? undefined,
       deepseekApiKey: getApiKey("deepseek") ?? undefined,
+      kimiApiKey: getApiKey("kimi") ?? undefined,
+      glmApiKey: getApiKey("glm") ?? undefined,
       tavilyApiKey: getApiKey("tavily") ?? undefined,
       defaultModel: llm.defaultModel || undefined,
       openaiBaseUrl: llm.openaiBaseUrl || undefined,
@@ -349,6 +352,8 @@ function registerIpc(): void {
     const mcpServersConfig = getMcpServersConfig();
     const openaiKey = getApiKey("openai");
     const deepseekKey = getApiKey("deepseek");
+    const kimiKey = getApiKey("kimi");
+    const glmKey = getApiKey("glm");
     const tavilyKey = getApiKey("tavily");
 
     const payload: Record<string, unknown> = {};
@@ -356,6 +361,8 @@ function registerIpc(): void {
     if (llm.openaiBaseUrl) payload.openai_base_url = llm.openaiBaseUrl;
     if (openaiKey) payload.openai_api_key = openaiKey;
     if (deepseekKey) payload.deepseek_api_key = deepseekKey;
+    if (kimiKey) payload.kimi_api_key = kimiKey;
+    if (glmKey) payload.glm_api_key = glmKey;
     if (tavilyKey) payload.tavily_api_key = tavilyKey;
     payload.approval_max_wait = approval.approvalMaxWait;
     payload.max_upload_bytes = approval.maxUploadBytes;
@@ -539,6 +546,10 @@ function registerIpc(): void {
     } catch (e) {
       throw new Error(e instanceof Error ? e.message : String(e));
     }
+  });
+  // 解密指定 ModelEntry 的 api key（safeStorage），仅供 renderer 点击眼睛图标回显使用
+  ipcMain.handle("settings:revealApiKey", (_e, id: string) => {
+    return revealModelApiKey(id);
   });
 
   // T6 process-resilience：读取日志（默认当天，最后 200 行）

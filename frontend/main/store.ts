@@ -708,16 +708,33 @@ export function setMcpServersConfig(servers: McpServerConfig[]): void {
 // 后端 spawn 时从 legacy 槽位读取 env 注入，故 spawn.ts / config.py / llm.py 无需改动。
 //
 // 与 backend/app/llm.py 的路由逻辑对齐：
-// - providerId="deepseek" → 写 apikey.deepseek（model 需以 deepseek 开头）
-// - providerId="openai"   → 写 apikey.openai（model 需以 gpt/o1/o3 开头）
-// - providerId="minimax" | "custom" → 写 apikey.openai + openaiBaseUrl（OpenAI 兼容兜底分支）
+// - providerId="deepseek"        → 写 apikey.deepseek（model 需以 deepseek 开头）
+// - providerId="kimi"            → 写 apikey.kimi（model 需以 kimi/moonshot 开头）
+// - providerId="glm"             → 写 apikey.glm（model 需以 glm 开头）
+// - providerId="openai"          → 写 apikey.openai（model 需以 gpt/o1/o3 开头）
+// - providerId="minimax"|"custom" → 写 apikey.openai + openaiBaseUrl（OpenAI 兼容兜底分支）
 
-export type ModelProviderId = "openai" | "deepseek" | "minimax" | "custom";
+export type ModelProviderId =
+  | "openai"
+  | "deepseek"
+  | "kimi"
+  | "minimax"
+  | "glm"
+  | "custom";
 
 // ModelEntry 现复用 frontend/shared/api-types.ts 中的定义（含 contextWindow + maxOutputTokens），
 // 单一事实源避免 main / renderer / preload 三处声明漂移。
 
 const MODEL_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+const ALLOWED_PROVIDERS = new Set<ModelProviderId>([
+  "openai",
+  "deepseek",
+  "kimi",
+  "minimax",
+  "glm",
+  "custom",
+]);
 
 function sanitizeModelEntry(raw: unknown): ModelEntry | null {
   if (!raw || typeof raw !== "object") return null;
@@ -725,8 +742,7 @@ function sanitizeModelEntry(raw: unknown): ModelEntry | null {
   const id = typeof r.id === "string" ? r.id : "";
   if (!MODEL_ID_RE.test(id)) return null;
   const providerId =
-    typeof r.providerId === "string" &&
-    ["openai", "deepseek", "minimax", "custom"].includes(r.providerId)
+    typeof r.providerId === "string" && ALLOWED_PROVIDERS.has(r.providerId as ModelProviderId)
       ? (r.providerId as ModelProviderId)
       : "custom";
   const model = typeof r.model === "string" ? r.model.trim() : "";
@@ -744,7 +760,18 @@ function sanitizeModelEntry(raw: unknown): ModelEntry | null {
     typeof r.maxOutputTokens === "number" && r.maxOutputTokens > 0
       ? r.maxOutputTokens
       : undefined;
-  return { id, label, providerId, model, baseUrl, apiKey, createdAt, contextWindow, maxOutputTokens };
+  // label 改为可选字段（向后兼容旧数据），未设置时返回 undefined
+  return {
+    id,
+    ...(label ? { label } : {}),
+    providerId,
+    model,
+    baseUrl,
+    apiKey,
+    createdAt,
+    contextWindow,
+    maxOutputTokens,
+  };
 }
 
 export function getModelEntries(): ModelEntry[] {
@@ -802,6 +829,8 @@ export function setActiveModelId(id: string | null): void {
 /**
  * 激活指定模型条目：将其 {model, baseUrl, apiKey} 写入 legacy 槽位。
  * - deepseek provider → apikey.deepseek
+ * - kimi provider     → apikey.kimi
+ * - glm provider      → apikey.glm
  * - 其他 provider（openai/minimax/custom）→ apikey.openai + openaiBaseUrl
  * 写入后需重启后端才能让新 env 生效。
  */
@@ -812,16 +841,34 @@ export function activateModelEntry(id: string): void {
   if (!entry.model) throw new Error("模型名称为空，无法激活");
   // 1. 写入 llm.defaultModel + llm.openaiBaseUrl
   setLLMConfig(entry.model, entry.baseUrl);
-  // 2. 写入对应 provider 的 API Key 槽位
+  // 2. 按 provider 路由到对应 api key 槽位
   const apiKey = decryptString(entry.apiKey) ?? "";
-  if (entry.providerId === "deepseek") {
-    setApiKey("deepseek", apiKey);
-  } else {
-    // openai / minimax / custom 均走 OpenAI 兼容兜底分支，使用 openai 槽位
-    setApiKey("openai", apiKey);
-  }
+  const slotByProvider: Record<ModelProviderId, string> = {
+    deepseek: "deepseek",
+    kimi: "kimi",
+    glm: "glm",
+    openai: "openai",
+    // minimax / custom 走 OpenAI 兼容兜底分支
+    minimax: "openai",
+    custom: "openai",
+  };
+  setApiKey(slotByProvider[entry.providerId], apiKey);
   // 3. 标记激活
   setActiveModelId(id);
+}
+
+/**
+ * 解密指定 ModelEntry 的 API Key（safeStorage），返回明文或 null。
+ * 仅供 renderer 「点击眼睛图标 → 真实回显」使用，调用方不应持久化该返回值。
+ * - 未找到条目 → null
+ * - safeStorage 不可用或解密失败 → null
+ * - 条目 apiKey 为空 → null
+ */
+export function revealModelApiKey(id: string): string | null {
+  const entries = getModelEntries();
+  const entry = entries.find((e) => e.id === id);
+  if (!entry) return null;
+  return decryptString(entry.apiKey);
 }
 
 /**
@@ -834,16 +881,29 @@ export function migrateLegacyLLMConfig(): void {
   if (existing.length > 0) return;
   const llm = getLLMConfig();
   if (!llm.defaultModel) return;
-  // 推断 provider
+  // 推断 provider（覆盖 5 家预设 + custom）
   let providerId: ModelProviderId = "custom";
   if (llm.defaultModel.startsWith("deepseek")) providerId = "deepseek";
+  else if (
+    llm.defaultModel.startsWith("kimi") ||
+    llm.defaultModel.startsWith("moonshot")
+  )
+    providerId = "kimi";
+  else if (llm.defaultModel.startsWith("glm")) providerId = "glm";
   else if (/^(gpt|o1|o3)/.test(llm.defaultModel)) providerId = "openai";
-  else if (llm.openaiBaseUrl && llm.openaiBaseUrl.includes("minimaxi")) providerId = "minimax";
-  // 读取已有 key
-  const apiKeyEnc =
-    providerId === "deepseek"
-      ? (store.get("apikey.deepseek") as string | undefined) ?? ""
-      : (store.get("apikey.openai") as string | undefined) ?? "";
+  else if (llm.openaiBaseUrl && llm.openaiBaseUrl.includes("minimaxi"))
+    providerId = "minimax";
+  // 读取已有 key（按 provider 对应槽位）
+  const keyByProvider: Record<ModelProviderId, string | undefined> = {
+    deepseek: store.get("apikey.deepseek") as string | undefined,
+    kimi: store.get("apikey.kimi") as string | undefined,
+    glm: store.get("apikey.glm") as string | undefined,
+    openai: store.get("apikey.openai") as string | undefined,
+    // minimax / custom 历史上都走 apikey.openai 槽位
+    minimax: store.get("apikey.openai") as string | undefined,
+    custom: store.get("apikey.openai") as string | undefined,
+  };
+  const apiKeyEnc = keyByProvider[providerId] ?? "";
   const entry: ModelEntry = {
     id: "migrated",
     label: `${providerId} · ${llm.defaultModel}`,
