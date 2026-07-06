@@ -42,7 +42,8 @@ export type BuiltinCommandIcon =
   | "help"
   | "info"
   | "sparkles"
-  | "wrench";
+  | "wrench"
+  | "file-text";
 
 /**
  * 内置命令清单。
@@ -117,6 +118,14 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
     detail: "展示 renderer 版本与后端 /api/health 摘要。",
     scope: "app",
     iconKey: "info",
+  },
+  {
+    name: "init",
+    aliases: ["agents", "agents-md"],
+    description: "生成或完善 AGENTS.md",
+    detail: "扫描项目结构，自动生成或更新根目录下的 AGENTS.md 与 claude.md 文件。",
+    scope: "app",
+    iconKey: "file-text",
   },
 ];
 

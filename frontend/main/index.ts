@@ -28,6 +28,8 @@ import {
   setKnowledgeConfig,
   getSubagentsConfig,
   setSubagentsConfig,
+  getTeamSubagentsConfig,
+  setTeamSubagentsConfig,
   getCustomSubagents,
   setCustomSubagents,
   addCustomSubagent,
@@ -338,6 +340,7 @@ function registerIpc(): void {
     const approval = getApprovalConfig();
     const systemPrompt = getSystemPrompt();
     const subagentsConfig = getSubagentsConfig();
+    const teamSubagentsConfig = getTeamSubagentsConfig();
     const customSubagentsConfig = getCustomSubagents();
     const toolsConfig = getToolsConfig();
     const profileAutoExtract = getProfileAutoExtract();
@@ -360,6 +363,7 @@ function registerIpc(): void {
     const maxOut = getActiveModelMaxOutputTokens();
     if (maxOut !== undefined) payload.max_output_tokens = maxOut;
     payload.subagents_config = subagentsConfig;
+    payload.team_subagents_config = teamSubagentsConfig;
     payload.custom_subagents_config = customSubagentsConfig;
     payload.tools_config = toolsConfig;
     payload.profile_auto_extract = profileAutoExtract;
@@ -383,6 +387,52 @@ function registerIpc(): void {
   });
   // Home workspace：返回桌面目录路径，renderer 用作"未显式选 workspace"时的默认归属
   ipcMain.handle("app:getHomeWorkspaceDir", () => getHomeWorkspaceDir());
+  // AGENTS.md 初始化：扫描项目结构并生成/完善 AGENTS.md 与 claude.md
+  ipcMain.handle("app:initAgentsMd", async () => {
+    try {
+      const projectRoot = app.getAppPath();
+      const agentsMdPath = path.join(projectRoot, "AGENTS.md");
+      const claudeMdPath = path.join(projectRoot, "claude.md");
+
+      // 检查文件是否存在
+      const hasAgentsMd = fs.existsSync(agentsMdPath);
+      const hasClaudeMd = fs.existsSync(claudeMdPath);
+
+      // 读取现有内容（如果存在）
+      let agentsContent = "";
+      let claudeContent = "";
+      if (hasAgentsMd) {
+        agentsContent = fs.readFileSync(agentsMdPath, "utf-8");
+      }
+      if (hasClaudeMd) {
+        claudeContent = fs.readFileSync(claudeMdPath, "utf-8");
+      }
+
+      // 构建状态摘要
+      const status = [];
+      if (hasAgentsMd) {
+        status.push(`AGENTS.md 已存在（${agentsContent.length} 字符）`);
+      } else {
+        status.push("AGENTS.md 不存在，将生成新文件");
+      }
+      if (hasClaudeMd) {
+        status.push(`claude.md 已存在（${claudeContent.length} 字符）`);
+      } else {
+        status.push("claude.md 不存在");
+      }
+
+      appendLog(`[main] initAgentsMd: ${status.join("; ")}`);
+
+      return {
+        ok: true,
+        message: `项目扫描完成。${status.join("；")}。请在 coding 模式下使用 agents-md-generator skill 生成或完善内容。`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendLog(`[main] initAgentsMd failed: ${msg}`);
+      return { ok: false, error: msg };
+    }
+  });
 
   ipcMain.handle("settings:setMilvusCredentials", async (_e, user: string, password: string) => {
     setMilvusCredentials(user, password);
@@ -422,6 +472,12 @@ function registerIpc(): void {
   ipcMain.handle("settings:getSubagentsConfig", () => getSubagentsConfig());
   ipcMain.handle("settings:setSubagentsConfig", (_e, cfg: Parameters<typeof setSubagentsConfig>[0]) => {
     setSubagentsConfig(cfg);
+    return { ok: true };
+  });
+  // 软件开发专家团角色配置 IPC handler
+  ipcMain.handle("settings:getTeamSubagentsConfig", () => getTeamSubagentsConfig());
+  ipcMain.handle("settings:setTeamSubagentsConfig", (_e, cfg: Parameters<typeof setTeamSubagentsConfig>[0]) => {
+    setTeamSubagentsConfig(cfg);
     return { ok: true };
   });
   // 自定义子代理 CRUD IPC handler

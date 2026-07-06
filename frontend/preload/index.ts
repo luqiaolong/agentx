@@ -7,10 +7,9 @@ import type {
   CompactResult,
   MilvusCredentialResult,
   PermissionMode,
+  AgentMode,
   SkillSummary,
   WorkspaceEntry,
-  AuthorizedDir,
-  HealthStatus,
   SubagentConfig,
   SubagentsConfig,
   CustomSubagentEntry,
@@ -27,6 +26,8 @@ import type {
   McpServerStatus,
   McpToolInfo,
   McpTestResult,
+  AuthorizedDir,
+  HealthStatus,
   ElectronAPI,
 } from "../shared/api-types";
 
@@ -36,6 +37,7 @@ export type {
   ApprovalDecision,
   MilvusCredentialResult,
   PermissionMode,
+  AgentMode,
   SkillSummary,
   WorkspaceEntry,
   SubagentConfig,
@@ -64,9 +66,14 @@ const approvalHandlers = new Set<(req: ApprovalRequest) => void>();
 
 async function streamChat(
   msg: { role: string; content: string },
-  opts?: { threadId?: string; permissionMode?: PermissionMode; systemPrompt?: string },
+  opts?: {
+    threadId?: string;
+    permissionMode?: PermissionMode;
+    systemPrompt?: string;
+    agentMode?: AgentMode;
+  },
 ): Promise<void> {
-  // 后端 ChatRequest: { message, thread_id, permission_mode, system_prompt }
+  // 后端 ChatRequest: { message, thread_id, permission_mode, system_prompt, agent_mode }
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -75,6 +82,7 @@ async function streamChat(
       thread_id: opts?.threadId ?? "",
       permission_mode: opts?.permissionMode ?? "workspace",
       system_prompt: opts?.systemPrompt ?? null,
+      agent_mode: opts?.agentMode ?? "agent",
     }),
   });
   const body = res.body;
@@ -277,6 +285,8 @@ const api: ElectronAPI = {
     setKnowledgeConfig: (cfg) => ipcRenderer.invoke("settings:setKnowledgeConfig", cfg),
     getSubagentsConfig: () => ipcRenderer.invoke("settings:getSubagentsConfig"),
     setSubagentsConfig: (cfg) => ipcRenderer.invoke("settings:setSubagentsConfig", cfg),
+    getTeamSubagentsConfig: () => ipcRenderer.invoke("settings:getTeamSubagentsConfig"),
+    setTeamSubagentsConfig: (cfg) => ipcRenderer.invoke("settings:setTeamSubagentsConfig", cfg),
     // 自定义子代理 CRUD
     getCustomSubagents: () => ipcRenderer.invoke("settings:getCustomSubagents"),
     setCustomSubagents: (cfg) => ipcRenderer.invoke("settings:setCustomSubagents", cfg),
@@ -417,6 +427,12 @@ const api: ElectronAPI = {
         ok: boolean;
         default_model?: string;
         mcp_refreshed?: boolean;
+      }>,
+    initAgentsMd: () =>
+      ipcRenderer.invoke("app:initAgentsMd") as Promise<{
+        ok: boolean;
+        message?: string;
+        error?: string;
       }>,
     getHomeWorkspaceDir: () => ipcRenderer.invoke("app:getHomeWorkspaceDir"),
   },

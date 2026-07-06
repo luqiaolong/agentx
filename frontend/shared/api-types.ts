@@ -133,7 +133,7 @@ export interface SubagentsConfig {
   web: SubagentConfig;
 }
 
-// 软件开发团队角色配置（与 backend/app/config.py _default_team_subagents() 一致）
+// 软件开发专家团角色配置（与 backend/app/config.py _default_team_subagents() 一致）
 export interface TeamSubagentsConfig {
   frontend_dev: SubagentConfig;
   backend_dev: SubagentConfig;
@@ -369,7 +369,7 @@ export interface ElectronAPI {
     // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取
     getSubagentsConfig: () => Promise<SubagentsConfig>;
     setSubagentsConfig: (cfg: SubagentsConfig) => Promise<unknown>;
-    // 软件开发团队角色配置
+    // 软件开发专家团角色配置
     getTeamSubagentsConfig: () => Promise<TeamSubagentsConfig>;
     setTeamSubagentsConfig: (cfg: TeamSubagentsConfig) => Promise<unknown>;
     // 自定义子代理（CRUD，与内置 subagents 配置独立持久化）
@@ -427,6 +427,8 @@ export interface ElectronAPI {
       default_model?: string;
       mcp_refreshed?: boolean;
     }>;
+    /** 生成或完善 AGENTS.md（调用 agents-md-generator skill） */
+    initAgentsMd: () => Promise<{ ok: boolean; message?: string; error?: string }>;
     /** 返回桌面目录路径（Home workspace 默认归属） */
     getHomeWorkspaceDir: () => Promise<string>;
   };

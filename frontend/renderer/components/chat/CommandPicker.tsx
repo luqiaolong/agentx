@@ -12,6 +12,7 @@ import {
   HelpCircle,
   Info,
   Wrench,
+  FileText,
 } from "lucide-react";
 import { useSkillsStore } from "@/stores/skills";
 import {
@@ -86,7 +87,7 @@ export function CommandPicker({ onSelect, onClose }: Props) {
         <span className="flex-1 text-xs font-semibold text-primary-c">
           命令与技能
         </span>
-        <span className="text-[10px] text-muted-c">
+        <span className="text-2xs text-muted-c">
           ↑↓ 选择 · Enter 确认 · Esc 关闭
         </span>
         <button
@@ -164,7 +165,7 @@ export function CommandPicker({ onSelect, onClose }: Props) {
 
 function SectionHeader({ label }: { label: string }) {
   return (
-    <div className="sticky top-0 z-10 bg-subtle px-3 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-c">
+    <div className="sticky top-0 z-10 bg-subtle px-3 py-0.5 text-2xs font-semibold uppercase tracking-wider text-muted-c">
       {label}
     </div>
   );
@@ -209,13 +210,13 @@ function CommandRow({
           {entry.title}
         </span>
         {entry.kind === "builtin" && entry.builtin?.takesArgument && (
-          <span className="shrink-0 rounded bg-subtle px-1 py-0.5 font-mono text-[10px] text-muted-c">
+          <span className="shrink-0 rounded bg-subtle px-1 py-0.5 font-mono text-2xs text-muted-c">
             {entry.builtin.argumentHint}
           </span>
         )}
         <ScopeBadge scope={entry.scope} />
         {entry.description && (
-          <span className="min-w-0 flex-1 truncate pl-2 text-[11px] text-muted-c">
+          <span className="min-w-0 flex-1 truncate pl-2 text-xs text-muted-c">
             {entry.description}
           </span>
         )}
@@ -235,7 +236,7 @@ function ScopeBadge({ scope }: { scope: CommandEntry["scope"] }) {
   const meta = map[scope];
   return (
     <span
-      className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-medium ${meta.tone}`}
+      className={`shrink-0 rounded px-1 py-0.5 text-2xs font-medium ${meta.tone}`}
     >
       {meta.label}
     </span>
@@ -252,4 +253,5 @@ const ICON_MAP: Record<BuiltinCommandIcon, typeof Sparkles> = {
   info: Info,
   sparkles: Sparkles,
   wrench: Wrench,
+  "file-text": FileText,
 };

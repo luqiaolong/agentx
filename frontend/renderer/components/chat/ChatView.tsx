@@ -5,6 +5,7 @@ import type { ChatMessage } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import { useSettingsStore } from "@/stores/settings";
 import { usePermissionStore } from "@/stores/permission";
+import { useAgentModeStore } from "@/stores/agentMode";
 import { SCENE_PROMPTS, useSceneStore } from "@/stores/scene";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
@@ -246,6 +247,28 @@ export function ChatView() {
         }
         return true;
       }
+      case "init": {
+        try {
+          const result = await window.api.app.initAgentsMd();
+          if (result.ok) {
+            appendCommandResult({
+              kind: "info",
+              text: result.message ?? "AGENTS.md 初始化完成。",
+            });
+          } else {
+            appendCommandResult({
+              kind: "error",
+              text: result.error ?? "AGENTS.md 初始化失败。",
+            });
+          }
+        } catch (err) {
+          appendCommandResult({
+            kind: "error",
+            text: `初始化失败：${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        return true;
+      }
       default:
         return false;
     }
@@ -285,11 +308,13 @@ export function ChatView() {
     try {
       // 从 permission store 读取会话级权限模式（不订阅，避免无谓重渲）
       const permissionMode = usePermissionStore.getState().mode;
+      // 从 agent mode store 读取用户级代理模式偏好
+      const agentMode = useAgentModeStore.getState().mode;
       // 从 scene store 读取当前场景 prompt（不订阅，避免无谓重渲）
       const scene = useSceneStore.getState().scene;
       await window.api.chat.send(
         { role: "user", content },
-        { threadId: tid, permissionMode, systemPrompt: SCENE_PROMPTS[scene] },
+        { threadId: tid, permissionMode, agentMode, systemPrompt: SCENE_PROMPTS[scene] },
       );
     } catch {
       setStreaming(false);
@@ -353,7 +378,7 @@ export function ChatView() {
       {/* 错误提示 */}
       {(errorMsg || dropError) && (
         <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-          <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+          <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{errorMsg ?? dropError}</span>
           </div>
