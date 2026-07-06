@@ -198,6 +198,41 @@ def test_subagents_env_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     assert subagents["code"].enabled is True
 
 
+def test_subagents_env_keywords_string_coerced_to_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """env JSON 中 keywords 为字符串时，自动转为单元素列表（防御性转换）。
+
+    前端配置注入时可能误传字符串（如语义描述），后端需兼容。
+    """
+    monkeypatch.setenv(
+        "AGENTX_SUBAGENTS_CONFIG",
+        json.dumps({
+            "code": {
+                "keywords": "用户问题涉及代码、文件、目录、技术实现、调试排错、依赖分析或代码审查时触发。",
+            }
+        }),
+    )
+    get_settings.cache_clear()
+
+    code_cfg = get_settings().subagents["code"]
+    assert isinstance(code_cfg.keywords, list)
+    assert len(code_cfg.keywords) == 1
+    assert code_cfg.keywords[0].startswith("用户问题涉及代码")
+
+
+def test_subagents_env_keywords_empty_string_becomes_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """env JSON 中 keywords 为空字符串时，转为空列表。"""
+    monkeypatch.setenv(
+        "AGENTX_SUBAGENTS_CONFIG",
+        json.dumps({"code": {"keywords": "   "}}),
+    )
+    get_settings.cache_clear()
+
+    code_cfg = get_settings().subagents["code"]
+    assert code_cfg.keywords == []
+
+
 # ============================================================
 # 3. 禁用子代理退回路径 A (R5)
 # ============================================================

@@ -345,6 +345,12 @@ class Settings(BaseSettings):
                 # 用 env 值覆盖默认值（字段级覆盖）
                 merged = defaults[name].model_dump()
                 merged.update(raw)
+                # 防御性转换：keywords 可能是字符串（前端配置注入时误传）
+                _kw = merged.get("keywords")
+                if isinstance(_kw, str):
+                    merged["keywords"] = [_kw] if _kw.strip() else []
+                elif not isinstance(_kw, list):
+                    merged["keywords"] = []
                 defaults[name] = SubagentSettings(**merged)
         return defaults
 

@@ -68,6 +68,10 @@ export function SessionList() {
   }, [sessionsMap]);
 
   const handleDelete = (id: string, title: string) => {
+    // 先清除焦点，避免 confirm 关闭后浏览器恢复焦点到即将被卸载的删除按钮，
+    // 与 ChatComposer useEffect 里的 textareaRef.current?.focus() 产生竞争，
+    // 导致输入框无法获得焦点（切换应用后恢复）。
+    (document.activeElement as HTMLElement | null)?.blur();
     if (window.confirm(`确认删除会话「${title}」？`)) {
       deleteSession(id);
     }
