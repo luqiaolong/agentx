@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { AlertCircle } from "lucide-react";
+import { useRef, useState, useEffect } from "react";
+import { AlertCircle, ArrowDown } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { ChatMessage } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
@@ -53,14 +53,29 @@ export function ChatView() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
-
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const pendingIdRef = useRef<string>("pending");
   const currentTaskIdRef = useRef<string | null>(null);
   const lastUserQueryRef = useRef<string>("");
 
   useChatStream({ pendingIdRef, currentTaskIdRef, lastUserQueryRef, setTodos, setErrorMsg });
   const bottomRef = useAutoScroll(messages);
+
+  // 监听滚动，控制"滚动到底部"按钮显隐
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const threshold = 100;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowScrollBtn(distance > threshold);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [messages.length]);
 
   // 把 CommandResult 序列化为 markdown-ish 文本塞进 assistant 消息。
   const appendCommandResult = (result: CommandResult) => {
@@ -353,10 +368,16 @@ export function ChatView() {
 
   const completedTodos = todos.filter((t) => t.done).length;
 
+  const scrollToBottom = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
+
   return (
     <div className="flex h-full flex-col bg-app">
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="relative flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyState />
         ) : (
@@ -375,6 +396,34 @@ export function ChatView() {
           />
         )}
         <div ref={bottomRef} />
+
+        {/* 右侧导航条 + 滚动到底部按钮 */}
+        <div className="absolute right-2 top-4 bottom-4 w-1.5 flex flex-col items-center">
+          {/* 导航条背景 */}
+          <div className="flex-1 w-full rounded-full bg-subtle/80 overflow-hidden relative">
+            {/* 当前视口进度指示 */}
+            <div
+              className="absolute left-0 w-full rounded-full bg-muted-c/40 transition-all duration-150"
+              style={{
+                top: `${(scrollContainerRef.current ? scrollContainerRef.current.scrollTop / Math.max(1, scrollContainerRef.current.scrollHeight - scrollContainerRef.current.clientHeight) : 0) * 100}%`,
+                height: `${(scrollContainerRef.current ? scrollContainerRef.current.clientHeight / Math.max(1, scrollContainerRef.current.scrollHeight) : 1) * 100}%`,
+              }}
+            />
+          </div>
+
+          {/* 滚动到底部按钮 */}
+          {showScrollBtn && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="mt-2 flex h-6 w-6 items-center justify-center rounded-full bg-surface border border-default text-secondary-c shadow-soft transition-colors hover:bg-hover-soft hover:text-primary-c"
+              aria-label="滚动到底部"
+              title="滚动到底部"
+            >
+              <ArrowDown className="h-3 w-3" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 任务进度 */}

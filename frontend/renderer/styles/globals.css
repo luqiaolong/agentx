@@ -152,8 +152,8 @@
     --border-default: #333333; /* softer, more visible borders */
     --border-strong: #444444; /* neutral-600 */
     --text-primary: #ececec; /* neutral-200 — Cursor-style crisp readability */
-    --text-secondary: #b0b0b0; /* neutral-400 — clearer body text */
-    --text-muted: #808080; /* neutral-500 — visible but unobtrusive */
+    --text-secondary: #c8c8c8; /* neutral-350 — workspace text brighter */
+    --text-muted: #909090; /* neutral-450 — visible but unobtrusive */
   }
 
   body {
