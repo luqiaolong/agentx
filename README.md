@@ -2,23 +2,26 @@
 
 本地优先的个人助理桌面应用，基于 Electron + React + FastAPI + LangGraph 构建。
 
+![主界面](docs/agentx.png)
+
 ## 特性
 
 - **本地优先**：数据与模型配置均保存在本地，隐私可控
-- **智能体编排**：基于 LangGraph 的多智能体路由与协作
-- **长期记忆**：会话检查点与技能/画像持久化
+- **智能体编排**：基于 LangGraph 的多智能体路由与协作（CHAT / SINGLE_TOOL / DEEP_TASK 三路径）
+- **长期记忆**：会话检查点、技能、画像持久化（SQLite）
 - **工具生态**：文件系统沙箱、RAG 检索、MCP 协议扩展
 - **流式交互**：SSE 实时推送，支持人在回路审批
+- **自定义子代理**：支持配置化添加自定义子智能体
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
-| 桌面壳 | Electron + electron-vite |
+| 桌面壳 | Electron 32 + electron-vite |
 | 前端 UI | React 18 + TypeScript + Tailwind CSS + Zustand |
 | 后端 API | FastAPI + Uvicorn |
 | AI 编排 | LangGraph + DeepAgents + LangChain |
-| 向量存储 | Milvus（通过 TEI 做嵌入） |
+| 向量存储 | Milvus（TEI BGE-M3 嵌入） |
 | 检查点 | LangGraph SqliteSaver |
 | 观测 | LangSmith / Langfuse |
 
@@ -28,7 +31,8 @@
 agentx/
 ├── backend/app/          # Python 后端
 │   ├── router/           # LangGraph 路由与状态机
-│   ├── subagents/        # 子智能体实现（代码/RAG/网页/自定义）
+│   ├── paths/            # 三路径实现（chat / tool / deep）
+│   ├── subagents/        # 子智能体（code / rag / web / 自定义）
 │   ├── memory/           # 检查点、画像、技能存储
 │   ├── tools/            # 工具实现（文件系统、RAG 检索）
 │   ├── vectorstore/      # Milvus 客户端
@@ -43,7 +47,8 @@ agentx/
 │   ├── renderer/         # React 渲染进程
 │   └── shared/           # 前后端共享类型
 ├── tests/                # 测试集（Python + 前端）
-├── docs/openspec/        # 设计规格与变更归档
+├── docs/                 # 设计文档与截图
+├── openspec/changes/     # 变更提案存档
 └── scripts/              # 构建与图标生成脚本
 ```
 
@@ -58,24 +63,20 @@ agentx/
 ### 安装依赖
 
 ```bash
-# 前端依赖
 npm install
-
-# Python 依赖
 uv sync
 ```
 
 ### 开发模式
 
 ```bash
-# 同时启动 Electron 主进程、渲染进程与 Python 后端
 npm run dev
 ```
 
 ### 测试
 
 ```bash
-# 前端测试
+# 前端
 npm run test
 
 # Python 单元测试
@@ -88,10 +89,7 @@ uv run pytest tests/python/integration -v
 ### 构建
 
 ```bash
-# 打包当前平台
 npm run dist
-
-# 指定平台
 npm run dist:win
 npm run dist:mac
 npm run dist:linux
@@ -99,12 +97,18 @@ npm run dist:linux
 
 ## 配置
 
-复制 `.env.example` 为 `.env`，按需填写以下关键项：
+![设置界面](docs/agentx-config.png)
 
-- `OPENAI_API_KEY` / `OPENAI_BASE_URL`：大模型接入
-- `MILVUS_URI` / `MILVUS_TOKEN`：向量数据库
-- `TEI_ENDPOINT`：嵌入服务地址
-- `LANGSMITH_API_KEY`：观测追踪（可选）
+配置通过前端设置面板实时保存，经 Electron safeStorage 加密后注入后端进程，无需手动编辑 `.env`：
+
+- **模型**：LLM 服务商、API Key、激活模型（支持多模型切换）
+- **记忆**：系统提示词、上下文窗口（消息数 / token 上限）
+- **技能**：Markdown 技能文件管理
+- **MCP**：MCP Server 配置与工具发现
+- **子代理**：内置子代理（code / rag / web）开关与参数，以及自定义子代理
+- **工具**：各工具启用状态
+- **知识库**：Milvus 连接配置
+- **审批与安全**：自动审批倒计时、沙箱授权目录
 
 ## 协议
 
