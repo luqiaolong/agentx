@@ -90,7 +90,7 @@ cd src-tauri && cargo check
 
 - [ ] 创建 `src-tauri/src/backend/mod.rs`：定义 `PythonHandle` 结构体（start/stop/waitForReady/onStatus）
 - [ ] 创建 `src-tauri/src/backend/env.rs`：实现 `build_env()`：
-  - 从 stronghold 读所有凭证（milvus.user/password, openai/anthropic/deepseek/tavily api keys）
+  - 从 `tauri-plugin-store` 读所有凭证（`store::credentials::get_credential`：milvus.user/password, openai/anthropic/deepseek/tavily api keys）
   - 从 tauri-plugin-store 读所有配置（llm.*, approval.*, knowledge.*, subagents_config, custom_subagents_config, tools_config, profile_auto_extract, mcp_servers_config）
   - 拼装为 `HashMap<String, String>`（key 加 `AGENTX_` 前缀）
 - [ ] 创建 `src-tauri/src/backend/handle.rs`：
@@ -142,11 +142,12 @@ cd src-tauri && cargo check
 ## Phase 3: 配置存储（tauri-plugin-store）
 
 - [ ] 创建 `src-tauri/src/store/mod.rs`：封装 tauri-plugin-store，统一 key 前缀管理
-- [ ] 创建 `src-tauri/src/store/credentials.rs`：封装 stronghold 调用：
+- [ ] 创建 `src-tauri/src/store/credentials.rs`：封装 tauri-plugin-store 凭证读写（`enc:`/`plain:` 前缀格式）：
   ```rust
-  pub async fn get_credential(app: &AppHandle, name: &str) -> Result<Option<String>, String>;
-  pub async fn set_credential(app: &AppHandle, name: &str, value: &str) -> Result<(), String>;
+  pub fn get_credential(app: &AppHandle, name: &str) -> Option<String>;
+  pub fn set_credential(app: &AppHandle, name: &str, value: &str);
   ```
+  > **注**：不使用 `tauri-plugin-stronghold`（v2.3.1 无公开 Rust runtime API）。stronghold 插件仅注册不用于凭证存储。
 - [ ] 实现 `load_config()` 和 `save_config()` 函数（使用 tauri-plugin-store）：
   ```rust
   pub struct AppConfig {
@@ -326,7 +327,7 @@ cd src-tauri && cargo check
 - [ ] 前端 settings 页监听迁移结果，对 `requires_reinput` 的 key 显示提示
 
 **Phase 8 验证**：
-- 单元测试：构造伪造的 `config.json`（明文 + enc: + plain: 混合）→ 跑迁移 → 验证 stronghold 数据正确
+- 单元测试：构造伪造的 `config.json`（明文 + enc: + plain: 混合）→ 跑迁移 → 验证 tauri-plugin-store 数据正确
 - 单元测试：构造 legacy `llm.defaultModel` + `apikey.openai` → 跑 `migrate_legacy_llm_config` → 验证 model entries 种子正确
 - 集成测试：手动从 Electron 版本生成配置 → 用 Tauri 启动 → 验证迁移报告
 

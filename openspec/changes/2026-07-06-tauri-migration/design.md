@@ -35,7 +35,7 @@ renderer → preload (window.api) → IPC → main (Node)
 - 删除 `frontend/main/`、`frontend/preload/`，替换为 Tauri Rust 主进程
 - 25+ 个 `window.api.*` 调用点全部迁移到 `@tauri-apps/api/core::invoke`
 - 30 个 IPC handler 改写为 30 个 Tauri command（同名同参）
-- `electron-store` 数据迁移到 `tauri-plugin-store` + `tauri-plugin-stronghold`
+- `electron-store` 数据迁移到 `tauri-plugin-store`（凭证用 `enc:`/`plain:` 前缀格式）
 - `dugite` 8 个 Git 命令迁移到 `git2` crate
 - Python 后端 spawn 改用 `tokio::process::Command` 注入 env
 - 打包脚本从 `electron-builder` 收敛到 `tauri build`
@@ -84,10 +84,10 @@ agentx/
 │       │   ├── env.rs                      ← build_env() 注入凭证
 │       │   ├── handle.rs                  ← PythonHandle (start/stop/waitForReady)
 │       │   └── reload.rs                  ← /api/config/reload 调用
-│       ├── store/                          ← 凭证 + 配置存储
-│       │   ├── mod.rs                      ← TauriStore 封装
-│       │   ├── credentials.rs              ← stronghold 加密封装
-│       │   └── migration.rs                ← electron-store JSON → stronghold 迁移
+│   ├── store/                          ← 凭证 + 配置存储
+│   │   ├── mod.rs                      ← tauri-plugin-store 封装
+│   │   ├── credentials.rs              ← 凭证读写（enc:/plain: 前缀格式）
+│   │   └── migration.rs                ← electron-store JSON → tauri-plugin-store 迁移
 │       ├── git/                            ← Git 集成
 │       │   ├── mod.rs                      ← 公共类型
 │       │   ├── status.rs                   ← git:getStatus
@@ -99,7 +99,7 @@ agentx/
 │       │   └── diff.rs                     ← git:getDiff
 │       ├── logger/                         ← 日志落盘
 │       │   └── mod.rs
-│       └── migration/                      ← electron-store → stronghold 数据迁移
+│       └── migration/                      ← electron-store → tauri-plugin-store 数据迁移
 │           └── mod.rs
 ├── vite.config.ts                          ← 简化（去掉 electron-vite 三入口）
 ├── package.json                            ← 改 scripts 为 tauri dev/build
@@ -189,7 +189,7 @@ agentx/
 | `python:status` | `python:status` | Python spawn 状态变化（starting/ready/error/giving_up） |
 | `window:maximized-change` | `window:maximized-change` | 窗口最大化状态变化 |
 
-### D3. 凭证存储迁移（electron-store → stronghold）
+### D3. 凭证存储迁移（electron-store → tauri-plugin-store）
 
 **electron-store 现状**（[frontend/main/store.ts](file:///d:/java/agentprojects/agentx/frontend/main/store.ts)）：
 - 普通配置：明文 JSON 存储（`milvus.user`/`milvus.password`/`apikey.*` 也用同一存储）
@@ -197,28 +197,20 @@ agentx/
 
 **迁移方案**：
 
-1. **配置存储**：用 `tauri-plugin-store`（API 几乎对等：`store.get(key)` / `store.set(key, value)`）
-2. **凭证加密**：用 `tauri-plugin-stronghold`（封装 OS keychain：Windows Credential Manager / macOS Keychain / Linux Secret Service）
+1. **配置 + 凭证存储**：统一用 `tauri-plugin-store`（API 几乎对等：`store.get(key)` / `store.set(key, value)`），凭证沿用 `enc:`/`plain:` 前缀格式
+2. **不使用 `tauri-plugin-stronghold`**：stronghold v2.3.1 的 `StrongholdCollection` 为私有类型，无公开 Rust runtime API（仅能通过 Tauri command 从 JS 侧访问），无法在 Rust 主进程的 `build_env()` 中读取凭证。`tauri-plugin-stronghold` 依赖在 `Cargo.toml` 中保留但仅注册插件，不用于凭证存储
 3. **数据迁移**：
    - 启动时检测 electron-store 默认路径（`new Store()` 无自定义 name）：
      - Windows: `%APPDATA%/agentx/config.json`
      - macOS: `~/Library/Application Support/agentx/config.json`
      - Linux: `~/.config/agentx/config.json`
-   - 若存在且 stronghold 无数据 → 读取所有 key → 写入 stronghold → 备份原文件到 `config.json.migrated` → 删除
-   - 加密值检测：`enc:` 前缀 → 用 Rust 端解密（需实现 safeStorage 兼容解码）→ 重新加密进 stronghold
-   - 明文值：`plain:` 前缀或裸字符串 → 直接加密进 stronghold
+   - 若存在 → 读取所有 key → 写入 `tauri-plugin-store` → 备份原文件到 `config.json.migrated` → 删除
+   - 加密值检测：`enc:` 前缀 → 无法自动解密（DPAPI/Keychain 未实现）→ 记录到 `requires_reinput` 列表
+   - 明文值：`plain:` 前缀或裸字符串 → 直接迁移到 `tauri-plugin-store`
 
 **数据迁移的关键决策**：
-- safeStorage 解密在 Rust 端需重新实现（OS DPAPI / Keychain 解密）
-- Windows DPAPI Rust crate：`windows` crate 的 `CryptUnprotectData`
-- macOS Keychain Rust crate：`security-framework`
-- Linux Secret Service Rust crate：`secret-service`
-
-**简化路径**（推荐）：**不实现 safeStorage 解密**，迁移脚本只迁移明文值（`plain:` 和裸字符串），加密值（`enc:`）提示用户重新输入。
-理由：
-- safeStorage 是 Electron 内部抽象，跨平台解密复杂
-- 凭证（API key）老用户重新输入成本低（最多 5 个 key：openai/anthropic/deepseek/tavily/milvus user/password）
-- 避免引入 DPAPI/Keychain Rust crate 拖慢迁移进度
+- 不实现 safeStorage 解密（DPAPI/Keychain），迁移脚本只迁移明文值（`plain:` 和裸字符串），加密值（`enc:`）提示用户重新输入
+- 理由：safeStorage 是 Electron 内部抽象，跨平台解密复杂；凭证（API key）老用户重新输入成本低（最多 5 个 key：openai/anthropic/deepseek/tavily/milvus user/password）；避免引入 DPAPI/Keychain Rust crate 拖慢迁移进度
 
 ### D4. Git 命令迁移（dugite → git2）
 
@@ -483,7 +475,7 @@ env_logger = "0.11"
 
 ```
 DELETE frontend/main/index.ts                 (855 行 TS → src-tauri/src/main.rs + commands/)
-DELETE frontend/main/store.ts                 (electron-store + safeStorage → stronghold)
+DELETE frontend/main/store.ts                 (electron-store + safeStorage → tauri-plugin-store + enc:/plain: 前缀)
 DELETE frontend/main/logger.ts                (Rust 日志重写)
 DELETE frontend/main/python/spawn.ts          (tokio::process::Command)
 DELETE frontend/preload/index.ts              (514 行 contextBridge → renderer 直调 invoke+fetch)
@@ -563,7 +555,7 @@ preload 中有 19 处 `fetch(${API_BASE}/api/...)` 代理调用后端 HTTP API�
 | 风险 | 缓解 |
 |---|---|
 | Rust 编译时间长（首次 3-5 分钟） | CI 缓存 `target/`；本地用 `cargo check` 而非 `cargo build` |
-| tauri-plugin-stronghold 跨平台差异 | 锁版本 + Windows 完整冒烟 |
+| tauri-plugin-stronghold 跨平台差异 | 不用于凭证存储（仅注册插件），无影响 |
 | safeStorage 加密值无法自动迁移 | 启动时检测到 `enc:` 值 → 弹窗提示用户重新输入 |
 | git2 某些边缘 case 行为与 dugite 不一致 | 8 个 Git 命令逐个 e2e 测试覆盖 |
 | Windows WebView2 Runtime 缺失 | README 加说明 + 安装包检测 |
@@ -581,7 +573,7 @@ preload 中有 19 处 `fetch(${API_BASE}/api/...)` 代理调用后端 HTTP API�
 7. 迁移 Git 8 个命令（git2 crate）
 8. 迁移事件订阅（python:status / window:maximized-change）
 9. 前端 `window.api.*` → `invoke()` 改造（25+ 处）
-10. 凭证数据迁移脚本（electron-store → stronghold）
+10. 凭证数据迁移脚本（electron-store → tauri-plugin-store，明文直接迁移，enc: 提示重输）
 11. 打包脚本（tauri.conf.json + bundler 配置）
 12. 自动更新插件配置（tauri-plugin-updater）
 13. 全量回归冒烟脚本

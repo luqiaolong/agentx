@@ -37,18 +37,20 @@ Tauri 命令 SHALL 在语义、参数、返回值上与原 Electron IPC handler 
 
 ### Requirement: 凭证存储与迁移
 
-凭证 SHALL 使用 `tauri-plugin-stronghold`（OS keychain 抽象）加密存储，启动时自动迁移原 `electron-store` 数据。
+凭证 SHALL 使用 `tauri-plugin-store` 与配置同库存储，采用 `enc:`/`plain:` 前缀格式（与 electron-store `safeStorage` 存储格式一致以便迁移）。启动时自动迁移原 `electron-store` 数据。
+
+> **设计决策**：不使用 `tauri-plugin-stronghold`。原因：stronghold v2.3.1 的 `StrongholdCollection` 为私有类型，无公开 Rust runtime API（仅能通过 Tauri command 从 JS 侧访问），无法在 Rust 主进程的 `build_env()` 中读取凭证。本次迁移复用 electron-store 的 `enc:`/`plain:` 前缀约定，`enc:` 解密留待后续 PR（DPAPI/Keychain 解密），明文值（`plain:` / 裸字符串）直接迁移。
 
 #### Scenario: 明文凭证自动迁移
 
 - **GIVEN** 原 `config.json`（electron-store 默认路径 `%APPDATA%/agentx/config.json`）存在且包含明文凭证（`plain:` 前缀或裸字符串）
 - **WHEN** AgentX 首次以 Tauri 启动
-- **THEN** 启动 hook 检测到旧文件 → 读取明文值 → 加密写入 stronghold → 备份原文件为 `config.json.migrated`
+- **THEN** 启动 hook 检测到旧文件 → 读取明文值 → 写入 `tauri-plugin-store`（保持 `plain:` 前缀） → 备份原文件为 `config.json.migrated`
 
 #### Scenario: 加密凭证提示重输
 
-- **GIVEN** 原 `config.json` 包含 `enc:` 前缀加密值
-- **WHEN** 迁移脚本检测到无法自动解密
+- **GIVEN** 原 `config.json` 包含 `enc:` 前缀加密值（safeStorage 加密）
+- **WHEN** 迁移脚本检测到无法自动解密（DPAPI/Keychain 解密未实现）
 - **THEN** 在 settings 页对应字段显示"请重新输入"提示
 
 ---
@@ -75,7 +77,7 @@ Tauri 主进程 SHALL 使用 `tokio::process::Command` 启动 Python 后端，�
 - **WHEN** Tauri 主进程执行 `setup()` hook
 - **THEN** 调 `Command::new("uv").args(["run", "python", "-m", "app.main"])` 启动后端
 - **AND** uv 缺失时回退 `Command::new("python")`
-- **AND** 凭证从 stronghold 读出后注入 env
+- **AND** 凭证从 `tauri-plugin-store` 读出后注入 env
 
 #### Scenario: 启动握手
 
@@ -133,14 +135,14 @@ Tauri 主进程 SHALL 使用 `tokio::process::Command` 启动 Python 后端，�
 
 ### Requirement: 凭证数据迁移脚本
 
-应用 SHALL 在 `setup()` hook 中执行 electron-store → stronghold 数据迁移，老用户零感知。
+应用 SHALL 在 `setup()` hook 中执行 electron-store → tauri-plugin-store 数据迁移，老用户零感知。
 
 #### Scenario: 首次启动迁移
 
 - **GIVEN** 用户从 Electron 版本升级到 Tauri 版本（首次启动）
 - **WHEN** `setup()` 执行
 - **THEN** 检测 `%APPDATA%/agentx/config.json`（electron-store `new Store()` 默认路径）
-- **AND** 存在 → 读取所有 key → 区分明文 / 加密值 → 加密写入 stronghold → 备份原文件为 `config.json.migrated` → 删除原文件
+- **AND** 存在 → 读取所有 key → 区分明文 / 加密值 → 明文写入 `tauri-plugin-store` → 备份原文件为 `config.json.migrated` → 删除原文件
 
 #### Scenario: legacy LLM 配置种子
 
@@ -184,13 +186,14 @@ Tauri 主进程 SHALL 使用 `tokio::process::Command` 启动 Python 后端，�
 
 ### Requirement: safeStorage 凭证加密
 
-原 Electron `safeStorage` 凭证加密 SHALL 由 `tauri-plugin-stronghold` 替代。
+原 Electron `safeStorage` 凭证加密 SHALL 由 `tauri-plugin-store` + `enc:`/`plain:` 前缀格式替代。
 
 #### Scenario: 不存在 safeStorage
 
 - **WHEN** 迁移完成
 - **THEN** 代码中不引用 `from "electron".safeStorage`
-- **AND** `enc:<base64>` 格式凭证不再被新写入
-- **AND** 所有凭证加密通过 stronghold 接口完成
+- **AND** `enc:<base64>` 格式凭证不再被新写入（新凭证用 `plain:` 前缀）
+- **AND** 所有凭证读写通过 `tauri-plugin-store` 接口完成（`store::credentials` 模块）
+- **AND** `enc:` 旧值解密留待后续 PR（DPAPI/Keychain 解密），当前返回 `None` 提示重输
 
 ---
