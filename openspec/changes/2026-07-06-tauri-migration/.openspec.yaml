@@ -1,0 +1,17 @@
+name: tauri-migration
+created: 2026-07-06
+scope: desktop-shell
+type: architecture-replacement
+risk: high
+estimated-effort: 6-9 weeks (1 developer)
+target-platforms:
+  - windows-x64
+depends-on:
+  - backend-python-stable
+replaces:
+  - electron-vite
+  - electron-builder
+  - electron-store
+  - dugite
+  - safeStorage
+  - electron-updater
