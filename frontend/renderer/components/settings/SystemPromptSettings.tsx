@@ -1,50 +1,48 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Save, Check } from "lucide-react";
 import { getSystemPrompt, setSystemPrompt } from "@/lib/api/settings";
 import { reloadBackendConfig } from "@/lib/api/app";
+import { systemPromptSchema, type SystemPromptFormValues } from "@/lib/schemas/system-prompt";
+import { useConfigSave } from "@/hooks/useConfigSave";
 
 export function SystemPromptSettings() {
-  const [value, setValue] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const form = useForm<SystemPromptFormValues>({
+    resolver: zodResolver(systemPromptSchema),
+    defaultValues: { prompt: "" },
+  });
+
+  const { saved, error, save } = useConfigSave({
+    saver: async () => {
+      await setSystemPrompt(form.getValues("prompt"));
+      await reloadBackendConfig();
+    },
+  });
 
   useEffect(() => {
     void (async () => {
       try {
         const prompt = await getSystemPrompt();
-        setValue(prompt ?? "");
+        form.reset({ prompt: prompt ?? "" });
       } catch {
         // ignore
       }
     })();
-  }, []);
-
-  const save = async () => {
-    setError(null);
-    try {
-      await setSystemPrompt(value);
-      // 热更新后端配置，无需重启
-      await reloadBackendConfig();
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
+  }, [form]);
 
   return (
     <div className="space-y-2">
       <p className="text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>留空则使用后端默认提示词</p>
       <textarea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
+        {...form.register("prompt")}
         rows={6}
         placeholder="留空使用后端默认"
         className="input-field resize-y font-mono leading-relaxed"
         style={{ fontSize: 'var(--fs-settings-form-input)' }}
       />
       <div className="flex items-center gap-2">
-        <button type="button" onClick={save} className="btn-primary">
+        <button type="button" onClick={() => void save()} className="btn-primary">
           <Save className="h-3.5 w-3.5" />
           保存
         </button>

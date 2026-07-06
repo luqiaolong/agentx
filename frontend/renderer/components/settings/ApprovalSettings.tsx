@@ -1,68 +1,70 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Save, Check } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { getApprovalConfig, setApprovalConfig } from "@/lib/api/settings";
 import { reloadBackendConfig } from "@/lib/api/app";
+import { approvalSchema, type ApprovalFormValues } from "@/lib/schemas/approval";
+import { useConfigSave } from "@/hooks/useConfigSave";
 
 const BYTES_PER_MB = 1024 * 1024;
 
 export function ApprovalSettings() {
-  const autoApproveAfterSeconds = useSettingsStore((s) => s.autoApproveAfterSeconds);
   const setAutoApproveAfterSeconds = useSettingsStore(
     (s) => s.setAutoApproveAfterSeconds,
   );
-  const maxUploadBytes = useSettingsStore((s) => s.maxUploadBytes);
   const setMaxUploadBytes = useSettingsStore((s) => s.setMaxUploadBytes);
-  // 默认值 300 与 main/store.ts getApprovalConfig() 的 approvalMaxWait 默认值一致，
-  // 避免 IPC 失败时前端用 0 覆盖后端 300s 默认值
-  const [approvalMaxWait, setApprovalMaxWait] = useState(300);
-  const [maxUploadMb, setMaxUploadMb] = useState(() =>
-    Math.round(maxUploadBytes / BYTES_PER_MB),
-  );
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  const form = useForm<ApprovalFormValues>({
+    resolver: zodResolver(approvalSchema),
+    defaultValues: {
+      autoApproveAfterSeconds: 0,
+      approvalMaxWait: 300,
+      maxUploadBytes: 52428800,
+    },
+  });
+  const { register, setValue, watch, getValues } = form;
+  const maxUploadMb = Math.round((watch("maxUploadBytes") ?? 0) / BYTES_PER_MB);
+
+  const { saved, error, save } = useConfigSave({
+    saver: async () => {
+      const v = getValues();
+      const bytes = Math.max(0, Math.round((v.maxUploadBytes ?? 0)));
+      setMaxUploadBytes(bytes);
+      setAutoApproveAfterSeconds(v.autoApproveAfterSeconds);
+      await setApprovalConfig({
+        autoApproveAfterSeconds: v.autoApproveAfterSeconds,
+        approvalMaxWait: v.approvalMaxWait,
+        maxUploadBytes: bytes,
+      });
+      await reloadBackendConfig();
+    },
+  });
 
   // 从后端加载持久化配置（electron-store 是后端读取的真正来源）。
-  // zustand 中的 autoApproveAfterSeconds / maxUploadBytes 仅作前端缓存，
-  // 真正生效需通过 setApprovalConfig IPC 写入 electron-store。
   useEffect(() => {
     void (async () => {
       try {
         const cfg = await getApprovalConfig();
-        setApprovalMaxWait(cfg.approvalMaxWait ?? 0);
-        // 用后端值同步前端缓存，避免两边漂移
+        form.reset({
+          autoApproveAfterSeconds: cfg.autoApproveAfterSeconds ?? 0,
+          approvalMaxWait: cfg.approvalMaxWait ?? 0,
+          maxUploadBytes: cfg.maxUploadBytes ?? 0,
+        });
         if (typeof cfg.autoApproveAfterSeconds === "number") {
           setAutoApproveAfterSeconds(cfg.autoApproveAfterSeconds);
         }
         if (typeof cfg.maxUploadBytes === "number") {
           setMaxUploadBytes(cfg.maxUploadBytes);
-          setMaxUploadMb(Math.round(cfg.maxUploadBytes / BYTES_PER_MB));
         }
       } catch {
         // ignore：后端未就绪时保留默认值
       }
     })();
-  }, [setAutoApproveAfterSeconds, setMaxUploadBytes]);
+  }, [form, setAutoApproveAfterSeconds, setMaxUploadBytes]);
 
-  const save = async () => {
-    setError(null);
-    const bytes = Math.max(0, Math.round(maxUploadMb * BYTES_PER_MB));
-    setMaxUploadBytes(bytes);
-    try {
-      // 三个字段全部写入 electron-store，后端从 getApprovalConfig() 读取
-      await setApprovalConfig({
-        autoApproveAfterSeconds,
-        approvalMaxWait,
-        maxUploadBytes: bytes,
-      });
-      // 热更新后端配置，无需重启
-      await reloadBackendConfig();
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
+  const currentAuto = watch("autoApproveAfterSeconds") ?? 0;
 
   return (
     <div className="space-y-4">
@@ -70,15 +72,15 @@ export function ApprovalSettings() {
         <div className="mb-1.5 flex items-center justify-between">
           <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>自动批准等待秒数</label>
           <span className="rounded-full bg-subtle px-2 py-0.5 font-medium text-primary-c" style={{ fontSize: 'var(--fs-settings-badge)' }}>
-            {autoApproveAfterSeconds}s（0=禁用）
+            {currentAuto}s（0=禁用）
           </span>
         </div>
         <input
           type="range"
           min={0}
           max={60}
-          value={autoApproveAfterSeconds}
-          onChange={(e) => setAutoApproveAfterSeconds(Number(e.target.value))}
+          {...register("autoApproveAfterSeconds", { valueAsNumber: true })}
+          onChange={(e) => setValue("autoApproveAfterSeconds", Number(e.target.value), { shouldValidate: false })}
           className="w-full accent-brand-500"
         />
         <p className="mt-1 text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
@@ -92,8 +94,7 @@ export function ApprovalSettings() {
         <input
           type="number"
           min={0}
-          value={approvalMaxWait}
-          onChange={(e) => setApprovalMaxWait(Number(e.target.value) || 0)}
+          {...register("approvalMaxWait", { valueAsNumber: true })}
           className="input-field"
         />
       </div>
@@ -103,12 +104,15 @@ export function ApprovalSettings() {
           type="number"
           min={0}
           value={maxUploadMb}
-          onChange={(e) => setMaxUploadMb(Number(e.target.value) || 0)}
+          onChange={(e) => {
+            const mb = Number(e.target.value) || 0;
+            setValue("maxUploadBytes", Math.max(0, Math.round(mb * BYTES_PER_MB)), { shouldValidate: false });
+          }}
           className="input-field"
         />
       </div>
       <div className="flex items-center gap-2">
-        <button type="button" onClick={save} className="btn-primary">
+        <button type="button" onClick={() => void save()} className="btn-primary">
           <Save className="h-3.5 w-3.5" />
           保存
         </button>
