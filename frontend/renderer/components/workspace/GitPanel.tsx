@@ -213,13 +213,13 @@ function BranchSelector({
         style={{ fontSize: "var(--fs-ws-file-name)" }}
       >
         <GitBranch className="h-3 w-3 text-brand-500" />
-        <span className="max-w-[120px] truncate">{currentBranch || "main"}</span>
+        <span className="max-w-[200px] truncate">{currentBranch || "main"}</span>
         <ChevronDown className="h-3 w-3 text-muted-c" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 max-h-48 w-48 overflow-auto rounded-md border border-default bg-surface shadow-pop">
+          <div className="absolute left-0 z-20 mt-1 max-h-60 min-w-[12rem] max-w-[20rem] overflow-auto rounded-md border border-default bg-surface shadow-pop">
             {localBranches.map((b) => (
               <button
                 key={b.name}
