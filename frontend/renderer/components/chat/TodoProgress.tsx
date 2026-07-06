@@ -22,7 +22,7 @@ export function TodoProgress({
           <li key={i} className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
             <span
               className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
-                t.done ? "border-brand-500 bg-brand-500 text-white" : "border-strong"
+                t.done ? "border-brand-600 bg-brand-700 text-brand-200" : "border-strong"
               }`}
             >
               {t.done && (

@@ -24,20 +24,20 @@ const STATUS_CONFIG: Record<
   },
   running: {
     Icon: Loader2,
-    color: "text-brand-500",
+    color: "text-brand-500 dark:text-brand-400",
     bg: "bg-brand-500/10",
     label: "进行中",
     spin: true,
   },
   done: {
     Icon: CheckCircle2,
-    color: "text-emerald-500",
+    color: "text-emerald-600 dark:text-emerald-400",
     bg: "bg-emerald-500/10",
     label: "已完成",
   },
   failed: {
     Icon: CircleX,
-    color: "text-rose-500",
+    color: "text-rose-500 dark:text-rose-400",
     bg: "bg-rose-500/10",
     label: "失败",
   },
@@ -106,7 +106,7 @@ function TaskCard({ task }: { task: Task }) {
               {completedTodos}/{totalTodos}
             </span>
             {task.status === "running" && (
-              <span className="text-brand-500">· 进行中</span>
+              <span className="text-brand-500 dark:text-brand-400">· 进行中</span>
             )}
           </span>
         )}
@@ -133,10 +133,10 @@ function TaskCard({ task }: { task: Task }) {
           <div
             className={`h-full rounded-full transition-all ${
               task.status === "failed"
-                ? "bg-rose-500"
+                ? "bg-rose-500 dark:bg-rose-400"
                 : task.status === "done"
-                  ? "bg-emerald-500"
-                  : "bg-brand-500"
+                  ? "bg-emerald-600 dark:bg-emerald-400"
+                  : "bg-brand-500 dark:bg-brand-400"
             }`}
             style={{ width: `${progress}%` }}
           />
@@ -151,7 +151,7 @@ function TaskCard({ task }: { task: Task }) {
               <span
                 className={`mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border ${
                   todo.done
-                    ? "border-brand-500 bg-brand-500 text-white"
+                    ? "border-brand-600 bg-brand-700 text-brand-200"
                     : "border-strong"
                 }`}
               >

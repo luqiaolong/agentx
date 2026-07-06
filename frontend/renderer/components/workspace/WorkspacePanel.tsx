@@ -164,9 +164,9 @@ const STATUS_CONFIG: Record<
   { Icon: typeof Loader2; color: string; label: string }
 > = {
   pending: { Icon: CircleDot, color: "text-muted-c", label: "待处理" },
-  running: { Icon: Loader2, color: "text-brand-500", label: "进行中" },
-  done: { Icon: CheckCircle2, color: "text-emerald-500", label: "已完成" },
-  failed: { Icon: CircleX, color: "text-rose-500", label: "失败" },
+  running: { Icon: Loader2, color: "text-brand-500 dark:text-brand-400", label: "进行中" },
+  done: { Icon: CheckCircle2, color: "text-emerald-600 dark:text-emerald-400", label: "已完成" },
+  failed: { Icon: CircleX, color: "text-rose-500 dark:text-rose-400", label: "失败" },
 };
 
 function CompactTaskList() {
@@ -295,7 +295,7 @@ function ContextTabPanel() {
               onClick={() => setActiveSub(key)}
               className={`relative inline-flex items-center gap-1 rounded px-2 py-1 font-medium transition-colors ${
                 isActive
-                  ? "bg-brand-600/10 text-brand-500"
+                  ? "bg-brand-600/10 text-brand-500 dark:text-brand-400"
                   : "text-muted-c hover:bg-hover-soft hover:text-secondary-c"
               }`}
               style={{ fontSize: 'var(--fs-ws-tab)' }}
@@ -303,7 +303,7 @@ function ContextTabPanel() {
               <cfg.Icon className="h-3 w-3" />
               <span>{cfg.label}</span>
               {count > 0 && (
-                <span className={`ml-0.5 rounded-full px-1 py-px text-2xs ${isActive ? "bg-brand-500/20 text-brand-500" : "bg-subtle text-muted-c"}`} style={{ fontSize: 'var(--fs-ws-file-size)' }}>
+                <span className={`ml-0.5 rounded-full px-1 py-px text-2xs ${isActive ? "bg-brand-500/20 text-brand-500 dark:text-brand-400" : "bg-subtle text-muted-c"}`} style={{ fontSize: 'var(--fs-ws-file-size)' }}>
                   {count}
                 </span>
               )}
@@ -383,7 +383,7 @@ export function WorkspacePanel() {
       onClick={() => setActive(id)}
       className={`group relative inline-flex items-center justify-center rounded p-1 font-medium transition-colors ${
         active === id
-          ? "bg-brand-600/10 text-brand-500"
+          ? "bg-brand-600/10 text-brand-500 dark:text-brand-400"
           : "text-muted-c hover:bg-hover-soft hover:text-secondary-c"
       }`}
       style={{ fontSize: 'var(--fs-ws-tab)' }}
@@ -423,14 +423,14 @@ export function WorkspacePanel() {
         <div className="flex items-center justify-between border-b border-default bg-subtle/50 px-2.5 py-1">
           <div className="flex items-center gap-2" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
             {runningCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-brand-500">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" />
+              <span className="inline-flex items-center gap-1 text-brand-500 dark:text-brand-400">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500 dark:bg-brand-400" />
                 {runningCount} 进行中
               </span>
             )}
             {doneCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-emerald-500">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
                 {doneCount} 已完成
               </span>
             )}

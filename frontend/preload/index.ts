@@ -317,6 +317,29 @@ const api: ElectronAPI = {
     revealApiKey: (id: string) =>
       ipcRenderer.invoke("settings:revealApiKey", id) as Promise<string | null>,
   },
+  models: {
+    // 走 HTTP，调用 backend/app/main.py 的 /api/models/test（发送最小 chat completion 验证连通性）
+    testConnection: async (req: {
+      providerId: string;
+      model: string;
+      baseUrl: string;
+      apiKey: string;
+      prompt?: string;
+    }) => {
+      const r = await fetch(`${API_BASE}/api/models/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      return (await r.json()) as {
+        ok: boolean;
+        statusCode: number | null;
+        latencyMs: number;
+        message: string;
+        responseText: string | null;
+      };
+    },
+  },
   mcp: {
     // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由
     listServers: async () => {
@@ -503,6 +526,10 @@ const api: ElectronAPI = {
       }>,
     getDiff: (repoPath: string, file?: string) =>
       ipcRenderer.invoke("git:getDiff", repoPath, file) as Promise<{
+        diff: string;
+      }>,
+    showCommit: (repoPath: string, hash: string) =>
+      ipcRenderer.invoke("git:showCommit", repoPath, hash) as Promise<{
         diff: string;
       }>,
   },

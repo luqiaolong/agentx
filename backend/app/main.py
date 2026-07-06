@@ -25,6 +25,7 @@
 - ``POST /api/mcp/servers/test``  — 测试单个 server 配置连接（不入主客户端状态）。
 - ``POST /api/mcp/refresh``       — 强制重连所有 server（配置热更新后调用）。
 - ``POST /api/config/reload``    — 热更新后端配置（无需重启进程，清除 settings 缓存）。
+- ``POST /api/models/test``      — 模型连接测试（设置面板「测试」按钮，发送最小 chat completion 请求）。
 
 跨进程状态：
 - ``_pending_approvals: dict[str, ApprovalDecision]`` — thread_id → 审批决策，DeepAgent 轮询。
@@ -34,9 +35,12 @@
 from __future__ import annotations
 
 import json
+import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal
+from urllib.parse import urljoin
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -351,6 +355,36 @@ class ConfigReloadRequest(BaseModel):
     profile_auto_extract: bool | None = None
     # MCP
     mcp_servers_config: list[Any] | None = None
+
+
+class ModelTestRequest(BaseModel):
+    """模型连接测试请求体。
+
+    用于「设置 → 模型」面板的「测试」按钮：向 API 地址发送一条最小 chat completion
+    请求（max_tokens=1）验证连通性、密钥、模型名是否有效。
+    - provider_id: 决定 base_url 默认值（preset）以及密钥用途
+    - model: 模型名（可包含前缀如 "deepseek-chat" / "kimi-k2-7-code"）
+    - base_url: 可选，未传则按 provider_id 取 MODEL_CATALOG 中该 preset 的默认值
+    - api_key: 明文 API Key（renderer 通过 IPC 解密或用户输入后传入）
+    - prompt: 可选测试消息内容，默认 "Hi"
+    """
+
+    provider_id: str
+    model: str
+    base_url: str | None = None
+    api_key: str
+    prompt: str = "Hi"
+
+
+class ModelTestResponse(BaseModel):
+    """模型连接测试响应。"""
+
+    ok: bool
+    status_code: int | None = None
+    latency_ms: int
+    message: str
+    # 成功时取模型返回的首个 choice content（可能是空字符串，max_tokens=1 情况下常见）
+    response_text: str | None = None
 
 
 # ============================================================
@@ -1063,6 +1097,128 @@ async def config_reload(req: ConfigReloadRequest) -> dict[str, Any]:
         "default_model": new_settings.default_model,
         "mcp_refreshed": mcp_refreshed,
     }
+
+
+# ============================================================
+# 模型连接测试（设置 → 模型面板「测试」按钮）
+# ============================================================
+
+
+@app.post("/api/models/test")
+async def models_test(req: ModelTestRequest) -> ModelTestResponse:
+    """发送最小 chat completion 请求验证 provider / model / base_url / api_key 组合是否通。
+
+    设计要点：
+    - max_tokens=1 + temperature=0：最低调用成本 + 速度，仅验证连通性
+    - 走 httpx 直接 POST，绕过 LangChain ChatOpenAI，避免拖入 LangSmith 追踪 / 长连接等
+    - 10s 超时，防止用户被某个不可达服务长时间挂住
+    - 不持久化任何状态：纯校验，不写入 store / env
+
+    base_url 与 api_key 均由前端负责组装（renderer 从 MODEL_CATALOG 拿 preset 默认值，
+    与用户输入/已存密钥合并后传入），后端不做 provider 路由，避免与 llm.py 路由逻辑双源。
+    """
+    base_url = (req.base_url or "").strip()
+    if not base_url:
+        return ModelTestResponse(
+            ok=False,
+            latency_ms=0,
+            message="未指定 base_url（自定义 provider 必须填写）",
+        )
+    if not req.model.strip():
+        return ModelTestResponse(
+            ok=False,
+            latency_ms=0,
+            message="模型名称不能为空",
+        )
+    if not req.api_key.strip():
+        return ModelTestResponse(
+            ok=False,
+            latency_ms=0,
+            message="API Key 不能为空",
+        )
+
+    # 拼接 chat completions 端点：保留 base_url 原路径，仅拼接 "chat/completions"
+    # 这样 GLM 的 /api/coding/paas/v4、kimi 的 /coding/v1、openai 的 /v1 都能正确路由
+    endpoint = urljoin(base_url.rstrip("/") + "/", "chat/completions")
+
+    body = {
+        "model": req.model,
+        "messages": [{"role": "user", "content": req.prompt}],
+        "max_tokens": 1,
+        "temperature": 0,
+        "stream": False,
+    }
+    headers = {
+        "Authorization": f"Bearer {req.api_key}",
+        "Content-Type": "application/json",
+    }
+
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(endpoint, headers=headers, json=body)
+    except httpx.TimeoutException:
+        latency = int((time.monotonic() - t0) * 1000)
+        return ModelTestResponse(
+            ok=False,
+            latency_ms=latency,
+            message=f"请求超时（10s）：{endpoint}",
+        )
+    except httpx.RequestError as exc:
+        latency = int((time.monotonic() - t0) * 1000)
+        return ModelTestResponse(
+            ok=False,
+            latency_ms=latency,
+            message=f"网络错误：{exc}",
+        )
+
+    latency = int((time.monotonic() - t0) * 1000)
+    status = resp.status_code
+
+    if 200 <= status < 300:
+        # 成功：尝试提取首个 choice 的 content（max_tokens=1 下可能为空字符串）
+        response_text: str | None = None
+        try:
+            data = resp.json()
+            choices = data.get("choices", [])
+            if choices:
+                response_text = (
+                    choices[0].get("message", {}).get("content", "") or ""
+                )
+        except Exception:  # noqa: BLE001 — 响应解析兑底，不影响 ok 判定
+            response_text = None
+        return ModelTestResponse(
+            ok=True,
+            status_code=status,
+            latency_ms=latency,
+            message="连接成功",
+            response_text=response_text,
+        )
+
+    # 失败：提取 OpenAI 风格错误 message 或截取 body 前 200 字符
+    err_msg = ""
+    try:
+        err_body = resp.json()
+        if isinstance(err_body, dict):
+            err = err_body.get("error")
+            if isinstance(err, dict):
+                err_msg = str(err.get("message") or err.get("type") or "")
+            elif isinstance(err, str):
+                err_msg = err
+            if not err_msg:
+                err_msg = str(err_body.get("message") or "")
+    except Exception:
+        pass
+    if not err_msg:
+        body_text = (resp.text or "").strip()
+        err_msg = body_text[:200] if body_text else f"HTTP {status}"
+
+    return ModelTestResponse(
+        ok=False,
+        status_code=status,
+        latency_ms=latency,
+        message=f"HTTP {status}：{err_msg}",
+    )
 
 
 if __name__ == "__main__":

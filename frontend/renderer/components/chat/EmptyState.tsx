@@ -4,7 +4,7 @@ export function EmptyState() {
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
       <div
-        className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl text-white ring-1 ring-white/20"
+        className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl text-brand-200 ring-1 ring-brand-200/20"
         style={{ backgroundColor: "rgba(79, 70, 229, 0.1)" }}
       >
         <Sparkles className="h-7 w-7" style={{ color: "#4f46e5" }} />

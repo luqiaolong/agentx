@@ -113,7 +113,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
   };
 
   return (
-    <div className="group relative my-2.5 overflow-hidden rounded-lg border border-default bg-[#f8fafc] dark:bg-[#0d1117]">
+    <div className="group relative my-2.5 overflow-hidden rounded-lg border border-default bg-[#1e1e1e] dark:bg-[#1e1e1e]">
       {/* 顶栏：语言标签 + 复制按钮 + 展开/折叠 */}
       <div className="flex items-center justify-between border-b border-default bg-subtle/60 px-3 py-1">
         <span className="font-mono font-medium uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-msg-tool)' }}>
@@ -150,8 +150,8 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
           >
             {copied ? (
               <>
-                <Check className="h-3 w-3 text-emerald-500" />
-                <span className="text-emerald-500">已复制</span>
+                <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-emerald-600 dark:text-emerald-400">已复制</span>
               </>
             ) : (
               <>
@@ -166,7 +166,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
         {htmlLight && htmlDark ? (
           <>
             <div
-              className="shiki-wrap overflow-x-auto p-3 leading-relaxed dark:hidden"
+              className="shiki-wrap hidden overflow-x-auto p-3 leading-relaxed dark:hidden"
               style={{ fontSize: 'var(--fs-msg-code)' }}
               dangerouslySetInnerHTML={{ __html: htmlLight }}
             />
@@ -183,7 +183,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
         )}
       </div>
       {shouldCollapse && !expanded && (
-        <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[#f8fafc] to-transparent dark:from-[#0d1117]" />
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[#1e1e1e] to-transparent dark:from-[#1e1e1e]" />
       )}
     </div>
   );

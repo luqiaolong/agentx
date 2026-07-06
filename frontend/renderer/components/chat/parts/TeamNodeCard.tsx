@@ -14,9 +14,9 @@ function AgentRow({ agent }: { agent: TeamAgentState }) {
     agent.status === "running" ? (
       <Loader2 className="h-3 w-3 animate-spin" />
     ) : agent.status === "done" ? (
-      <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+      <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
     ) : agent.status === "error" ? (
-      <AlertCircle className="h-3 w-3 text-red-500" />
+      <AlertCircle className="h-3 w-3 text-red-500 dark:text-red-400" />
     ) : (
       <div className="h-3 w-3 rounded-full border border-muted-c/40" />
     );
@@ -54,9 +54,9 @@ export function TeamNodeCard({
     status === "running" ? (
       <Loader2 className="h-3.5 w-3.5 animate-spin" />
     ) : status === "done" ? (
-      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
     ) : (
-      <AlertCircle className="h-3.5 w-3.5 text-red-500" />
+      <AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400" />
     );
 
   return (

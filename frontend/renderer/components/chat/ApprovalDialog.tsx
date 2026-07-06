@@ -161,7 +161,7 @@ export function ApprovalDialog() {
                   </button>
                   <button
                     type="button"
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 font-medium text-white transition-colors hover:bg-emerald-500"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3.5 py-2 font-medium text-brand-200 transition-colors hover:bg-emerald-600"
                     style={{ fontSize: 'var(--fs-settings-header)' }}
                     onClick={() => void submit(true, "approve")}
                   >
@@ -181,7 +181,7 @@ export function ApprovalDialog() {
                   </button>
                   <button
                     type="button"
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 font-medium text-white transition-colors hover:bg-sky-500"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-sky-700 px-3.5 py-2 font-medium text-brand-200 transition-colors hover:bg-sky-600"
                     style={{ fontSize: 'var(--fs-settings-header)' }}
                     onClick={() => void submit(true, "once")}
                     title="本次允许访问该路径，调用结束后失效"
@@ -191,7 +191,7 @@ export function ApprovalDialog() {
                   </button>
                   <button
                     type="button"
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 font-medium text-white transition-colors hover:bg-emerald-500"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3.5 py-2 font-medium text-brand-200 transition-colors hover:bg-emerald-600"
                     style={{ fontSize: 'var(--fs-settings-header)' }}
                     onClick={() => void submit(true, "session")}
                     title="本会话内允许访问该路径"

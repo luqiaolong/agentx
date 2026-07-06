@@ -43,11 +43,11 @@ function formatDate(iso: string): string {
 }
 
 function statusIcon(entry: GitStatusEntry) {
-  if (entry.status === "added") return <Plus className="h-3 w-3 text-emerald-500" />;
-  if (entry.status === "deleted") return <Minus className="h-3 w-3 text-rose-500" />;
-  if (entry.status === "modified") return <FileEdit className="h-3 w-3 text-amber-500" />;
-  if (entry.status === "renamed") return <GitMerge className="h-3 w-3 text-brand-500" />;
-  if (entry.status === "conflict") return <AlertCircle className="h-3 w-3 text-rose-500" />;
+  if (entry.status === "added") return <Plus className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />;
+  if (entry.status === "deleted") return <Minus className="h-3 w-3 text-rose-500 dark:text-rose-400" />;
+  if (entry.status === "modified") return <FileEdit className="h-3 w-3 text-amber-600 dark:text-amber-400" />;
+  if (entry.status === "renamed") return <GitMerge className="h-3 w-3 text-brand-500 dark:text-brand-400" />;
+  if (entry.status === "conflict") return <AlertCircle className="h-3 w-3 text-rose-500 dark:text-rose-400" />;
   return <FileQuestion className="h-3 w-3 text-muted-c" />;
 }
 
@@ -376,13 +376,13 @@ export function GitPanel() {
             onCheckout={handleCheckout}
           />
           {repoStatus.ahead > 0 && (
-            <span className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/10 px-1.5 py-px text-brand-500" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/10 px-1.5 py-px text-brand-500 dark:text-brand-400" style={{ fontSize: "var(--fs-ws-file-size)" }}>
               <GitPullRequest className="h-2.5 w-2.5" />
               {repoStatus.ahead}
             </span>
           )}
           {repoStatus.behind > 0 && (
-            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-px text-amber-500" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-px text-amber-600 dark:text-amber-400" style={{ fontSize: "var(--fs-ws-file-size)" }}>
               <GitPullRequest className="h-2.5 w-2.5" />
               {repoStatus.behind}
             </span>
@@ -412,7 +412,7 @@ export function GitPanel() {
         {staged.length > 0 && (
           <div className="card space-y-1 p-2">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-emerald-500" style={{ fontSize: "var(--fs-ws-task-title)" }}>
+              <span className="font-medium text-emerald-600 dark:text-emerald-400" style={{ fontSize: "var(--fs-ws-task-title)" }}>
                 已暂存 ({staged.length})
               </span>
             </div>
@@ -426,7 +426,7 @@ export function GitPanel() {
         {unstaged.length > 0 && (
           <div className="card space-y-1 p-2">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-amber-500" style={{ fontSize: "var(--fs-ws-task-title)" }}>
+              <span className="font-medium text-amber-600 dark:text-amber-400" style={{ fontSize: "var(--fs-ws-task-title)" }}>
                 未暂存 ({unstaged.length})
               </span>
             </div>
@@ -453,7 +453,7 @@ export function GitPanel() {
         {/* 无变更提示 */}
         {entries.length === 0 && !loading && (
           <div className="flex flex-col items-center gap-1.5 py-6 text-center">
-            <Check className="h-5 w-5 text-emerald-500" />
+            <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             <div className="text-secondary-c" style={{ fontSize: "var(--fs-empty-title)" }}>
               工作区干净
             </div>

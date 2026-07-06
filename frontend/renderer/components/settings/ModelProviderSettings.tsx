@@ -19,6 +19,7 @@ import {
   Server,
   Ruler,
   ArrowDownToLine,
+  Zap,
 } from "lucide-react";
 import type { ModelEntry, ModelProviderId } from "@/lib/utils";
 import { useModelStore } from "@/stores/model";
@@ -361,6 +362,17 @@ function ModelEditor({
   const [revealing, setRevealing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errs, setErrs] = useState<Record<string, string>>({});
+  // 「测试连接」状态
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<
+    | {
+        ok: boolean;
+        statusCode: number | null;
+        latencyMs: number;
+        message: string;
+      }
+    | null
+  >(null);
 
   const isCustom = draft.providerId === "custom";
   const preset = getProviderPreset(draft.providerId);
@@ -493,6 +505,72 @@ function ModelEditor({
       await onSave(entry);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 「测试连接」：取当前 draft 的 model/baseUrl 与用户输入的 keyInput（优先）或
+  // 编辑态下解密出来的 revealedKey，调用后端 /api/models/test 发送最小 chat 请求。
+  // 不触发任何保存或后端 spawn，純校验。
+  const handleTest = async (): Promise<void> => {
+    const testModel = draft.model.trim();
+    // baseUrl 优先级：用户输入 → preset 默认
+    const testBaseUrl =
+      draft.baseUrl.trim() || (preset ? preset.baseUrl : "");
+    const testApiKey = keyInput.trim() || revealedKey || "";
+
+    // 前端预校验：避免空请求走到后端
+    if (!testModel) {
+      setTestResult({
+        ok: false,
+        statusCode: null,
+        latencyMs: 0,
+        message: "模型名称不能为空",
+      });
+      return;
+    }
+    if (!testBaseUrl) {
+      setTestResult({
+        ok: false,
+        statusCode: null,
+        latencyMs: 0,
+        message: "请填写 API 地址",
+      });
+      return;
+    }
+    if (!testApiKey) {
+      setTestResult({
+        ok: false,
+        statusCode: null,
+        latencyMs: 0,
+        message: "请输入 API Key",
+      });
+      return;
+    }
+
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await window.api.models.testConnection({
+        providerId: draft.providerId,
+        model: testModel,
+        baseUrl: testBaseUrl,
+        apiKey: testApiKey,
+      });
+      setTestResult({
+        ok: res.ok,
+        statusCode: res.statusCode,
+        latencyMs: res.latencyMs,
+        message: res.message,
+      });
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        statusCode: null,
+        latencyMs: 0,
+        message: `请求失败：${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -701,7 +779,7 @@ function ModelEditor({
       )}
 
       {/* 操作按钮 */}
-      <div className="flex items-center gap-2 border-t border-default pt-2">
+      <div className="flex flex-wrap items-center gap-2 border-t border-default pt-2">
         <button
           type="button"
           onClick={handleSave}
@@ -714,6 +792,20 @@ function ModelEditor({
             <Save className="h-3 w-3" />
           )}
           保存
+        </button>
+        <button
+          type="button"
+          onClick={handleTest}
+          disabled={testing}
+          className="btn-secondary"
+          title="发送最小 chat 请求验证连通性（max_tokens=1）"
+        >
+          {testing ? (
+            <RefreshCw className="h-3 w-3 animate-spin" />
+          ) : (
+            <Zap className="h-3 w-3" />
+          )}
+          {testing ? "测试中…" : "测试连接"}
         </button>
         <button
           type="button"
@@ -732,6 +824,43 @@ function ModelEditor({
           </span>
         )}
       </div>
+
+      {/* 测试连接结果（位于按钮下方，跨多行展示错误详情） */}
+      {testResult && (
+        <div
+          role={testResult.ok ? "status" : "alert"}
+          className={`flex items-start gap-1.5 rounded-md border px-2.5 py-1.5 ${
+            testResult.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
+              : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300"
+          }`}
+          style={{ fontSize: 'var(--fs-settings-form-hint)' }}
+        >
+          {testResult.ok ? (
+            <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
+          ) : (
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+          )}
+          <span className="min-w-0 flex-1 break-words">
+            <span className="font-medium">
+              {testResult.ok ? "连接成功" : "连接失败"}
+            </span>
+            {testResult.statusCode != null && (
+              <span className="ml-1 opacity-75">
+                HTTP {testResult.statusCode}
+              </span>
+            )}
+            <span className="ml-1 opacity-75">
+              · 耗时 {testResult.latencyMs}ms
+            </span>
+            {testResult.message && (
+              <span className="block break-all opacity-90">
+                {testResult.message}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

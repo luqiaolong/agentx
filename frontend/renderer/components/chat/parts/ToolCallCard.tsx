@@ -78,19 +78,19 @@ export function ToolCallCard({
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {status === "running" && (
             <>
-              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+              <Loader2 className="h-3 w-3 animate-spin text-amber-600 dark:text-amber-400" />
               <span className="text-amber-600 dark:text-amber-400">运行中</span>
             </>
           )}
           {status === "complete" && (
             <>
-              <Check className="h-3 w-3 text-emerald-500" />
+              <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
               <span className="text-emerald-600 dark:text-emerald-400">完成</span>
             </>
           )}
           {status === "error" && (
             <>
-              <X className="h-3 w-3 text-rose-500" />
+              <X className="h-3 w-3 text-rose-500 dark:text-rose-400" />
               <span className="text-rose-600 dark:text-rose-400">失败</span>
             </>
           )}
@@ -123,7 +123,7 @@ export function ToolCallCard({
           )}
           {error && (
             <div>
-              <div className="mb-0.5 font-semibold uppercase tracking-wide text-rose-500" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+              <div className="mb-0.5 font-semibold uppercase tracking-wide text-rose-500 dark:text-rose-400" style={{ fontSize: 'var(--fs-msg-tool)' }}>
                 Error
               </div>
               <pre className="overflow-auto bg-rose-500/5 p-1 font-mono text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-msg-code)' }}>

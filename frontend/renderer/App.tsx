@@ -97,7 +97,7 @@ export default function App() {
       >
         <div className="flex items-center gap-2">
           <div
-            className="flex h-6 w-6 items-center justify-center rounded-md text-white shadow-soft"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-brand-200 shadow-soft"
             style={{ backgroundColor: "#4f46e5" }}
             aria-hidden
           >
@@ -122,7 +122,7 @@ export default function App() {
                 onClick={() => handleSceneChange(s)}
                 className={`h-5 px-2 font-medium transition-colors ${
                   scene === s
-                    ? "bg-brand-600 text-white"
+                    ? "bg-brand-700 text-brand-200"
                     : "text-secondary-c hover:text-primary-c"
                 }`}
                 style={{ fontSize: 'var(--fs-scene-tab)' }}
@@ -172,7 +172,7 @@ export default function App() {
               onClick={() => void window.api.window.close()}
               aria-label="关闭"
               title="关闭"
-              hoverColor="hover:bg-rose-500 hover:text-white"
+              hoverColor="hover:bg-rose-700 hover:text-brand-200"
             >
               <X className="h-3.5 w-3.5" strokeWidth={2} />
             </WindowControlButton>

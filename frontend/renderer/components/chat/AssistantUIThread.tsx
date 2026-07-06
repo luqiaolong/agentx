@@ -207,7 +207,7 @@ function MessageParts({
               onKeyDown={handleEditKeyDown}
               onBlur={() => setIsEditing(false)}
               rows={2}
-              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-600 px-3 py-2 pr-24 pb-8 leading-snug text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-700 px-3 py-2 pr-24 pb-8 leading-snug text-brand-100 shadow-soft placeholder:text-brand-300/60 focus:outline-none focus:ring-2 focus:ring-brand-400/30"
               style={{ minHeight: "48px", fontSize: 'var(--fs-msg-user)' }}
             />
             {/* 模型选择 + 发送按钮：编辑框右下角 */}
@@ -235,7 +235,7 @@ function MessageParts({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-2 leading-snug text-white shadow-soft" style={{ fontSize: 'var(--fs-msg-user)' }}>
+        <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-700 px-3 py-2 leading-snug text-brand-100 shadow-soft" style={{ fontSize: 'var(--fs-msg-user)' }}>
           {userText}
         </div>
         {/* 编辑按钮：消息右侧，hover 时显示 */}

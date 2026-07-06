@@ -805,6 +805,16 @@ function registerIpc(): void {
       return { diff: "" };
     }
   });
+
+  ipcMain.handle("git:showCommit", async (_e, repoPath: string, hash: string) => {
+    try {
+      const { stdout, exitCode } = await exec(["show", hash, "--stat", "-p"], repoPath);
+      if (exitCode !== 0) return { diff: "" };
+      return { diff: stdout };
+    } catch (err) {
+      return { diff: "" };
+    }
+  });
 }
 
 // Windows 任务栏：必须设置 AppUserModelID，否则任务栏会从 electron.exe 取默认图标

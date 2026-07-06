@@ -265,6 +265,25 @@ export interface ModelEntry {
   maxOutputTokens?: number | null;
 }
 
+/** 模型连接测试请求：发送给后端 POST /api/models/test */
+export interface ModelTestRequest {
+  providerId: string;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  prompt?: string;
+}
+
+/** 模型连接测试响应 */
+export interface ModelTestResponse {
+  ok: boolean;
+  statusCode: number | null;
+  latencyMs: number;
+  message: string;
+  /** 成功时返回模型首个 choice content（max_tokens=1 下可能为空） */
+  responseText: string | null;
+}
+
 export interface McpServerConfig {
   name: string;
   transport: McpTransport;
@@ -459,6 +478,10 @@ export interface ElectronAPI {
      *  仅供「点击眼睛图标 → 真实回显」使用，renderer 不应持久化该返回值。 */
     revealApiKey: (id: string) => Promise<string | null>;
   };
+  // 模型连接测试（设置 → 模型面板「测试」按钮）：走 HTTP 调用 backend/app/main.py 的 /api/models/test
+  models: {
+    testConnection: (req: ModelTestRequest) => Promise<ModelTestResponse>;
+  };
   mcp: {
     // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由
     listServers: () => Promise<{ servers: McpServerStatus[] }>;
@@ -518,6 +541,7 @@ export interface ElectronAPI {
     commit: (repoPath: string, message: string) => Promise<{ ok: boolean; error?: string }>;
     discardChanges: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
     getDiff: (repoPath: string, file?: string) => Promise<{ diff: string }>;
+    showCommit: (repoPath: string, hash: string) => Promise<{ diff: string }>;
   };
 }
 
