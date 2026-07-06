@@ -1,15 +1,32 @@
-import { useState } from "react";
-import { Folder, ListChecks, Trash2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Folder, ListChecks, Trash2, GitBranch } from "lucide-react";
 import { FileTree } from "./FileTree";
 import { TaskTimeline } from "./TaskTimeline";
+import { GitPanel } from "./GitPanel";
 import { useTasksStore } from "@/stores/tasks";
+import { useGitStore } from "@/stores/git";
+import { useChatStore } from "@/stores/chat";
 
-type Tab = "files" | "tasks";
+type Tab = "files" | "tasks" | "git";
 
 export function WorkspacePanel() {
   const [active, setActive] = useState<Tab>("tasks");
   const tasks = useTasksStore((s) => s.tasks);
   const clearDone = useTasksStore((s) => s.clearDone);
+  const gitRepoStatus = useGitStore((s) => s.repoStatus);
+  const setGitRepoPath = useGitStore((s) => s.setRepoPath);
+  const currentSession = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId] ?? null : null,
+  );
+  const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
+  const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath;
+
+  // 当 workspace 路径变化时，同步到 git store
+  useEffect(() => {
+    if (workspacePath) {
+      setGitRepoPath(workspacePath);
+    }
+  }, [workspacePath, setGitRepoPath]);
 
   const runningCount = tasks.filter((t) => t.status === "running").length;
   const doneCount = tasks.filter((t) => t.status === "done").length;
@@ -18,7 +35,7 @@ export function WorkspacePanel() {
     <button
       type="button"
       onClick={() => setActive(id)}
-      className={`group inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-medium transition-colors ${
+      className={`group relative inline-flex items-center justify-center rounded p-1 font-medium transition-colors ${
         active === id
           ? "bg-brand-600/10 text-brand-500"
           : "text-muted-c hover:bg-hover-soft hover:text-secondary-c"
@@ -26,18 +43,18 @@ export function WorkspacePanel() {
       style={{ fontSize: 'var(--fs-ws-tab)' }}
     >
       <Icon className="h-3.5 w-3.5" />
-      {label}
+      {/* hover 时右上角弹出提示 */}
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-default bg-surface px-2 py-1 text-secondary-c opacity-0 shadow-pop transition-opacity group-hover:opacity-100" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
+        {label}
+      </span>
       {badge !== undefined && badge > 0 && (
         <span
-          className={`ml-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 font-semibold leading-none ${
+          className={`absolute -right-0.5 -top-0.5 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full ${
             active === id
-              ? "bg-brand-500 text-white"
-              : "bg-subtle text-secondary-c"
+              ? "bg-brand-500"
+              : "bg-amber-500"
           }`}
-          style={{ fontSize: 'var(--fs-card-meta)' }}
-        >
-          {badge}
-        </span>
+        />
       )}
     </button>
   );
@@ -52,8 +69,9 @@ export function WorkspacePanel() {
           </span>
         </div>
         <div className="flex items-center gap-0.5">
+          {tabBtn("tasks", "任务", ListChecks)}
           {tabBtn("files", "文件", Folder)}
-          {tabBtn("tasks", "任务", ListChecks, tasks.length)}
+          {tabBtn("git", "Git", GitBranch, gitRepoStatus.isGitRepo && !gitRepoStatus.clean ? 1 : undefined)}
         </div>
       </div>
 
@@ -91,7 +109,7 @@ export function WorkspacePanel() {
 
       {/* 内容 */}
       <div className="flex-1 overflow-auto p-2">
-        {active === "files" ? <FileTree /> : <TaskTimeline />}
+        {active === "files" ? <FileTree /> : active === "tasks" ? <TaskTimeline /> : <GitPanel />}
       </div>
     </div>
   );

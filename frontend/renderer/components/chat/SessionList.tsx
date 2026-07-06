@@ -288,7 +288,7 @@ function SessionGroup({
         </button>
       </div>
       {open && (
-        <ul className="mt-0.5 space-y-px">
+        <ul className="m-0 mt-0.5 space-y-px p-0">
           {items.map((s) => {
             const active = s.id === currentId;
             return (
@@ -303,14 +303,12 @@ function SessionGroup({
                       onSwitch(s.id);
                     }
                   }}
-                  className={`group relative flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 transition-colors ${
+                  className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-4 pr-1 transition-colors ${
                     isStreaming
                       ? "cursor-not-allowed opacity-60"
                       : "hover:bg-hover-soft"
                   } ${active ? "bg-subtle" : ""}`}
                 >
-                  {/* 12px 占位（=分组标题的 Chevron 宽度），让小圆点与 icon 严格对齐 */}
-                  <span className="h-3.5 w-3 shrink-0" aria-hidden />
                   <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
                     {s.isRunning ? (
                       <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />

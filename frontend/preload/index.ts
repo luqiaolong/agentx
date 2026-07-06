@@ -29,6 +29,10 @@ import type {
   AuthorizedDir,
   HealthStatus,
   ElectronAPI,
+  GitStatusEntry,
+  GitCommit,
+  GitBranch,
+  GitRepoStatus,
 } from "../shared/api-types";
 
 export type {
@@ -57,6 +61,10 @@ export type {
   McpToolInfo,
   McpTestResult,
   ElectronAPI,
+  GitStatusEntry,
+  GitCommit,
+  GitBranch,
+  GitRepoStatus,
 };
 
 const API_BASE = "http://127.0.0.1:8123";
@@ -450,6 +458,50 @@ const api: ElectronAPI = {
         ipcRenderer.removeListener("window:maximized-change", listener);
       };
     },
+  },
+  git: {
+    getStatus: (repoPath: string) =>
+      ipcRenderer.invoke("git:getStatus", repoPath) as Promise<{
+        entries: GitStatusEntry[];
+        repoStatus: GitRepoStatus;
+      }>,
+    getLog: (repoPath: string, limit?: number) =>
+      ipcRenderer.invoke("git:getLog", repoPath, limit) as Promise<{
+        commits: GitCommit[];
+      }>,
+    getBranches: (repoPath: string) =>
+      ipcRenderer.invoke("git:getBranches", repoPath) as Promise<{
+        branches: GitBranch[];
+      }>,
+    checkout: (repoPath: string, branch: string) =>
+      ipcRenderer.invoke("git:checkout", repoPath, branch) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+    stage: (repoPath: string, files: string[]) =>
+      ipcRenderer.invoke("git:stage", repoPath, files) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+    unstage: (repoPath: string, files: string[]) =>
+      ipcRenderer.invoke("git:unstage", repoPath, files) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+    commit: (repoPath: string, message: string) =>
+      ipcRenderer.invoke("git:commit", repoPath, message) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+    discardChanges: (repoPath: string, files: string[]) =>
+      ipcRenderer.invoke("git:discardChanges", repoPath, files) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+    getDiff: (repoPath: string, file?: string) =>
+      ipcRenderer.invoke("git:getDiff", repoPath, file) as Promise<{
+        diff: string;
+      }>,
   },
 };
 

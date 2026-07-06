@@ -275,6 +275,48 @@ export interface CompactResult {
   error?: string;
 }
 
+// ---- Git ----
+
+export type GitFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflict";
+
+export interface GitStatusEntry {
+  path: string;
+  status: GitFileStatus;
+  staged: boolean;
+  originalPath?: string;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  email: string;
+  date: string;
+  parents: string[];
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream?: string;
+}
+
+export interface GitRepoStatus {
+  currentBranch: string;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  isGitRepo: boolean;
+}
+
 export interface ElectronAPI {
   chat: {
     send: (
@@ -435,6 +477,17 @@ export interface ElectronAPI {
     close: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
     onMaximizedChange: (handler: (maximized: boolean) => void) => () => void;
+  };
+  git: {
+    getStatus: (repoPath: string) => Promise<{ entries: GitStatusEntry[]; repoStatus: GitRepoStatus }>;
+    getLog: (repoPath: string, limit?: number) => Promise<{ commits: GitCommit[] }>;
+    getBranches: (repoPath: string) => Promise<{ branches: GitBranch[] }>;
+    checkout: (repoPath: string, branch: string) => Promise<{ ok: boolean; error?: string }>;
+    stage: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
+    unstage: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
+    commit: (repoPath: string, message: string) => Promise<{ ok: boolean; error?: string }>;
+    discardChanges: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
+    getDiff: (repoPath: string, file?: string) => Promise<{ diff: string }>;
   };
 }
 

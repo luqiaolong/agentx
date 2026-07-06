@@ -12,6 +12,7 @@ import {
 import * as path from "path";
 import * as fs from "fs";
 import * as crypto from "crypto";
+import { exec } from "dugite";
 import { spawnPython, type PythonHandle } from "./python/spawn";
 import {
   getMilvusCredentials,
@@ -47,6 +48,7 @@ import {
   migrateLegacyLLMConfig,
 } from "./store";
 import { appendLog, readLogs, cleanOldLogs } from "./logger";
+import type { GitStatusEntry, GitRepoStatus, GitCommit, GitBranch, GitFileStatus } from "../shared/api-types";
 
 const PYTHON_PORT = 8123;
 
@@ -559,6 +561,239 @@ function registerIpc(): void {
     app.quit();
   });
   ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
+
+  // ---- Git IPC handlers ----
+  ipcMain.handle("git:getStatus", async (_e, repoPath: string) => {
+    try {
+      const gitDir = path.join(repoPath, ".git");
+      const isGitRepo = fs.existsSync(gitDir) && fs.statSync(gitDir).isDirectory();
+      if (!isGitRepo) {
+        return {
+          entries: [] as GitStatusEntry[],
+          repoStatus: {
+            currentBranch: "",
+            ahead: 0,
+            behind: 0,
+            clean: true,
+            isGitRepo: false,
+          } as GitRepoStatus,
+        };
+      }
+
+      const { stdout, exitCode } = await exec(
+        ["status", "--porcelain", "-u", "--branch"],
+        repoPath,
+      );
+      if (exitCode !== 0) {
+        return {
+          entries: [] as GitStatusEntry[],
+          repoStatus: {
+            currentBranch: "",
+            ahead: 0,
+            behind: 0,
+            clean: true,
+            isGitRepo: true,
+          } as GitRepoStatus,
+        };
+      }
+
+      const entries: GitStatusEntry[] = [];
+      let currentBranch = "";
+      let ahead = 0;
+      let behind = 0;
+
+      const lines = stdout.split("\n").filter((l) => l.trim());
+      for (const line of lines) {
+        if (line.startsWith("## ")) {
+          const branchInfo = line.slice(3);
+          const match = branchInfo.match(/^([^\.]+?)(?:\.\.\.([^\[]+))?(?:\s*\[([^\]]+)\])?/);
+          if (match) {
+            currentBranch = match[1]?.trim() ?? "";
+            const tracking = match[3];
+            if (tracking) {
+              const aheadMatch = tracking.match(/ahead\s+(\d+)/);
+              const behindMatch = tracking.match(/behind\s+(\d+)/);
+              if (aheadMatch) ahead = parseInt(aheadMatch[1] ?? "0", 10);
+              if (behindMatch) behind = parseInt(behindMatch[1] ?? "0", 10);
+            }
+          }
+          continue;
+        }
+
+        const staged = line[0] ?? " ";
+        const unstaged = line[1] ?? " ";
+        const rawPath = line.slice(3);
+
+        let status: GitFileStatus = "untracked";
+        if (staged === "A" || unstaged === "A") status = "added";
+        else if (staged === "M" || unstaged === "M") status = "modified";
+        else if (staged === "D" || unstaged === "D") status = "deleted";
+        else if (staged === "R" || unstaged === "R") status = "renamed";
+        else if (staged === "U" || unstaged === "U" || staged === "C" || unstaged === "C") status = "conflict";
+
+        const isStaged = staged !== " " && staged !== "?";
+        const isUntracked = staged === "?" && unstaged === "?";
+
+        let filePath = rawPath;
+        let originalPath: string | undefined;
+        if (status === "renamed" && rawPath.includes(" -> ")) {
+          const parts = rawPath.split(" -> ");
+          originalPath = parts[0] ?? "";
+          filePath = parts[1] ?? "";
+        }
+
+        entries.push({
+          path: filePath,
+          status: isUntracked ? "untracked" : status,
+          staged: isStaged,
+          originalPath,
+        });
+      }
+
+      const clean = entries.length === 0;
+      return {
+        entries,
+        repoStatus: {
+          currentBranch,
+          ahead,
+          behind,
+          clean,
+          isGitRepo: true,
+        } as GitRepoStatus,
+      };
+    } catch (err) {
+      appendLog(`[main] git:getStatus error: ${(err as Error).message}`);
+      return {
+        entries: [] as GitStatusEntry[],
+        repoStatus: {
+          currentBranch: "",
+          ahead: 0,
+          behind: 0,
+          clean: true,
+          isGitRepo: false,
+        } as GitRepoStatus,
+      };
+    }
+  });
+
+  ipcMain.handle("git:getLog", async (_e, repoPath: string, limit = 50) => {
+    try {
+      const format = "%H|%h|%s|%an|%ae|%ad|%P";
+      const { stdout, exitCode } = await exec(
+        ["log", `--pretty=format:${format}`, "--date=iso", `-n${limit}`],
+        repoPath,
+      );
+      if (exitCode !== 0) return { commits: [] as GitCommit[] };
+
+      const commits: GitCommit[] = stdout.split("\n").filter(Boolean).map((line) => {
+        const parts = line.split("|");
+        return {
+          hash: parts[0] ?? "",
+          shortHash: parts[1] ?? "",
+          message: parts[2] ?? "",
+          author: parts[3] ?? "",
+          email: parts[4] ?? "",
+          date: parts[5] ?? "",
+          parents: parts[6] ? parts[6].split(" ") : [],
+        };
+      });
+      return { commits };
+    } catch (err) {
+      appendLog(`[main] git:getLog error: ${(err as Error).message}`);
+      return { commits: [] as GitCommit[] };
+    }
+  });
+
+  ipcMain.handle("git:getBranches", async (_e, repoPath: string) => {
+    try {
+      const { stdout, exitCode } = await exec(
+        ["branch", "-a", "-vv"],
+        repoPath,
+      );
+      if (exitCode !== 0) return { branches: [] as GitBranch[] };
+
+      const branches: GitBranch[] = [];
+      const lines = stdout.split("\n").filter((l) => l.trim());
+      for (const line of lines) {
+        const current = line.startsWith("*");
+        const rawName = line.replace(/^\*?\s+/, "").split(" ")[0] ?? "";
+        const remote = rawName.startsWith("remotes/");
+        const cleanName = remote ? rawName.replace("remotes/", "") : rawName;
+        const upstreamMatch = line.match(/\[([^\]]+)\]/);
+        branches.push({
+          name: cleanName,
+          current,
+          remote,
+          upstream: upstreamMatch ? upstreamMatch[1] : undefined,
+        });
+      }
+      return { branches };
+    } catch (err) {
+      appendLog(`[main] git:getBranches error: ${(err as Error).message}`);
+      return { branches: [] as GitBranch[] };
+    }
+  });
+
+  ipcMain.handle("git:checkout", async (_e, repoPath: string, branch: string) => {
+    try {
+      const { exitCode, stderr } = await exec(["checkout", branch], repoPath);
+      if (exitCode !== 0) return { ok: false, error: stderr || "checkout failed" };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("git:stage", async (_e, repoPath: string, files: string[]) => {
+    try {
+      const { exitCode, stderr } = await exec(["add", "--", ...files], repoPath);
+      if (exitCode !== 0) return { ok: false, error: stderr || "stage failed" };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("git:unstage", async (_e, repoPath: string, files: string[]) => {
+    try {
+      const { exitCode, stderr } = await exec(["reset", "HEAD", "--", ...files], repoPath);
+      if (exitCode !== 0) return { ok: false, error: stderr || "unstage failed" };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("git:commit", async (_e, repoPath: string, message: string) => {
+    try {
+      const { exitCode, stderr } = await exec(["commit", "-m", message], repoPath);
+      if (exitCode !== 0) return { ok: false, error: stderr || "commit failed" };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("git:discardChanges", async (_e, repoPath: string, files: string[]) => {
+    try {
+      const { exitCode, stderr } = await exec(["checkout", "--", ...files], repoPath);
+      if (exitCode !== 0) return { ok: false, error: stderr || "discard failed" };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("git:getDiff", async (_e, repoPath: string, file?: string) => {
+    try {
+      const args = file ? ["diff", "--", file] : ["diff"];
+      const { stdout, exitCode } = await exec(args, repoPath);
+      if (exitCode !== 0) return { diff: "" };
+      return { diff: stdout };
+    } catch (err) {
+      return { diff: "" };
+    }
+  });
 }
 
 // Windows 任务栏：必须设置 AppUserModelID，否则任务栏会从 electron.exe 取默认图标
