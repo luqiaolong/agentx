@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ScrollText,
   Pencil,
+  MessageSquare,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { Session } from "@/stores/chat";
@@ -308,8 +309,8 @@ function SessionGroup({
                       : "hover:bg-hover-soft"
                   } ${active ? "bg-subtle" : ""}`}
                 >
-                  {/* 占位：与分组标题的 Chevron 宽度对齐，让小圆点和 icon 左边缘对齐 */}
-                  <span className="w-3 shrink-0" aria-hidden />
+                  {/* 12px 占位（=分组标题的 Chevron 宽度），让小圆点与 icon 严格对齐 */}
+                  <span className="h-3.5 w-3 shrink-0" aria-hidden />
                   <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
                     {s.isRunning ? (
                       <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
