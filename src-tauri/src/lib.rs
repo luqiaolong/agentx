@@ -1,16 +1,26 @@
 //! AgentX Tauri 主进程入口
 //!
-//! 注册 10 个官方插件 + 日志，在 `setup()` 中启动 Python 后端。
+//! 注册 10 个官方插件 + 日志，在 `setup()` 中启动 Python 后端，
+//! 注册全部 45+ 个 Tauri 命令（settings/system/app）。
 
 pub mod backend;
 pub mod commands;
+pub mod logger;
 pub mod store;
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use tauri::Manager;
 
 const PYTHON_PORT: u16 = 8123;
+
+/// Python 后端 handle 的全局状态包装。
+///
+/// 用 `Mutex<Option<PythonHandle>>` 而非直接 `manage(PythonHandle)`，
+/// 因为 `app_restart_backend` 命令需要取出旧 handle 停止后替换为新 handle。
+/// `Mutex` 不跨 await 点持有，`stop().await` 在锁外执行。
+pub type PythonState = Mutex<Option<backend::handle::PythonHandle>>;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -33,7 +43,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            // === Settings 命令（28 个）===
+            // === Settings 命令（30 个）===
             commands::settings::settings_get_milvus_credentials,
             commands::settings::settings_set_milvus_credentials,
             commands::settings::settings_get_api_key,
@@ -64,6 +74,35 @@ pub fn run() {
             commands::settings::settings_set_model_entries,
             commands::settings::settings_get_active_model_id,
             commands::settings::settings_activate_model,
+            // === Dialog 命令（4 个）===
+            commands::dialog::dialog_open_file,
+            commands::dialog::dialog_open_folder,
+            commands::dialog::dialog_save_file,
+            commands::dialog::dialog_save_dropped_file,
+            // === Shell 命令（3 个）===
+            commands::shell::shell_reveal_in_folder,
+            commands::shell::shell_open_in_editor,
+            commands::shell::shell_open_external,
+            // === Window 命令（4 个）===
+            commands::window::window_minimize,
+            commands::window::window_maximize,
+            commands::window::window_close,
+            commands::window::window_is_maximized,
+            // === Clipboard 命令（2 个）===
+            commands::clipboard::clipboard_read,
+            commands::clipboard::clipboard_write,
+            // === Notify 命令（1 个）===
+            commands::notify::notify_show,
+            // === Logs 命令（1 个）===
+            commands::logs::logs_read,
+            // === App 命令（7 个）===
+            commands::app::app_get_version,
+            commands::app::app_quit,
+            commands::app::app_restart,
+            commands::app::app_restart_backend,
+            commands::app::app_reload_backend_config,
+            commands::app::app_init_agents_md,
+            commands::app::app_get_home_workspace_dir,
         ])
         .setup(|app| {
             log::info!(
@@ -73,6 +112,12 @@ pub fn run() {
 
             // 迁移旧版 LLM 配置（若需要）
             store::migrate_legacy_llm_config(app.handle());
+
+            // 初始化 PythonHandle 状态（None，setup 后台任务填充）
+            app.manage(PythonState::new(None));
+
+            // 注册窗口事件（maximized-change 推送）
+            commands::window::register_window_events(app.handle());
 
             // 启动 Python 后端
             let handle = app.handle().clone();
@@ -91,7 +136,11 @@ pub fn run() {
                     log::warn!("python waitForReady returned false (timeout or stopped)");
                 }
                 // 将 handle 存入 app state，后续 stop/restart 时使用
-                handle.manage(py);
+                if let Some(state) = handle.try_state::<PythonState>() {
+                    if let Ok(mut guard) = state.lock() {
+                        *guard = Some(py);
+                    }
+                }
             });
 
             Ok(())

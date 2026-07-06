@@ -53,6 +53,7 @@ thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 log = "0.4"
+dirs = "5"
 
 # Platform-specific
 libc = "0.2"
