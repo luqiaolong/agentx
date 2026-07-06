@@ -35,6 +35,10 @@ tauri-plugin-log = "2"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
+
+# 加密（Electron safeStorage / Chromium OSCrypt v10 解密）
+aes-gcm = "0.10"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -57,6 +61,10 @@ dirs = "5"
 
 # Platform-specific
 libc = "0.2"
+
+# Windows DPAPI（解密 Electron safeStorage 加密的 enc: 凭证）
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.59", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile = "3"
