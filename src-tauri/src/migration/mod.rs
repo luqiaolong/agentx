@@ -87,6 +87,42 @@ fn resolve_legacy_config_path() -> Option<std::path::PathBuf> {
     Some(base.join(LEGACY_DIR_NAME).join(STORE_NAME))
 }
 
+/// 读取并解析 legacy config.json
+///
+/// 返回值：
+/// - `Ok(None)` — 文件不存在 / 解析失败 / 空对象（跳过迁移）
+/// - `Ok(Some(data))` — 成功读取的 JSON 对象
+/// - `Err(msg)` — 读取失败（权限/IO 错误）
+fn read_legacy_config(path: &std::path::Path) -> Result<Option<Map<String, Value>>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("读取 config.json 失败: {}", e))?;
+    let data: Map<String, Value> = match serde_json::from_str(&content) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("config.json 解析失败（{}），跳过迁移", e);
+            return Ok(None);
+        }
+    };
+    if data.is_empty() {
+        log::info!("config.json 为空，跳过迁移");
+        return Ok(None);
+    }
+    Ok(Some(data))
+}
+
+/// 备份 legacy config.json（rename 确保原子性，避免重复迁移）
+///
+/// 返回备份文件路径。
+fn backup_legacy_config(original: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let backup = original.with_extension("json.migrated");
+    fs::rename(original, &backup)
+        .map_err(|e| format!("备份 config.json 失败: {}", e))?;
+    Ok(backup)
+}
+
 /// 迁移 electron-store 配置到 tauri-plugin-store
 ///
 /// 在 `setup()` 中调用，Python 后端启动前执行。
@@ -102,33 +138,15 @@ pub fn migrate_electron_store(app: &AppHandle) -> Result<MigrationReport, String
         }
     };
 
-    if !legacy_path.exists() {
-        log::info!("未检测到 legacy config.json（{}），跳过迁移", legacy_path.display());
-        return Ok(MigrationReport::default());
-    }
-
-    let content = fs::read_to_string(&legacy_path)
-        .map_err(|e| format!("读取 config.json 失败: {}", e))?;
-
-    let data: Map<String, Value> = match serde_json::from_str(&content) {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("config.json 解析失败（{}），跳过迁移", e);
-            return Ok(MigrationReport::default());
-        }
+    let data = match read_legacy_config(&legacy_path)? {
+        Some(d) => d,
+        None => return Ok(MigrationReport::default()),
     };
-
-    if data.is_empty() {
-        log::info!("config.json 为空，跳过迁移");
-        return Ok(MigrationReport::default());
-    }
 
     let (migrated_data, report) = migrate_data(&data);
 
     // 备份原文件（rename 确保原子性，避免重复迁移）
-    let backup_path = legacy_path.with_extension("json.migrated");
-    fs::rename(&legacy_path, &backup_path)
-        .map_err(|e| format!("备份 config.json 失败: {}", e))?;
+    let _backup_path = backup_legacy_config(&legacy_path)?;
 
     // 写入迁移后的数据到 tauri-plugin-store
     if let Ok(store) = app.store(STORE_NAME) {
@@ -341,5 +359,291 @@ mod tests {
             assert!(p.ends_with(STORE_NAME));
             assert!(p.to_string_lossy().contains(LEGACY_DIR_NAME));
         }
+    }
+
+    // =========================================================================
+    // E2E 测试：文件 I/O + 混合凭证迁移完整流程
+    // =========================================================================
+
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// 构造一个完整的混合凭证 electron-store 配置（模拟真实用户数据）
+    fn build_realistic_electron_config() -> Map<String, Value> {
+        let mut m = Map::new();
+        // enc: 加密的 Milvus 凭证（safeStorage 加密，无法跨进程解密）
+        m.insert("milvus.user".into(), json!("enc:QkFPqkbi1C0+b3pX0g=="));
+        m.insert("milvus.password".into(), json!("enc:ZIxPr79lFwM+abc123=="));
+        // plain: 前缀的 API Key（可自动迁移）
+        m.insert("apikey.openai".into(), json!("plain:sk-proj-abcdef123456"));
+        m.insert("apikey.deepseek".into(), json!("plain:sk-deepseek-xyz789"));
+        // 裸字符串（可自动迁移）
+        m.insert("apikey.anthropic".into(), json!("sk-ant-api03-test"));
+        m.insert("llm.defaultModel".into(), json!("deepseek-chat"));
+        m.insert("llm.openaiBaseUrl".into(), json!("https://api.deepseek.com/v1"));
+        m.insert("systemPrompt".into(), json!("你是 AgentX 助手"));
+        // 数值
+        m.insert("approval.autoApproveAfterSeconds".into(), json!(0));
+        m.insert("approval.approvalMaxWait".into(), json!(300));
+        m.insert("approval.maxUploadBytes".into(), json!(52428800));
+        m.insert("knowledge.milvusPort".into(), json!(19530));
+        // 布尔
+        m.insert("knowledge.milvusAuthEnabled".into(), json!(true));
+        m.insert("profile.autoExtract".into(), json!(false));
+        // 对象
+        m.insert("subagents".into(), json!({
+            "code": {"enabled": true, "temperature": 0.2},
+            "rag": {"enabled": false, "temperature": 0.1}
+        }));
+        m.insert("tools".into(), json!({
+            "read_file": true, "write_file": true, "web_search": false
+        }));
+        // 数组
+        m.insert("mcp.servers".into(), json!([
+            {"name": "filesystem", "transport": "stdio", "command": "npx"}
+        ]));
+        m.insert("models.entries".into(), json!([
+            {"id": "m1", "providerId": "deepseek", "model": "deepseek-chat"}
+        ]));
+        m.insert("models.activeId".into(), json!("m1"));
+        m
+    }
+
+    /// E2E: 完整混合凭证迁移流程 — enc:/plain:/bare/number/bool/object/array
+    #[test]
+    fn e2e_mixed_credentials_full_migration_flow() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        // 1. 写入模拟的 electron-store config.json
+        let original_data = build_realistic_electron_config();
+        let json_content = serde_json::to_string_pretty(&original_data).unwrap();
+        fs::write(&config_path, &json_content).unwrap();
+
+        // 2. 读取 legacy config
+        let data = read_legacy_config(&config_path).unwrap();
+        assert!(data.is_some(), "应成功读取 config.json");
+        let data = data.unwrap();
+        assert_eq!(data.len(), original_data.len());
+
+        // 3. 执行迁移
+        let (migrated_data, report) = migrate_data(&data);
+
+        // 4. 验证 enc: 凭证 → requires_reinput（不泄露到 migrated_data）
+        // 注意：serde_json::Map 迭代顺序按 key 字母序，不依赖插入顺序
+        let mut req_reinput_sorted = report.requires_reinput.clone();
+        req_reinput_sorted.sort();
+        assert_eq!(
+            req_reinput_sorted,
+            vec!["milvus.password", "milvus.user"]
+        );
+        assert!(!migrated_data.contains_key("milvus.user"));
+        assert!(!migrated_data.contains_key("milvus.password"));
+
+        // 5. 验证 plain: 凭证 → 去前缀后迁移
+        assert_eq!(
+            migrated_data.get("apikey.openai").and_then(|v| v.as_str()),
+            Some("sk-proj-abcdef123456")
+        );
+        assert_eq!(
+            migrated_data.get("apikey.deepseek").and_then(|v| v.as_str()),
+            Some("sk-deepseek-xyz789")
+        );
+
+        // 6. 验证裸字符串 → 原样迁移
+        assert_eq!(
+            migrated_data.get("apikey.anthropic").and_then(|v| v.as_str()),
+            Some("sk-ant-api03-test")
+        );
+        assert_eq!(
+            migrated_data.get("llm.defaultModel").and_then(|v| v.as_str()),
+            Some("deepseek-chat")
+        );
+
+        // 7. 验证非字符串值 → 原样保留
+        assert_eq!(
+            migrated_data.get("approval.maxUploadBytes").and_then(|v| v.as_f64()),
+            Some(52428800.0)
+        );
+        assert_eq!(
+            migrated_data.get("knowledge.milvusAuthEnabled").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(migrated_data.get("subagents").unwrap().is_object());
+        assert!(migrated_data.get("mcp.servers").unwrap().is_array());
+
+        // 8. 备份原文件
+        let backup_path = backup_legacy_config(&config_path).unwrap();
+        assert!(!config_path.exists(), "原文件应已被 rename 移走");
+        assert!(backup_path.exists(), "备份文件应存在");
+        assert!(backup_path.to_string_lossy().ends_with("config.json.migrated"));
+
+        // 9. 验证备份内容与原文件一致
+        let backup_content = fs::read_to_string(&backup_path).unwrap();
+        assert_eq!(backup_content, json_content);
+    }
+
+    /// E2E: enc: 凭证绝对不会泄露到迁移后的数据中
+    #[test]
+    fn e2e_enc_credentials_never_leak() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        // 构造只有 enc: 凭证的配置
+        let mut data = Map::new();
+        data.insert("milvus.user".into(), json!("enc:SecretData1=="));
+        data.insert("milvus.password".into(), json!("enc:SecretData2=="));
+        data.insert("apikey.openai".into(), json!("enc:SecretKey3=="));
+
+        fs::write(&config_path, serde_json::to_string(&data).unwrap()).unwrap();
+
+        let read_data = read_legacy_config(&config_path).unwrap().unwrap();
+        let (migrated_data, report) = migrate_data(&read_data);
+
+        // 所有 key 都应进入 requires_reinput
+        assert_eq!(report.requires_reinput.len(), 3);
+        assert!(report.migrated.is_empty());
+        assert!(report.preserved.is_empty());
+
+        // migrated_data 应为空（enc: 值不迁移）
+        assert!(migrated_data.is_empty());
+
+        // 验证 enc: 原始值不会出现在任何迁移后的字段中
+        let migrated_json = serde_json::to_string(&migrated_data).unwrap();
+        assert!(!migrated_json.contains("SecretData1"));
+        assert!(!migrated_json.contains("SecretData2"));
+        assert!(!migrated_json.contains("SecretKey3"));
+    }
+
+    /// E2E: plain: 凭证正确去前缀，裸字符串原样保留
+    #[test]
+    fn e2e_plain_and_bare_credentials_migrated_correctly() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        let mut data = Map::new();
+        data.insert("key1".into(), json!("plain:value1"));
+        data.insert("key2".into(), json!("plain:"));
+        data.insert("key3".into(), json!("bare_value"));
+        data.insert("key4".into(), json!("plain:plain:nested")); // 只去第一个前缀
+
+        fs::write(&config_path, serde_json::to_string(&data).unwrap()).unwrap();
+
+        let read_data = read_legacy_config(&config_path).unwrap().unwrap();
+        let (migrated_data, report) = migrate_data(&read_data);
+
+        assert_eq!(migrated_data.get("key1").and_then(|v| v.as_str()), Some("value1"));
+        assert_eq!(migrated_data.get("key2").and_then(|v| v.as_str()), Some(""));
+        assert_eq!(migrated_data.get("key3").and_then(|v| v.as_str()), Some("bare_value"));
+        assert_eq!(
+            migrated_data.get("key4").and_then(|v| v.as_str()),
+            Some("plain:nested")
+        );
+        assert_eq!(report.migrated.len(), 4);
+        assert!(report.requires_reinput.is_empty());
+    }
+
+    /// E2E: 文件不存在时跳过迁移
+    #[test]
+    fn e2e_nonexistent_config_skips_migration() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        // 文件不存在
+        let result = read_legacy_config(&config_path).unwrap();
+        assert!(result.is_none(), "文件不存在时应返回 Ok(None)");
+    }
+
+    /// E2E: 损坏的 JSON 跳过迁移（不报错）
+    #[test]
+    fn e2e_corrupted_json_skips_migration() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        fs::write(&config_path, "{ this is not valid json }").unwrap();
+
+        let result = read_legacy_config(&config_path).unwrap();
+        assert!(result.is_none(), "损坏 JSON 应返回 Ok(None) 跳过迁移");
+    }
+
+    /// E2E: 空对象跳过迁移
+    #[test]
+    fn e2e_empty_object_skips_migration() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        fs::write(&config_path, "{}").unwrap();
+
+        let result = read_legacy_config(&config_path).unwrap();
+        assert!(result.is_none(), "空对象应返回 Ok(None) 跳过迁移");
+    }
+
+    /// E2E: 备份原子性 — rename 后原文件不存在，备份文件内容一致
+    #[test]
+    fn e2e_backup_atomicity() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+        let original_content = r#"{"apikey":"plain:sk-test"}"#;
+        fs::write(&config_path, original_content).unwrap();
+
+        let backup_path = backup_legacy_config(&config_path).unwrap();
+
+        // 原文件已被 rename 移走
+        assert!(!config_path.exists(), "原文件不应存在");
+        // 备份文件存在且内容一致
+        assert!(backup_path.exists(), "备份文件应存在");
+        assert_eq!(
+            fs::read_to_string(&backup_path).unwrap(),
+            original_content,
+            "备份内容应与原文件一致"
+        );
+        // 备份文件扩展名
+        assert!(
+            backup_path.to_string_lossy().ends_with("config.json.migrated"),
+            "备份文件扩展名应为 .json.migrated"
+        );
+    }
+
+    /// E2E: 真实场景 — 大量 key 的混合配置迁移性能和正确性
+    #[test]
+    fn e2e_large_mixed_config_migration() {
+        let dir = TempDir::new().unwrap();
+        let config_path: PathBuf = dir.path().join(STORE_NAME);
+
+        let mut data = Map::new();
+        // 50 个 enc: 凭证
+        for i in 0..50 {
+            data.insert(format!("enc.key.{}", i), json!(format!("enc:base64data{}", i)));
+        }
+        // 50 个 plain: 凭证
+        for i in 0..50 {
+            data.insert(format!("plain.key.{}", i), json!(format!("plain:value{}", i)));
+        }
+        // 50 个裸字符串
+        for i in 0..50 {
+            data.insert(format!("bare.key.{}", i), json!(format!("bare{}", i)));
+        }
+        // 50 个数值
+        for i in 0..50 {
+            data.insert(format!("num.key.{}", i), json!(i));
+        }
+
+        fs::write(&config_path, serde_json::to_string(&data).unwrap()).unwrap();
+
+        let read_data = read_legacy_config(&config_path).unwrap().unwrap();
+        let (migrated_data, report) = migrate_data(&read_data);
+
+        // 验证计数
+        assert_eq!(report.requires_reinput.len(), 50, "50 个 enc: key");
+        assert_eq!(report.migrated.len(), 100, "50 plain + 50 bare");
+        assert_eq!(report.preserved.len(), 50, "50 个数值");
+
+        // 验证迁移后的数据条目数 = 100 migrated + 50 preserved = 150
+        assert_eq!(migrated_data.len(), 150);
+
+        // 验证备份
+        let backup_path = backup_legacy_config(&config_path).unwrap();
+        assert!(!config_path.exists());
+        assert!(backup_path.exists());
     }
 }
