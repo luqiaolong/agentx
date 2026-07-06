@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Folder, FileText, ChevronRight, Home, FolderOpen } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  RefreshCw,
+  Folder,
+  FileText,
+  ChevronRight,
+  Home,
+  FolderOpen,
+  ChevronDown,
+} from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 
 interface Entry {
@@ -19,10 +27,165 @@ function joinPath(base: string, name: string): string {
   return base ? `${base}/${name}` : name;
 }
 
+/* ------------------------------------------------------------------ */
+/*  TreeNode — 单个文件/目录行（递归展开子目录）                       */
+/* ------------------------------------------------------------------ */
+interface TreeNodeProps {
+  entry: Entry;
+  depth: number;
+  parentPath: string;
+  workspacePath: string | null;
+  currentId: string | null;
+  onRefreshRoot: () => void;
+}
+
+function TreeNode({
+  entry,
+  depth,
+  parentPath,
+  workspacePath,
+  currentId,
+  onRefreshRoot,
+}: TreeNodeProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<Entry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const hasLoaded = useRef(false);
+
+  const fullPath = joinPath(parentPath, entry.name);
+
+  const loadChildren = useCallback(async () => {
+    if (hasLoaded.current) return;
+    setLoading(true);
+    try {
+      const { entries: list } = await window.api.workspace.list(
+        fullPath,
+        currentId ?? undefined,
+      );
+      const sorted = [...list].sort((a, b) => {
+        if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      setChildren(sorted);
+      hasLoaded.current = true;
+    } catch {
+      setChildren([]);
+      hasLoaded.current = true;
+    } finally {
+      setLoading(false);
+    }
+  }, [fullPath, currentId]);
+
+  const toggle = () => {
+    if (entry.type !== "dir") return;
+    if (!expanded) {
+      void loadChildren();
+    }
+    setExpanded((v) => !v);
+  };
+
+  const reveal = async () => {
+    try {
+      await window.api.shell.revealInFolder(fullPath);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const indent = depth * 14; /* 每层缩进 14px */
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => (entry.type === "dir" ? toggle() : void reveal())}
+        className="group flex w-full items-center gap-1 rounded px-1 py-0.5 text-left transition-colors hover:bg-hover-soft"
+        style={{ paddingLeft: `${indent + 4}px` }}
+        title={entry.name}
+      >
+        {/* 展开箭头（仅目录） */}
+        {entry.type === "dir" ? (
+          expanded ? (
+            <ChevronDown className="h-3 w-3 shrink-0 text-muted-c" />
+          ) : (
+            <ChevronRight className="h-3 w-3 shrink-0 text-muted-c" />
+          )
+        ) : (
+          <span className="h-3 w-3 shrink-0" />
+        )}
+
+        {entry.type === "dir" ? (
+          <Folder className="h-3.5 w-3.5 shrink-0 text-brand-500" />
+        ) : (
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-c" />
+        )}
+
+        <span
+          className="min-w-0 flex-1 truncate text-secondary-c group-hover:text-primary-c"
+          style={{ fontSize: "var(--fs-ws-file-name)" }}
+        >
+          {entry.name}
+        </span>
+
+        {entry.type === "file" && (
+          <span
+            className="shrink-0 text-muted-c"
+            style={{ fontSize: "var(--fs-ws-file-size)" }}
+          >
+            {formatSize(entry.size)}
+          </span>
+        )}
+      </button>
+
+      {/* 子目录/文件 */}
+      {entry.type === "dir" && expanded && (
+        <div>
+          {loading ? (
+            <div
+              className="flex items-center gap-1.5 py-0.5 text-muted-c"
+              style={{
+                paddingLeft: `${indent + 18}px`,
+                fontSize: "var(--fs-ws-file-name)",
+              }}
+            >
+              <RefreshCw className="h-3 w-3 animate-spin" />
+              加载中…
+            </div>
+          ) : children === null || children.length === 0 ? (
+            <div
+              className="py-0.5 text-muted-c"
+              style={{
+                paddingLeft: `${indent + 18}px`,
+                fontSize: "var(--fs-ws-file-size)",
+              }}
+            >
+              空目录
+            </div>
+          ) : (
+            children.map((c) => (
+              <TreeNode
+                key={`${c.type}-${c.name}`}
+                entry={c}
+                depth={depth + 1}
+                parentPath={fullPath}
+                workspacePath={workspacePath}
+                currentId={currentId}
+                onRefreshRoot={onRefreshRoot}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  FileTree — 根组件                                                   */
+/* ------------------------------------------------------------------ */
 export function FileTree() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [relPath, setRelPath] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
   const currentId = useChatStore((s) => s.currentId);
@@ -31,24 +194,14 @@ export function FileTree() {
   );
   const workspacePath = currentSession?.workspacePath ?? null;
 
-  /**
-   * 计算当前浏览的绝对路径：
-   * - 有 workspacePath：root = workspacePath，current = root + relPath
-   * - 无 workspacePath（Home）：root = ""，current = relPath（后端解析为 data/workspace）
-   */
   const rootPath = workspacePath ?? "";
-  const currentPath = rootPath
-    ? relPath
-      ? `${rootPath}/${relPath}`.replace(/\\/g, "/")
-      : rootPath
-    : relPath;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
       const { entries: list } = await window.api.workspace.list(
-        currentPath,
+        rootPath,
         currentId ?? undefined,
       );
       const sorted = [...list].sort((a, b) => {
@@ -62,43 +215,15 @@ export function FileTree() {
     } finally {
       setLoading(false);
     }
-  }, [currentPath, currentId]);
+  }, [rootPath, currentId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  // 切换会话时重置相对路径，让文件树回到新会话的 workspace 根
-  useEffect(() => {
-    setRelPath("");
-  }, [currentId]);
-
-  // 面包屑：基于 workspacePath 的相对路径
-  const breadcrumbParts = relPath ? relPath.split("/") : [];
-
-  const enter = (name: string): void => {
-    setRelPath((p) => joinPath(p, name));
-  };
-
-  const goTo = (index: number): void => {
-    if (index < 0) {
-      setRelPath("");
-    } else {
-      setRelPath(breadcrumbParts.slice(0, index + 1).join("/"));
-    }
-  };
-
-  const reveal = async (name: string): Promise<void> => {
-    try {
-      await window.api.shell.revealInFolder(joinPath(currentPath, name));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   return (
-    <div className="space-y-2">
-      {/* 工具栏：刷新 + 面包屑 */}
+    <div className="space-y-1">
+      {/* 工具栏：刷新 */}
       <div className="flex items-center gap-1.5">
         <button
           type="button"
@@ -108,77 +233,61 @@ export function FileTree() {
           aria-label="刷新"
           title="刷新"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+          />
         </button>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
-          <button
-            type="button"
-            onClick={() => goTo(-1)}
-            className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
-          >
-            <Home className="h-3 w-3" />
-          </button>
-          {breadcrumbParts.map((part, i) => (
-            <span key={i} className="flex items-center">
-              <ChevronRight className="h-3 w-3 text-muted-c" />
-              <button
-                type="button"
-                onClick={() => goTo(i)}
-                className="rounded px-1 py-0.5 text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
-              >
-                {part}
-              </button>
-            </span>
-          ))}
+        <div
+          className="flex min-w-0 flex-1 flex-wrap items-center text-muted-c"
+          style={{ fontSize: "var(--fs-ws-file-name)" }}
+        >
+          <Home className="h-3 w-3" />
+          <span className="ml-0.5 truncate">
+            {workspacePath ? workspacePath.replace(/\\/g, "/") : "Home"}
+          </span>
         </div>
       </div>
 
       {/* 错误 */}
       {err && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
+        <div
+          className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300"
+          style={{ fontSize: "var(--fs-settings-form-hint)" }}
+        >
           {err}
         </div>
       )}
 
-      {/* 列表 */}
+      {/* 树 */}
       {loading ? (
-        <div className="flex items-center gap-2 px-2 py-3 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
+        <div
+          className="flex items-center gap-2 px-2 py-2 text-muted-c"
+          style={{ fontSize: "var(--fs-ws-file-name)" }}
+        >
           <RefreshCw className="h-3 w-3 animate-spin" />
           加载中…
         </div>
       ) : entries.length === 0 ? (
-        <div className="flex flex-col items-center gap-1.5 py-6 text-center">
-          <FolderOpen className="h-5 w-5 text-muted-c" />
-          <div className="text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>空目录</div>
+        <div className="flex flex-col items-center gap-1 py-4 text-center">
+          <FolderOpen className="h-4 w-4 text-muted-c" />
+          <div className="text-muted-c" style={{ fontSize: "var(--fs-empty-title)" }}>
+            空目录
+          </div>
         </div>
       ) : (
-        <ul className="space-y-0.5">
+        <div>
           {entries.map((e) => (
-            <li key={`${e.type}-${e.name}`}>
-              <button
-                type="button"
-                onClick={() =>
-                  e.type === "dir" ? enter(e.name) : void reveal(e.name)
-                }
-                className="group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-hover-soft"
-              >
-                {e.type === "dir" ? (
-                  <Folder className="h-3.5 w-3.5 shrink-0 text-brand-500" />
-                ) : (
-                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-c" />
-                )}
-                <span className="min-w-0 flex-1 truncate text-secondary-c group-hover:text-primary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
-                  {e.name}
-                </span>
-                {e.type === "file" && (
-                  <span className="shrink-0 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-size)' }}>
-                    {formatSize(e.size)}
-                  </span>
-                )}
-              </button>
-            </li>
+            <TreeNode
+              key={`${e.type}-${e.name}`}
+              entry={e}
+              depth={0}
+              parentPath={rootPath}
+              workspacePath={workspacePath}
+              currentId={currentId}
+              onRefreshRoot={refresh}
+            />
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );
