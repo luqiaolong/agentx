@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
-import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2 } from "lucide-react";
+import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
 import { ChatView } from "./components/chat/ChatView";
 import { SessionList } from "./components/chat/SessionList";
@@ -19,6 +19,7 @@ import { useAgentModeStore } from "./stores/agentMode";
 export default function App() {
   const [pythonStatus, setPythonStatus] = useState<PythonStatus>(null);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const scene = useSceneStore((s) => s.scene);
@@ -137,6 +138,19 @@ export default function App() {
         <div className="app-no-drag flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setWorkspaceOpen((v) => !v)}
+            className="btn-ghost"
+            aria-label={workspaceOpen ? "折叠工作区" : "打开工作区"}
+            title={workspaceOpen ? "折叠工作区" : "打开工作区"}
+          >
+            {workspaceOpen ? (
+              <PanelRightClose className="h-4 w-4" />
+            ) : (
+              <PanelRightOpen className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            type="button"
             onClick={toggleTheme}
             className="btn-ghost"
             aria-label={theme === "dark" ? "切换到亮色" : "切换到暗色"}
@@ -199,9 +213,11 @@ export default function App() {
         </main>
 
         {/* 右侧栏 —— 工作区面板 */}
-        <aside className="hidden w-72 shrink-0 border-l border-default bg-surface lg:flex">
-          <WorkspacePanel />
-        </aside>
+        {workspaceOpen && (
+          <aside className="w-72 shrink-0 border-l border-default bg-surface flex">
+            <WorkspacePanel />
+          </aside>
+        )}
       </div>
 
       <ApprovalDialog />
