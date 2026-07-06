@@ -25,7 +25,8 @@ export function ContextUsage() {
       className="inline-flex h-4 w-3 flex-col items-stretch justify-end gap-[1.5px] cursor-help"
     >
       {Array.from({ length: 5 }).map((_, i) => {
-        const filled = i < filledStripes;
+        // 从底部往上数：底部索引 = 4，顶部索引 = 0
+        const filled = 4 - i < filledStripes;
         return (
           <span
             key={i}
