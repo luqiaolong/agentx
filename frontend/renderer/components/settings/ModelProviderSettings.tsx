@@ -159,11 +159,12 @@ function ModelRow({
         <div className="min-w-0 flex-1">
           {/* 第一行：标签 + provider 徽章 + 状态 */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-semibold text-primary-c">{displayLabel}</span>
+            <span className="text-primary-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>{displayLabel}</span>
             <span
               className={`rounded-full px-1.5 py-0.5 font-medium ${providerColor(
                 entry.providerId,
               )}`}
+              style={{ fontSize: 'var(--fs-settings-badge)' }}
             >
               {providerLabel(entry.providerId)}
             </span>
