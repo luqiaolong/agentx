@@ -184,7 +184,7 @@ describe("ChatComposer 底部 Toolbar", () => {
 });
 
 describe("ChatComposer 含 ContextUsage", () => {
-  it("Toolbar 右组最左渲染 ContextUsage widget（以 data-filled 5 条 为错）", () => {
+  it("Toolbar 右组最左渲染 Cursor 风格圆环 widget（data-context-ring）", () => {
     useChatStore.getState().createSession();
     const { container } = render(
       <ChatComposer
@@ -194,11 +194,15 @@ describe("ChatComposer 含 ContextUsage", () => {
         onAbort={() => {}}
       />,
     );
-    // ContextUsage 是唯一拥有 data-filled 属性的元素；5 条纹总应渲染
-    const stripes = container.querySelectorAll("[data-filled]");
-    expect(stripes.length).toBe(5);
-    // 同时验证 aria-label 含百分比（不依赖 messageInput textarea）
-    const ctx = container.querySelector("[aria-label]"); // 可能是 textarea 也可能是 widget
+    // Cursor 风格：ContextUsage 唯一拥有 data-context-ring 属性的是 SVG；必须有圆环 SVG + 百分比文字。
+    const ring = container.querySelector('[data-context-ring="true"]');
+    expect(ring).not.toBeNull();
+    expect(ring!.tagName.toLowerCase()).toBe("svg");
+    const text = container.querySelector('[data-context-text="true"]');
+    expect(text).not.toBeNull();
+    expect(text!.textContent).toMatch(/%/);
+    // 同时验证 aria-label / title 含百分比（不依赖 messageInput textarea）
+    const ctx = container.querySelector('[aria-label*="%"]');
     expect(ctx).toBeTruthy();
   });
 

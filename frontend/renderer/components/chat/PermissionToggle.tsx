@@ -124,7 +124,7 @@ export function PermissionToggle({
             exit={{ opacity: 0, y: 4, scale: 0.98 }}
             transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
             className={[
-              "absolute bottom-full right-0 z-50 mb-1.5 w-[200px]",
+              "absolute bottom-full right-0 z-50 mb-1.5 min-w-[160px] max-w-[220px]",
               "overflow-hidden rounded-md border border-default bg-surface shadow-pop",
             ].join(" ")}
           >
@@ -141,7 +141,7 @@ export function PermissionToggle({
                     title={opt.description}
                     onClick={() => choose(opt.value)}
                     className={[
-                      "group flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left",
+                      "group flex w-full items-center gap-2 rounded-sm px-2 py-1 leading-snug text-left",
                       "transition-colors duration-100 outline-none",
                       active
                         ? opt.value === "full_trust"
@@ -159,7 +159,7 @@ export function PermissionToggle({
                       ].join(" ")}
                       aria-hidden="true"
                     />
-                    <span className="min-w-0 flex-1 truncate font-medium text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
+                    <span className="min-w-0 flex-1 truncate font-medium leading-snug text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
                       {opt.label}
                     </span>
                     {active && (

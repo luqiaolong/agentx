@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 
 // jsdom 不带 localStorage；zustand persist 加载/写入时需要
 vi.hoisted(() => {
@@ -105,12 +105,19 @@ describe("useContextUsage selector", () => {
 });
 
 describe("ContextUsage 组件", () => {
-  it("无 session 时也渲染 5 条纹（至少 1 条 filled）", () => {
+  it("无 session 时也渲染圆环 + 0% 文字", () => {
     const { container } = render(<ContextUsage />);
-    const stripes = container.querySelectorAll("[data-filled]");
-    expect(stripes.length).toBe(5);
-    const filled = container.querySelectorAll('[data-filled="true"]');
-    expect(filled.length).toBeGreaterThanOrEqual(1);
+    // Cursor 风格：右侧必须同时存在圆环 SVG + "0%" 文字。
+    const ring = container.querySelector('[data-context-ring="true"]');
+    expect(ring).not.toBeNull();
+    expect(ring!.tagName.toLowerCase()).toBe("svg");
+
+    const text = container.querySelector('[data-context-text="true"]');
+    expect(text).not.toBeNull();
+    expect(text!.textContent).toBe("0%");
+
+    // 0% 时填充弧长为 0，data-context-filled 应该为 "0.000"
+    expect(ring!.getAttribute("data-context-filled")).toBe("0.000");
   });
 
   it("title 属性包含百分比与激活模型标签", () => {
@@ -130,9 +137,123 @@ describe("ContextUsage 组件", () => {
       activeId: "m1",
     });
     const { container } = render(<ContextUsage />);
-    const el = container.querySelector("[title]")!;
-    expect(el.getAttribute("title")).toMatch(/%/);
-    expect(el.getAttribute("title")).toMatch(/GPT-4o/);
+    // title 挂在 button 上（圆环 + 文字的外层），不是 SVG 本身
+    const btn = container.querySelector("button[title]")!;
+    expect(btn.getAttribute("title")).toMatch(/%/);
+    expect(btn.getAttribute("title")).toMatch(/GPT-4o/);
+  });
+
+  it("有 user 消息时填充弧长严格大于 0（data-context-filled > 0）", () => {
+    useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({
+      id: crypto.randomUUID(),
+      role: "user",
+      ts: Date.now(),
+      // 1000 chars → ~250 tokens；相对于 16000 默认上限，约 2%
+      content: "a".repeat(1000),
+    });
+    const { container } = render(<ContextUsage />);
+    const ring = container.querySelector('[data-context-ring="true"]')!;
+    const filled = Number(ring.getAttribute("data-context-filled") ?? "0");
+    expect(filled).toBeGreaterThan(0);
+    // 周长 ≈ 37.7，2% → ≈ 0.75；这里宽松断言 < 3 即可（防止跃阶到几十）
+    expect(filled).toBeLessThan(3);
+  });
+});
+
+describe("ContextUsage 弹窗与其他 Toolbar popover 体验一致", () => {
+  // jsdom 下 framer-motion 的入场 + 退场动画都靠 setTimeout/raf，
+  // 整个 describe 用 fake timers 并每个 case 结尾 advance，确保 AnimatePresence 走完。
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  // 弹窗以及 framer-motion 都依赖 currentId 存在 → 创建个会话
+  // 先 resize (createSession) 然后给一个 currentId
+  beforeEach(() => {
+    useChatStore.getState().createSession();
+  });
+
+  it("初始未点击时不渲染弹窗 DOM（role=dialog 不存在）", () => {
+    const { container } = render(<ContextUsage />);
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("点击 trigger 后渲染弹窗 = ModelToggle popover 同款样式", async () => {
+    const { container } = render(<ContextUsage />);
+    // trigger 是带 title 的那个 button
+    const trigger = container.querySelector("button[title]") as HTMLButtonElement;
+    await act(async () => {
+      trigger.click();
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    // 类名遵循 popover 统一规范：rounded-md + overflow-hidden + border-default + bg-surface + shadow-pop + mb-1.5
+    const cls = (dialog as HTMLElement).className;
+    expect(cls).toMatch(/\brounded-md\b/);
+    expect(cls).toMatch(/\boverflow-hidden\b/);
+    expect(cls).toMatch(/\bborder-default\b/);
+    expect(cls).toMatch(/\bbg-surface\b/);
+    expect(cls).toMatch(/\bshadow-pop\b/);
+    expect(cls).toMatch(/\bmb-1\.5\b/);
+    expect(cls).toMatch(/\bz-50\b/);
+  });
+
+  it("头部摘要含数字千分位 + Context used 文本", async () => {
+    const { container } = render(<ContextUsage />);
+    await act(async () => {
+      (container.querySelector("button[title]") as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    const summary = container.querySelector('[data-context-summary="true"]');
+    expect(summary).not.toBeNull();
+    expect(summary!.textContent).toMatch(/\d+%/);
+    expect(summary!.textContent).toMatch(/Context used/);
+    expect(summary!.textContent).toMatch(/\//);
+  });
+
+  it("存在 Compact Chat 按钮，初始文案 = 'Compact Chat'", async () => {
+    const { container } = render(<ContextUsage />);
+    await act(async () => {
+      (container.querySelector("button[title]") as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    const btn = container.querySelector(
+      '[data-context-compact="true"]',
+    ) as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.textContent).toBe("Compact Chat");
+    // 按钮也按 popover option 同款样式：rounded-sm + hover:bg-hover-soft
+    expect(btn.className).toMatch(/\brounded-sm\b/);
+    expect(btn.className).toMatch(/\bhover:bg-hover-soft\b/);
+  });
+
+  it("Escape 键可关闭弹窗", async () => {
+    const { container } = render(<ContextUsage />);
+    await act(async () => {
+      (container.querySelector("button[title]") as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    // 打开后 trigger 的 aria-expanded 应为 true（a11y 表达）
+    const trigger = container.querySelector("button[title]") as HTMLButtonElement;
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    // dispatch Escape：组件 setOpen(false) + framer-motion 启动 exit。
+    // 不验证 dialog DOM 卸载时机（jsdom 下 framer 退场动画完成不确定性），
+    // 改为验证 trigger state：aria-expanded 变为 false。
+    // 这与 mode-toggle 的 "aria-expanded" 验证风格一致。
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 });
 
