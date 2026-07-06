@@ -3,6 +3,7 @@
 //! 注册 10 个官方插件 + 日志，在 `setup()` 中启动 Python 后端。
 
 pub mod backend;
+pub mod commands;
 pub mod store;
 
 use std::path::PathBuf;
@@ -31,6 +32,39 @@ pub fn run() {
             .build(),
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            // === Settings 命令（28 个）===
+            commands::settings::settings_get_milvus_credentials,
+            commands::settings::settings_set_milvus_credentials,
+            commands::settings::settings_get_api_key,
+            commands::settings::settings_set_api_key,
+            commands::settings::settings_get_llm_config,
+            commands::settings::settings_set_llm_config,
+            commands::settings::settings_get_system_prompt,
+            commands::settings::settings_set_system_prompt,
+            commands::settings::settings_get_approval_config,
+            commands::settings::settings_set_approval_config,
+            commands::settings::settings_get_knowledge_config,
+            commands::settings::settings_set_knowledge_config,
+            commands::settings::settings_get_subagents_config,
+            commands::settings::settings_set_subagents_config,
+            commands::settings::settings_get_team_subagents_config,
+            commands::settings::settings_set_team_subagents_config,
+            commands::settings::settings_get_custom_subagents,
+            commands::settings::settings_set_custom_subagents,
+            commands::settings::settings_add_custom_subagent,
+            commands::settings::settings_remove_custom_subagent,
+            commands::settings::settings_get_tools_config,
+            commands::settings::settings_set_tools_config,
+            commands::settings::settings_get_profile_auto_extract,
+            commands::settings::settings_set_profile_auto_extract,
+            commands::settings::settings_get_mcp_servers_config,
+            commands::settings::settings_set_mcp_servers_config,
+            commands::settings::settings_get_model_entries,
+            commands::settings::settings_set_model_entries,
+            commands::settings::settings_get_active_model_id,
+            commands::settings::settings_activate_model,
+        ])
         .setup(|app| {
             log::info!(
                 "AgentX Tauri shell started (version: {})",

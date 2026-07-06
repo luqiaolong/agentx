@@ -7,6 +7,7 @@
 //! 所有 store 方法均为同步调用（tauri-plugin-store v2 的 API 是同步的）。
 
 pub mod credentials;
+pub mod custom_subagents;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,6 +23,7 @@ const STORE_NAME: &str = "config.json";
 
 /// LLM 配置（对应 `llm.defaultModel` / `llm.openaiBaseUrl`）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmConfig {
     #[serde(default)]
     pub default_model: String,
@@ -31,6 +33,7 @@ pub struct LlmConfig {
 
 /// 审批配置（对应 `approval.*`）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApprovalConfig {
     #[serde(default)]
     pub auto_approve_after_seconds: f64,
@@ -50,6 +53,7 @@ fn default_max_upload_bytes() -> f64 {
 
 /// 知识库配置（对应 `knowledge.*`，Milvus 连接参数）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KnowledgeConfig {
     #[serde(default)]
     pub embedding_url: String,
@@ -83,6 +87,7 @@ fn default_milvus_collection() -> String {
 
 /// 单个模型条目（对应 `models.entries[]`）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelEntry {
     pub id: String,
     #[serde(default)]
@@ -108,6 +113,7 @@ fn default_provider() -> String {
 
 /// MCP 服务器配置（对应 `mcp.servers[]`）
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpServerConfig {
     pub name: String,
     #[serde(default = "default_transport")]
@@ -258,6 +264,153 @@ pub fn get_knowledge_config(app: &AppHandle) -> KnowledgeConfig {
 /// 读取 profile.autoExtract（默认 true）。
 pub fn get_profile_auto_extract(app: &AppHandle) -> bool {
     get_bool(app, "profile.autoExtract", true)
+}
+
+/// 写入 profile.autoExtract。
+pub fn set_profile_auto_extract(app: &AppHandle, v: bool) {
+    set_value(app, "profile.autoExtract", Value::Bool(v));
+}
+
+// =============================================================================
+// 配置 setter（对应 store.ts 的 setXxx 函数）
+// =============================================================================
+
+/// 数值 clamp：防 renderer 传入负数/NaN/极大值。
+fn clamp_finite(v: f64, min: f64, max: f64) -> f64 {
+    if v.is_finite() {
+        v.min(max).max(min)
+    } else {
+        min
+    }
+}
+
+/// 写入审批配置（带数值 clamp，与 store.ts setApprovalConfig 行为一致）。
+/// `Some` 字段才写入，`None` 字段保留原值（Partial 语义）。
+pub fn set_approval_config_partial(
+    app: &AppHandle,
+    auto_approve_after_seconds: Option<f64>,
+    approval_max_wait: Option<f64>,
+    max_upload_bytes: Option<f64>,
+) {
+    if let Some(v) = auto_approve_after_seconds {
+        set_value(
+            app,
+            "approval.autoApproveAfterSeconds",
+            Value::from(clamp_finite(v, 0.0, 3600.0)),
+        );
+    }
+    if let Some(v) = approval_max_wait {
+        set_value(
+            app,
+            "approval.approvalMaxWait",
+            Value::from(clamp_finite(v, 0.0, 3600.0)),
+        );
+    }
+    if let Some(v) = max_upload_bytes {
+        set_value(
+            app,
+            "approval.maxUploadBytes",
+            Value::from(clamp_finite(v, 0.0, 1_073_741_824.0)),
+        );
+    }
+}
+
+/// 写入知识库配置（Partial 语义：Some 才写入）。
+pub fn set_knowledge_config_partial(
+    app: &AppHandle,
+    embedding_url: Option<&str>,
+    milvus_host: Option<&str>,
+    milvus_port: Option<f64>,
+    milvus_db: Option<&str>,
+    milvus_collection: Option<&str>,
+    milvus_auth_enabled: Option<bool>,
+) {
+    if let Some(v) = embedding_url {
+        set_value(app, "knowledge.embeddingUrl", Value::String(v.to_string()));
+    }
+    if let Some(v) = milvus_host {
+        set_value(app, "knowledge.milvusHost", Value::String(v.to_string()));
+    }
+    if let Some(v) = milvus_port {
+        set_value(app, "knowledge.milvusPort", Value::from(v));
+    }
+    if let Some(v) = milvus_db {
+        set_value(app, "knowledge.milvusDb", Value::String(v.to_string()));
+    }
+    if let Some(v) = milvus_collection {
+        set_value(
+            app,
+            "knowledge.milvusCollection",
+            Value::String(v.to_string()),
+        );
+    }
+    if let Some(v) = milvus_auth_enabled {
+        set_value(app, "knowledge.milvusAuthEnabled", Value::Bool(v));
+    }
+}
+
+/// 写入 subagents 配置（整体覆盖）。
+pub fn set_subagents_config(app: &AppHandle, cfg: &Value) {
+    set_value(app, "subagents", cfg.clone());
+}
+
+/// 写入 teamSubagents 配置（整体覆盖）。
+pub fn set_team_subagents_config(app: &AppHandle, cfg: &Value) {
+    set_value(app, "teamSubagents", cfg.clone());
+}
+
+/// 写入 customSubagents 配置（整体覆盖，调用方负责 sanitize）。
+pub fn set_custom_subagents_raw(app: &AppHandle, cfg: &Value) {
+    set_value(app, "customSubagents", cfg.clone());
+}
+
+/// 写入 tools 配置（整体覆盖）。
+pub fn set_tools_config(app: &AppHandle, cfg: &Value) {
+    set_value(app, "tools", cfg.clone());
+}
+
+/// 写入 MCP 服务器配置（整体覆盖）。
+pub fn set_mcp_servers_config(app: &AppHandle, servers: &[McpServerConfig]) {
+    set_json(app, "mcp.servers", &servers.to_vec());
+}
+
+/// 写入模型条目列表（整体覆盖）。
+pub fn set_model_entries(app: &AppHandle, entries: &[ModelEntry]) {
+    set_json(app, "models.entries", &entries.to_vec());
+}
+
+/// 设置当前激活的模型 id。
+pub fn set_active_model_id(app: &AppHandle, id: &str) {
+    set_value(app, "models.activeId", Value::String(id.to_string()));
+}
+
+/// 激活指定模型条目：将其 {model, baseUrl, apiKey} 写入 legacy 槽位。
+///
+/// 与 store.ts `activateModelEntry` 行为一致：
+/// - deepseek provider → apikey.deepseek
+/// - 其他 provider（openai/minimax/custom）→ apikey.openai + openaiBaseUrl
+pub fn activate_model(app: &AppHandle, id: &str) -> Result<(), String> {
+    let entries = get_model_entries(app);
+    let entry = entries
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| format!("模型条目不存在: {}", id))?;
+    if entry.model.is_empty() {
+        return Err("模型名称为空，无法激活".into());
+    }
+    // 1. 写入 llm.defaultModel + llm.openaiBaseUrl
+    set_llm_config(app, &entry.model, &entry.base_url);
+    // 2. 写入对应 provider 的 API Key 槽位
+    let api_key = credentials::decrypt_string(&entry.api_key).unwrap_or_default();
+    if entry.provider_id == "deepseek" {
+        credentials::set_api_key(app, "deepseek", &api_key);
+    } else {
+        // openai / minimax / custom 均走 OpenAI 兼容兜底分支
+        credentials::set_api_key(app, "openai", &api_key);
+    }
+    // 3. 标记激活
+    set_active_model_id(app, id);
+    Ok(())
 }
 
 // =============================================================================
