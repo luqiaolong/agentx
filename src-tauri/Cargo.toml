@@ -54,6 +54,9 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 log = "0.4"
 
+# Platform-specific
+libc = "0.2"
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
