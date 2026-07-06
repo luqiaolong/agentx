@@ -12,6 +12,23 @@
     />
   </head>
   <body>
+    <script>
+      (function() {
+        try {
+          var store = localStorage.getItem('agentx-settings');
+          var isDark = true;
+          if (store) {
+            var parsed = JSON.parse(store);
+            if (parsed && parsed.state) {
+              isDark = parsed.state.theme !== 'light';
+            }
+          }
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/main.tsx"></script>
   </body>
