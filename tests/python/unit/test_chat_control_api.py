@@ -155,7 +155,7 @@ def test_chat_sse_abort_yields_error_event(client: TestClient, monkeypatch: pyte
     import threading
 
     with patch("app.router.graph.classify_message", new=_classify_chat), \
-         patch("app.llm.get_chat_model", return_value=_SlowChatModel()):
+         patch("app.chat.run.get_chat_model", return_value=_SlowChatModel()):
         threading.Thread(target=lambda: client.post("/api/chat/abort", json={"thread_id": tid})).start()
 
         with client.stream("POST", "/api/chat", json={"message": "hi", "thread_id": tid}) as r:

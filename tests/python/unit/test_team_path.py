@@ -18,16 +18,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.config import get_settings
-from app.paths.team_path import (
+from app.team.orchestrator import (
     Blackboard,
     TeamPlanTask,
     _build_summary,
-    _make_team_event,
     _parse_plan,
     _serialize_blackboard,
     _validate_task,
     run_team_path,
 )
+from app.utils.sse_events import make_team_event
 
 
 # ============================================================
@@ -313,7 +313,7 @@ async def test_run_team_path_emits_team_plan_progress_result(
             {"agent": "rag", "input": "Router 设计", "purpose": "文档"},
         ],
     }
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "代码结果"}
@@ -321,8 +321,8 @@ async def test_run_team_path_emits_team_plan_progress_result(
     async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "检索结果"}
 
-    monkeypatch.setattr("app.paths.team_path.run_code_agent", _fake_run_code_agent)
-    monkeypatch.setattr("app.paths.team_path.run_rag_agent", _fake_run_rag_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_rag_agent", _fake_run_rag_agent)
 
     events = await _collect_events(
         run_team_path("分析项目入口文件和文档结构", "t-team", {"thread_id": "t-team", "messages": []})
@@ -362,14 +362,14 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
             {"agent": "code", "input": "读文件", "purpose": "读"},
         ]
     }
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
         if False:
             yield {}
 
-    monkeypatch.setattr("app.paths.team_path.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-fail", {"thread_id": "t-fail", "messages": []})
@@ -390,7 +390,7 @@ async def test_run_team_path_partial_failure_continues(
             {"agent": "rag", "input": "检索", "purpose": "检索"},
         ]
     }
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "代码成功"}
@@ -400,8 +400,8 @@ async def test_run_team_path_partial_failure_continues(
         if False:
             yield {}
 
-    monkeypatch.setattr("app.paths.team_path.run_code_agent", _fake_run_code_agent)
-    monkeypatch.setattr("app.paths.team_path.run_rag_agent", _fake_run_rag_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_rag_agent", _fake_run_rag_agent)
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-partial", {"thread_id": "t-partial", "messages": []})
@@ -421,7 +421,7 @@ async def test_run_team_path_invalid_plan_yields_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Orchestrator 输出非法 JSON 时发送 error。"""
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm("不是 JSON"))
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm("不是 JSON"))
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-invalid", {"thread_id": "t-invalid", "messages": []})
@@ -441,14 +441,14 @@ async def test_run_team_path_deep_subtask_propagates_approval_request(
             {"agent": "deep", "input": "写入文件", "purpose": "改配置"},
         ]
     }
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
     async def _fake_run_deep_path(state, message, **kwargs):
         yield {"event": "approval_request", "data": json.dumps({"tool_name": "write_file", "preview": "test"})}
         yield {"event": "token", "data": "deep 结果"}
         yield {"event": "tool_result", "data": json.dumps({"name": "write_file", "result": "ok"})}
 
-    monkeypatch.setattr("app.paths.team_path.run_deep_path", _fake_run_deep_path)
+    monkeypatch.setattr("app.team.orchestrator.run_deep_path", _fake_run_deep_path)
 
     events = await _collect_events(
         run_team_path("请修改配置文件中的数据库连接", "t-deep", {"thread_id": "t-deep", "messages": []})
@@ -476,12 +476,12 @@ async def test_run_team_path_token_data_is_plain_string(
             {"agent": "code", "input": "读文件", "purpose": "读"},
         ]
     }
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "代码结果"}
 
-    monkeypatch.setattr("app.paths.team_path.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-token", {"thread_id": "t-token", "messages": []})
@@ -503,18 +503,18 @@ async def test_run_team_path_downgrades_simple_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """简单短消息降级到 chat 路径，不触发 Orchestrator。"""
-    # mock chat path 的 LLM（_run_chat_path 延迟 import app.llm.get_chat_model）
+    # mock chat path 的 LLM（chat/run.py 顶层 import get_chat_model）
     async def _fake_astream(messages: Any) -> AsyncIterator:
         yield SimpleNamespace(content="直接回答")
 
     mock_llm = MagicMock()
     mock_llm.astream = _fake_astream
-    monkeypatch.setattr("app.llm.get_chat_model", lambda **_: mock_llm)
+    monkeypatch.setattr("app.chat.run.get_chat_model", lambda **_: mock_llm)
 
     # mock team Orchestrator LLM — 若被调用则测试失败
     def _orchestrator_should_not_be_called(**_: Any) -> Any:
         raise AssertionError("Orchestrator should not be called for simple message")
-    monkeypatch.setattr("app.paths.team_path.get_chat_model", _orchestrator_should_not_be_called)
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", _orchestrator_should_not_be_called)
 
     events = await _collect_events(
         run_team_path("你好", "t-simple", {"thread_id": "t-simple", "messages": []})
@@ -534,7 +534,7 @@ async def test_run_team_path_downgrades_simple_message(
 
 def test_make_team_event_serializes_data() -> None:
     """_make_team_event 将 dict 序列化为 JSON 字符串。"""
-    event = _make_team_event("team_plan", {"plan": [], "reasoning": "r"})
+    event = make_team_event("team_plan", {"plan": [], "reasoning": "r"})
     assert event["event"] == "team_plan"
     data = json.loads(event["data"])
     assert data["reasoning"] == "r"
@@ -542,6 +542,6 @@ def test_make_team_event_serializes_data() -> None:
 
 def test_make_team_event_token_uses_plain_string() -> None:
     """token 事件 data 必须是纯字符串（与 graph.py _sse 约定一致）。"""
-    event = _make_team_event("token", "你好")
+    event = make_team_event("token", "你好")
     assert event["event"] == "token"
     assert event["data"] == "你好"  # 不是 '"你好"'

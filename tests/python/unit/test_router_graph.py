@@ -20,7 +20,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.router.graph import build_router_graph, resolve_system_prompt, run_router
+from app.router.graph import build_router_graph, run_router
+from app.utils.prompts import resolve_system_prompt
 
 
 # ============================================================
@@ -96,7 +97,7 @@ async def test_router_chat_path(
 
     # mock get_chat_model 返回 fake LLM
     fake_llm = _make_fake_llm(["你好", "！", "我是", "助理"])
-    monkeypatch.setattr("app.llm.get_chat_model", lambda **kw: fake_llm)
+    monkeypatch.setattr("app.chat.run.get_chat_model", lambda **kw: fake_llm)
 
     events = await _collect_events(run_router("你好", "t1"))
 
@@ -128,7 +129,7 @@ async def test_router_chat_path_llm_error(
     def _fake_get_chat_model(**kw):
         raise ValueError("no API key")
 
-    monkeypatch.setattr("app.llm.get_chat_model", _fake_get_chat_model)
+    monkeypatch.setattr("app.chat.run.get_chat_model", _fake_get_chat_model)
 
     events = await _collect_events(run_router("你好", "t1"))
 
@@ -156,7 +157,7 @@ async def test_router_tool_path(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     # mock run_code_agent yield 标准化事件（T3 后子代理已带 source 字段）
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
@@ -174,7 +175,7 @@ async def test_router_tool_path(
             "source": "code",
         }
 
-    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("读文件 /tmp/a.txt", "t1"))
 
@@ -217,12 +218,12 @@ async def test_router_tool_path_yields_delegation(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "ok"}
 
-    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("读文件", "t-delegation"))
 
@@ -247,12 +248,12 @@ async def test_router_tool_path_delegation_for_web_agent(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["web"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["web"]))
 
     async def _fake_run_web_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "web result"}
 
-    monkeypatch.setattr("app.router.graph.run_web_agent", _fake_run_web_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_web_agent", _fake_run_web_agent)
 
     events = await _collect_events(run_router("搜索网页信息", "t-web"))
 
@@ -273,14 +274,14 @@ async def test_router_tool_path_source_fallback(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     # mock yield 旧格式事件（无 source 字段）
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "tool_call", "name": "read_file", "args": {"path": "/tmp"}}
         yield {"type": "tool_result", "name": "read_file", "result": "ok"}
 
-    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("读文件", "t-fallback"))
 
@@ -304,14 +305,14 @@ async def test_router_tool_path_reasoning_separation(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         # 模拟推理模型输出：think 块 + 正文
         yield {"type": "token", "content": "<think>用户要读文件，我应该用 list_dir</think>"}
         yield {"type": "token", "content": "好的，我来读取文件内容。"}
 
-    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("列出 /tmp 目录", "t-reasoning"))
 
@@ -344,7 +345,7 @@ async def test_router_tool_path_selects_web_agent(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["web"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["web"]))
 
     web_called = False
 
@@ -356,8 +357,8 @@ async def test_router_tool_path_selects_web_agent(
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "code result"}
 
-    monkeypatch.setattr("app.router.graph.run_web_agent", _fake_run_web_agent)
-    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_web_agent", _fake_run_web_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("搜索网页信息", "t1"))
 
@@ -383,7 +384,7 @@ async def test_router_tool_path_strips_think_blocks(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock LLM（_llm_select_subagent 内部调用 get_chat_model）
-    monkeypatch.setattr("app.router.graph.get_chat_model", lambda **_: _make_fake_llm(["code"]))
+    monkeypatch.setattr("app.subagents.dispatch.get_chat_model", lambda **_: _make_fake_llm(["code"]))
 
     async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
         # 模拟 MiniMax-M3 推理模型输出：think 块 + 正文
@@ -392,7 +393,7 @@ async def test_router_tool_path_strips_think_blocks(
         yield {"type": "tool_call", "name": "list_dir", "args": {"path": "/tmp"}}
         yield {"type": "tool_result", "name": "list_dir", "result": ["a.txt"]}
 
-    monkeypatch.setattr("app.router.graph.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.subagents.dispatch.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(run_router("列出 /tmp 目录", "t-think"))
 

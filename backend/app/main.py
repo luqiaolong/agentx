@@ -863,14 +863,14 @@ async def memory_profile_delete(key: str) -> dict[str, Any]:
 async def memory_profile_extract(req: ExtractRequest) -> dict[str, Any]:
     """LLM 抽取画像条目并写入 profile.json。
 
-    调用 ``_extract_profile_via_llm`` 抽取，再 ``upsert_from_llm`` 写入。
+    调用 ``extract_profile_via_llm`` 抽取，再 ``upsert_from_llm`` 写入。
     失败不报错（仅 warning 日志），返回 ``{extracted: 0}``。
     """
     from app.memory.profile_store import upsert_from_llm
-    from app.paths.deep_path import _extract_profile_via_llm
+    from app.memory.profile_extractor import extract_profile_via_llm
 
     try:
-        entries = await _extract_profile_via_llm(req.message, req.assistant_reply)
+        entries = await extract_profile_via_llm(req.message, req.assistant_reply)
         written = upsert_from_llm(entries)
     except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
         logger.warning("profile extract endpoint failed", error=str(exc))

@@ -171,6 +171,19 @@ CSV/JSON                     │ 标准库 csv / json
 
 ---
 
+## 9.5 前端界面概念定义
+
+主界面采用**单窗口会话模式**，左右分栏布局：
+
+| 区域 | 术语 | 说明 |
+|---|---|---|
+| **左侧** | **会话列表**（Session List / Chat List）| 展示历史会话，以用户首条消息内容作为主标题，UUID 短码弱化展示 |
+| **右侧** | **工作区**（Workspace）| 当前选中会话的聊天内容区域，包含消息流、输入框、工具栏 |
+
+> 所有 AI 代理在讨论前端 UI 时，**必须使用上述术语**，避免"左边""右边"等模糊描述。
+
+---
+
 ## 10. 技术栈速查（与 §2 同步）
 
 | 层 | 选型 |
@@ -198,15 +211,32 @@ agentx/
 │   ├── llm.py                  ← ChatModel 单例
 │   ├── router/                 ← 消息分类 + StateGraph
 │   │   ├── classifier.py       ← 规则前置 + LLM 分类
-│   │   ├── graph.py            ← Router 图 + run_router（主入口）
+│   │   ├── graph.py            ← Router 图 + run_router（主入口，仅编排）
 │   │   └── state.py            ← RouterState TypedDict
-│   ├── paths/
-│   │   ├── chat_path.py        ← 路径 A：LLM 直答
-│   │   ├── tool_path.py        ← 路径 B：单工具 subagent
-│   │   └── deep_path.py        ← 路径 C：DeepAgent + interrupt_before 审批
-│   ├── subagents/              ← code / rag / web 子代理
+│   ├── chat/                   ← 路径 A：LLM 直答
+│   │   ├── __init__.py
+│   │   └── run.py              ← run_chat_path（ThinkFilter 流式 token）
+│   ├── deep/                   ← 路径 C：DeepAgent + interrupt_before 审批
+│   │   ├── __init__.py
+│   │   └── agent.py            ← run_deep_path / build_deep_agent / wait_for_approval
+│   ├── team/                   ← 路径 D：AgentTeam 多代理协作
+│   │   ├── __init__.py
+│   │   └── orchestrator.py     ← run_team_path（Orchestrator + 并行子代理 + Blackboard）
+│   ├── subagents/              ← code / rag / web 子代理 + 路径 B 分发
+│   │   ├── code_agent.py       ← code 子代理（ReAct）
+│   │   ├── rag_agent.py        ← rag 子代理（ReAct）
+│   │   ├── web_agent.py        ← web 子代理（ReAct）
+│   │   ├── custom_agent.py     ← 自定义子代理工厂
+│   │   └── dispatch.py         ← run_tool_path（路径 B）+ select_subagent + 事件转换
 │   ├── tools/                  ← filesystem + rag_retrieve
 │   ├── memory/                 ← skills / profile / checkpointer
+│   │   ├── profile_extractor.py ← LLM 画像抽取（extract_profile_via_llm）
+│   │   ├── profile_store.py    ← 画像存储（upsert_from_llm / build_profile_prompt）
+│   │   ├── skills_loader.py    ← 技能加载
+│   │   ├── skills_store.py     ← 技能存储
+│   │   ├── checkpointer.py     ← LangGraph checkpointer
+│   │   ├── context.py          ← 消息截断（trim_messages_with_budget）
+│   │   └── sandbox_store.py    ← 授权目录存储
 │   ├── vectorstore/            ← Milvus 客户端
 │   ├── embedding/              ← TEI 客户端
 │   ├── observability/          ← LangSmith + logger
@@ -236,9 +266,10 @@ agentx/
 
 | 分类 | 路径 | 文件 | 典型场景 |
 |---|---|---|---|
-| `CHAT` | A | [chat_path.py](file:///d:/java/agentprojects/agentx/backend/app/paths/chat_path.py) | 闲聊、问答、翻译 |
-| `SINGLE_TOOL` | B | [tool_path.py](file:///d:/java/agentprojects/agentx/backend/app/paths/tool_path.py) | 单工具调用（读文件 / 搜索 / 联网） |
-| `DEEP_TASK` | C | [deep_path.py](file:///d:/java/agentprojects/agentx/backend/app/paths/deep_path.py) | 多步规划 + 工具，含**危险工具审批** |
+| `CHAT` | A | [chat/run.py](file:///d:/java/agentprojects/agentx/backend/app/chat/run.py) | 闲聊、问答、翻译 |
+| `SINGLE_TOOL` | B | [subagents/dispatch.py](file:///d:/java/agentprojects/agentx/backend/app/subagents/dispatch.py) | 单工具调用（读文件 / 搜索 / 联网） |
+| `DEEP_TASK` | C | [deep/agent.py](file:///d:/java/agentprojects/agentx/backend/app/deep/agent.py) | 多步规划 + 工具，含**危险工具审批** |
+| `agent_team` 模式 | D | [team/orchestrator.py](file:///d:/java/agentprojects/agentx/backend/app/team/orchestrator.py) | 多代理协作（Orchestrator + 并行子代理 + Blackboard） |
 
 **危险工具**（`DANGEROUS_TOOLS = {"edit_file", "write_file", "shell_exec"}`）**只在路径 C
 暴露**，配合 LangGraph `interrupt_before=["tools"]` 触发用户审批；路径 B 子代理**严禁**
@@ -309,12 +340,13 @@ agentx/
 - `auto_approve_after_seconds=0` → 禁用，等用户操作。
 - SSE handler 每轮检查 `_abort_flags[thread_id]`，用户中止立即退出循环。
 
-### 14.5 路径导入循环
+### 14.5 路径导入循环（已消除）
 
-- `graph.py` 与 `deep_path.py` 有循环导入风险：`graph.py` 顶层
-  `from app.paths.deep_path import run_deep_path`。
-- `deep_path.py` 用 `TYPE_CHECKING` 延迟导入 `RouterState`，**禁止**改为运行时导入，
-  详见 [deep_path.py:30-34](file:///d:/java/agentprojects/agentx/backend/app/paths/deep_path.py#L30-L34)。
+- 路径重构后 `graph.py` 与路径模块**无循环导入**：
+  - `graph.py` 顶层单向 import `app.chat.run` / `app.deep.agent` / `app.subagents.dispatch` / `app.team.orchestrator`。
+  - `deep/agent.py` 用 `TYPE_CHECKING` 延迟导入 `RouterState`，**禁止**改为运行时导入。
+  - `team/orchestrator.py` 回退路径 A 时在函数内延迟 import `run_chat_path`（保持 lazy）。
+- `app.paths` 包已删除，**禁止**重新创建 `backend/app/paths/` 目录。
 
 ### 14.6 路由别名（前端）
 
@@ -429,7 +461,7 @@ uv run ruff check backend/                              # 风格检查
 |---|---|
 | 新增 REST 端点 | [backend/app/main.py](file:///d:/java/agentprojects/agentx/backend/app/main.py) 顶部端点总览 + §1.1「优先用现成框架」 |
 | 新增/修改 SSE 事件 | §13 + [preload/index.ts](file:///d:/java/agentprojects/agentx/frontend/preload/index.ts) + [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts) |
-| 新增工具 | [backend/app/tools/](file:///d:/java/agentprojects/agentx/backend/app/tools/) + `subagents/*_agent.py` + [deep_path.py](file:///d:/java/agentprojects/agentx/backend/app/paths/deep_path.py)（危险工具**仅**路径 C） |
+| 新增工具 | [backend/app/tools/](file:///d:/java/agentprojects/agentx/backend/app/tools/) + `subagents/*_agent.py` + [deep/agent.py](file:///d:/java/agentprojects/agentx/backend/app/deep/agent.py)（危险工具**仅**路径 C） |
 | 调整分类规则 | [classifier.py](file:///d:/java/agentprojects/agentx/backend/app/router/classifier.py) 关键词表 + §12 路径分发 |
 | 改 Electron IPC | [preload/index.ts](file:///d:/java/agentprojects/agentx/frontend/preload/index.ts) + [shared/api-types.ts](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts)（双份类型同步） |
 | 写 ADR / 提案 | [openspec/changes/archive/](file:///d:/java/agentprojects/agentx/openspec/changes/archive/) 历史格式参考 |

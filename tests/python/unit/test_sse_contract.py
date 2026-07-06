@@ -58,9 +58,10 @@ async def test_run_router_chat_path_yields_token_string_and_done():
 
     fake_model = _FakeChatModel(["你好", "！"])
 
-    # graph.py: classify_message 在模块顶层 import，_run_chat_path 函数内 import get_chat_model
+    # graph.py: classify_message 在模块顶层 import（run_router 内调用）
+    # chat/run.py: get_chat_model 在模块顶层 import（run_chat_path 内调用）
     with patch.object(graph_mod, "classify_message", new=AsyncMock(return_value="CHAT")), \
-         patch("app.llm.get_chat_model", return_value=fake_model):
+         patch("app.chat.run.get_chat_model", return_value=fake_model):
         events: list[dict[str, str]] = []
         async for evt in graph_mod.run_router("你好", "test-thread-a"):
             events.append(evt)
@@ -93,7 +94,7 @@ def test_make_approval_event_includes_thread_id():
     前端 ApprovalRequest.threadId 为空字符串，approve 提交后后端无法匹配，
     DeepAgent _await_approval 永远收不到决定 → 危险操作链路彻底断开。
     """
-    from app.paths.deep_path import _make_approval_event
+    from app.deep.agent import _make_approval_event
 
     tool_call = {
         "name": "write_file",
@@ -119,7 +120,7 @@ def test_make_approval_event_includes_thread_id():
 
 def test_make_approval_event_redacts_edit_file_content():
     """edit_file 的 old_text/new_text 应被 redacted。"""
-    from app.paths.deep_path import _make_approval_event
+    from app.deep.agent import _make_approval_event
 
     tool_call = {
         "name": "edit_file",
@@ -144,9 +145,9 @@ def test_make_todo_event_produces_todos_json():
     前端 preload 解析: JSON 对象 payload → 展开到 ChatEvent 顶层 →
     ChatView 读 e.todos（不是 e.data）。
     """
-    from app.paths.deep_path import _make_todo_event
+    from app.utils.sse_events import make_todo_event
 
-    event = _make_todo_event("调用工具: read_file", done=False)
+    event = make_todo_event("调用工具: read_file", done=False)
 
     assert event["event"] == "todo_update"
     payload = json.loads(event["data"])
@@ -163,9 +164,9 @@ def test_make_todo_event_produces_todos_json():
 
 def test_make_todo_event_done_true():
     """done=True 的 todo 事件。"""
-    from app.paths.deep_path import _make_todo_event
+    from app.utils.sse_events import make_todo_event
 
-    event = _make_todo_event("工具 read_file 完成", done=True)
+    event = make_todo_event("工具 read_file 完成", done=True)
     payload = json.loads(event["data"])
 
     assert payload["todos"][0]["done"] is True
@@ -181,9 +182,9 @@ def test_sse_token_uses_plain_string():
     前端 preload: 纯字符串不以 { 或 [ 开头 → 不 JSON.parse → payload 保持字符串 →
     走 {data: payload} 分支 → ChatView 读 e.data。
     """
-    from app.router.graph import _sse
+    from app.utils.sse_events import make_sse_event
 
-    event = _sse("token", "hello world")
+    event = make_sse_event("token", "hello world")
     assert event == {"event": "token", "data": "hello world"}
 
     # 确保不是 JSON 包装
@@ -192,26 +193,26 @@ def test_sse_token_uses_plain_string():
 
 def test_sse_done_data_is_empty_json():
     """done 事件 data 必须是 "{}"。"""
-    from app.router.graph import _sse
+    from app.utils.sse_events import make_sse_event
 
-    event = _sse("done", "{}")
+    event = make_sse_event("done", "{}")
     assert event == {"event": "done", "data": "{}"}
 
 
 def test_sse_error_uses_plain_string():
     """error 事件 data 是纯字符串错误消息。"""
-    from app.router.graph import _sse
+    from app.utils.sse_events import make_sse_event
 
-    event = _sse("error", "LLM 不可用")
+    event = make_sse_event("error", "LLM 不可用")
     assert event == {"event": "error", "data": "LLM 不可用"}
 
 
 def test_sse_todo_update_serializes_dict():
     """todo_update 事件接收 dict 时用 json.dumps 序列化。"""
-    from app.router.graph import _sse
+    from app.utils.sse_events import make_sse_event
 
     data = {"todos": [{"text": "test", "done": True}]}
-    event = _sse("todo_update", data)
+    event = make_sse_event("todo_update", data)
 
     assert event["event"] == "todo_update"
     # data 是 JSON 字符串
@@ -231,10 +232,10 @@ def test_sse_todo_update_serializes_dict():
 
 def test_convert_subagent_event_token():
     """子代理 token 事件（无 think_filter）→ 透传为单个 SSE token 事件，data 为纯字符串。"""
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
     subagent_event = {"type": "token", "content": "hello"}
-    sse_list = _convert_subagent_event(subagent_event)
+    sse_list = convert_subagent_event(subagent_event)
 
     assert isinstance(sse_list, list)
     assert len(sse_list) == 1
@@ -248,10 +249,10 @@ def test_convert_subagent_event_tool_call():
 
     契约变更: D1 后不再 flatten 为 todo_update，前端 ToolCallCard 直接消费 tool_call SSE。
     """
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
     subagent_event = {"type": "tool_call", "name": "read_file", "args": {"path": "/foo"}}
-    sse_list = _convert_subagent_event(subagent_event, source="code")
+    sse_list = convert_subagent_event(subagent_event, source="code")
 
     assert isinstance(sse_list, list)
     assert len(sse_list) == 1
@@ -270,10 +271,10 @@ def test_convert_subagent_event_tool_result():
 
     契约变更: D1 后不再 flatten 为 todo_update，前端 ToolCallCard 按 id 配对后渲染完成态。
     """
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
     subagent_event = {"type": "tool_result", "name": "read_file", "result": "..."}
-    sse_list = _convert_subagent_event(subagent_event, source="code")
+    sse_list = convert_subagent_event(subagent_event, source="code")
 
     assert isinstance(sse_list, list)
     assert len(sse_list) == 1
@@ -288,10 +289,10 @@ def test_convert_subagent_event_tool_result():
 
 def test_convert_subagent_event_unknown_type_returns_empty_list():
     """未知子代理事件类型 → 返回空 list（被过滤，不产生任何 SSE）。"""
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
-    assert _convert_subagent_event({"type": "unknown"}) == []
-    assert _convert_subagent_event({}) == []
+    assert convert_subagent_event({"type": "unknown"}) == []
+    assert convert_subagent_event({}) == []
 
 
 def test_convert_subagent_event_token_with_think_filter_splits_reasoning():
@@ -304,12 +305,12 @@ def test_convert_subagent_event_token_with_think_filter_splits_reasoning():
     标签前缀），所以 visible text 末尾 6 字符会被 hold 不 emit。这里用足够长的
     visible text 让前缀部分被 emit 为 token SSE。
     """
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
     from app.utils.text import ThinkFilter
 
     tf = ThinkFilter(retain_think=True)
     # 完整 <think> 块在一次 feed 内闭合，visible text 长度 > 6 让前缀被 emit
-    sse_list = _convert_subagent_event(
+    sse_list = convert_subagent_event(
         {"type": "token", "content": "<think>内部推理</think>可见回答123456789"},
         think_filter=tf,
         source="code",
@@ -339,7 +340,7 @@ def test_convert_subagent_event_tool_call_result_id_pairing():
     前端 AssistantUIThread.buildRenderItems 按 id 配对会 100% 失败，导致每个工具
     调用产生两张卡片（永久 running + 孤儿 complete）。
     """
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
     # 模拟 subagent 实际产出：同一 tool run 的 start/end 共享 run_id
     shared_run_id = "run-abc-123"
@@ -358,8 +359,8 @@ def test_convert_subagent_event_tool_call_result_id_pairing():
         "source": "code",
     }
 
-    call_sse_list = _convert_subagent_event(tool_call_event, source="code")
-    result_sse_list = _convert_subagent_event(tool_result_event, source="code")
+    call_sse_list = convert_subagent_event(tool_call_event, source="code")
+    result_sse_list = convert_subagent_event(tool_result_event, source="code")
 
     assert len(call_sse_list) == 1
     assert len(result_sse_list) == 1
@@ -380,10 +381,10 @@ def test_convert_subagent_event_event_source_overrides_caller_source():
 
     覆盖 _convert_subagent_event 中 ``ev_source = event.get("source") or source`` 优先级。
     """
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
     # event 自带 source="rag"，caller 传 source="code"
-    sse_list = _convert_subagent_event(
+    sse_list = convert_subagent_event(
         {
             "type": "tool_call",
             "id": "r1",
@@ -401,10 +402,10 @@ def test_convert_subagent_event_event_source_overrides_caller_source():
 
 def test_convert_subagent_event_fallback_uuid_when_no_id():
     """subagent 未传 id 时 _convert_subagent_event 兜底生成 uuid（不崩）。"""
-    from app.router.graph import _convert_subagent_event
+    from app.subagents.dispatch import convert_subagent_event
 
     # 不传 id（旧 subagent 行为），应 fallback 到 uuid4
-    sse_list = _convert_subagent_event(
+    sse_list = convert_subagent_event(
         {"type": "tool_call", "name": "read_file", "args": {"path": "/foo"}},
         source="code",
     )
@@ -419,7 +420,7 @@ def test_convert_subagent_event_fallback_uuid_when_no_id():
 
 def test_select_subagent_web_keywords(monkeypatch: pytest.MonkeyPatch):
     """含 web 关键词 → web 子代理。使用短 trigger_description 确保匹配。"""
-    from app.router.graph import _select_subagent
+    from app.subagents.dispatch import select_subagent
     from app.config import SubagentSettings
 
     mock = MagicMock()
@@ -429,15 +430,15 @@ def test_select_subagent_web_keywords(monkeypatch: pytest.MonkeyPatch):
         "web": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["web_search"], trigger_description="搜索网页、联网查询"),
     }
     mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock)
 
-    assert _select_subagent("帮我搜索网页信息") == "web"
-    assert _select_subagent("联网查询一下") == "web"
+    assert select_subagent("帮我搜索网页信息") == "web"
+    assert select_subagent("联网查询一下") == "web"
 
 
 def test_select_subagent_rag_keywords(monkeypatch: pytest.MonkeyPatch):
     """含 RAG 关键词 → rag 子代理。使用短 trigger_description 确保匹配。"""
-    from app.router.graph import _select_subagent
+    from app.subagents.dispatch import select_subagent
     from app.config import SubagentSettings
 
     mock = MagicMock()
@@ -447,21 +448,21 @@ def test_select_subagent_rag_keywords(monkeypatch: pytest.MonkeyPatch):
         "web": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["web_search"], trigger_description=""),
     }
     mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock)
 
-    assert _select_subagent("从知识库检索文档") == "rag"
-    assert _select_subagent("查文档库") == "rag"
+    assert select_subagent("从知识库检索文档") == "rag"
+    assert select_subagent("查文档库") == "rag"
 
 
 def test_select_subagent_defaults_to_code(monkeypatch: pytest.MonkeyPatch):
     """无关键词命中 → code 子代理（默认）。"""
-    from app.router.graph import _select_subagent
+    from app.subagents.dispatch import select_subagent
     from app.config import _default_subagents
 
     mock = MagicMock()
     mock.subagents = _default_subagents()
     mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock)
 
-    assert _select_subagent("读取这个文件") == "code"
-    assert _select_subagent("hello") == "code"
+    assert select_subagent("读取这个文件") == "code"
+    assert select_subagent("hello") == "code"

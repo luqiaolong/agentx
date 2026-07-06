@@ -86,6 +86,17 @@ export interface Session {
    * 持久化到 localStorage（跨重启保留）。
    */
   manuallyRevokedPaths: string[];
+  /**
+   * 该会话是否正在执行中（流式输出 / 工具调用 / 子代理任务）。
+   * 由前端根据 SSE 事件维护，用于会话列表展示执行状态。
+   */
+  isRunning: boolean;
+  /**
+   * 该会话是否有新结果待查看。
+   * 当任务执行完成但用户未切换到该会话时设为 true，
+   * 用户点击切换到该会话后设为 false。
+   */
+  hasNewResult: boolean;
 }
 
 interface ChatState {
@@ -180,6 +191,10 @@ interface ChatState {
   deleteMessagesAfter: (messageId: string) => string | null;
   setStreaming: (v: boolean) => void;
   setApprovalRequest: (req: ApprovalRequest | null) => void;
+  /** 设置指定会话的执行状态。 */
+  setSessionRunning: (id: string, running: boolean) => void;
+  /** 清除指定会话的新结果标记。 */
+  clearSessionNewResult: (id: string) => void;
 }
 
 const DEFAULT_TITLE = "新会话";
@@ -192,6 +207,8 @@ function createSessionRecord(id: string, workspacePath: string | null = null): S
     createdAt: Date.now(),
     workspacePath,
     manuallyRevokedPaths: [],
+    isRunning: false,
+    hasNewResult: false,
   };
 }
 
@@ -245,6 +262,8 @@ function migrateV0toV1(persisted: unknown): Partial<ChatState> {
     createdAt: firstMsg ? firstMsg.ts : Date.now(),
     workspacePath: null,
     manuallyRevokedPaths: [],
+    isRunning: false,
+    hasNewResult: false,
   };
   return { sessions: { [id]: session }, currentId: id };
 }
@@ -267,6 +286,8 @@ function migrateV1toV2(persisted: unknown): Partial<ChatState> {
           : null,
       manuallyRevokedPaths:
         Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
+      isRunning: false,
+      hasNewResult: false,
     };
   }
   return {
@@ -325,6 +346,8 @@ function migrateV2toV3(persisted: unknown): Partial<ChatState> {
           : null,
       manuallyRevokedPaths:
         Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
+      isRunning: false,
+      hasNewResult: false,
     };
   }
   return {
@@ -356,6 +379,8 @@ function migrateV3toV4(persisted: unknown): Partial<ChatState> {
           : null,
       manuallyRevokedPaths:
         Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
+      isRunning: false,
+      hasNewResult: false,
     };
   }
   return {
@@ -841,6 +866,30 @@ export const useChatStore = create<ChatState>()(
         setStreaming: (v) => set({ isStreaming: v }),
 
         setApprovalRequest: (req) => set({ approvalRequest: req }),
+
+        setSessionRunning: (id, running) =>
+          set((s) => {
+            const sess = s.sessions[id];
+            if (!sess) return s;
+            return {
+              sessions: {
+                ...s.sessions,
+                [id]: { ...sess, isRunning: running },
+              },
+            };
+          }),
+
+        clearSessionNewResult: (id) =>
+          set((s) => {
+            const sess = s.sessions[id];
+            if (!sess) return s;
+            return {
+              sessions: {
+                ...s.sessions,
+                [id]: { ...sess, hasNewResult: false },
+              },
+            };
+          }),
       }),
       {
         name: "agentx-chat",

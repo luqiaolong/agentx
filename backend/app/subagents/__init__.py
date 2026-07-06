@@ -4,6 +4,7 @@ from .code_agent import build_code_agent, run_code_agent
 from .custom_agent import build_custom_agent, run_custom_agent
 from .rag_agent import build_rag_agent, run_rag_agent
 from .web_agent import build_web_agent, run_web_agent
+from .dispatch import run_tool_path
 
 __all__ = [
     "build_code_agent",
@@ -14,4 +15,5 @@ __all__ = [
     "run_web_agent",
     "build_custom_agent",
     "run_custom_agent",
+    "run_tool_path",
 ]

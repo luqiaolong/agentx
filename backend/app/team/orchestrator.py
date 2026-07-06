@@ -21,16 +21,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.config import get_settings
+from app.deep.agent import run_deep_path
 from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
-from app.paths.deep_path import run_deep_path
 from app.subagents import (
     run_code_agent,
     run_custom_agent,
     run_rag_agent,
     run_web_agent,
 )
+from app.utils.sse_events import make_team_event
 from app.utils.text import ThinkFilter, extract_chunk_text
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def _build_project_context() -> str:
         "项目结构（agentx）：",
         "- 后端 Python: backend/app/（FastAPI + LangGraph）",
         "  - router/ (classifier.py, graph.py, state.py) — 消息分类 + StateGraph",
-        "  - paths/ (chat_path.py, tool_path.py, deep_path.py, team_path.py) — 四路径",
+        "  - chat/ (run.py), subagents/ (dispatch.py), deep/ (agent.py), team/ (orchestrator.py)",
         "  - subagents/ (code/rag/web/custom) — 子代理",
         "  - tools/ (filesystem + rag_retrieve) — 工具",
         "- 前端 Electron+React: frontend/",
@@ -342,7 +343,7 @@ async def _run_subtask(
     tool_traces: list[str] = []
 
     def _done(success: bool, payload: str) -> dict[str, str]:
-        return _make_team_event(
+        return make_team_event(
             _SUBTASK_DONE_EVENT,
             {"agent": agent_name, "success": success, "payload": payload},
         )
@@ -467,31 +468,6 @@ def _build_summary(text_parts: list[str], tool_traces: list[str], agent_name: st
     return summary.strip()
 
 
-def _make_team_event(event: str, data: Any) -> dict[str, str]:
-    """构造标准 SSE 事件 dict（与 router/graph.py 的 _sse 约定一致）。
-
-    - token: data 为纯字符串（前端直接拼接，不做 JSON.parse）
-    - team_plan / team_progress / team_result / reasoning / error / _subtask_done:
-      data 为 JSON 字符串（dict 会被 json 序列化）
-    - done: data 为 "{}"
-    """
-    if event in (
-        "team_plan",
-        "team_progress",
-        "team_result",
-        "team_done",
-        "reasoning",
-        "error",
-        _SUBTASK_DONE_EVENT,
-    ):
-        if isinstance(data, str):
-            return {"event": event, "data": data}
-        return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
-    if event == "done":
-        return {"event": "done", "data": "{}"}
-    return {"event": event, "data": str(data)}
-
-
 def _serialize_blackboard(blackboard: Blackboard) -> str:
     lines: list[str] = []
     for agent_name, finding in blackboard.findings.items():
@@ -534,7 +510,7 @@ async def _run_aggregator(
     ok, reason = _quality_gate(blackboard)
     if not ok:
         logger.warning("team aggregator quality gate rejected", reason=reason)
-        yield _make_team_event(
+        yield make_team_event(
             "error",
             {"message": f"专家结果质量不足: {reason}"},
         )
@@ -543,7 +519,7 @@ async def _run_aggregator(
     try:
         llm = get_chat_model(temperature=0.5, streaming=True)
     except ValueError as exc:
-        yield _make_team_event("error", {"message": f"LLM 不可用: {exc}"})
+        yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
         return
 
     prompt = _AGGREGATOR_PROMPT.format(
@@ -560,15 +536,15 @@ async def _run_aggregator(
             if getattr(think_filter, "_retain_think", False):
                 reasoning = think_filter.take_think()
                 if reasoning:
-                    yield _make_team_event("reasoning", {"content": reasoning, "source": "team"})
+                    yield make_team_event("reasoning", {"content": reasoning, "source": "team"})
             if cleaned:
-                yield _make_team_event("token", cleaned)
+                yield make_team_event("token", cleaned)
         tail = think_filter.flush()
         if tail:
-            yield _make_team_event("token", tail)
+            yield make_team_event("token", tail)
     except Exception as exc:  # noqa: BLE001
         logger.warning("team aggregator stream failed", error=str(exc))
-        yield _make_team_event("error", {"message": f"Aggregator 流式失败: {exc}"})
+        yield make_team_event("error", {"message": f"Aggregator 流式失败: {exc}"})
 
 
 _SIMPLE_TASK_KEYWORDS = frozenset({
@@ -614,8 +590,8 @@ async def run_team_path(
     if downgrade:
         logger.info("team downgrade to chat", reason=reason, message_len=len(message))
         # 延迟 import 避免循环依赖（graph.py 顶层 import team_path）
-        from app.router.graph import _run_chat_path
-        async for sse in _run_chat_path(
+        from app.chat.run import run_chat_path
+        async for sse in run_chat_path(
             message,
             thread_id,
             system_prompt_extra=profile_prompt or None,
@@ -636,7 +612,7 @@ async def run_team_path(
         try:
             llm = get_chat_model(temperature=0.3, streaming=False)
         except ValueError as exc:
-            yield _make_team_event("error", {"message": f"LLM 不可用: {exc}"})
+            yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
             return
 
         orchestrator_prompt = _build_orchestrator_prompt(message, max_tasks, context=context)
@@ -645,15 +621,15 @@ async def run_team_path(
             raw_text = response.content if hasattr(response, "content") else str(response)
         except Exception as exc:  # noqa: BLE001
             logger.warning("team orchestrator invoke failed", error=str(exc))
-            yield _make_team_event("error", {"message": f"Orchestrator 调用失败: {exc}"})
+            yield make_team_event("error", {"message": f"Orchestrator 调用失败: {exc}"})
             return
 
         plan, reasoning = _parse_plan(raw_text, max_tasks)
         if not plan:
-            yield _make_team_event("error", {"message": "Orchestrator 未生成有效计划"})
+            yield make_team_event("error", {"message": "Orchestrator 未生成有效计划"})
             return
 
-        yield _make_team_event(
+        yield make_team_event(
             "team_plan",
             {
                 "plan": [
@@ -674,7 +650,7 @@ async def run_team_path(
                 valid_tasks.append(task)
             else:
                 blackboard.errors[task.agent] = err
-                yield _make_team_event(
+                yield make_team_event(
                     "team_progress",
                     {"agent": task.agent, "status": "error", "message": err},
                 )
@@ -688,7 +664,7 @@ async def run_team_path(
             async with semaphore:
                 # 实际开始执行时才发 running
                 await queue.put(
-                    _make_team_event(
+                    make_team_event(
                         "team_progress",
                         {"agent": t.agent, "status": "running", "message": t.purpose},
                     )
@@ -701,7 +677,7 @@ async def run_team_path(
                         await queue.put(ev)
                 except Exception as exc:  # noqa: BLE001
                     await queue.put(
-                        _make_team_event(
+                        make_team_event(
                             _SUBTASK_DONE_EVENT,
                             {
                                 "agent": t.agent,
@@ -739,7 +715,7 @@ async def run_team_path(
                             agent=task.agent, success=False, payload=err_msg,
                         )
                         blackboard.errors[task.agent] = err_msg
-                        yield _make_team_event(
+                        yield make_team_event(
                             "team_progress",
                             {"agent": task.agent, "status": "error", "message": err_msg},
                         )
@@ -765,30 +741,30 @@ async def run_team_path(
             if res is None:
                 err_msg = f"{agent_name} 子任务未返回结果"
                 blackboard.errors[agent_name] = err_msg
-                yield _make_team_event(
+                yield make_team_event(
                     "team_progress",
                     {"agent": agent_name, "status": "error", "message": err_msg},
                 )
             elif res.success:
                 blackboard.findings[agent_name] = res.payload
-                yield _make_team_event(
+                yield make_team_event(
                     "team_progress",
                     {"agent": agent_name, "status": "done", "message": task.purpose},
                 )
-                yield _make_team_event(
+                yield make_team_event(
                     "team_result",
                     {"agent": agent_name, "summary": res.payload},
                 )
             else:
                 blackboard.errors[agent_name] = res.payload
-                yield _make_team_event(
+                yield make_team_event(
                     "team_progress",
                     {"agent": agent_name, "status": "error", "message": res.payload},
                 )
 
         if not blackboard.findings:
-            yield _make_team_event("error", {"message": "所有专家任务均失败"})
-            yield _make_team_event("team_done", {"status": "error"})
+            yield make_team_event("error", {"message": "所有专家任务均失败"})
+            yield make_team_event("team_done", {"status": "error"})
             return
 
         # ---- 3. Aggregator 汇总 ----
@@ -797,7 +773,7 @@ async def run_team_path(
 
         # team 整体结束
         has_error = bool(blackboard.errors)
-        yield _make_team_event(
+        yield make_team_event(
             "team_done",
             {"status": "error" if has_error and not blackboard.findings else "done"},
         )

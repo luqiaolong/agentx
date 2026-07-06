@@ -14,7 +14,7 @@ import json
 import pytest
 
 from app.config import get_settings
-from app.paths.deep_path import (
+from app.deep.agent import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
     _make_deep_tools,

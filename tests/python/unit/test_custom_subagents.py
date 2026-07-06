@@ -23,7 +23,7 @@ from app.config import (
     _sanitize_custom_tools,
     get_settings,
 )
-from app.router.graph import _select_subagent
+from app.subagents.dispatch import select_subagent
 
 
 # ============================================================
@@ -246,10 +246,10 @@ def test_select_subagent_custom_matched_after_builtin(
         ),
     }
     mock_settings = _make_mock_settings_with_custom(custom_subagents=custom)
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "特殊词" 不匹配内置任何子代理，匹配自定义 → 返回自定义 key
-    result = _select_subagent("帮我处理特殊词")
+    result = select_subagent("帮我处理特殊词")
     assert result == "my_agent"
 
 
@@ -271,10 +271,10 @@ def test_select_subagent_builtin_takes_priority_over_custom(
     mock_settings = _make_mock_settings_with_custom(custom_subagents=custom)
     # 覆盖 web 的 trigger_description 为短关键词，确保与自定义冲突
     mock_settings.subagents["web"] = mock_settings.subagents["web"].model_copy(update={"trigger_description": "搜一下、查查"})
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "帮我搜一下" 同时命中内置 web 与自定义，优先内置
-    result = _select_subagent("帮我搜一下")
+    result = select_subagent("帮我搜一下")
     assert result == "web"
 
 
@@ -298,9 +298,9 @@ def test_select_subagent_custom_disabled_skipped(
         subagents_overrides={"code": {"enabled": False}},
         custom_subagents=custom,
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
-    result = _select_subagent("特殊词")
+    result = select_subagent("特殊词")
     assert result is None
 
 
@@ -324,9 +324,9 @@ def test_select_subagent_custom_all_tools_disabled_returns_none(
         tools_overrides={"read_file": False},  # 自定义绑定的工具被禁用
         custom_subagents=custom,
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
-    result = _select_subagent("特殊词")
+    result = select_subagent("特殊词")
     assert result is None
 
 
@@ -358,7 +358,7 @@ def test_select_subagent_custom_sorted_by_key(
         subagents_overrides={"code": {"enabled": False}},
         custom_subagents=custom,
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
-    result = _select_subagent("共同词")
+    result = select_subagent("共同词")
     assert result == "a_agent"

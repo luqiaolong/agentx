@@ -319,7 +319,7 @@ async def test_extract_profile_via_llm_parses_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """LLM 抽取：mock get_chat_model，验证 JSON 解析。"""
-    from app.paths.deep_path import _extract_profile_via_llm
+    from app.memory.profile_extractor import extract_profile_via_llm
 
     # mock LLM 返回 JSON（ainvoke 必须用 AsyncMock 才能 await）
     fake_response = MagicMock()
@@ -329,9 +329,9 @@ async def test_extract_profile_via_llm_parses_json(
     )
     fake_llm = MagicMock()
     fake_llm.ainvoke = AsyncMock(return_value=fake_response)
-    monkeypatch.setattr("app.paths.deep_path.get_chat_model", lambda **kw: fake_llm)
+    monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await _extract_profile_via_llm("我用 TypeScript", "好的")
+    entries = await extract_profile_via_llm("我用 TypeScript", "好的")
     assert len(entries) == 1
     assert entries[0]["key"] == "uses_ts"
     assert entries[0]["category"] == "project"
@@ -341,15 +341,15 @@ async def test_extract_profile_via_llm_no_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """LLM 返回空 entries。"""
-    from app.paths.deep_path import _extract_profile_via_llm
+    from app.memory.profile_extractor import extract_profile_via_llm
 
     fake_response = MagicMock()
     fake_response.content = '{"entries": []}'
     fake_llm = MagicMock()
     fake_llm.ainvoke = AsyncMock(return_value=fake_response)
-    monkeypatch.setattr("app.paths.deep_path.get_chat_model", lambda **kw: fake_llm)
+    monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await _extract_profile_via_llm("你好", "你好")
+    entries = await extract_profile_via_llm("你好", "你好")
     assert entries == []
 
 
@@ -357,15 +357,15 @@ async def test_extract_profile_via_llm_invalid_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """LLM 返回非法 JSON 时返回空列表（不报错）。"""
-    from app.paths.deep_path import _extract_profile_via_llm
+    from app.memory.profile_extractor import extract_profile_via_llm
 
     fake_response = MagicMock()
     fake_response.content = "not a json"
     fake_llm = MagicMock()
     fake_llm.ainvoke = AsyncMock(return_value=fake_response)
-    monkeypatch.setattr("app.paths.deep_path.get_chat_model", lambda **kw: fake_llm)
+    monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await _extract_profile_via_llm("msg", "reply")
+    entries = await extract_profile_via_llm("msg", "reply")
     assert entries == []
 
 
@@ -373,7 +373,7 @@ async def test_extract_profile_via_llm_json_with_surrounding_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """LLM 返回含解释文字 + JSON 时容错提取 JSON。"""
-    from app.paths.deep_path import _extract_profile_via_llm
+    from app.memory.profile_extractor import extract_profile_via_llm
 
     fake_response: Any = MagicMock()
     fake_response.content = (
@@ -382,9 +382,9 @@ async def test_extract_profile_via_llm_json_with_surrounding_text(
     )
     fake_llm = MagicMock()
     fake_llm.ainvoke = AsyncMock(return_value=fake_response)
-    monkeypatch.setattr("app.paths.deep_path.get_chat_model", lambda **kw: fake_llm)
+    monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await _extract_profile_via_llm("msg", "reply")
+    entries = await extract_profile_via_llm("msg", "reply")
     assert len(entries) == 1
     assert entries[0]["key"] == "k1"
 

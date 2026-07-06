@@ -99,10 +99,23 @@ def make_team_event(event: str, data: Any) -> dict[str, str]:
     return {"event": event, "data": str(data)}
 
 
+def make_approval_event(data: dict) -> dict[str, str]:
+    """构造 approval_request SSE 事件（仅做 JSON 封装）。
+
+    redaction 和 preview 生成逻辑由调用方（deep/agent.py）处理，
+    本函数只负责将 data dict 序列化为 SSE 事件格式。
+    """
+    return {
+        "event": "approval_request",
+        "data": json.dumps(data, ensure_ascii=False, default=str),
+    }
+
+
 __all__ = [
     "make_sse_event",
     "make_todo_event",
     "make_tool_call_event",
     "make_tool_result_event",
     "make_team_event",
+    "make_approval_event",
 ]

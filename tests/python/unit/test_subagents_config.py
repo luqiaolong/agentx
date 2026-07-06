@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.config import SubagentSettings, get_settings
-from app.router.graph import _select_subagent
+from app.subagents.dispatch import select_subagent
 
 
 # ============================================================
@@ -272,12 +272,12 @@ def test_select_subagent_disabled_web_falls_back_to_code(
     mock_settings = _make_mock_settings(
         subagents_overrides={"web": {"enabled": False}}
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "搜索一下" 默认匹配 web 关键词，但 web 被禁用 → 跳过
     # rag 关键词不匹配 → 跳过；code.keywords=[] → 不匹配
     # 兜底：code 启用且有工具 → 返回 "code"
-    result = _select_subagent("搜索一下")
+    result = select_subagent("搜索一下")
     assert result == "code"
 
 
@@ -292,9 +292,9 @@ def test_select_subagent_all_disabled_returns_none(
             "web": {"enabled": False},
         }
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
-    result = _select_subagent("搜索一下")
+    result = select_subagent("搜索一下")
     assert result is None
 
 
@@ -308,10 +308,10 @@ def test_select_subagent_code_disabled_no_match_returns_none(
     mock_settings = _make_mock_settings(
         subagents_overrides={"code": {"enabled": False}}
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "你好" 不匹配 web/rag 默认关键词，code 被禁用 → None
-    result = _select_subagent("你好")
+    result = select_subagent("你好")
     assert result is None
 
 
@@ -323,10 +323,10 @@ def test_select_subagent_all_tools_disabled_returns_none(
         subagents_overrides={"code": {"enabled": False}},
         tools_overrides={"web_search": False},
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "搜索" 匹配 web 关键词，但 web_search 工具被禁用 → None
-    result = _select_subagent("搜索")
+    result = select_subagent("搜索")
     assert result is None
 
 
@@ -350,10 +350,10 @@ def test_select_subagent_empty_keywords_no_match(
             "code": {"enabled": False},  # 排除 code 兜底干扰
         }
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "搜索一下" 不匹配任何子代理（web/rag 空 trigger_description，code 禁用）→ None
-    result = _select_subagent("搜索一下")
+    result = select_subagent("搜索一下")
     assert result is None
 
 
@@ -367,9 +367,9 @@ def test_select_subagent_custom_trigger_description_match(
             "rag": {"trigger_description": ""},
         }
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
-    result = _select_subagent("帮我搜一下")
+    result = select_subagent("帮我搜一下")
     assert result == "web"
 
 
@@ -383,10 +383,10 @@ def test_select_subagent_trigger_description_no_match(
             "code": {"enabled": False},  # 排除 code 兜底干扰
         }
     )
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "写代码" 不含 "搜索" → web 不匹配 → None
-    result = _select_subagent("写代码")
+    result = select_subagent("写代码")
     assert result is None
 
 
@@ -399,10 +399,10 @@ def test_select_subagent_code_empty_keywords_fallback(
     当其他子代理都不匹配时，code 仍会被选为 fallback（若 enabled 且工具可用）。
     """
     mock_settings = _make_mock_settings()  # 全默认
-    monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
+    monkeypatch.setattr("app.subagents.dispatch.get_settings", lambda: mock_settings)
 
     # "你好" 不匹配任何关键词，但 code 作为兜底子代理仍返回
-    result = _select_subagent("你好")
+    result = select_subagent("你好")
     assert result == "code"
 
 

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator
 from uuid import uuid4
@@ -29,7 +28,15 @@ from app.observability.logger import logger
 from app.subagents.code_agent import _make_fs_tools
 from app.subagents.rag_agent import _make_rag_tools
 from app.subagents.web_agent import _make_web_tools
+from app.utils.prompts import resolve_system_prompt
 from app.utils.security import ApprovalDecision, get_sandbox
+from app.utils.sse_events import (
+    make_approval_event,
+    make_sse_event,
+    make_todo_event,
+    make_tool_call_event,
+    make_tool_result_event,
+)
 
 if TYPE_CHECKING:
     # RouterState 仅用于类型注解（``from __future__ import annotations`` 使注解
@@ -172,10 +179,6 @@ async def build_deep_agent(
     Returns:
         编译后的 CompiledStateGraph 实例。
     """
-    # 延迟 import 避免与 app.router.graph 形成循环导入
-    # （graph.py 顶部 from app.paths.deep_path import run_deep_path）
-    from app.router.graph import resolve_system_prompt
-
     model = get_chat_model(temperature=0.3, streaming=True)
     if tools is None:
         tools = _make_deep_tools(thread_id)
@@ -397,10 +400,7 @@ def _make_approval_event(
         data["requestedPath"] = requested_path or ""
         data["writable"] = writable
 
-    return {
-        "event": "approval_request",
-        "data": json.dumps(data, ensure_ascii=False),
-    }
+    return make_approval_event(data)
 
 
 # 只读 fs 工具名集合（用于 directory_extension 预检查）
@@ -437,52 +437,6 @@ def _extract_paths_from_tool_call(tool_call: dict) -> list[str]:
 def _is_read_only_fs_tool(name: str) -> bool:
     """是否为只读 fs 工具（用于 directory_extension 预检查）。"""
     return name in _READ_ONLY_FS_TOOLS
-
-
-def _make_todo_event(text: str, done: bool = False) -> dict[str, str]:
-    """构造 todo_update SSE 事件。"""
-    return {
-        "event": "todo_update",
-        "data": json.dumps(
-            {"todos": [{"text": text, "done": done}]},
-            ensure_ascii=False,
-        ),
-    }
-
-
-def _make_tool_call_event(tc_id: str, name: str, args: Any) -> dict[str, str]:
-    """构造 tool_call SSE 事件（source 固定为 "deep"）。"""
-    return {
-        "event": "tool_call",
-        "data": json.dumps(
-            {
-                "id": tc_id,
-                "name": name,
-                "args": args if args is not None else {},
-                "source": "deep",
-            },
-            ensure_ascii=False,
-        ),
-    }
-
-
-def _make_tool_result_event(tc_id: str, name: str, result: Any) -> dict[str, str]:
-    """构造 tool_result SSE 事件（source 固定为 "deep"）。"""
-    # result 可能是 LangChain ToolMessage / BaseMessage 对象，先转为可序列化类型
-    serializable_result = _to_serializable(result)
-    return {
-        "event": "tool_result",
-        "data": json.dumps(
-            {
-                "id": tc_id,
-                "name": name,
-                "result": serializable_result,
-                "source": "deep",
-            },
-            ensure_ascii=False,
-            default=str,
-        ),
-    }
 
 
 async def _stream_agent_events(
@@ -525,8 +479,8 @@ async def _stream_agent_events(
                     else ""
                     for block in content
                 )
-            yield _make_tool_result_event(tool_call_id, tool_name, content)
-            yield _make_todo_event(f"工具 {tool_name} 完成", done=True)
+            yield make_tool_result_event(tool_call_id, tool_name, content, source="deep")
+            yield make_todo_event(f"工具 {tool_name} 完成", done=True)
 
         elif isinstance(last_msg, AIMessage):
             if getattr(last_msg, "tool_calls", None):
@@ -551,13 +505,10 @@ async def _stream_agent_events(
                 display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
                 if display_plan:
                     # yield reasoning 事件供前端展示思考过程
-                    yield {
-                        "event": "reasoning",
-                        "data": json.dumps(
-                            {"content": display_plan, "source": "deep"},
-                            ensure_ascii=False,
-                        ),
-                    }
+                    yield make_sse_event(
+                        "reasoning",
+                        {"content": display_plan, "source": "deep"},
+                    )
                 # 再 yield 每个 tool_call
                 for tc in last_msg.tool_calls:
                     if isinstance(tc, dict):
@@ -568,8 +519,8 @@ async def _stream_agent_events(
                         tc_name = getattr(tc, "name", "unknown")
                         tc_args = getattr(tc, "args", {}) or {}
                         tc_id = getattr(tc, "id", None) or str(uuid4())
-                    yield _make_tool_call_event(tc_id, tc_name, tc_args)
-                    yield _make_todo_event(f"调用工具: {tc_name}", done=False)
+                    yield make_tool_call_event(tc_id, tc_name, tc_args, source="deep")
+                    yield make_todo_event(f"调用工具: {tc_name}", done=False)
             elif getattr(last_msg, "content", ""):
                 # AIMessage without tool_calls → 最终回复
                 content = last_msg.content
@@ -586,7 +537,7 @@ async def _stream_agent_events(
                 from app.utils.text import strip_tool_call_xml
                 text = strip_tool_call_xml(text)
                 if text:
-                    yield {"event": "token", "data": text}
+                    yield make_sse_event("token", text)
 
 
 async def run_deep_path(
@@ -662,13 +613,13 @@ async def run_deep_path(
             scene_prompt=scene_prompt,
         )
     except ValueError as exc:
-        yield {"event": "error", "data": f"LLM 不可用: {exc}"}
+        yield make_sse_event("error", f"LLM 不可用: {exc}")
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("build_deep_agent failed", thread_id=thread_id)
-        yield {"event": "error", "data": f"DeepAgent 初始化失败: {exc}"}
+        yield make_sse_event("error", f"DeepAgent 初始化失败: {exc}")
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
         return
@@ -704,7 +655,7 @@ async def run_deep_path(
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.exception("deep agent stream failed", thread_id=thread_id)
         await _inject_tool_error_messages(agent, config, f"DeepAgent 执行失败: {exc}")
-        yield {"event": "error", "data": f"DeepAgent 执行失败: {exc}"}
+        yield make_sse_event("error", f"DeepAgent 执行失败: {exc}")
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
         return
@@ -737,7 +688,7 @@ async def run_deep_path(
             except Exception as exc:  # noqa: BLE001
                 logger.exception("deep agent resume failed", thread_id=thread_id)
                 await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
-                yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
+                yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
             continue
@@ -778,7 +729,7 @@ async def run_deep_path(
             )
 
             if decision is None or not decision.approved:
-                yield {"event": "error", "data": "用户拒绝执行危险操作"}
+                yield make_sse_event("error", "用户拒绝执行危险操作")
                 await _inject_tool_error_messages(
                     agent, config, "用户拒绝执行危险操作"
                 )
@@ -799,14 +750,14 @@ async def run_deep_path(
             for evt in extension_handled.events:
                 yield evt
             if extension_handled.denied:
-                yield {"event": "error", "data": "用户拒绝访问该目录"}
+                yield make_sse_event("error", "用户拒绝访问该目录")
                 await _inject_tool_error_messages(
                     agent, config, "用户拒绝访问该目录"
                 )
                 sandbox.set_full_trust(thread_id, False)
                 return
             if extension_handled.timed_out:
-                yield {"event": "error", "data": "目录授权等待被中断，操作未执行"}
+                yield make_sse_event("error", "目录授权等待被中断，操作未执行")
                 await _inject_tool_error_messages(
                     agent, config, "目录授权等待被中断，操作未执行"
                 )
@@ -820,7 +771,7 @@ async def run_deep_path(
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.exception("deep agent resume failed", thread_id=thread_id)
             await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
-            yield {"event": "error", "data": f"DeepAgent 恢复失败: {exc}"}
+            yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
             sandbox.set_full_trust(thread_id, False)
             return
 
@@ -829,7 +780,7 @@ async def run_deep_path(
 
     if iteration >= max_iterations:
         logger.warning("deep agent hit max iterations", thread_id=thread_id)
-        yield {"event": "error", "data": "DeepAgent 达到最大迭代上限"}
+        yield make_sse_event("error", "DeepAgent 达到最大迭代上限")
         await _inject_tool_error_messages(
             agent, config, "DeepAgent 达到最大迭代上限"
         )
@@ -843,84 +794,22 @@ async def run_deep_path(
     # T10：路径 C 流式结束后，若开关开启则异步触发画像抽取（失败仅 warning，不报错）
     # 不阻塞 done 事件：fire-and-forget（spec memory-management R10）
     if get_settings().profile_auto_extract:
+        from app.memory.profile_extractor import extract_last_assistant_reply, extract_profile_via_llm
         async def _do_extract() -> None:
             try:
-                assistant_reply = await _extract_last_assistant_reply(agent, config)
+                assistant_reply = await extract_last_assistant_reply(agent, config)
                 if assistant_reply:
                     from app.memory.profile_store import upsert_from_llm
-
-                    entries = await _extract_profile_via_llm(message, assistant_reply)
+                    entries = await extract_profile_via_llm(message, assistant_reply)
                     upsert_from_llm(entries)
                     logger.info("profile auto extracted", count=len(entries))
             except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
                 logger.warning("profile auto extract failed", error=str(exc))
-
         task = asyncio.create_task(_do_extract())
         _extract_tasks.add(task)
         task.add_done_callback(_extract_tasks.discard)
 
     # done 事件由 run_router 统一 yield，此处不再重复
-
-
-async def _extract_last_assistant_reply(agent: Any, config: dict) -> str:
-    """从 agent state 读取最后一条 AIMessage 的 content。
-
-    用于 T10 画像抽取：取最终回复作为 LLM 抽取输入。
-    跳过含 tool_calls 的 AIMessage（那些是工具调用而非最终回复）。
-
-    MUST 使用 ``aget_state``（异步接口）——见 ``_get_pending_tool_calls`` 注释。
-    """
-    state = await agent.aget_state(config)
-    if not state or not state.values:
-        return ""
-    messages = state.values.get("messages", [])
-    if not messages:
-        return ""
-    from langchain_core.messages import AIMessage
-
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
-            content = msg.content
-            if isinstance(content, list):
-                # 兼容 list 内容块（OpenAI vision 等多模态返回）
-                return "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in content
-                )
-            return str(content)
-    return ""
-
-
-async def _extract_profile_via_llm(message: str, assistant_reply: str) -> list[dict]:
-    """调 LLM 抽取画像条目。
-
-    Prompt 引导 LLM 抽取「值得跨会话记住的事实」：用户偏好、项目约定、重要事实。
-    输出 JSON ``{"entries": [{"key", "category", "content"}]}``，无内容返回空列表。
-
-    失败时返回空列表（调用方按"无可抽取"处理，不报错）。
-    """
-    prompt = (
-        "你是一个用户画像抽取器。分析以下对话，抽取\"值得跨会话记住的事实\"：\n"
-        "- 用户偏好（如\"喜欢简洁回复\"、\"用 TypeScript\"）\n"
-        "- 项目约定（如\"项目用 FastAPI\"、\"测试用 pytest\"）\n"
-        "- 重要事实（如\"用户是前端工程师\"、\"工作日 9-18 点在线\"）\n\n"
-        f"对话：\n用户: {message}\n助手: {assistant_reply}\n\n"
-        '输出 JSON: {{"entries": [{{"key": "...", "category": "...", "content": "..."}}]}}\n'
-        '若无可抽取内容，返回 {{"entries": []}}。不要编造，只抽取明确的事实。'
-    )
-    llm = get_chat_model(temperature=0.0)
-    response = await llm.ainvoke(prompt)
-    text = response.content if hasattr(response, "content") else str(response)
-    import re
-
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return []
-    try:
-        data = json.loads(match.group())
-        return data.get("entries", []) if isinstance(data, dict) else []
-    except json.JSONDecodeError:
-        return []
 
 
 async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> ApprovalDecision | None:

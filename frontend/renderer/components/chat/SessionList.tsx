@@ -1,9 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import {
   Plus,
-  MessageSquare,
   Trash2,
-  Loader2,
   Settings,
   Home,
   Folder,
@@ -32,6 +30,7 @@ export function SessionList() {
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
   const createSession = useChatStore((s) => s.createSession);
   const switchSession = useChatStore((s) => s.switchSession);
+  const clearSessionNewResult = useChatStore((s) => s.clearSessionNewResult);
   const deleteSession = useChatStore((s) => s.deleteSession);
   const renameSession = useChatStore((s) => s.renameSession);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
@@ -102,6 +101,8 @@ export function SessionList() {
       window.alert("当前会话正在流式输出，请等待完成或中止后再切换");
       return;
     }
+    // 切换到该会话时清除新结果标记
+    clearSessionNewResult(id);
     switchSession(id);
   };
 
@@ -261,8 +262,11 @@ function SessionGroup({
         <ChevronRight className="h-3 w-3 shrink-0 text-muted-c" />
       )}
       {icon}
-      <span className="min-w-0 flex-1 truncate font-semibold uppercase tracking-wider" style={{ fontSize: 'var(--fs-sidebar-group)' }}>
-        {label}
+      <span
+        className="min-w-0 flex-1 truncate font-semibold tracking-wider"
+        style={{ fontSize: 'var(--fs-sidebar-group)' }}
+      >
+        {label.toLowerCase() === 'home' ? label.toUpperCase() : label}
       </span>
     </button>
   );
@@ -283,7 +287,7 @@ function SessionGroup({
         </button>
       </div>
       {open && (
-        <ul className="mt-0.5 space-y-px pl-4 border-l border-default ml-2">
+        <ul className="mt-0.5 space-y-px">
           {items.map((s) => {
             const active = s.id === currentId;
             return (
@@ -298,36 +302,37 @@ function SessionGroup({
                       onSwitch(s.id);
                     }
                   }}
-                  className={`group relative flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 pl-2.5 transition-colors ${
+                  className={`group relative flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 transition-colors ${
                     isStreaming
                       ? "cursor-not-allowed opacity-60"
                       : "hover:bg-hover-soft"
                   } ${active ? "bg-subtle" : ""}`}
                 >
-                  {active && (
-                    <span
-                      className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-brand-500"
-                      aria-hidden
-                    />
-                  )}
-                  {active && isStreaming ? (
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand-500" />
-                  ) : (
-                    <MessageSquare
-                      className={`h-3.5 w-3.5 shrink-0 ${
-                        active ? "text-brand-500" : "text-muted-c"
-                      }`}
-                    />
-                  )}
+                  {/* 占位：与分组标题的 Chevron 宽度对齐，让小圆点和 icon 左边缘对齐 */}
+                  <span className="w-3 shrink-0" aria-hidden />
+                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
+                    {s.isRunning ? (
+                      <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
+                    ) : s.hasNewResult ? (
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: 'var(--color-brand-500)', opacity: 0.5 }}
+                        aria-hidden
+                      />
+                    ) : (
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: active ? 'var(--color-brand-500)' : 'var(--text-muted)' }}
+                        aria-hidden
+                      />
+                    )}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div
-                      className={`truncate font-medium leading-snug ${active ? "text-primary-c" : "text-secondary-c"}`}
+                      className={`truncate font-semibold leading-snug ${active ? "text-primary-c" : "text-secondary-c"}`}
                       style={{ fontSize: 'var(--fs-sidebar-item)' }}
                     >
                       {s.title}
-                    </div>
-                    <div className="leading-snug text-muted-c" style={{ fontSize: 'var(--fs-sidebar-meta)' }}>
-                      {new Date(s.createdAt).toLocaleString()}
                     </div>
                   </div>
                   <button

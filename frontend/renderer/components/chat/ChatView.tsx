@@ -44,6 +44,7 @@ export function ChatView() {
   const clearMessages = useChatStore((s) => s.clearMessages);
   const deleteMessagesAfter = useChatStore((s) => s.deleteMessagesAfter);
   const setStreaming = useChatStore((s) => s.setStreaming);
+  const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const updateTask = useTasksStore((s) => s.updateTask);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -304,6 +305,8 @@ export function ChatView() {
     setTodos([]);
     setStreaming(true);
     setErrorMsg(null);
+    // 标记当前会话进入执行状态
+    setSessionRunning(tid, true);
 
     try {
       // 从 permission store 读取会话级权限模式（不订阅，避免无谓重渲）
@@ -318,6 +321,7 @@ export function ChatView() {
       );
     } catch {
       setStreaming(false);
+      setSessionRunning(tid, false);
       setErrorMsg("发送失败，请检查后端是否运行");
       // 失败时也标记当前任务为 failed
       const failTid = currentTaskIdRef.current;
