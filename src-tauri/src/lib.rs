@@ -10,7 +10,6 @@ pub mod logger;
 pub mod migration;
 pub mod store;
 
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use tauri::Manager;
@@ -150,7 +149,7 @@ pub fn run() {
 
             // 启动 Python 后端
             let handle = app.handle().clone();
-            let cwd = resolve_backend_cwd(app.handle());
+            let cwd = backend::resolve_backend_cwd(app.handle());
             tauri::async_runtime::spawn(async move {
                 let env = backend::env::build_env(&handle, PYTHON_PORT);
                 let py =
@@ -172,20 +171,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running AgentX tauri application");
-}
-
-/// 解析 Python 后端工作目录。
-///
-/// 开发模式：`{项目根}/backend`（与 Electron 的 `app.getAppPath()/backend` 一致）。
-/// 生产模式：`{resource_dir}/backend`（打包后 backend 随资源一起分发）。
-fn resolve_backend_cwd(app: &tauri::AppHandle) -> PathBuf {
-    // 优先尝试 resource_dir（生产模式）
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let backend = resource_dir.join("backend");
-        if backend.exists() {
-            return backend;
-        }
-    }
-    // 开发模式回退：当前工作目录下的 backend/
-    PathBuf::from("backend")
 }

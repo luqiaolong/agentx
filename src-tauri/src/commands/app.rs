@@ -116,7 +116,7 @@ pub async fn app_restart_backend(
     tokio::time::sleep(Duration::from_millis(800)).await;
 
     // 3. 重新构建 env + spawn
-    let cwd = resolve_backend_cwd(&app);
+    let cwd = backend::resolve_backend_cwd(&app);
     let env = backend::env::build_env(&app, PYTHON_PORT);
     let new_handle = backend::handle::PythonHandle::start(app.clone(), cwd, PYTHON_PORT, env);
 
@@ -339,15 +339,4 @@ fn resolve_project_root(app: &AppHandle) -> PathBuf {
         }
     }
     PathBuf::from(".")
-}
-
-/// 解析后端工作目录（与 lib.rs 的 `resolve_backend_cwd` 一致逻辑）。
-fn resolve_backend_cwd(app: &AppHandle) -> PathBuf {
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let backend = resource_dir.join("backend");
-        if backend.exists() {
-            return backend;
-        }
-    }
-    PathBuf::from("backend")
 }

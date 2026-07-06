@@ -7,7 +7,7 @@
 //! - `dialog:saveDroppedFile` → `dialog_save_dropped_file`（含系统目录黑名单 + 大小限制）
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -218,7 +218,7 @@ pub async fn dialog_save_dropped_file(
     }
 
     // 获取后端工作目录
-    let backend_cwd = resolve_backend_cwd(&app);
+    let backend_cwd = crate::backend::resolve_backend_cwd(&app);
     let upload_dir = backend_cwd.join("data").join("uploads");
     fs::create_dir_all(&upload_dir).map_err(|e| format!("无法创建上传目录: {}", e))?;
 
@@ -238,15 +238,4 @@ pub async fn dialog_save_dropped_file(
     let relative = format!("data/uploads/{}", dest_name);
     log::info!("saveDroppedFile saved {} -> {}", safe_name, relative);
     Ok(relative)
-}
-
-/// 解析后端工作目录（与 lib.rs 的 `resolve_backend_cwd` 一致逻辑）。
-fn resolve_backend_cwd(app: &AppHandle) -> PathBuf {
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let backend = resource_dir.join("backend");
-        if backend.exists() {
-            return backend;
-        }
-    }
-    PathBuf::from("backend")
 }

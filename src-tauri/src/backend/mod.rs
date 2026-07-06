@@ -10,7 +10,10 @@
 pub mod env;
 pub mod handle;
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
 
 /// Python 后端进程状态，对应 spawn.ts 的 `PythonStatus`。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -24,4 +27,22 @@ pub enum PythonStatus {
     Crashed,
     /// 重试次数耗尽，放弃
     GivingUp,
+}
+
+/// 解析 Python 后端工作目录。
+///
+/// 生产模式优先使用 `{resource_dir}/backend`（打包后 backend 随资源一起分发）。
+/// 开发模式下 `CARGO_MANIFEST_DIR` 指向 `src-tauri`，项目根目录为其父目录，
+/// 因此回退到 `{项目根}/backend`，避免在 `src-tauri` 子目录中找不到 `backend/`。
+pub fn resolve_backend_cwd(app: &AppHandle) -> PathBuf {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let backend = resource_dir.join("backend");
+        if backend.exists() {
+            return backend;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("CARGO_MANIFEST_DIR should have a parent directory")
+        .join("backend")
 }
