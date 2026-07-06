@@ -64,7 +64,7 @@
   --fs-scene-tab:    var(--text-2xs);      /* 11px — Work/Coding tabs */
   /* Sidebar */
   --fs-sidebar-section: var(--text-2xs);  /* 11px - "会话" section header */
-  --fs-sidebar-group:   var(--text-2xs);  /* 11px - HOME/AGENTX group label */
+  --fs-sidebar-group:   var(--text-xs);   /* 12px - HOME/AGENTX group label, 项目名大一号 */
   --fs-sidebar-item:    var(--text-xs);   /* 12px - session title */
   --fs-sidebar-meta:    var(--text-2xs);  /* 11px - session timestamp */
   --fs-sidebar-action:  var(--text-xs);   /* 12px - 设置/日志 button */

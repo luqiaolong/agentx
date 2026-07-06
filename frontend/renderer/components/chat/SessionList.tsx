@@ -273,7 +273,7 @@ function SessionGroup({
   );
 
   return (
-    <div className="mb-1">
+    <div className="mb-2">
       <div className="flex items-center gap-0.5">
         {headerBtn}
         <button
@@ -288,7 +288,7 @@ function SessionGroup({
         </button>
       </div>
       {open && (
-        <ul className="m-0 mt-0.5 space-y-px p-0">
+        <ul className="m-0 mt-1 space-y-1 p-0">
           {items.map((s) => {
             const active = s.id === currentId;
             return (
