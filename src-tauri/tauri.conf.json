@@ -31,6 +31,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "AgentX",
+    "shortDescription": "本地优先的个人助理桌面应用",
+    "longDescription": "AgentX 是一个本地优先的个人助理桌面应用，集成 FastAPI/Python 后端 + LangGraph 多智能体编排，支持工具调用、RAG 检索、危险操作审批、技能/画像记忆。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,6 +44,17 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://releases.agentx.com/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "pubkey": "PLACEHOLDER_PUBKEY_REPLACE_WITH_REAL_KEY_IN_NEXT_PR",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

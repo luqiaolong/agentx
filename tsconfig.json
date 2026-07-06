@@ -14,8 +14,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["frontend/renderer/*"],
-      "@main/*": ["frontend/main/*"]
+      "@/*": ["frontend/renderer/*"]
     }
   },
   "references": [
