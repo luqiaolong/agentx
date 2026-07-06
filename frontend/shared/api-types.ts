@@ -219,11 +219,29 @@ export type McpTransport = "stdio" | "sse" | "streamable_http";
 
 // ---- 模型条目（Model Entries）---
 // 用户可保存多个 LLM 模型配置；激活某条目时写入 legacy 槽位由后端 spawn 时读取
-export type ModelProviderId = "openai" | "deepseek" | "minimax" | "custom";
+export type ModelProviderId = "openai" | "deepseek" | "minimax" | "kimi" | "glm" | "custom";
+
+export interface ModelPreset {
+  value: string;
+  desc: string;
+}
+
+export interface ModelCatalogEntry {
+  label: string;
+  docs: string;
+  baseUrl: string;
+  models: ModelPreset[];
+  defaultContextK: number;
+  defaultOutputK: number;
+}
+
+export type ModelPresetProviderId = Exclude<ModelProviderId, "custom">;
+
+export type ModelCatalog = Record<ModelPresetProviderId, ModelCatalogEntry>;
 
 export interface ModelEntry {
   id: string;
-  label: string;
+  label?: string;
   providerId: ModelProviderId;
   model: string;
   baseUrl: string;

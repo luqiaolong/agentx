@@ -354,7 +354,7 @@ function ContextTabPanel() {
 /*  WorkspacePanel — 主组件                                              */
 /* ------------------------------------------------------------------ */
 
-type Tab = "tasks" | "context" | "files" | "git";
+type Tab = "tasks" | "files" | "git";
 
 export function WorkspacePanel() {
   const [active, setActive] = useState<Tab>("tasks");
@@ -466,7 +466,6 @@ export function WorkspacePanel() {
             </div>
           </div>
         )}
-        {active === "context" && <ContextTabPanel />}
         {active === "files" && <FileTree />}
         {active === "git" && <GitPanel />}
       </div>
