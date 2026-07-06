@@ -7,6 +7,7 @@ pub mod backend;
 pub mod commands;
 pub mod git;
 pub mod logger;
+pub mod migration;
 pub mod store;
 
 use std::path::PathBuf;
@@ -120,6 +121,22 @@ pub fn run() {
                 "AgentX Tauri shell started (version: {})",
                 app.package_info().version
             );
+
+            // 迁移 electron-store 数据到 tauri-plugin-store（enc: 值记录到 requires_reinput）
+            // 必须在 migrate_legacy_llm_config 之前执行，确保旧 config.json 已处理
+            match migration::migrate_electron_store(app.handle()) {
+                Ok(report) => {
+                    if !report.requires_reinput.is_empty() {
+                        log::warn!(
+                            "迁移完成，以下凭证需重新输入: {:?}",
+                            report.requires_reinput
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::warn!("electron-store 迁移失败（继续启动）: {}", e);
+                }
+            }
 
             // 迁移旧版 LLM 配置（若需要）
             store::migrate_legacy_llm_config(app.handle());

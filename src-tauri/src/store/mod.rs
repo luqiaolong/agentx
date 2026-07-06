@@ -463,9 +463,51 @@ pub fn get_active_model_id(app: &AppHandle) -> Option<String> {
 // 迁移逻辑
 // =============================================================================
 
+/// 根据 model 名称和 base_url 推断 provider id（纯函数，便于单测）。
+///
+/// 规则（与 [frontend/main/store.ts migrateLegacyLLMConfig](file:///d:/java/agentprojects/agentx/frontend/main/store.ts) 一致）：
+/// - `deepseek*` → `deepseek`
+/// - `gpt*` / `o1*` / `o3*` → `openai`
+/// - baseUrl 含 `minimaxi` → `minimax`
+/// - 其他 → `custom`
+pub fn infer_provider_id(model: &str, base_url: &str) -> &'static str {
+    if model.starts_with("deepseek") {
+        "deepseek"
+    } else if model.starts_with("gpt") || model.starts_with("o1") || model.starts_with("o3") {
+        "openai"
+    } else if base_url.contains("minimaxi") {
+        "minimax"
+    } else {
+        "custom"
+    }
+}
+
+/// 根据旧版 LLM 字段构建种子 ModelEntry（纯函数，便于单测）。
+///
+/// `created_at` 由调用方传入，避免单测依赖系统时间。
+pub fn build_seed_entry(
+    default_model: String,
+    openai_base_url: String,
+    api_key_enc: String,
+    created_at: f64,
+) -> ModelEntry {
+    let provider_id = infer_provider_id(&default_model, &openai_base_url);
+    ModelEntry {
+        id: "migrated".into(),
+        label: format!("{} · {}", provider_id, default_model),
+        provider_id: provider_id.into(),
+        model: default_model,
+        base_url: openai_base_url,
+        api_key: api_key_enc,
+        created_at,
+        context_window: None,
+        max_output_tokens: None,
+    }
+}
+
 /// 迁移旧版 LLM 配置：若 `models.entries` 为空但 `llm.defaultModel` 存在，
 /// 则根据旧字段种子一条默认条目，并将 `models.activeId` 设为 `"migrated"`。
-/// 应在 Python 子进程启动前调用。
+/// 应在 Python 子进程启动前、electron-store 迁移后调用。
 pub fn migrate_legacy_llm_config(app: &AppHandle) {
     let entries = get_model_entries(app);
     if !entries.is_empty() {
@@ -476,37 +518,128 @@ pub fn migrate_legacy_llm_config(app: &AppHandle) {
         return;
     }
 
-    let provider_id = if llm.default_model.starts_with("deepseek") {
-        "deepseek"
-    } else if llm.default_model.starts_with("gpt")
-        || llm.default_model.starts_with("o1")
-        || llm.default_model.starts_with("o3")
-    {
-        "openai"
-    } else if llm.openai_base_url.contains("minimaxi") {
-        "minimax"
-    } else {
-        "custom"
-    };
-
+    let provider_id = infer_provider_id(&llm.default_model, &llm.openai_base_url);
     let api_key_enc = if provider_id == "deepseek" {
         get_string(app, "apikey.deepseek", "")
     } else {
         get_string(app, "apikey.openai", "")
     };
 
-    let entry = ModelEntry {
-        id: "migrated".into(),
-        label: format!("{} · {}", provider_id, llm.default_model),
-        provider_id: provider_id.into(),
-        model: llm.default_model,
-        base_url: llm.openai_base_url,
-        api_key: api_key_enc,
-        created_at: chrono::Utc::now().timestamp_millis() as f64,
-        context_window: None,
-        max_output_tokens: None,
-    };
+    let entry = build_seed_entry(
+        llm.default_model,
+        llm.openai_base_url,
+        api_key_enc,
+        chrono::Utc::now().timestamp_millis() as f64,
+    );
 
     set_json(app, "models.entries", &vec![entry]);
     set_value(app, "models.activeId", Value::String("migrated".into()));
+}
+
+// =============================================================================
+// 单元测试
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_provider_deepseek() {
+        assert_eq!(infer_provider_id("deepseek-chat", ""), "deepseek");
+        assert_eq!(infer_provider_id("deepseek-coder", ""), "deepseek");
+        assert_eq!(infer_provider_id("deepseek-reasoner", "https://x"), "deepseek");
+    }
+
+    #[test]
+    fn test_infer_provider_openai() {
+        assert_eq!(infer_provider_id("gpt-4o", ""), "openai");
+        assert_eq!(infer_provider_id("gpt-3.5-turbo", ""), "openai");
+        assert_eq!(infer_provider_id("o1-preview", ""), "openai");
+        assert_eq!(infer_provider_id("o3-mini", ""), "openai");
+    }
+
+    #[test]
+    fn test_infer_provider_minimax() {
+        assert_eq!(
+            infer_provider_id("abab-7", "https://api.minimaxi.com/v1"),
+            "minimax"
+        );
+        // model 名不含 deepseek/gpt/o1/o3，baseUrl 含 minimaxi → minimax
+        assert_eq!(infer_provider_id("custom-model", "https://api.minimaxi.com"), "minimax");
+    }
+
+    #[test]
+    fn test_infer_provider_custom() {
+        assert_eq!(infer_provider_id("claude-3-opus", ""), "custom");
+        assert_eq!(infer_provider_id("custom-model", "https://api.x.com"), "custom");
+        assert_eq!(infer_provider_id("", ""), "custom");
+    }
+
+    #[test]
+    fn test_build_seed_entry_deepseek() {
+        let entry = build_seed_entry(
+            "deepseek-chat".into(),
+            "https://api.deepseek.com".into(),
+            "plain:sk-test".into(),
+            1700000000000.0,
+        );
+        assert_eq!(entry.id, "migrated");
+        assert_eq!(entry.provider_id, "deepseek");
+        assert_eq!(entry.model, "deepseek-chat");
+        assert_eq!(entry.base_url, "https://api.deepseek.com");
+        assert_eq!(entry.api_key, "plain:sk-test");
+        assert_eq!(entry.label, "deepseek · deepseek-chat");
+        assert_eq!(entry.created_at, 1700000000000.0);
+        assert!(entry.context_window.is_none());
+        assert!(entry.max_output_tokens.is_none());
+    }
+
+    #[test]
+    fn test_build_seed_entry_openai() {
+        let entry = build_seed_entry(
+            "gpt-4o".into(),
+            "https://api.openai.com/v1".into(),
+            "plain:sk-oai".into(),
+            1700000000000.0,
+        );
+        assert_eq!(entry.provider_id, "openai");
+        assert_eq!(entry.label, "openai · gpt-4o");
+    }
+
+    #[test]
+    fn test_build_seed_entry_minimax() {
+        let entry = build_seed_entry(
+            "abab-7".into(),
+            "https://api.minimaxi.com/v1".into(),
+            "plain:sk-mm".into(),
+            1700000000000.0,
+        );
+        assert_eq!(entry.provider_id, "minimax");
+        assert_eq!(entry.label, "minimax · abab-7");
+    }
+
+    #[test]
+    fn test_build_seed_entry_custom() {
+        let entry = build_seed_entry(
+            "claude-3-opus".into(),
+            "https://api.anthropic.com".into(),
+            "plain:sk-ant".into(),
+            1700000000000.0,
+        );
+        assert_eq!(entry.provider_id, "custom");
+        assert_eq!(entry.label, "custom · claude-3-opus");
+    }
+
+    #[test]
+    fn test_build_seed_entry_empty_api_key() {
+        let entry = build_seed_entry(
+            "deepseek-chat".into(),
+            "".into(),
+            "".into(),
+            0.0,
+        );
+        assert_eq!(entry.api_key, "");
+        assert_eq!(entry.provider_id, "deepseek");
+    }
 }
