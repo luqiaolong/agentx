@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Heart,
-  Trash2,
   Save,
   Plus,
   RefreshCw,
-  AlertCircle,
   X,
   Sparkles,
 } from "lucide-react";
@@ -16,9 +14,10 @@ import type {
 import { memory } from "@/lib/api/http";
 import { getProfileAutoExtract, setProfileAutoExtract } from "@/lib/api/settings";
 import { reloadBackendConfig } from "@/lib/api/app";
-
-// key 正则与后端 profile_store._KEY_RE 一致
-const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+import { formatTime } from "@/lib/format";
+import { KEY_RE } from "@/lib/validators";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
 
 // content 上限与后端 _CONTENT_MAX 一致
 const CONTENT_MAX = 500;
@@ -40,17 +39,6 @@ function sourceLabel(source: string): string {
   return source;
 }
 
-function formatTime(iso: string): string {
-  if (!iso) return "-";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
 export function PreferenceManager() {
   const [entries, setEntries] = useState<ProfileEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -58,7 +46,6 @@ export function PreferenceManager() {
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftEntry | null>(null);
   const [draftErr, setDraftErr] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setErrMsg(null);
@@ -152,7 +139,6 @@ export function PreferenceManager() {
     setErrMsg(null);
     try {
       await memory.deleteProfile(key);
-      setConfirmDelete(null);
       await refresh();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
@@ -215,10 +201,7 @@ export function PreferenceManager() {
       </label>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
-          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>{errMsg}</span>
-        </div>
+        <ErrorBanner message={errMsg} />
       )}
 
       {entries.length === 0 && !draft && (
@@ -255,36 +238,7 @@ export function PreferenceManager() {
                 >
                   <Save className="h-3 w-3" />
                 </button>
-                {confirmDelete === entry.key ? (
-                  <>
-                    <button
-                      type="button"
-                      className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
-                      onClick={() => remove(entry.key)}
-                      style={{ fontSize: 'var(--fs-settings-form-hint)' }}
-                    >
-                      确认
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => setConfirmDelete(null)}
-                      aria-label="取消"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={() => setConfirmDelete(entry.key)}
-                    aria-label="删除"
-                    title="删除"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                )}
+                <ConfirmButton onConfirm={() => remove(entry.key)} />
               </div>
               <p className="mt-1 whitespace-pre-wrap break-words text-secondary-c">
                 {entry.content}

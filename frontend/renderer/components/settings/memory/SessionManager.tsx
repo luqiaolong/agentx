@@ -1,39 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Database,
-  Trash2,
-  RefreshCw,
-  AlertCircle,
-  X,
-  HardDrive,
-} from "lucide-react";
+import { Database, RefreshCw, HardDrive } from "lucide-react";
 import type { ThreadInfo } from "@/lib/utils";
 import { memory } from "@/lib/api/http";
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function formatTime(iso: string): string {
-  if (!iso) return "-";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
-}
+import { formatTime, formatSize } from "@/lib/format";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
 
 export function SessionManager() {
   const [dbSize, setDbSize] = useState(0);
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setErrMsg(null);
@@ -56,7 +33,6 @@ export function SessionManager() {
     setErrMsg(null);
     try {
       await memory.deleteThread(threadId);
-      setConfirmDelete(null);
       await refresh();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
@@ -95,10 +71,7 @@ export function SessionManager() {
       </div>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
-          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>{errMsg}</span>
-        </div>
+        <ErrorBanner message={errMsg} />
       )}
 
       {threads.length === 0 ? (
@@ -123,36 +96,7 @@ export function SessionManager() {
                   <span>最后更新 {formatTime(t.last_updated)}</span>
                 </div>
               </div>
-              {confirmDelete === t.thread_id ? (
-                <>
-                  <button
-                    type="button"
-                    className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
-                    onClick={() => remove(t.thread_id)}
-                    style={{ fontSize: 'var(--fs-settings-form-hint)' }}
-                  >
-                    确认
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={() => setConfirmDelete(null)}
-                    aria-label="取消"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => setConfirmDelete(t.thread_id)}
-                  aria-label="删除"
-                  title="删除"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              )}
+              <ConfirmButton onConfirm={() => remove(t.thread_id)} />
             </li>
           ))}
         </ul>

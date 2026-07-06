@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useTasksStore, type Task } from "@/stores/tasks";
+import { formatTime } from "@/lib/format";
 
 const STATUS_CONFIG: Record<
   Task["status"],
@@ -42,14 +43,6 @@ const STATUS_CONFIG: Record<
     label: "失败",
   },
 };
-
-function formatTime(ts: number): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
-}
 
 function TaskCard({ task }: { task: Task }) {
   const [expanded, setExpanded] = useState(task.status === "running");
@@ -97,7 +90,7 @@ function TaskCard({ task }: { task: Task }) {
         {task.createdAt > 0 && (
           <span className="inline-flex items-center gap-0.5">
             <Clock className="h-2.5 w-2.5" />
-            {formatTime(task.createdAt)}
+            {formatTime(task.createdAt, "hhmm")}
           </span>
         )}
         {hasTodos && (

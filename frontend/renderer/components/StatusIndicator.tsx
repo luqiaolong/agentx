@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Database, Cpu } from "lucide-react";
 import type { HealthStatus } from "@/lib/utils";
 import { health } from "@/lib/api/http";
+import { logger } from "@/lib/logger";
 
 export function StatusIndicator() {
   const [healthState, setHealth] = useState<HealthStatus | null>(null);
@@ -9,18 +10,22 @@ export function StatusIndicator() {
 
   useEffect(() => {
     let cancelled = false;
-    health
-      .check()
-      .then((h) => {
-        if (cancelled) return;
-        setHealth(h ?? null);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setErr("unavailable");
-      });
+    const fetchHealth = async () => {
+      try {
+        const status = await health.check();
+        if (!cancelled) setHealth(status ?? null);
+      } catch (e) {
+        if (!cancelled) {
+          setErr("unavailable");
+          logger.warn("StatusIndicator health check failed", e);
+        }
+      }
+    };
+    fetchHealth();
+    const timer = setInterval(fetchHealth, 60_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, []);
 

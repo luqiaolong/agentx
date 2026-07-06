@@ -93,7 +93,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
     return () => {
       cancelled = true;
     };
-  }, [code, language]);
+  }, [displayCode, language]);
 
   useEffect(() => {
     return () => {

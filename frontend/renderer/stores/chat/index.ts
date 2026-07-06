@@ -1,7 +1,16 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
-import type { ApprovalRequest } from "../../shared/api-types";
+import type { ApprovalRequest } from "../../../shared/api-types";
 import { sandbox, memory } from "@/lib/api/http";
+import {
+  DEFAULT_TITLE,
+  migrateV0toV1,
+  migrateV1toV2,
+  migrateV2toV3,
+  migrateV3toV4,
+} from "./migrations";
+import { deriveContent, findSessionIdByMessageId } from "./messageOps";
+import { createQuotaGuardedStorage } from "./quotaStorage";
 
 /**
  * parts-based 消息模型（chat-rendering-trace-v2 D3）。
@@ -100,7 +109,7 @@ export interface Session {
   hasNewResult: boolean;
 }
 
-interface ChatState {
+export interface ChatState {
   // 多会话结构
   sessions: Record<string, Session>;
   currentId: string | null;
@@ -198,8 +207,6 @@ interface ChatState {
   clearSessionNewResult: (id: string) => void;
 }
 
-const DEFAULT_TITLE = "新会话";
-
 function createSessionRecord(id: string, workspacePath: string | null = null): Session {
   return {
     id,
@@ -210,254 +217,6 @@ function createSessionRecord(id: string, workspacePath: string | null = null): S
     manuallyRevokedPaths: [],
     isRunning: false,
     hasNewResult: false,
-  };
-}
-
-/**
- * 从 parts 派生兼容字段 content：取所有 text part 的 text 拼接。
- * 渲染组件（MessageBubble/MessageList）未迁移到 parts 渲染时使用。
- */
-function deriveContent(parts: MessagePart[]): string {
-  return parts
-    .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
-    .map((p) => p.text)
-    .join("");
-}
-
-/**
- * 在 sessions 中按 messageId 定位所属 session id（不依赖 currentId）。
- * 流式 token 追加期间会话切换/删除可能让 currentId 漂移，需按 id 跨会话查找。
- */
-function findSessionIdByMessageId(
-  sessions: Record<string, Session>,
-  messageId: string,
-): string | null {
-  for (const sid of Object.keys(sessions)) {
-    const candidate = sessions[sid];
-    if (candidate && candidate.messages.some((m) => m.id === messageId)) {
-      return sid;
-    }
-  }
-  return null;
-}
-
-// 迁移：v0（单会话 {messages, threadId}） -> v1（多会话 {sessions, currentId}）
-function migrateV0toV1(persisted: unknown): Partial<ChatState> {
-  const p = (persisted ?? {}) as Record<string, unknown>;
-  if (p.sessions && typeof p.sessions === "object") {
-    // 已经是新结构，直接返回
-    return p as Partial<ChatState>;
-  }
-  if (!Array.isArray(p.messages)) {
-    return { sessions: {}, currentId: null };
-  }
-  const oldMessages = p.messages as ChatMessage[];
-  const oldThreadId = typeof p.threadId === "string" ? p.threadId : null;
-  const id = oldThreadId ?? crypto.randomUUID();
-  // oldMessages 是 ChatMessage[]，TS 不知道 length > 0 时 [0] 必存在；先收一下再用。
-  const firstMsg = oldMessages[0];
-  const session: Session = {
-    id,
-    title: DEFAULT_TITLE,
-    messages: oldMessages,
-    createdAt: firstMsg ? firstMsg.ts : Date.now(),
-    workspacePath: null,
-    manuallyRevokedPaths: [],
-    isRunning: false,
-    hasNewResult: false,
-  };
-  return { sessions: { [id]: session }, currentId: id };
-}
-
-// v1 -> v2：所有 session 补 workspacePath 字段（缺省为 null = Home）
-function migrateV1toV2(persisted: unknown): Partial<ChatState> {
-  const p = (persisted ?? {}) as Record<string, unknown>;
-  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
-  const sessions: Record<string, Session> = {};
-  for (const [id, raw] of Object.entries(rawSessions)) {
-    if (!raw || typeof raw !== "object") continue;
-    sessions[id] = {
-      id: typeof raw.id === "string" ? raw.id : id,
-      title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
-      messages: Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : [],
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-      workspacePath:
-        typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
-          ? raw.workspacePath
-          : null,
-      manuallyRevokedPaths:
-        Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
-      isRunning: false,
-      hasNewResult: false,
-    };
-  }
-  return {
-    sessions,
-    currentId: typeof p.currentId === "string" ? p.currentId : null,
-  };
-}
-
-/**
- * v2 -> v3：ChatMessage 从扁平 `{content: string}` 升级为 parts-based。
- *
- * 旧消息 `content: string` → `parts: [{type:"text", id: uuid, text: content}]`，
- * 同时保留 content 字段（兼容渲染组件）。
- * 已经是 parts 结构的消息（理论上 v2 不会有）做幂等处理。
- */
-function migrateV2toV3(persisted: unknown): Partial<ChatState> {
-  const p = (persisted ?? {}) as Record<string, unknown>;
-  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
-  const sessions: Record<string, Session> = {};
-  for (const [id, raw] of Object.entries(rawSessions)) {
-    if (!raw || typeof raw !== "object") continue;
-    const oldMessages = Array.isArray(raw.messages)
-      ? (raw.messages as Array<Record<string, unknown>>)
-      : [];
-    const newMessages: ChatMessage[] = oldMessages.map((m) => {
-      const msgId = typeof m.id === "string" ? m.id : crypto.randomUUID();
-      const role = (m.role as "user" | "assistant" | "tool") ?? "assistant";
-      const ts = typeof m.ts === "number" ? m.ts : Date.now();
-      // 已经是 parts 结构（数组且非空且首项有 type 字段）：保留 parts，派生 content
-      if (
-        Array.isArray(m.parts) &&
-        m.parts.length > 0 &&
-        typeof (m.parts[0] as Record<string, unknown> | undefined)?.type === "string"
-      ) {
-        const parts = m.parts as MessagePart[];
-        return { id: msgId, role, parts, ts, content: deriveContent(parts) };
-      }
-      // 旧扁平结构：content 转 parts
-      const text = String(m.content ?? "");
-      return {
-        id: msgId,
-        role,
-        parts: [{ type: "text", id: crypto.randomUUID(), text }],
-        ts,
-        content: text,
-      };
-    });
-    sessions[id] = {
-      id: typeof raw.id === "string" ? raw.id : id,
-      title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
-      messages: newMessages,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-      workspacePath:
-        typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
-          ? raw.workspacePath
-          : null,
-      manuallyRevokedPaths:
-        Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
-      isRunning: false,
-      hasNewResult: false,
-    };
-  }
-  return {
-    sessions,
-    currentId: typeof p.currentId === "string" ? p.currentId : null,
-  };
-}
-
-/**
- * v3 -> v4：所有 session 补 manuallyRevokedPaths 字段（缺省为 []）。
- *
- * 旧 session 没有 manuallyRevokedPaths 字段，访问 .includes() 会抛 TypeError。
- * 防御性补字段，确保所有 session 都有该数组。
- */
-function migrateV3toV4(persisted: unknown): Partial<ChatState> {
-  const p = (persisted ?? {}) as Record<string, unknown>;
-  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
-  const sessions: Record<string, Session> = {};
-  for (const [id, raw] of Object.entries(rawSessions)) {
-    if (!raw || typeof raw !== "object") continue;
-    sessions[id] = {
-      id: typeof raw.id === "string" ? raw.id : id,
-      title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
-      messages: Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : [],
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-      workspacePath:
-        typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
-          ? raw.workspacePath
-          : null,
-      manuallyRevokedPaths:
-        Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
-      isRunning: false,
-      hasNewResult: false,
-    };
-  }
-  return {
-    sessions,
-    currentId: typeof p.currentId === "string" ? p.currentId : null,
-  };
-}
-
-// 归档保留的最近会话数（超限时按 createdAt 降序保留）
-const MAX_SESSIONS_ON_QUOTA = 10;
-
-/**
- * 自定义 StateStorage：包裹 localStorage，捕获 QuotaExceededError。
- *
- * 超限时自动归档旧会话（按 createdAt 降序保留最近 MAX_SESSIONS_ON_QUOTA 个），
- * 重试写入；仍超限则放弃写入并记日志（不抛错避免破坏 store）。
- *
- * 注意：zustand `persist` 会自动用 JSON.stringify 包裹 setItem 的 value，
- * 这里收到的 value 已经是序列化后的字符串。
- */
-function createQuotaGuardedStorage(): {
-  getItem: (name: string) => string | null;
-  setItem: (name: string, value: string) => void;
-  removeItem: (name: string) => void;
-} {
-  return {
-    getItem: (name) => localStorage.getItem(name),
-    setItem: (name, value) => {
-      try {
-        localStorage.setItem(name, value);
-      } catch (e) {
-        const err = e as DOMException;
-        if (err?.name !== "QuotaExceededError") {
-          throw e;
-        }
-        // 解析当前值，归档旧会话后重试
-        try {
-          const parsed = JSON.parse(value) as {
-            state?: { sessions?: Record<string, Session> };
-          };
-          const sessions = parsed?.state?.sessions ?? {};
-          const allIds = Object.keys(sessions);
-          if (allIds.length <= MAX_SESSIONS_ON_QUOTA) {
-            console.warn("[chat-store] localStorage 配额超限，无法归档更多会话");
-            return;
-          }
-          const sorted = allIds.sort(
-            (a, b) =>
-              (sessions[b]?.createdAt ?? 0) - (sessions[a]?.createdAt ?? 0),
-          );
-          const keepIds = new Set(sorted.slice(0, MAX_SESSIONS_ON_QUOTA));
-          const removedCount = allIds.length - keepIds.size;
-          for (const id of allIds) {
-            if (!keepIds.has(id)) {
-              delete sessions[id];
-            }
-          }
-          parsed.state = parsed.state ?? {};
-          parsed.state.sessions = sessions;
-          const shrunkValue = JSON.stringify(parsed);
-          try {
-            localStorage.setItem(name, shrunkValue);
-            console.warn(
-              `[chat-store] localStorage 配额超限，已自动清理 ${removedCount} 个旧会话`,
-            );
-          } catch {
-            console.warn(
-              "[chat-store] 归档后仍超限，放弃写入。请手动删除旧会话或使用 /compact 压缩。",
-            );
-          }
-        } catch {
-          console.warn("[chat-store] localStorage 配额超限且归档失败");
-        }
-      }
-    },
-    removeItem: (name) => localStorage.removeItem(name),
   };
 }
 

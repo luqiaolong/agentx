@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronDown,
@@ -9,6 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { usePermissionStore, type PermissionMode } from "@/stores/permission";
+import { usePopover } from "@/components/ui/hooks/usePopover";
 
 /**
  * 权限模式按钮 —— 与 ChatComposer 左侧 btn-icon 同款 minimal 风格。
@@ -54,29 +54,12 @@ export function PermissionToggle({
 }) {
   const mode = usePermissionStore((s) => s.mode);
   const setMode = usePermissionStore((s) => s.setMode);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const { open, setOpen, rootRef } = usePopover();
 
   const current = OPTIONS.find((o) => o.value === mode) ?? OPTIONS[0]!;
   const Icon = current.Icon;
   const effectivePath = workspacePath ?? homeWorkspacePath ?? null;
   const isFullTrust = mode === "full_trust";
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   const choose = (v: PermissionMode) => {
     setMode(v);

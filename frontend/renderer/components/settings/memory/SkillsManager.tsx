@@ -2,35 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import {
   FileText,
   Pencil,
-  Trash2,
   Plus,
   Save,
   X,
   RefreshCw,
-  AlertCircle,
 } from "lucide-react";
 import type { SkillFileInfo } from "@/lib/utils";
 import { memory } from "@/lib/api/http";
-
-// 名称正则与后端 skills_store._NAME_RE 一致：^[a-zA-Z0-9_-]{1,64}$
-const NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function formatMtime(iso: string): string {
-  // ISO 字符串截短到秒，避免过长
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
-}
+import { formatTime, formatSize } from "@/lib/format";
+import { NAME_RE } from "@/lib/validators";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
 
 export function SkillsManager() {
   const [skills, setSkills] = useState<SkillFileInfo[]>([]);
@@ -44,7 +26,6 @@ export function SkillsManager() {
     originalName?: string;
   } | null>(null);
   const [nameErr, setNameErr] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setErrMsg(null);
@@ -108,7 +89,6 @@ export function SkillsManager() {
     setErrMsg(null);
     try {
       await memory.deleteSkill(name);
-      setConfirmDelete(null);
       await refresh();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
@@ -149,10 +129,7 @@ export function SkillsManager() {
       </div>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
-          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>{errMsg}</span>
-        </div>
+        <ErrorBanner message={errMsg} />
       )}
 
       {skills.length === 0 && !editing && (
@@ -174,7 +151,7 @@ export function SkillsManager() {
                 <div className="mt-0.5 flex items-center gap-2 text-muted-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
                   <span>{formatSize(s.size)}</span>
                   <span>·</span>
-                  <span>{formatMtime(s.mtime)}</span>
+                  <span>{formatTime(s.mtime)}</span>
                 </div>
               </div>
               <button
@@ -186,36 +163,7 @@ export function SkillsManager() {
               >
                 <Pencil className="h-3 w-3" />
               </button>
-              {confirmDelete === s.name ? (
-                <>
-                  <button
-                    type="button"
-                    className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
-                    onClick={() => remove(s.name)}
-                    style={{ fontSize: 'var(--fs-settings-form-hint)' }}
-                  >
-                    确认
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={() => setConfirmDelete(null)}
-                    aria-label="取消"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => setConfirmDelete(s.name)}
-                  aria-label="删除"
-                  title="删除"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              )}
+              <ConfirmButton onConfirm={() => remove(s.name)} />
             </li>
           ))}
         </ul>

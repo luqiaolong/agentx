@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { X, Save, AlertTriangle, Lock } from "lucide-react";
-
-// 全部可选工具清单（与 SubagentsSettings 一致；危险工具对内置 subagent 也禁用绑定）
-const ALL_TOOLS: string[] = [
-  "read_file",
-  "list_dir",
-  "glob",
-  "grep",
-  "web_search",
-  "rag_retrieve",
-];
+import { useModalDialog } from "@/components/ui/hooks/useModalDialog";
+import { ALL_TOOLS } from "@/lib/subagentConstants";
+import { NAME_RE } from "@/lib/validators";
 
 export interface SubagentEditModalData {
   /** 内置子代理 key（"code"/"rag"/"web"）；自定义子代理为 undefined */
@@ -49,6 +42,7 @@ export function SubagentEditModal({
   const [data, setData] = useState<SubagentEditModalData | null>(initial);
   const [triggerText, setTriggerText] = useState("");
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const { closeBtnRef, dialogRef } = useModalDialog({ open, onClose });
 
   // 当弹窗打开/切换时同步本地状态；open 变化时总是重置，避免关闭后重新打开同一子代理时显示旧值
   useEffect(() => {
@@ -71,7 +65,7 @@ export function SubagentEditModal({
     if (!data || !isNew || isBuiltin || isTeam) return null;
     const key = data.customKey?.trim() ?? "";
     if (!key) return "key 不能为空";
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(key)) {
+    if (!NAME_RE.test(key)) {
       return "key 仅允许字母数字/下划线/连字符，1-64 字符";
     }
     if (existingCustomKeys.includes(key)) {
@@ -118,12 +112,15 @@ export function SubagentEditModal({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
+      role="presentation"
     >
       <div
+        ref={dialogRef}
         className="w-[560px] max-h-[85vh] overflow-y-auto rounded-lg border border-default bg-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑子代理"
       >
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-default px-4 py-3">
@@ -147,6 +144,7 @@ export function SubagentEditModal({
             )}
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             className="rounded p-1 text-muted-c hover:bg-hover-soft hover:text-primary-c"
