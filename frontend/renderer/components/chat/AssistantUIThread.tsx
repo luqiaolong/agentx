@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, useCallback, useRef, useEffect } from "react";
-import { Sparkles, Pencil, Send } from "lucide-react";
+import { Pencil, Send } from "lucide-react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
@@ -271,14 +271,8 @@ function MessageParts({
   const hasContent = items.length > 0 || message.content.length > 0;
   return (
     <div className="flex justify-start">
-      <div className="flex w-[85%] gap-3">
-        <div
-          className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-white"
-          style={{ backgroundColor: "#4f46e5" }}
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-        </div>
-        <div className="flex w-full flex-col gap-1 rounded-xl rounded-tl-md bg-surface px-2.5 py-1.5 shadow-soft">
+      <div className="flex w-[95%] gap-2">
+        <div className="flex w-full flex-col gap-1 rounded-lg rounded-tl-md bg-surface px-2 py-1 shadow-soft">
           {items.length === 0 && !hasContent && isStreamingLast && (
             <span className="flex items-center gap-1.5 text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
               <span className="flex gap-0.5">
