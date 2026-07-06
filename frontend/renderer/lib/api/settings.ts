@@ -1,5 +1,5 @@
 /**
- * Settings 域 API（30 个 Tauri command 包装）。
+ * Settings 域 API（31 个 Tauri command 包装）。
  *
  * 对应原 preload `window.api.settings.*`，底层改为 `invoke()` 调 Tauri command。
  * 命令名使用 snake_case（Rust 端 `#[tauri::command]` 默认导出名）。
