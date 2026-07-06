@@ -102,36 +102,6 @@ function StatusRow({
       </span>
       {/* 操作按钮（hover 显示） */}
       <div className={`shrink-0 flex items-center gap-0.5 ${hover ? "opacity-100" : "opacity-0"} transition-opacity`}>
-        {onStage && (
-          <button
-            type="button"
-            onClick={() => onStage(entry.path)}
-            className="rounded p-0.5 text-muted-c hover:bg-hover-soft hover:text-emerald-500"
-            title="暂存"
-          >
-            <Plus className="h-3 w-3" />
-          </button>
-        )}
-        {onUnstage && (
-          <button
-            type="button"
-            onClick={() => onUnstage(entry.path)}
-            className="rounded p-0.5 text-muted-c hover:bg-hover-soft hover:text-amber-500"
-            title="取消暂存"
-          >
-            <Minus className="h-3 w-3" />
-          </button>
-        )}
-        {onDiscard && (
-          <button
-            type="button"
-            onClick={() => onDiscard(entry.path)}
-            className="rounded p-0.5 text-muted-c hover:bg-hover-soft hover:text-rose-500"
-            title="丢弃变更"
-          >
-            <RotateCcw className="h-3 w-3" />
-          </button>
-        )}
       </div>
     </div>
   );
@@ -209,17 +179,17 @@ function BranchSelector({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 rounded-md border border-default bg-surface px-2 py-0.5 text-secondary-c transition-colors hover:bg-hover-soft"
+        className="inline-flex items-center gap-1 rounded-md border border-default bg-surface px-2 py-0.5 text-secondary-c transition-colors hover:bg-hover-soft min-w-[8.5rem] shrink-0"
         style={{ fontSize: "var(--fs-ws-file-name)" }}
       >
         <GitBranch className="h-3 w-3 text-brand-500" />
-        <span className="max-w-[200px] truncate">{currentBranch || "main"}</span>
+        <span className="max-w-[260px] truncate flex-1">{currentBranch || "main"}</span>
         <ChevronDown className="h-3 w-3 text-muted-c" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-20 mt-1 max-h-60 min-w-[12rem] max-w-[20rem] overflow-auto rounded-md border border-default bg-surface shadow-pop">
+          <div className="absolute left-0 z-20 mt-1 max-h-60 min-w-[15.6rem] max-w-[26rem] overflow-auto rounded-md border border-default bg-surface shadow-pop">
             {localBranches.map((b) => (
               <button
                 key={b.name}
@@ -399,7 +369,7 @@ export function GitPanel() {
     <div className="flex h-full flex-col gap-2">
       {/* 顶部工具栏 */}
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0 overflow-visible">
           <BranchSelector
             branches={branches}
             currentBranch={repoStatus.currentBranch}
@@ -445,14 +415,6 @@ export function GitPanel() {
               <span className="font-medium text-emerald-500" style={{ fontSize: "var(--fs-ws-task-title)" }}>
                 已暂存 ({staged.length})
               </span>
-              <button
-                type="button"
-                onClick={() => void handleUnstageAll()}
-                className="text-muted-c hover:text-secondary-c"
-                style={{ fontSize: "var(--fs-ws-file-size)" }}
-              >
-                全部取消
-              </button>
             </div>
             {staged.map((e) => (
               <StatusRow key={e.path} entry={e} onUnstage={handleUnstage} />
@@ -467,14 +429,6 @@ export function GitPanel() {
               <span className="font-medium text-amber-500" style={{ fontSize: "var(--fs-ws-task-title)" }}>
                 未暂存 ({unstaged.length})
               </span>
-              <button
-                type="button"
-                onClick={() => void handleStageAll()}
-                className="text-muted-c hover:text-secondary-c"
-                style={{ fontSize: "var(--fs-ws-file-size)" }}
-              >
-                全部暂存
-              </button>
             </div>
             {unstaged.map((e) => (
               <StatusRow key={e.path} entry={e} onStage={handleStage} onDiscard={(p) => setConfirmDiscard(p)} />
