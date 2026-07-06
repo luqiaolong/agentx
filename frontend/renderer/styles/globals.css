@@ -69,8 +69,8 @@
   --fs-sidebar-meta:    var(--text-2xs);  /* 11px - session timestamp */
   --fs-sidebar-action:  var(--text-xs);   /* 12px - 设置/日志 button */
   /* Chat messages */
-  --fs-msg-user:     var(--text-sm);      /* 16px — user bubble text */
-  --fs-msg-assist:   var(--text-sm);      /* 16px — assistant text / prose */
+  --fs-msg-user:     var(--text-sm);      /* 14px — user bubble text */
+  --fs-msg-assist:   var(--text-xs);      /* 13px — assistant text / prose (slightly smaller for dense output) */
   --fs-msg-heading:  var(--text-lg);      /* 18px — h1 in markdown */
   --fs-msg-h2:       var(--text-base);    /* 16px — h2 in markdown */
   --fs-msg-h3:       var(--text-sm);      /* 16px — h3 in markdown */
