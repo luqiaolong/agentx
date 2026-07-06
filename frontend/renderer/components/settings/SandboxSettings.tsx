@@ -3,6 +3,7 @@ import { FolderLock, X } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
 import type { AuthorizedDir } from "@/lib/utils";
+import { sandbox } from "@/lib/api/http";
 
 export function SandboxSettings() {
   const threadId = useChatStore((s) => s.currentId);
@@ -17,7 +18,7 @@ export function SandboxSettings() {
       return;
     }
     try {
-      const result = await window.api.sandbox.listAuthorized(threadId);
+      const result = await sandbox.listAuthorized(threadId);
       setDirs(Array.isArray(result) ? result : []);
     } catch {
       setDirs([]);
@@ -40,7 +41,7 @@ export function SandboxSettings() {
   const revoke = async (p: string) => {
     setError(null);
     try {
-      await window.api.sandbox.revoke(threadId, p);
+      await sandbox.revoke(threadId, p);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

@@ -29,8 +29,6 @@ import type {
   McpTransport,
   McpToolInfo,
   McpTestResult,
-  ElectronAPI,
-  WindowAPI,
 } from "../../shared/api-types";
 
 export type {
@@ -62,16 +60,8 @@ export type {
   McpTransport,
   McpToolInfo,
   McpTestResult,
-  ElectronAPI,
-  WindowAPI,
 };
 
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
-}
-
-declare global {
-  interface Window {
-    api: WindowAPI;
-  }
 }

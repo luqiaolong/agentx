@@ -10,6 +10,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { SkillFileInfo } from "@/lib/utils";
+import { memory } from "@/lib/api/http";
 
 // 名称正则与后端 skills_store._NAME_RE 一致：^[a-zA-Z0-9_-]{1,64}$
 const NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -48,7 +49,7 @@ export function SkillsManager() {
   const refresh = useCallback(async () => {
     setErrMsg(null);
     try {
-      const result = await window.api.memory.listSkills();
+      const result = await memory.listSkills();
       setSkills(result.skills ?? []);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
@@ -69,7 +70,7 @@ export function SkillsManager() {
   const startEdit = async (name: string): Promise<void> => {
     setNameErr(null);
     try {
-      const result = await window.api.memory.getSkill(name);
+      const result = await memory.getSkill(name);
       setEditing({
         name,
         content: result.content ?? "",
@@ -95,7 +96,7 @@ export function SkillsManager() {
     }
     setNameErr(null);
     try {
-      await window.api.memory.saveSkill(name, editing.content);
+      await memory.saveSkill(name, editing.content);
       setEditing(null);
       await refresh();
     } catch (e) {
@@ -106,7 +107,7 @@ export function SkillsManager() {
   const remove = async (name: string): Promise<void> => {
     setErrMsg(null);
     try {
-      await window.api.memory.deleteSkill(name);
+      await memory.deleteSkill(name);
       setConfirmDelete(null);
       await refresh();
     } catch (e) {

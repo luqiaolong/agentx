@@ -13,9 +13,7 @@
     "noEmit": true,
     "types": ["node"],
     "baseUrl": ".",
-    "paths": {
-      "@main/*": ["frontend/main/*"]
-    }
+    "paths": {}
   },
-  "include": ["frontend/main/**/*", "frontend/preload/**/*", "frontend/shared/**/*", "electron.vite.config.ts"]
+  "include": ["vite.config.ts", "frontend/shared/**/*"]
 }

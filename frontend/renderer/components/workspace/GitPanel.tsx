@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useGitStore } from "@/stores/git";
 import { useChatStore } from "@/stores/chat";
+import { checkout, commit, discardChanges, stage, unstage } from "@/lib/api/git";
 import type { GitStatusEntry, GitCommit as GitCommitType, GitBranch as GitBranchType } from "../../../shared/api-types";
 
 /* ------------------------------------------------------------------ */
@@ -226,7 +227,7 @@ function CommitInput({ repoPath, onCommitted }: { repoPath: string; onCommitted:
     if (!message.trim()) return;
     setLoading(true);
     try {
-      const result = await window.api.git.commit(repoPath, message.trim());
+      const result = await commit(repoPath, message.trim());
       if (result.ok) {
         setMessage("");
         onCommitted();
@@ -303,7 +304,7 @@ export function GitPanel() {
 
   const handleStage = useCallback(
     async (filePath: string) => {
-      await window.api.git.stage(repoPath, [filePath]);
+      await stage(repoPath, [filePath]);
       await refresh();
     },
     [repoPath, refresh],
@@ -311,7 +312,7 @@ export function GitPanel() {
 
   const handleUnstage = useCallback(
     async (filePath: string) => {
-      await window.api.git.unstage(repoPath, [filePath]);
+      await unstage(repoPath, [filePath]);
       await refresh();
     },
     [repoPath, refresh],
@@ -319,7 +320,7 @@ export function GitPanel() {
 
   const handleDiscard = useCallback(
     async (filePath: string) => {
-      await window.api.git.discardChanges(repoPath, [filePath]);
+      await discardChanges(repoPath, [filePath]);
       setConfirmDiscard(null);
       await refresh();
     },
@@ -328,7 +329,7 @@ export function GitPanel() {
 
   const handleCheckout = useCallback(
     async (branch: string) => {
-      await window.api.git.checkout(repoPath, branch);
+      await checkout(repoPath, branch);
       await refresh();
     },
     [repoPath, refresh],
@@ -337,14 +338,14 @@ export function GitPanel() {
   const handleStageAll = useCallback(async () => {
     const files = unstaged.map((e) => e.path);
     if (files.length === 0) return;
-    await window.api.git.stage(repoPath, files);
+    await stage(repoPath, files);
     await refresh();
   }, [repoPath, unstaged, refresh]);
 
   const handleUnstageAll = useCallback(async () => {
     const files = staged.map((e) => e.path);
     if (files.length === 0) return;
-    await window.api.git.unstage(repoPath, files);
+    await unstage(repoPath, files);
     await refresh();
   }, [repoPath, staged, refresh]);
 

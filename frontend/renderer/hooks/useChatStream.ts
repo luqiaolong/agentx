@@ -4,6 +4,7 @@ import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { TeamAgentState } from "@/stores/chat";
 import type { ChatEvent } from "@/lib/utils";
+import { chat } from "@/lib/api/chat";
 
 export interface TodoItem {
   text: string;
@@ -67,7 +68,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const updateTask = useTasksStore((s) => s.updateTask);
 
   useEffect(() => {
-    const unsubEvents = window.api.chat.onEvent((e: ChatEvent) => {
+    const unsubEvents = chat.onEvent((e: ChatEvent) => {
       switch (e.type) {
         case "token": {
           // token 事件 data 是纯字符串
@@ -218,7 +219,7 @@ export function useChatStream(args: UseChatStreamArgs) {
       }
     });
 
-    const unsubApproval = window.api.chat.onApprovalRequest((req) => {
+    const unsubApproval = chat.onApprovalRequest((req) => {
       setApprovalRequest(req);
     });
 

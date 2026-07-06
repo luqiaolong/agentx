@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
+import { installApiMock } from "./api-mock";
 
 // jsdom 不带 window.api；ModelToggle 用到的几个最小桩
 const getModelEntries = vi.fn().mockResolvedValue([]);
@@ -27,7 +28,7 @@ vi.hoisted(() => {
   });
 });
 
-(globalThis.window as unknown as { api: unknown }).api = {
+installApiMock({
   settings: {
     getModelEntries,
     getActiveModelId,
@@ -37,7 +38,7 @@ vi.hoisted(() => {
   app: {
     reloadBackendConfig,
   },
-};
+});
 
 import { ModelToggle } from "@/components/chat/ModelToggle";
 import { useModelStore } from "@/stores/model";

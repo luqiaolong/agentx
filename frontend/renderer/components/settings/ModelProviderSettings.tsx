@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Cpu,
   Eye,
@@ -33,6 +33,15 @@ import {
   providerBadgeColor,
   providerLabel,
 } from "@/lib/modelCatalog";
+import {
+  getModelEntries,
+  getActiveModelId,
+  setModelEntries,
+  activateModel,
+  revealApiKey,
+} from "@/lib/api/settings";
+import { reloadBackendConfig, restartBackend } from "@/lib/api/app";
+import { models as modelsApi } from "@/lib/api/http";
 
 /**
  * 模型配置面板（设置 → 模型）。
@@ -368,7 +377,7 @@ function ModelEditor({
     | {
         ok: boolean;
         statusCode: number | null;
-        latencyMs: number;
+        latencyMs: number | null;
         message: string;
       }
     | null
@@ -402,8 +411,7 @@ function ModelEditor({
     }
     let cancelled = false;
     setRevealing(true);
-    void window.api.settings
-      .revealApiKey(initial.id)
+    void revealApiKey(initial.id)
       .then((v) => {
         if (!cancelled) setRevealedKey(v);
       })
@@ -550,7 +558,7 @@ function ModelEditor({
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await window.api.models.testConnection({
+      const res = await modelsApi.testConnection({
         providerId: draft.providerId,
         model: testModel,
         baseUrl: testBaseUrl,
@@ -558,8 +566,8 @@ function ModelEditor({
       });
       setTestResult({
         ok: res.ok,
-        statusCode: res.statusCode,
-        latencyMs: res.latencyMs,
+        statusCode: res.statusCode ?? null,
+        latencyMs: res.latencyMs ?? null,
         message: res.message,
       });
     } catch (err) {
@@ -882,8 +890,8 @@ export function ModelProviderSettings(): JSX.Element {
   const load = useCallback(async () => {
     try {
       const [list, active] = await Promise.all([
-        window.api.settings.getModelEntries(),
-        window.api.settings.getActiveModelId(),
+        getModelEntries(),
+        getActiveModelId(),
       ]);
       setEntries(list);
       setActiveId(active);
@@ -926,7 +934,7 @@ export function ModelProviderSettings(): JSX.Element {
       } else {
         next = entries.map((e) => (e.id === entry.id ? entry : e));
       }
-      await window.api.settings.setModelEntries(next);
+      await setModelEntries(next);
       setEntries(next);
       setEditing(null);
       setSaved(true);
@@ -936,8 +944,8 @@ export function ModelProviderSettings(): JSX.Element {
       // 若编辑的是当前激活条目，重新写入 legacy 槽位以同步新配置，并热更新后端
       if (wasActive) {
         try {
-          await window.api.settings.activateModel(entry.id);
-          await window.api.app.reloadBackendConfig();
+          await activateModel(entry.id);
+          await reloadBackendConfig();
           setHotReloaded(true);
           window.setTimeout(() => setHotReloaded(false), 2000);
         } catch (e) {
@@ -953,7 +961,7 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     try {
       const next = entries.filter((e) => e.id !== id);
-      await window.api.settings.setModelEntries(next);
+      await setModelEntries(next);
       setEntries(next);
       // 同步刷新 ModelToggle 的 useModelStore
       await useModelStore.getState().load();
@@ -973,12 +981,12 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     setActivatingId(id);
     try {
-      await window.api.settings.activateModel(id);
+      await activateModel(id);
       setActiveId(id);
       // 同步刷新 ModelToggle 的 useModelStore（激活状态变更）
       await useModelStore.getState().load();
       // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setHotReloaded(true);
       window.setTimeout(() => setHotReloaded(false), 2000);
     } catch (e) {
@@ -992,7 +1000,7 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     try {
       setRestarting(true);
-      const result = await window.api.app.restartBackend();
+      const result = await restartBackend();
       if (!result.ok) {
         setErrMsg(result.message ?? "重启后端超时");
       }

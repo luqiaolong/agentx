@@ -14,6 +14,7 @@ import type {
   ProfileCategory,
   ProfileEntryRequest,
 } from "@/lib/utils";
+import { memory } from "@/lib/api/http";
 
 // key 正则与后端 profile_store._KEY_RE 一致
 const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -74,8 +75,8 @@ export function ProfileManager() {
     try {
       // 用户画像 Tab 展示 fact + custom，分别请求后合并
       const [factResult, customResult] = await Promise.all([
-        window.api.memory.getProfile("fact"),
-        window.api.memory.getProfile("custom"),
+        memory.getProfile("fact"),
+        memory.getProfile("custom"),
       ]);
       const all = [
         ...(factResult.entries ?? []),
@@ -143,9 +144,9 @@ export function ProfileManager() {
           category: draft.category,
           content: draft.content,
         };
-        await window.api.memory.saveProfile(req);
+        await memory.saveProfile(req);
       } else {
-        await window.api.memory.updateProfile(
+        await memory.updateProfile(
           draft.originalKey ?? key,
           draft.content,
           draft.category,
@@ -161,7 +162,7 @@ export function ProfileManager() {
   const remove = async (key: string): Promise<void> => {
     setErrMsg(null);
     try {
-      await window.api.memory.deleteProfile(key);
+      await memory.deleteProfile(key);
       setConfirmDelete(null);
       await refresh();
     } catch (e) {

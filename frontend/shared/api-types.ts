@@ -1,15 +1,15 @@
 // frontend/shared/api-types.ts
-// preload 和 renderer 共享的 window.api 类型声明
-// 改动此文件后，preload 和 renderer 会自动同步，无需维护双份声明
+// renderer 与 shared 共享的类型声明（SSE 事件契约 + API 请求/响应类型）。
+// Tauri 架构下 renderer 通过 invoke()/fetch() 直连，无 preload 中转。
 
 /**
- * SSE 事件契约（AGENTS.md §13 三处同步：main.py + preload/index.ts + useChatStream.ts）。
+ * SSE 事件契约（AGENTS.md §13 两处同步：main.py + useChatStream.ts）。
  *
  * Discriminated union on `type` 字段。token 事件 data 是纯字符串；
  * reasoning/tool_call/tool_result/delegation 事件 payload 是 JSON 对象，
- * preload 解析后展开到事件顶层。
+ * useChatStream 解析后展开到事件顶层。
  *
- * 注意：preload 构造 ChatEvent 时 eventType 是动态 string，对象字面量无法
+ * 注意：useChatStream 构造 ChatEvent 时 eventType 是动态 string，对象字面量无法
  * 直接赋值给 union，需用 `as unknown as ChatEvent` 断言。
  */
 export type ChatEvent =
@@ -64,8 +64,8 @@ export interface ApprovalRequest {
   args: unknown;
   preview: string;
   kind?: ApprovalKind;          // 缺省 = dangerous_tool（向后兼容）
-  requestedPath?: string;       // directory_extension 时填
-  writable?: boolean;           // directory_extension 时填
+  requestedPath?: string;       // directory_extension 时必填
+  writable?: boolean;           // directory_extension 时必填
 }
 
 export type PermissionMode = "workspace" | "full_trust";
@@ -145,7 +145,7 @@ export interface TeamSubagentsConfig {
 
 /**
  * 自定义子代理条目（含展示元数据）。
- * 与 SubagentConfig 的差异：额外含 key/name/description 用于 UI 展示。
+ * 与 SubagentConfig 的差异：额外包含 key/name/description 用于 UI 展示。
  */
 export interface CustomSubagentEntry {
   key: string;
@@ -217,71 +217,25 @@ export interface ProfileEntryRequest {
 
 export type McpTransport = "stdio" | "sse" | "streamable_http";
 
-// ---- 模型条目（Model Entries）----
-// 用户可保存多个 LLM 模型配置，"激活"某条目时写入 legacy 槽位由后端 spawn 时读取
-export type ModelProviderId =
-  | "openai"
-  | "deepseek"
-  | "kimi"
-  | "minimax"
-  | "glm"
-  | "custom";
-
-/** 单个 preset 模型的展示信息（提供下拉补全 + 描述） */
-export interface ModelPreset {
-  value: string;
-  desc: string;
-}
-
-/** 服务商预设的完整元信息（驱动 ModelProviderSettings 下拉 / datalist / 默认值） */
-export interface ModelCatalogEntry {
-  label: string;
-  docs: string;
-  baseUrl: string;
-  models: ModelPreset[];
-  defaultContextK: number;
-  defaultOutputK: number;
-}
-
-/** 排除 custom 的预设服务商（custom 需要用户自定义 baseUrl/模型） */
-export type ModelPresetProviderId = Exclude<ModelProviderId, "custom">;
-export type ModelCatalog = Record<ModelPresetProviderId, ModelCatalogEntry>;
+// ---- 模型条目（Model Entries）---
+// 用户可保存多个 LLM 模型配置；激活某条目时写入 legacy 槽位由后端 spawn 时读取
+export type ModelProviderId = "openai" | "deepseek" | "minimax" | "custom";
 
 export interface ModelEntry {
   id: string;
-  /** 显示名称（可选，仅作向后兼容；UI 默认按 provider + model 拼接展示） */
-  label?: string;
+  label: string;
   providerId: ModelProviderId;
   model: string;
   baseUrl: string;
   /** 加密后的 API Key（enc:... 或 plain:...），renderer 视为不透明字符串 */
   apiKey: string;
   createdAt: number;
-  /** 输入上下文 token 上限（用户在「设置 → 模型」可选填入）；
+  /** 输入上下文 token 上限（用户在「设置 → 模型」可选项填入）：
    *  undefined / null → useContextUsage 降级使用默认 16000 */
   contextWindow?: number | null;
   /** 模型单次响应输出 token 上限（透传到 ChatOpenAI.max_tokens）；
    *  undefined / null → 不设上限（langchain-openai 走模型默认） */
   maxOutputTokens?: number | null;
-}
-
-/** 模型连接测试请求：发送给后端 POST /api/models/test */
-export interface ModelTestRequest {
-  providerId: string;
-  model: string;
-  baseUrl: string;
-  apiKey: string;
-  prompt?: string;
-}
-
-/** 模型连接测试响应 */
-export interface ModelTestResponse {
-  ok: boolean;
-  statusCode: number | null;
-  latencyMs: number;
-  message: string;
-  /** 成功时返回模型首个 choice content（max_tokens=1 下可能为空） */
-  responseText: string | null;
 }
 
 export interface McpServerConfig {
@@ -363,187 +317,34 @@ export interface GitRepoStatus {
   isGitRepo: boolean;
 }
 
-export interface ElectronAPI {
-  chat: {
-    send: (
-      msg: { role: string; content: string },
-      opts?: {
-        threadId?: string;
-        permissionMode?: PermissionMode;
-        systemPrompt?: string;
-        agentMode?: AgentMode;
-      },
-    ) => Promise<void>;
-    abort: (threadId: string) => Promise<void>;
-    compact: (threadId: string) => Promise<CompactResult>;
-    onEvent: (handler: (e: ChatEvent) => void) => () => void;
-    onApprovalRequest: (handler: (req: ApprovalRequest) => void) => () => void;
-  };
-  sandbox: {
-    authorize: (threadId: string, p: string, writable?: boolean, source?: SandboxSource) => Promise<unknown>;
-    revoke: (threadId: string, p: string) => Promise<unknown>;
-    listAuthorized: (threadId: string) => Promise<AuthorizedDir[]>;
-  };
-  skills: {
-    list: () => Promise<{ skills: SkillSummary[] }>;
-    reload: () => Promise<{ ok: boolean; count: number }>;
-  };
-  workspace: {
-    list: (path?: string, threadId?: string) => Promise<{ entries: WorkspaceEntry[] }>;
-  };
-  python: {
-    onStatus: (handler: (status: string) => void) => () => void;
-  };
-  logs: {
-    read: (date?: string, maxLines?: number) => Promise<string[]>;
-  };
-  dialog: {
-    openFile: (opts?: unknown) => Promise<unknown>;
-    openFolder: () => Promise<unknown>;
-    saveFile: (opts?: unknown) => Promise<unknown>;
-    saveDroppedFile: (filePath: string, fileName: string) => Promise<string>;
-  };
-  shell: {
-    revealInFolder: (p: string) => Promise<void>;
-  };
-  approve: {
-    submit: (
-      threadId: string,
-      approval: boolean,
-      decision?: ApprovalDecision,
-      path?: string,
-      writable?: boolean,
-    ) => Promise<void>;
-  };
-  health: { check: () => Promise<HealthStatus> };
-  settings: {
-    setMilvusCredentials: (user: string, password: string) => Promise<unknown>;
-    getMilvusCredentials: () => Promise<MilvusCredentialResult>;
-    getApiKey: (provider: string) => Promise<string | null>;
-    setApiKey: (provider: string, key: string) => Promise<unknown>;
-    getLLMConfig: () => Promise<{ defaultModel: string; openaiBaseUrl: string }>;
-    setLLMConfig: (model: string, baseUrl: string) => Promise<unknown>;
-    getSystemPrompt: () => Promise<string>;
-    setSystemPrompt: (prompt: string) => Promise<unknown>;
-    getApprovalConfig: () => Promise<{
-      autoApproveAfterSeconds: number;
-      approvalMaxWait: number;
-      maxUploadBytes: number;
-    }>;
-    setApprovalConfig: (cfg: {
-      autoApproveAfterSeconds?: number;
-      approvalMaxWait?: number;
-      maxUploadBytes?: number;
-    }) => Promise<unknown>;
-    getKnowledgeConfig: () => Promise<{
-      embeddingUrl: string;
-      milvusHost: string;
-      milvusPort: number;
-      milvusDb: string;
-      milvusCollection: string;
-      milvusAuthEnabled: boolean;
-    }>;
-    setKnowledgeConfig: (cfg: {
-      embeddingUrl?: string;
-      milvusHost?: string;
-      milvusPort?: number;
-      milvusDb?: string;
-      milvusCollection?: string;
-      milvusAuthEnabled?: boolean;
-    }) => Promise<unknown>;
-    // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取
-    getSubagentsConfig: () => Promise<SubagentsConfig>;
-    setSubagentsConfig: (cfg: SubagentsConfig) => Promise<unknown>;
-    // 软件开发专家团角色配置
-    getTeamSubagentsConfig: () => Promise<TeamSubagentsConfig>;
-    setTeamSubagentsConfig: (cfg: TeamSubagentsConfig) => Promise<unknown>;
-    // 自定义子代理（CRUD，与内置 subagents 配置独立持久化）
-    getCustomSubagents: () => Promise<CustomSubagentsMap>;
-    setCustomSubagents: (cfg: CustomSubagentsMap) => Promise<unknown>;
-    addCustomSubagent: (input: CustomSubagentInput) => Promise<CustomSubagentEntry>;
-    removeCustomSubagent: (key: string) => Promise<{ ok: boolean; key: string }>;
-    getToolsConfig: () => Promise<ToolsConfig>;
-    setToolsConfig: (cfg: ToolsConfig) => Promise<unknown>;
-    getProfileAutoExtract: () => Promise<boolean>;
-    setProfileAutoExtract: (v: boolean) => Promise<unknown>;
-    // MCP server 配置（electron-store 持久化，env 注入后端，重启生效）
-    getMcpServersConfig: () => Promise<McpServerConfig[]>;
-    setMcpServersConfig: (servers: McpServerConfig[]) => Promise<unknown>;
-    // 模型条目 CRUD + 激活（electron-store 持久化，激活时写入 legacy 槽位，重启后端生效）
-    getModelEntries: () => Promise<ModelEntry[]>;
-    setModelEntries: (entries: ModelEntry[]) => Promise<unknown>;
-    getActiveModelId: () => Promise<string | null>;
-    activateModel: (id: string) => Promise<unknown>;
-    /** 解密指定 ModelEntry 的 api key（safeStorage），返回明文或 null。
-     *  仅供「点击眼睛图标 → 真实回显」使用，renderer 不应持久化该返回值。 */
-    revealApiKey: (id: string) => Promise<string | null>;
-  };
-  // 模型连接测试（设置 → 模型面板「测试」按钮）：走 HTTP 调用 backend/app/main.py 的 /api/models/test
-  models: {
-    testConnection: (req: ModelTestRequest) => Promise<ModelTestResponse>;
-  };
-  mcp: {
-    // 走 HTTP，不走 IPC：所有端点对应 backend/app/main.py 的 /api/mcp/* 路由
-    listServers: () => Promise<{ servers: McpServerStatus[] }>;
-    listTools: () => Promise<{ tools: McpToolInfo[] }>;
-    testServer: (config: McpServerConfig) => Promise<McpTestResult>;
-    refresh: () => Promise<{ ok: boolean; servers: McpServerStatus[] }>;
-  };
-  memory: {
-    listSkills: () => Promise<{ skills: SkillFileInfo[] }>;
-    getSkill: (name: string) => Promise<{ content: string }>;
-    saveSkill: (name: string, content: string) => Promise<unknown>;
-    deleteSkill: (name: string) => Promise<unknown>;
-    getCheckpointer: () => Promise<{ db_size: number; threads: ThreadInfo[] }>;
-    deleteThread: (thread_id: string) => Promise<{ deleted: number }>;
-    getProfile: (category?: string) => Promise<{ entries: ProfileEntry[] }>;
-    saveProfile: (entry: ProfileEntryRequest) => Promise<unknown>;
-    updateProfile: (key: string, content: string, category?: string) => Promise<unknown>;
-    deleteProfile: (key: string) => Promise<unknown>;
-    extractProfile: (
-      thread_id: string,
-      message: string,
-      reply: string,
-    ) => Promise<{ extracted: number }>;
-  };
-  app: {
-    getVersion: () => Promise<string>;
-    quit: () => Promise<void>;
-    /** 全量重启 Electron（仅用于 ErrorBoundary 渲染错误恢复） */
-    restart: () => Promise<void>;
-    /** 仅重启 Python 后端（不重启 Electron 窗口），返回就绪状态 */
-    restartBackend: () => Promise<{ ok: boolean; message?: string }>;
-    /** 热更新后端配置（无需重启进程），从 electron-store 读最新配置 POST 到 /api/config/reload */
-    reloadBackendConfig: () => Promise<{
-      ok: boolean;
-      default_model?: string;
-      mcp_refreshed?: boolean;
-    }>;
-    /** 生成或完善 AGENTS.md（调用 agents-md-generator skill） */
-    initAgentsMd: () => Promise<{ ok: boolean; message?: string; error?: string }>;
-    /** 返回桌面目录路径（Home workspace 默认归属） */
-    getHomeWorkspaceDir: () => Promise<string>;
-  };
-  window: {
-    minimize: () => Promise<void>;
-    maximize: () => Promise<void>;
-    close: () => Promise<void>;
-    isMaximized: () => Promise<boolean>;
-    onMaximizedChange: (handler: (maximized: boolean) => void) => () => void;
-  };
-  git: {
-    getStatus: (repoPath: string) => Promise<{ entries: GitStatusEntry[]; repoStatus: GitRepoStatus }>;
-    getLog: (repoPath: string, limit?: number) => Promise<{ commits: GitCommit[] }>;
-    getBranches: (repoPath: string) => Promise<{ branches: GitBranch[] }>;
-    checkout: (repoPath: string, branch: string) => Promise<{ ok: boolean; error?: string }>;
-    stage: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
-    unstage: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
-    commit: (repoPath: string, message: string) => Promise<{ ok: boolean; error?: string }>;
-    discardChanges: (repoPath: string, files: string[]) => Promise<{ ok: boolean; error?: string }>;
-    getDiff: (repoPath: string, file?: string) => Promise<{ diff: string }>;
-    showCommit: (repoPath: string, hash: string) => Promise<{ diff: string }>;
-  };
+// ---- 模型连接测试（设置 → 模型面板「测试」按钮）----
+// TS 侧用 camelCase，http.ts 的 models.testConnection 在 HTTP 边界做 ↔ snake_case 翻译，
+// 与 backend/app/main.py 的 ModelTestRequest / ModelTestResponse（pydantic snake_case）对齐。
+
+export interface ModelTestRequest {
+  /** 服务商 ID（决定 base_url 默认值 preset 及密钥用途） */
+  providerId: ModelProviderId;
+  /** 模型名（可含前缀如 "deepseek-chat" / "kimi-k2-7-code"） */
+  model: string;
+  /** 可选 base URL，未传则后端按 providerId 取 preset 默认值 */
+  baseUrl?: string;
+  /** 明文 API Key（renderer 通过 invoke 解密或用户输入后传入） */
+  apiKey: string;
+  /** 可选测试消息内容，默认 "Hi" */
+  prompt?: string;
 }
 
-// renderer 侧用 WindowAPI 别名保持向后兼容
-export type WindowAPI = ElectronAPI;
+export interface ModelTestResponse {
+  ok: boolean;
+  statusCode?: number | null;
+  latencyMs: number;
+  message: string;
+  /** 成功时取模型返回的首个 choice content（max_tokens=1 时可能为空字符串） */
+  responseText?: string | null;
+}
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  done: boolean;
+}

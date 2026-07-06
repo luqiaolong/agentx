@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type { ModelEntry } from "../../shared/api-types";
+import {
+  getModelEntries,
+  getActiveModelId,
+  getLlmConfig,
+  activateModel,
+} from "@/lib/api/settings";
+import { reloadBackendConfig } from "@/lib/api/app";
 
 /**
  * 会话级"模型选择"状态。
@@ -37,9 +44,9 @@ export const useModelStore = create<ModelState>()(
         set({ loading: true });
         try {
           const [entries, active, llm] = await Promise.all([
-            window.api.settings.getModelEntries(),
-            window.api.settings.getActiveModelId(),
-            window.api.settings.getLLMConfig(),
+            getModelEntries(),
+            getActiveModelId(),
+            getLlmConfig(),
           ]);
           set({
             entries,
@@ -57,10 +64,10 @@ export const useModelStore = create<ModelState>()(
         const prev = get().activeId;
         set({ activeId: id });
         try {
-          await window.api.settings.activateModel(id);
-          await window.api.app.reloadBackendConfig();
+          await activateModel(id);
+          await reloadBackendConfig();
           // 激活后回拉 defaultModel 同步 trigger 显示
-          const llm = await window.api.settings.getLLMConfig();
+          const llm = await getLlmConfig();
           set({ defaultModel: llm.defaultModel });
         } catch (err) {
           // 回滚 + 上抛

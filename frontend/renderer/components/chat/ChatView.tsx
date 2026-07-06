@@ -19,6 +19,10 @@ import {
   findBuiltinCommand,
   type BuiltinCommand,
 } from "@/stores/commands";
+import { chat } from "@/lib/api/chat";
+import { getVersion, reloadBackendConfig, initAgentsMd } from "@/lib/api/app";
+import { health as healthApi, skills as skillsApi } from "@/lib/api/http";
+import { getModelEntries, activateModel } from "@/lib/api/settings";
 
 // 稳定空数组：currentId 为 null 时避免每次 selector 返回新 [] 触发无谓重渲
 const EMPTY_MESSAGES: ChatMessage[] = [];
@@ -116,7 +120,7 @@ export function ChatView() {
       case "clear": {
         const resetTid = currentId ?? "";
         try {
-          await window.api.chat.send({ role: "user", content: raw }, { threadId: resetTid });
+          await chat.send({ role: "user", content: raw }, { threadId: resetTid });
         } catch {
           /* 后端不可用也允许前端清空 */
         }
@@ -135,7 +139,7 @@ export function ChatView() {
           return true;
         }
         try {
-          const result = await window.api.chat.compact(tid);
+          const result = await chat.compact(tid);
           if (result.ok) {
             appendCommandResult({
               kind: "info",
@@ -189,7 +193,7 @@ export function ChatView() {
           return true;
         }
         try {
-          const entries = await window.api.settings.getModelEntries();
+          const entries = await getModelEntries();
           // 优先精确匹配 id，其次大小写不敏感匹配展示名（label 或 model 名称本身）
           const target =
             entries.find((e) => e.id === args) ??
@@ -208,8 +212,8 @@ export function ChatView() {
             });
             return true;
           }
-          await window.api.settings.activateModel(target.id);
-          await window.api.app.reloadBackendConfig();
+          await activateModel(target.id);
+          await reloadBackendConfig();
           appendCommandResult({
             kind: "info",
             text: `已激活模型「${modelDisplayName(target)}」，配置已即时生效。`,
@@ -224,7 +228,7 @@ export function ChatView() {
       }
       case "skills": {
         try {
-          const { skills } = await window.api.skills.list();
+          const { skills } = await skillsApi.list();
           const items = skills.map(
             (s) => `${s.name}${s.description ? ` — ${s.description}` : ""}`,
           );
@@ -244,8 +248,8 @@ export function ChatView() {
       case "version": {
         try {
           const [appVer, health] = await Promise.all([
-            window.api.app.getVersion(),
-            window.api.health.check().catch(() => null),
+            getVersion(),
+            healthApi.check().catch(() => null),
           ]);
           const items = [
             `renderer 版本：${appVer}`,
@@ -268,7 +272,7 @@ export function ChatView() {
       }
       case "init": {
         try {
-          const result = await window.api.app.initAgentsMd();
+          const result = await initAgentsMd();
           if (result.ok) {
             appendCommandResult({
               kind: "info",
@@ -333,7 +337,7 @@ export function ChatView() {
       const agentMode = useAgentModeStore.getState().mode;
       // 从 scene store 读取当前场景 prompt（不订阅，避免无谓重渲）
       const scene = useSceneStore.getState().scene;
-      await window.api.chat.send(
+      await chat.send(
         { role: "user", content },
         { threadId: tid, permissionMode, agentMode, systemPrompt: SCENE_PROMPTS[scene] },
       );
@@ -353,7 +357,7 @@ export function ChatView() {
   const handleAbort = async () => {
     if (!currentId) return;
     try {
-      await window.api.chat.abort(currentId);
+      await chat.abort(currentId);
     } catch {
       /* ignore */
     }

@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { Database, Check, Save, AlertCircle } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
+import { getMilvusCredentials, setMilvusCredentials, getKnowledgeConfig, setKnowledgeConfig } from "@/lib/api/settings";
 
 const schema = z.object({
   user: z.string().min(1, "用户名不能为空"),
@@ -29,7 +30,7 @@ export function MilvusCredentialsForm() {
   useEffect(() => {
     void (async () => {
       try {
-        const cfg = await window.api.settings.getKnowledgeConfig();
+        const cfg = await getKnowledgeConfig();
         setHost(cfg.milvusHost ?? "192.168.1.4");
         setPort(String(cfg.milvusPort ?? 19530));
         setDb(cfg.milvusDb ?? "agentx");
@@ -37,7 +38,7 @@ export function MilvusCredentialsForm() {
         setEmbeddingUrl(cfg.embeddingUrl ?? "");
         if (typeof cfg.milvusAuthEnabled === "boolean") setAuthEnabled(cfg.milvusAuthEnabled);
         // 用 electron-store 实际凭证状态校正前端标志，避免 localStorage 与后端漂移
-        const cred = await window.api.settings.getMilvusCredentials();
+        const cred = await getMilvusCredentials();
         setMilvusConfigured(!!(cred.user && cred.password));
       } catch {
         // ignore
@@ -56,8 +57,8 @@ export function MilvusCredentialsForm() {
     setErrMsg(null);
     try {
       // 两步保存：先写凭证，再写连接配置。任一失败都回滚状态并提示。
-      await window.api.settings.setMilvusCredentials(values.user, values.password);
-      await window.api.settings.setKnowledgeConfig({
+      await setMilvusCredentials(values.user, values.password);
+      await setKnowledgeConfig({
         milvusHost: host,
         milvusPort: Number(port) || 19530,
         milvusDb: db,

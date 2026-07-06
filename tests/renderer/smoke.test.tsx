@@ -3,6 +3,7 @@ import { render, waitFor } from "@testing-library/react";
 import { act } from "react";
 import { BrowserRouter } from "react-router-dom";
 import App from "@/App";
+import { installApiMock } from "./api-mock";
 
 // Mock window.api before rendering App.
 const mockApi = {
@@ -138,7 +139,7 @@ const mockApi = {
 };
 
 beforeAll(() => {
-  (globalThis.window as unknown as { api: unknown }).api = mockApi;
+  installApiMock(mockApi);
 });
 
 describe("App smoke", () => {

@@ -1,36 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { useSkillsStore } from "@/stores/skills";
-
-const mockStorage = (() => {
-  const m = new Map<string, string>();
-  return {
-    getItem: (k: string) => m.get(k) ?? null,
-    setItem: (k: string, v: string) => {
-      m.set(k, String(v));
-    },
-    removeItem: (k: string) => {
-      m.delete(k);
-    },
-    clear: () => m.clear(),
-    key: (i: number) => Array.from(m.keys())[i] ?? null,
-    get length() {
-      return m.size;
-    },
-  } as unknown as Storage;
-});
+import { installApiMock } from "./api-mock";
 
 const listMock = vi.fn();
 
 beforeEach(() => {
-  Object.defineProperty(globalThis, "localStorage", {
-    value: mockStorage,
-    configurable: true,
-    writable: true,
-  });
-  (globalThis.window as unknown as { api: unknown }).api = {
+  installApiMock({
     skills: { list: listMock },
-  };
+  });
   listMock.mockReset();
   useSkillsStore.setState({ skills: [], loading: false, error: null });
 });

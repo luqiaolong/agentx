@@ -8,6 +8,7 @@ import {
   HardDrive,
 } from "lucide-react";
 import type { ThreadInfo } from "@/lib/utils";
+import { memory } from "@/lib/api/http";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -37,7 +38,7 @@ export function SessionManager() {
   const refresh = useCallback(async () => {
     setErrMsg(null);
     try {
-      const result = await window.api.memory.getCheckpointer();
+      const result = await memory.getCheckpointer();
       setDbSize(result.db_size ?? 0);
       setThreads(result.threads ?? []);
     } catch (e) {
@@ -54,7 +55,7 @@ export function SessionManager() {
   const remove = async (threadId: string): Promise<void> => {
     setErrMsg(null);
     try {
-      await window.api.memory.deleteThread(threadId);
+      await memory.deleteThread(threadId);
       setConfirmDelete(null);
       await refresh();
     } catch (e) {

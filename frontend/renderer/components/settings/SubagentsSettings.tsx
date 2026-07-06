@@ -34,6 +34,18 @@ import type {
 } from "@/lib/utils";
 import { useSceneStore } from "@/stores/scene";
 import {
+  getToolsConfig,
+  getSubagentsConfig,
+  setSubagentsConfig,
+  getTeamSubagentsConfig,
+  setTeamSubagentsConfig,
+  getCustomSubagents,
+  setCustomSubagents,
+  addCustomSubagent,
+  removeCustomSubagent,
+} from "@/lib/api/settings";
+import { reloadBackendConfig, restartBackend } from "@/lib/api/app";
+import {
   SubagentEditModal,
   type SubagentEditModalData,
 } from "./SubagentEditModal";
@@ -290,7 +302,7 @@ function BuiltinCard({ meta, cfg, onEnabledChange, onEdit }: BuiltinCardProps) {
   useEffect(() => {
     void (async () => {
       try {
-        const tc = await window.api.settings.getToolsConfig();
+        const tc = await getToolsConfig();
         setToolsConfig(tc);
       } catch {
         // 后端未就绪时保留空对象
@@ -424,7 +436,7 @@ function CustomCard({
   useEffect(() => {
     void (async () => {
       try {
-        const tc = await window.api.settings.getToolsConfig();
+        const tc = await getToolsConfig();
         setToolsConfig(tc);
       } catch {
         // 后端未就绪时保留空对象
@@ -610,9 +622,9 @@ export function SubagentsSettings() {
     void (async () => {
       try {
         const [cfg, team, custom] = await Promise.all([
-          window.api.settings.getSubagentsConfig(),
-          window.api.settings.getTeamSubagentsConfig(),
-          window.api.settings.getCustomSubagents(),
+          getSubagentsConfig(),
+          getTeamSubagentsConfig(),
+          getCustomSubagents(),
         ]);
         setConfig(cfg);
         setTeamConfig(team);
@@ -647,12 +659,12 @@ export function SubagentsSettings() {
     setErrMsg(null);
     try {
       await Promise.all([
-        window.api.settings.setSubagentsConfig(config),
-        window.api.settings.setTeamSubagentsConfig(teamConfig),
-        window.api.settings.setCustomSubagents(customMap),
+        setSubagentsConfig(config),
+        setTeamSubagentsConfig(teamConfig),
+        setCustomSubagents(customMap),
       ]);
       // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -665,7 +677,7 @@ export function SubagentsSettings() {
     try {
       setRestarting(true);
       await save();
-      const result = await window.api.app.restartBackend();
+      const result = await restartBackend();
       if (!result.ok) {
         setErrMsg(result.message ?? "重启后端超时");
       }
@@ -767,7 +779,7 @@ export function SubagentsSettings() {
         // 新建：调用 IPC addCustomSubagent（会校验 key 唯一性）
         void (async () => {
           try {
-            const entry = await window.api.settings.addCustomSubagent({
+            const entry = await addCustomSubagent({
               key: customKey,
               name: data.name,
               enabled: data.enabled,
@@ -804,7 +816,7 @@ export function SubagentsSettings() {
   const handleRemoveCustom = (key: string): void => {
     void (async () => {
       try {
-        await window.api.settings.removeCustomSubagent(key);
+        await removeCustomSubagent(key);
         setCustomMap((s) => {
           const next = { ...s };
           delete next[key];

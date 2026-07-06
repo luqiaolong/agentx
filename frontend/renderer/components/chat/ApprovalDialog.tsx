@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ShieldAlert, Check, X, Clock, ShieldCheck } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
+import { approve } from "@/lib/api/http";
 import type { ApprovalDecision } from "../../../shared/api-types";
 
 /**
@@ -34,7 +35,7 @@ export function ApprovalDialog() {
       setRemaining((r) => {
         if (r <= 1) {
           if (timerRef.current) clearInterval(timerRef.current);
-          void window.api.approve
+          void approve
             .submit(approvalRequest.threadId, true)
             .catch(() => {});
           setApprovalRequest(null);
@@ -57,7 +58,7 @@ export function ApprovalDialog() {
     setError(null);
     if (timerRef.current) clearInterval(timerRef.current);
     try {
-      await window.api.approve.submit(
+      await approve.submit(
         approvalRequest.threadId,
         approved,
         decision,
@@ -74,7 +75,7 @@ export function ApprovalDialog() {
           setRemaining((r) => {
             if (r <= 1) {
               if (timerRef.current) clearInterval(timerRef.current);
-              void window.api.approve
+              void approve
                 .submit(approvalRequest.threadId, true)
                 .catch(() => {});
               setApprovalRequest(null);

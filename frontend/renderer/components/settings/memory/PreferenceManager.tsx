@@ -13,6 +13,9 @@ import type {
   ProfileEntry,
   ProfileEntryRequest,
 } from "@/lib/utils";
+import { memory } from "@/lib/api/http";
+import { getProfileAutoExtract, setProfileAutoExtract } from "@/lib/api/settings";
+import { reloadBackendConfig } from "@/lib/api/app";
 
 // key 正则与后端 profile_store._KEY_RE 一致
 const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -61,8 +64,8 @@ export function PreferenceManager() {
     setErrMsg(null);
     try {
       const [profileResult, autoExtractVal] = await Promise.all([
-        window.api.memory.getProfile("preference"),
-        window.api.settings.getProfileAutoExtract(),
+        memory.getProfile("preference"),
+        getProfileAutoExtract(),
       ]);
       setEntries(profileResult.entries ?? []);
       setAutoExtract(autoExtractVal);
@@ -80,8 +83,8 @@ export function PreferenceManager() {
   const toggleAutoExtract = async (v: boolean): Promise<void> => {
     setAutoExtract(v);
     try {
-      await window.api.settings.setProfileAutoExtract(v);
-      await window.api.app.reloadBackendConfig();
+      await setProfileAutoExtract(v);
+      await reloadBackendConfig();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     }
@@ -130,9 +133,9 @@ export function PreferenceManager() {
           category: "preference",
           content: draft.content,
         };
-        await window.api.memory.saveProfile(req);
+        await memory.saveProfile(req);
       } else {
-        await window.api.memory.updateProfile(
+        await memory.updateProfile(
           draft.originalKey ?? key,
           draft.content,
           "preference",
@@ -148,7 +151,7 @@ export function PreferenceManager() {
   const remove = async (key: string): Promise<void> => {
     setErrMsg(null);
     try {
-      await window.api.memory.deleteProfile(key);
+      await memory.deleteProfile(key);
       setConfirmDelete(null);
       await refresh();
     } catch (e) {

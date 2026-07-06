@@ -12,6 +12,7 @@ import type {
   ProfileEntry,
   ProfileEntryRequest,
 } from "@/lib/utils";
+import { memory } from "@/lib/api/http";
 
 // key 正则与后端 profile_store._KEY_RE 一致
 const KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -58,7 +59,7 @@ export function ProjectMemoryManager() {
   const refresh = useCallback(async () => {
     setErrMsg(null);
     try {
-      const profileResult = await window.api.memory.getProfile("project");
+      const profileResult = await memory.getProfile("project");
       setEntries(profileResult.entries ?? []);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
@@ -114,9 +115,9 @@ export function ProjectMemoryManager() {
           category: "project",
           content: draft.content,
         };
-        await window.api.memory.saveProfile(req);
+        await memory.saveProfile(req);
       } else {
-        await window.api.memory.updateProfile(
+        await memory.updateProfile(
           draft.originalKey ?? key,
           draft.content,
           "project",
@@ -132,7 +133,7 @@ export function ProjectMemoryManager() {
   const remove = async (key: string): Promise<void> => {
     setErrMsg(null);
     try {
-      await window.api.memory.deleteProfile(key);
+      await memory.deleteProfile(key);
       setConfirmDelete(null);
       await refresh();
     } catch (e) {

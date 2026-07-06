@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the AgentX main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:webview:default",
+    "core:event:default",
+    "core:app:default",
+    "core:path:default",
+    "os:default",
+    "process:default",
+    "dialog:default",
+    "shell:default",
+    "shell:allow-open",
+    "notification:default",
+    "clipboard-manager:default",
+    "fs:default",
+    "store:default",
+    "stronghold:default",
+    "updater:default",
+    "log:default"
+  ]
+}

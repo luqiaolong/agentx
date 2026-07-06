@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { act } from "react";
+import { installApiMock } from "./api-mock";
 
 // jsdom 不带 window.api；ChatComposer 与 chat store 用到的几个最小桩
 const mockApi = {
@@ -46,7 +47,7 @@ if (typeof HTMLElement !== "undefined") {
   }
 }
 
-(globalThis.window as unknown as { api: unknown }).api = mockApi;
+installApiMock(mockApi);
 
 // 受测组件
 import { ChatComposer } from "@/components/chat/ChatComposer";

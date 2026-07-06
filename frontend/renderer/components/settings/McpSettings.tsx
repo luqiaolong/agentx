@@ -21,6 +21,9 @@ import type {
   McpTransport,
   McpTestResult,
 } from "@/lib/utils";
+import { mcp } from "@/lib/api/http";
+import { getMcpServersConfig, setMcpServersConfig } from "@/lib/api/settings";
+import { reloadBackendConfig, restartBackend } from "@/lib/api/app";
 
 // 名称正则与后端 McpServerConfig.name pattern 一致：^[a-zA-Z0-9_-]{1,64}$
 const NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -517,7 +520,7 @@ export function McpSettings(): JSX.Element {
 
   const loadConfig = useCallback(async () => {
     try {
-      const cfg = await window.api.settings.getMcpServersConfig();
+      const cfg = await getMcpServersConfig();
       setServers(cfg);
     } catch {
       // 后端未就绪时保留空列表
@@ -526,7 +529,7 @@ export function McpSettings(): JSX.Element {
 
   const loadStatuses = useCallback(async () => {
     try {
-      const result = await window.api.mcp.listServers();
+      const result = await mcp.listServers();
       setStatuses(result.servers ?? []);
     } catch {
       // 后端未就绪时清空
@@ -571,11 +574,11 @@ export function McpSettings(): JSX.Element {
           s.name === editing?.originalName ? cfg : s,
         );
       }
-      await window.api.settings.setMcpServersConfig(next);
+      await setMcpServersConfig(next);
       setServers(next);
       setEditing(null);
       // 热更新后端配置（含 MCP server 重连），无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -587,7 +590,7 @@ export function McpSettings(): JSX.Element {
     setErrMsg(null);
     try {
       const next = servers.filter((s) => s.name !== name);
-      await window.api.settings.setMcpServersConfig(next);
+      await setMcpServersConfig(next);
       setServers(next);
       // 清除该 server 的测试结果
       setTestResults((prev) => {
@@ -596,7 +599,7 @@ export function McpSettings(): JSX.Element {
         return next;
       });
       // 热更新后端配置（含 MCP server 重连），无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     }
@@ -606,7 +609,7 @@ export function McpSettings(): JSX.Element {
     setErrMsg(null);
     setTestingName(cfg.name);
     try {
-      const result = await window.api.mcp.testServer(cfg);
+      const result = await mcp.testServer(cfg);
       setTestResults((prev) => ({ ...prev, [cfg.name]: result }));
     } catch (e) {
       setTestResults((prev) => ({
@@ -626,7 +629,7 @@ export function McpSettings(): JSX.Element {
     setErrMsg(null);
     try {
       setRestarting(true);
-      const result = await window.api.app.restartBackend();
+      const result = await restartBackend();
       if (!result.ok) {
         setErrMsg(result.message ?? "重启后端超时");
       }
@@ -640,7 +643,7 @@ export function McpSettings(): JSX.Element {
   const refreshStatuses = async (): Promise<void> => {
     setErrMsg(null);
     try {
-      const result = await window.api.mcp.refresh();
+      const result = await mcp.refresh();
       setStatuses(result.servers ?? []);
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
