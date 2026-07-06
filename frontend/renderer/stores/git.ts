@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { GitStatusEntry, GitCommit, GitBranch, GitRepoStatus } from "../../shared/api-types";
+import { getStatus, getLog, getBranches } from "@/lib/api/git";
 
 interface GitState {
   repoPath: string;
@@ -40,9 +41,9 @@ export const useGitStore = create<GitState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const [statusResult, logResult, branchesResult] = await Promise.all([
-        window.api.git.getStatus(repoPath),
-        window.api.git.getLog(repoPath, 30),
-        window.api.git.getBranches(repoPath),
+        getStatus(repoPath),
+        getLog(repoPath, 30),
+        getBranches(repoPath),
       ]);
       set({
         entries: statusResult.entries,

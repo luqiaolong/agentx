@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { useRef, useState } from "react";
-import { ChatComposer } from "@/components/chat/ChatComposer";
-import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
-import { useChatStore } from "@/stores/chat";
-import { useTasksStore } from "@/stores/tasks";
 
 // jsdom 不实现 scrollIntoView；CommandPicker effect 调用它会抛错。
 if (typeof HTMLElement !== "undefined") {
@@ -33,37 +29,51 @@ vi.hoisted(() => {
   });
 });
 
-type Event = { type: string; [k: string]: unknown };
-type Approval = { threadId: string; toolName: string; args: unknown; preview: string };
-
-function makeMockApi() {
-  const evtHandlers = new Set<(e: Event) => void>();
-  const approvalHandlers = new Set<(r: Approval) => void>();
+// Mock @/lib/api/chat 模块：vi.hoisted 创建共享状态，vi.mock 工厂引用。
+// useChatStream 内部 import { chat } from "@/lib/api/chat"，需在此替换。
+const chatMock = vi.hoisted(() => {
+  const eventHandlers = new Set<(e: unknown) => void>();
+  const approvalHandlers = new Set<(req: unknown) => void>();
   return {
+    eventHandlers,
+    approvalHandlers,
     chat: {
-      send: vi.fn().mockResolvedValue(undefined),
-      abort: vi.fn().mockResolvedValue(undefined),
-      onEvent: vi.fn((h: (e: Event) => void) => {
-        evtHandlers.add(h);
-        return () => evtHandlers.delete(h);
+      onEvent: vi.fn((h: (e: unknown) => void) => {
+        eventHandlers.add(h);
+        return () => eventHandlers.delete(h);
       }),
-      onApprovalRequest: vi.fn((h: (r: Approval) => void) => {
+      onApprovalRequest: vi.fn((h: (req: unknown) => void) => {
         approvalHandlers.add(h);
         return () => approvalHandlers.delete(h);
       }),
+      send: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+      compact: vi.fn().mockResolvedValue(undefined),
     },
-    sandbox: { authorize: vi.fn().mockResolvedValue(undefined) },
-    dialog: {
-      openFile: vi.fn(),
-      openFolder: vi.fn(),
-      saveDroppedFile: vi.fn(),
-    },
-    _emitEvent: (e: Event) => evtHandlers.forEach((h) => h(e)),
-    _emitApproval: (r: Approval) => approvalHandlers.forEach((h) => h(r)),
   };
-}
+});
 
-let mockApi: ReturnType<typeof makeMockApi>;
+vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
+
+import { ChatComposer } from "@/components/chat/ChatComposer";
+import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
+import { useChatStore } from "@/stores/chat";
+import { useTasksStore } from "@/stores/tasks";
+import { installApiMock, resetChatMock } from "./api-mock";
+
+// 事件触发辅助函数
+const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
+const emitApproval = (req: unknown) => chatMock.approvalHandlers.forEach((h) => h(req));
+
+// sandbox/dialog 走 Tauri invoke / fetch，用 installApiMock 安装路由
+installApiMock({
+  sandbox: { authorize: vi.fn().mockResolvedValue(undefined) },
+  dialog: {
+    openFile: vi.fn(),
+    openFolder: vi.fn(),
+    saveDroppedFile: vi.fn(),
+  },
+});
 
 // 顶层 hook 容器组件：把 useChatStream 接到 ChatComposer 的 onSend 上，
 // 模拟 ChatView 的最小协作单元。
@@ -104,19 +114,18 @@ function ChatHarness({ onError }: { onError?: (msg: string | null) => void }) {
         currentTaskIdRef.current = null;
         lastUserQueryRef.current = content;
         useChatStore.getState().setStreaming(true);
-        void mockApi.chat.send({ role: "user", content }, { threadId: cid });
+        void chatMock.chat.send({ role: "user", content }, { threadId: cid });
       }}
       onAbort={() => {
         const cid = useChatStore.getState().currentId;
-        if (cid) void mockApi.chat.abort(cid);
+        if (cid) void chatMock.chat.abort(cid);
       }}
     />
   );
 }
 
 beforeEach(() => {
-  mockApi = makeMockApi();
-  (globalThis.window as unknown as { api: unknown }).api = mockApi;
+  resetChatMock(chatMock);
   useChatStore.setState({
     sessions: {},
     currentId: null,
@@ -152,12 +161,12 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
     expect(sess1.messages.some((m) => m.role === "user" && m.content === "你好")).toBe(true);
     expect(sess1.messages.some((m) => m.role === "assistant" && m.content === "")).toBe(true);
     expect(useChatStore.getState().isStreaming).toBe(true);
-    expect(mockApi.chat.send).toHaveBeenCalledTimes(1);
+    expect(chatMock.chat.send).toHaveBeenCalledTimes(1);
 
     // 后端 SSE 推 token
     await act(async () => {
-      mockApi._emitEvent({ type: "token", data: "Hi" });
-      mockApi._emitEvent({ type: "token", data: " 你好" });
+      emitEvent({ type: "token", data: "Hi" });
+      emitEvent({ type: "token", data: " 你好" });
     });
 
     const sess2 = useChatStore.getState().sessions[useChatStore.getState().currentId!];
@@ -167,7 +176,7 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
 
     // done 事件
     await act(async () => {
-      mockApi._emitEvent({ type: "done", data: {} });
+      emitEvent({ type: "done", data: {} });
     });
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
@@ -181,7 +190,7 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
     });
 
     await act(async () => {
-      mockApi._emitEvent({ type: "error", data: "后端超时" });
+      emitEvent({ type: "error", data: "后端超时" });
     });
 
     expect(errors).toContain("后端超时");
@@ -195,12 +204,12 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
     });
 
     await act(async () => {
-      mockApi._emitEvent({
+      emitEvent({
         type: "todo_update",
         todos: [{ text: "读文件", done: false }],
       });
-      mockApi._emitEvent({ type: "token", data: "hi" });
-      mockApi._emitEvent({ type: "error", data: "boom" });
+      emitEvent({ type: "token", data: "hi" });
+      emitEvent({ type: "error", data: "boom" });
     });
 
     const tasks = useTasksStore.getState().tasks;
@@ -216,7 +225,7 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
     });
 
     await act(async () => {
-      mockApi._emitEvent({ type: "error", error: "字段在 error 上" });
+      emitEvent({ type: "error", error: "字段在 error 上" });
     });
 
     expect(errors).toContain("字段在 error 上");

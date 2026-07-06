@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Cpu,
   Eye,
@@ -22,6 +22,13 @@ import {
 } from "lucide-react";
 import type { ModelEntry, ModelProviderId } from "@/lib/utils";
 import { useModelStore } from "@/stores/model";
+import {
+  getModelEntries,
+  getActiveModelId,
+  setModelEntries,
+  activateModel,
+} from "@/lib/api/settings";
+import { reloadBackendConfig, restartBackend } from "@/lib/api/app";
 
 // 服务商预设：默认模型名 / Base URL / 文档链接
 // 与 backend/app/llm.py 路由逻辑对齐：
@@ -645,8 +652,8 @@ export function ModelProviderSettings(): JSX.Element {
   const load = useCallback(async () => {
     try {
       const [list, active] = await Promise.all([
-        window.api.settings.getModelEntries(),
-        window.api.settings.getActiveModelId(),
+        getModelEntries(),
+        getActiveModelId(),
       ]);
       setEntries(list);
       setActiveId(active);
@@ -689,7 +696,7 @@ export function ModelProviderSettings(): JSX.Element {
       } else {
         next = entries.map((e) => (e.id === entry.id ? entry : e));
       }
-      await window.api.settings.setModelEntries(next);
+      await setModelEntries(next);
       setEntries(next);
       setEditing(null);
       setSaved(true);
@@ -699,8 +706,8 @@ export function ModelProviderSettings(): JSX.Element {
       // 若编辑的是当前激活条目，重新写入 legacy 槽位以同步新配置，并热更新后端
       if (wasActive) {
         try {
-          await window.api.settings.activateModel(entry.id);
-          await window.api.app.reloadBackendConfig();
+          await activateModel(entry.id);
+          await reloadBackendConfig();
           setHotReloaded(true);
           window.setTimeout(() => setHotReloaded(false), 2000);
         } catch (e) {
@@ -716,7 +723,7 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     try {
       const next = entries.filter((e) => e.id !== id);
-      await window.api.settings.setModelEntries(next);
+      await setModelEntries(next);
       setEntries(next);
       // 同步刷新 ModelToggle 的 useModelStore
       await useModelStore.getState().load();
@@ -736,12 +743,12 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     setActivatingId(id);
     try {
-      await window.api.settings.activateModel(id);
+      await activateModel(id);
       setActiveId(id);
       // 同步刷新 ModelToggle 的 useModelStore（激活状态变更）
       await useModelStore.getState().load();
       // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setHotReloaded(true);
       window.setTimeout(() => setHotReloaded(false), 2000);
     } catch (e) {
@@ -755,7 +762,7 @@ export function ModelProviderSettings(): JSX.Element {
     setErrMsg(null);
     try {
       setRestarting(true);
-      const result = await window.api.app.restartBackend();
+      const result = await restartBackend();
       if (!result.ok) {
         setErrMsg(result.message ?? "重启后端超时");
       }

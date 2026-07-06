@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useContextUsage } from "@/stores/contextUsage";
 import { useChatStore } from "@/stores/chat";
+import { chat } from "@/lib/api/chat";
 
 /**
  * 上下文使用率组件：5 条纵向黑白条纹 widget + 点击弹出详情面板。
@@ -43,7 +44,7 @@ export function ContextUsage() {
     setCompacting(true);
     setCompactResult(null);
     try {
-      const res = await window.api.chat.compact(currentId);
+      const res = await chat.compact(currentId);
       setCompactResult({
         ok: res.ok,
         summary: res.summary,

@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RotateCcw, FileText } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
+import { restart } from "@/lib/api/app";
 
 interface Props {
   children: ReactNode;
@@ -47,7 +48,7 @@ export class ErrorBoundary extends Component<Props, State> {
               <FileText className="h-3.5 w-3.5" />
               查看日志
             </button>
-            <button type="button" className="btn-primary" onClick={() => void window.api.app.restart()}>
+            <button type="button" className="btn-primary" onClick={() => void restart()}>
               <RotateCcw className="h-3.5 w-3.5" />
               重启应用
             </button>

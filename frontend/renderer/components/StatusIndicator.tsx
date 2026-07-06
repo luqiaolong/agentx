@@ -1,18 +1,16 @@
 import { useEffect, useState } from "react";
 import { Database, Cpu } from "lucide-react";
 import type { HealthStatus } from "@/lib/utils";
+import { health } from "@/lib/api/http";
 
 export function StatusIndicator() {
-  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [healthState, setHealth] = useState<HealthStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    const p = window.api?.health?.check?.();
-    if (!p || typeof p.then !== "function") {
-      return;
-    }
-    p
+    health
+      .check()
       .then((h) => {
         if (cancelled) return;
         setHealth(h ?? null);
@@ -26,8 +24,8 @@ export function StatusIndicator() {
     };
   }, []);
 
-  const embOk = health?.embedding?.status === "healthy";
-  const milvusOk = health?.milvus?.status === "healthy";
+  const embOk = healthState?.embedding?.status === "healthy";
+  const milvusOk = healthState?.milvus?.status === "healthy";
 
   const renderBadge = (
     ok: boolean,
@@ -61,8 +59,8 @@ export function StatusIndicator() {
 
   return (
     <div className="flex items-center gap-1.5">
-      {renderBadge(embOk, "TEI", Cpu, health?.embedding)}
-      {renderBadge(milvusOk, "Milvus", Database, health?.milvus)}
+      {renderBadge(embOk, "TEI", Cpu, healthState?.embedding)}
+      {renderBadge(milvusOk, "Milvus", Database, healthState?.milvus)}
     </div>
   );
 }

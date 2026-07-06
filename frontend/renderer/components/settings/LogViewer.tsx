@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, FileText, ArrowDown } from "lucide-react";
+import { read } from "@/lib/api/logs";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -26,7 +27,7 @@ export function LogViewer({ fillParent = false }: LogViewerProps = {}) {
     setLoading(true);
     setErr(null);
     try {
-      const result = await window.api.logs.read(undefined, 200);
+      const result = await read(undefined, 200);
       setLines(result);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

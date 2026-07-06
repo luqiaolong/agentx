@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { useChatStream } from "@/hooks/useChatStream";
-import { useChatStore } from "@/stores/chat";
-import { useTasksStore } from "@/stores/tasks";
 
 // jsdom localStorage 在 vitest 下不可用，persist 会在 store 导入时捕获 storage
 vi.hoisted(() => {
@@ -28,11 +25,14 @@ vi.hoisted(() => {
   });
 });
 
-// 模拟 preload 暴露的 window.api.chat
-function makeMockApi() {
+// Mock @/lib/api/chat 模块：vi.hoisted 创建共享状态，vi.mock 工厂引用。
+// useChatStream 内部 import { chat } from "@/lib/api/chat"，需在此替换。
+const chatMock = vi.hoisted(() => {
   const eventHandlers = new Set<(e: unknown) => void>();
   const approvalHandlers = new Set<(req: unknown) => void>();
   return {
+    eventHandlers,
+    approvalHandlers,
     chat: {
       onEvent: vi.fn((h: (e: unknown) => void) => {
         eventHandlers.add(h);
@@ -42,21 +42,26 @@ function makeMockApi() {
         approvalHandlers.add(h);
         return () => approvalHandlers.delete(h);
       }),
-      send: vi.fn(),
-      abort: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+      compact: vi.fn().mockResolvedValue(undefined),
     },
-    _emitEvent: (e: unknown) => eventHandlers.forEach((h) => h(e)),
-    _emitApproval: (req: unknown) => approvalHandlers.forEach((h) => h(req)),
-    _eventHandlers: eventHandlers,
-    _approvalHandlers: approvalHandlers,
   };
-}
+});
 
-let api: ReturnType<typeof makeMockApi>;
+vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
+
+import { useChatStream } from "@/hooks/useChatStream";
+import { useChatStore } from "@/stores/chat";
+import { useTasksStore } from "@/stores/tasks";
+import { resetChatMock } from "./api-mock";
+
+// 事件触发辅助函数（替代原 makeMockApi 返回的 _emitEvent / _emitApproval）
+const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
+const emitApproval = (req: unknown) => chatMock.approvalHandlers.forEach((h) => h(req));
 
 beforeEach(() => {
-  api = makeMockApi();
-  (globalThis.window as unknown as { api: unknown }).api = api;
+  resetChatMock(chatMock);
   useChatStore.setState({
     sessions: {},
     currentId: null,
@@ -77,14 +82,14 @@ describe("useChatStream hook", () => {
         setErrorMsg: () => {},
       }),
     );
-    expect(api.chat.onEvent).toHaveBeenCalledTimes(1);
-    expect(api.chat.onApprovalRequest).toHaveBeenCalledTimes(1);
-    expect(api._eventHandlers.size).toBe(1);
-    expect(api._approvalHandlers.size).toBe(1);
+    expect(chatMock.chat.onEvent).toHaveBeenCalledTimes(1);
+    expect(chatMock.chat.onApprovalRequest).toHaveBeenCalledTimes(1);
+    expect(chatMock.eventHandlers.size).toBe(1);
+    expect(chatMock.approvalHandlers.size).toBe(1);
 
     unmount();
-    expect(api._eventHandlers.size).toBe(0);
-    expect(api._approvalHandlers.size).toBe(0);
+    expect(chatMock.eventHandlers.size).toBe(0);
+    expect(chatMock.approvalHandlers.size).toBe(0);
   });
 
   it("token 事件追加到 pendingId 对应的 assistant 消息", () => {
@@ -107,8 +112,8 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      api._emitEvent({ type: "token", data: "你好" });
-      api._emitEvent({ type: "token", data: "世界" });
+      emitEvent({ type: "token", data: "你好" });
+      emitEvent({ type: "token", data: "世界" });
     });
 
     const sess = useChatStore.getState().sessions[id];
@@ -130,7 +135,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      api._emitEvent({ type: "done", data: {} });
+      emitEvent({ type: "done", data: {} });
     });
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
@@ -152,7 +157,7 @@ describe("useChatStream hook", () => {
 
     // 先 emit todo_update 触发任务创建（真实流程：先 todo 后 error）
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "todo_update",
         todos: [{ text: "step1", done: false }],
       });
@@ -161,7 +166,7 @@ describe("useChatStream hook", () => {
     expect(useTasksStore.getState().tasks[0]?.status).toBe("running");
 
     act(() => {
-      api._emitEvent({ type: "error", data: "出错了" });
+      emitEvent({ type: "error", data: "出错了" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("出错了");
     expect(useChatStore.getState().isStreaming).toBe(false);
@@ -182,7 +187,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      api._emitEvent({ type: "error", error: "字符串在 error 字段" });
+      emitEvent({ type: "error", error: "字符串在 error 字段" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("字符串在 error 字段");
   });
@@ -200,7 +205,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "todo_update",
         todos: [
           { text: "读取源", done: false },
@@ -216,7 +221,7 @@ describe("useChatStream hook", () => {
     expect(tasks1[0].todos).toHaveLength(2);
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "todo_update",
         todos: [
           { text: "读取源", done: true },
@@ -249,7 +254,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      api._emitApproval(req);
+      emitApproval(req);
     });
     const stored = useChatStore.getState().approvalRequest;
     expect(stored?.threadId).toBe("t-1");
@@ -295,8 +300,8 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({ type: "token", data: "hello" });
-      api._emitEvent({ type: "token", data: " world" });
+      emitEvent({ type: "token", data: "hello" });
+      emitEvent({ type: "token", data: " world" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -320,8 +325,8 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({ type: "reasoning", content: "分析", source: "deep" });
-      api._emitEvent({ type: "reasoning", content: "中", source: "deep" });
+      emitEvent({ type: "reasoning", content: "分析", source: "deep" });
+      emitEvent({ type: "reasoning", content: "中", source: "deep" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -346,9 +351,9 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({ type: "reasoning", content: "思考", source: "deep" });
-      api._emitEvent({ type: "token", data: "回答" });
-      api._emitEvent({ type: "done" });
+      emitEvent({ type: "reasoning", content: "思考", source: "deep" });
+      emitEvent({ type: "token", data: "回答" });
+      emitEvent({ type: "done" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -373,7 +378,7 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "tool_call",
         id: "tc1",
         name: "read_file",
@@ -407,14 +412,14 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "tool_call",
         id: "tc1",
         name: "read_file",
         args: { path: "/tmp" },
         source: "code",
       });
-      api._emitEvent({
+      emitEvent({
         type: "tool_result",
         id: "tc1",
         name: "read_file",
@@ -449,14 +454,14 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "tool_call",
         id: "tc1",
         name: "shell_exec",
         args: { command: "rm -rf" },
         source: "code",
       });
-      api._emitEvent({
+      emitEvent({
         type: "tool_result",
         id: "tc1",
         name: "shell_exec",
@@ -485,7 +490,7 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "delegation",
         target: "code",
         source: "router",
@@ -517,30 +522,30 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "delegation",
         target: "code",
         source: "router",
         message: "委派给 code agent",
       });
-      api._emitEvent({ type: "reasoning", content: "分析中", source: "code" });
-      api._emitEvent({
+      emitEvent({ type: "reasoning", content: "分析中", source: "code" });
+      emitEvent({
         type: "tool_call",
         id: "tc1",
         name: "read_file",
         args: { path: "/tmp" },
         source: "code",
       });
-      api._emitEvent({
+      emitEvent({
         type: "tool_result",
         id: "tc1",
         name: "read_file",
         result: "content",
         source: "code",
       });
-      api._emitEvent({ type: "token", data: "最终" });
-      api._emitEvent({ type: "token", data: "回答" });
-      api._emitEvent({ type: "done" });
+      emitEvent({ type: "token", data: "最终" });
+      emitEvent({ type: "token", data: "回答" });
+      emitEvent({ type: "done" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -580,7 +585,7 @@ describe("useChatStream part 分发", () => {
 
     // todo_update 创建任务
     act(() => {
-      api._emitEvent({
+      emitEvent({
         type: "todo_update",
         todos: [{ text: "step1", done: false }],
       });
@@ -590,7 +595,7 @@ describe("useChatStream part 分发", () => {
 
     // approval_request 写入 store
     act(() => {
-      api._emitApproval({
+      emitApproval({
         threadId: "t-1",
         toolName: "shell_exec",
         args: {},
@@ -601,7 +606,7 @@ describe("useChatStream part 分发", () => {
 
     // error 写入 errorMsg
     act(() => {
-      api._emitEvent({ type: "error", data: "失败" });
+      emitEvent({ type: "error", data: "失败" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("失败");
     expect(useChatStore.getState().isStreaming).toBe(false);

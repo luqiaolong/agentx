@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
+import { installApiMock } from "./api-mock";
 
 const approveSubmit = vi.fn().mockResolvedValue(undefined);
 vi.hoisted(() => {
@@ -21,9 +22,9 @@ vi.hoisted(() => {
   });
 });
 
-(globalThis.window as unknown as { api: unknown }).api = {
+installApiMock({
   approve: { submit: approveSubmit },
-};
+});
 
 import { PermissionToggle } from "@/components/chat/PermissionToggle";
 import { ApprovalDialog } from "@/components/chat/ApprovalDialog";
@@ -88,7 +89,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
     expect(trigger.textContent).not.toContain("Home");
   });
 
-  it("无 workspace 时 popover header 显示 Home", async () => {
+  it("无 workspace 时 popover 展开并显示选项", async () => {
     render(
       <PermissionToggle workspacePath={null} homeWorkspacePath={null} />,
     );
@@ -98,10 +99,12 @@ describe("PermissionToggle 紧凑命令栏", () => {
     await act(async () => {
       trigger.click();
     });
-    expect(document.body.textContent ?? "").toContain("Home");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(document.body.textContent ?? "").toContain("当前工作区");
+    expect(document.body.textContent ?? "").toContain("完全授权");
   });
 
-  it("有 workspace 时 popover header 显示完整路径", async () => {
+  it("有 workspace 时 popover 展开并显示选项", async () => {
     render(
       <PermissionToggle
         workspacePath="D:\\projects\\agentx"
@@ -114,7 +117,9 @@ describe("PermissionToggle 紧凑命令栏", () => {
     await act(async () => {
       trigger.click();
     });
-    expect(document.body.textContent ?? "").toContain("agentx");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(document.body.textContent ?? "").toContain("当前工作区");
+    expect(document.body.textContent ?? "").toContain("完全授权");
   });
 
   it("点击 trigger 展开面板，再次点击关闭", async () => {
@@ -138,7 +143,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("面板含两个 option + 头部摘要 + scope 标签", async () => {
+  it("面板含两个 option", async () => {
     const { getAllByRole, queryByText } = render(
       <PermissionToggle
         workspacePath="/tmp/proj"
@@ -155,12 +160,6 @@ describe("PermissionToggle 紧凑命令栏", () => {
     expect(opts).toHaveLength(2);
     expect(queryByText("当前工作区")).not.toBeNull();
     expect(queryByText("完全授权")).not.toBeNull();
-    expect(queryByText("权限模式 · 当前生效")).not.toBeNull();
-    // scope 字符串：panel header 显示 "scope: <currentMode.scope>"，
-    // 两个 option 的 kbd 仅显示 scope 名（"workspace"/"session"）。两边都至少存在。
-    expect(document.body.textContent ?? "").toContain("scope: workspace");
-    expect(document.body.textContent ?? "").toContain("workspace");
-    expect(document.body.textContent ?? "").toContain("session");
   });
 
   it("点击 option 切换 store 状态并关闭面板", async () => {

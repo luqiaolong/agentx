@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installApiMock } from "./api-mock";
 
 // vitest jsdom 的 localStorage 在该环境下 setItem 不可用（--localstorage-file 路径无效），
 // 而 zustand persist 会在 store 模块导入时即捕获 storage，故在导入 store 之前替换为内存版。
@@ -875,12 +876,12 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
   beforeEach(() => {
     authorizeMock = vi.fn().mockResolvedValue(undefined);
     revokeMock = vi.fn().mockResolvedValue(undefined);
-    (globalThis.window as unknown as { api: unknown }).api = {
+    installApiMock({
       sandbox: {
         authorize: authorizeMock,
         revoke: revokeMock,
       },
-    };
+    });
   });
 
   // ---- createSession ----

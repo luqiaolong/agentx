@@ -17,63 +17,61 @@
  * `vi.waitFor`（vitest 内置），其内部用 `getSafeTimers()` 绕开 fake timers。
  *
  * 测试结构（mock 形状、用例列表、断言）保持与任务原文一致。
+ *
+ * Tauri 迁移：`logs.read` 现在通过 `invoke("logs_read", { date, maxLines })`
+ * 调用。使用 `installApiMock` 安装路由，mockApi.logs.read 为 vi.fn。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 import { LogViewer } from "@/components/settings/LogViewer";
+import { installApiMock } from "./api-mock";
 
-declare global {
-  // eslint-disable-next-line no-var
-  var api:
-    | {
-        logs: { read: (date?: string, maxLines?: number) => Promise<string[]> };
-      }
-    | undefined;
-}
+const logsRead = vi.fn();
 
 describe("LogViewer 轮询", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    window.api = {
-      logs: { read: vi.fn().mockResolvedValue(["[12:00:00] line 1"]) },
-    };
+    logsRead.mockReset();
+    logsRead.mockResolvedValue(["[12:00:00] line 1"]);
+    installApiMock({
+      logs: { read: logsRead },
+    });
   });
   afterEach(() => {
     vi.useRealTimers();
-    window.api = undefined as unknown as typeof window.api;
   });
 
   it("挂载后立即拉一次日志", async () => {
     render(<LogViewer />);
     await vi.waitFor(() => {
-      expect(window.api!.logs.read).toHaveBeenCalledTimes(1);
+      expect(logsRead).toHaveBeenCalledTimes(1);
     });
   });
 
   it("每 2 秒拉一次", async () => {
     render(<LogViewer />);
     await vi.waitFor(() => {
-      expect(window.api!.logs.read).toHaveBeenCalledTimes(1);
+      expect(logsRead).toHaveBeenCalledTimes(1);
     });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    expect(window.api!.logs.read).toHaveBeenCalledTimes(2);
+    expect(logsRead).toHaveBeenCalledTimes(2);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    expect(window.api!.logs.read).toHaveBeenCalledTimes(3);
+    expect(logsRead).toHaveBeenCalledTimes(3);
   });
 
   it("卸载后停止轮询", async () => {
     const { unmount } = render(<LogViewer />);
     await vi.waitFor(() => {
-      expect(window.api!.logs.read).toHaveBeenCalledTimes(1);
+      expect(logsRead).toHaveBeenCalledTimes(1);
     });
     unmount();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000);
     });
-    expect(window.api!.logs.read).toHaveBeenCalledTimes(1);
+    expect(logsRead).toHaveBeenCalledTimes(1);
   });
 });

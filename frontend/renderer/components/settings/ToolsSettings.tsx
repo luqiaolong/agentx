@@ -14,6 +14,8 @@ import {
   EyeOff,
 } from "lucide-react";
 import type { ToolsConfig } from "@/lib/utils";
+import { getApiKey, setApiKey, getToolsConfig, setToolsConfig } from "@/lib/api/settings";
+import { reloadBackendConfig } from "@/lib/api/app";
 
 // 工具元信息：键名与 backend/app/config.py _ALL_TOOLS 保持一致
 interface ToolMeta {
@@ -124,7 +126,7 @@ export function ToolsSettings() {
 
   const loadTavily = useCallback(async () => {
     try {
-      const key = await window.api.settings.getApiKey("tavily");
+      const key = await getApiKey("tavily");
       setTavilyConfigured(typeof key === "string" && key.length > 0);
     } catch {
       setTavilyConfigured(false);
@@ -134,7 +136,7 @@ export function ToolsSettings() {
   useEffect(() => {
     void (async () => {
       try {
-        const cfg = await window.api.settings.getToolsConfig();
+        const cfg = await getToolsConfig();
         setConfig(cfg);
       } catch {
         // 后端未就绪时保留默认值
@@ -150,13 +152,13 @@ export function ToolsSettings() {
     const key = tavilyKey.trim();
     if (!key) return;
     try {
-      await window.api.settings.setApiKey("tavily", key);
+      await setApiKey("tavily", key);
       setTavilyConfigured(true);
       setTavilyKey("");
       setTavilySaved(true);
       window.setTimeout(() => setTavilySaved(false), 2000);
       // 热更新后端配置（tavily_api_key），无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : String(e));
     }
@@ -171,9 +173,9 @@ export function ToolsSettings() {
   const save = async (): Promise<void> => {
     setErrMsg(null);
     try {
-      await window.api.settings.setToolsConfig(config);
+      await setToolsConfig(config);
       // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (e) {

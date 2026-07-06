@@ -9,6 +9,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
+import { workspace } from "@/lib/api/http";
+import { revealInFolder } from "@/lib/api/shell";
 
 interface Entry {
   name: string;
@@ -58,7 +60,7 @@ function TreeNode({
     if (hasLoaded.current) return;
     setLoading(true);
     try {
-      const { entries: list } = await window.api.workspace.list(
+      const { entries: list } = await workspace.list(
         fullPath,
         currentId ?? undefined,
       );
@@ -86,7 +88,7 @@ function TreeNode({
 
   const reveal = async () => {
     try {
-      await window.api.shell.revealInFolder(fullPath);
+      await revealInFolder(fullPath);
     } catch {
       /* ignore */
     }
@@ -200,7 +202,7 @@ export function FileTree() {
     setLoading(true);
     setErr(null);
     try {
-      const { entries: list } = await window.api.workspace.list(
+      const { entries: list } = await workspace.list(
         rootPath,
         currentId ?? undefined,
       );

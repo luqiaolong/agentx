@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2 } from "lucide-react";
+import { onPythonStatus } from "@/lib/api/events";
+import {
+  minimize,
+  maximize,
+  close,
+  isMaximized as isWindowMaximized,
+  onMaximizedChange,
+} from "@/lib/api/window";
+import { getHomeWorkspaceDir, restartBackend } from "@/lib/api/app";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
 import { ChatView } from "./components/chat/ChatView";
 import { SessionList } from "./components/chat/SessionList";
@@ -36,11 +45,11 @@ export default function App() {
 
   // 订阅 Python 后端启动状态
   useEffect(() => {
-    const unsub = window.api.python.onStatus((status) => {
+    const promise = onPythonStatus((status) => {
       setPythonStatus(status as PythonStatus);
     });
     return () => {
-      unsub();
+      void promise.then((unlisten) => unlisten());
     };
   }, []);
 
@@ -57,8 +66,7 @@ export default function App() {
   // 拉取 Home workspace 路径（桌面目录）并写入 chat store，供 SessionList 分组 + ChatComposer tooltip 使用
   useEffect(() => {
     let mounted = true;
-    void window.api.app
-      .getHomeWorkspaceDir()
+    void getHomeWorkspaceDir()
       .then((p) => {
         if (mounted && typeof p === "string" && p.length > 0) {
           useChatStore.getState().setHomeWorkspacePath(p);
@@ -75,13 +83,13 @@ export default function App() {
   // 订阅窗口最大化状态
   useEffect(() => {
     let mounted = true;
-    void window.api.window.isMaximized().then((v) => {
+    void isWindowMaximized().then((v) => {
       if (mounted) setIsMaximized(v);
     });
-    const unsub = window.api.window.onMaximizedChange((v) => setIsMaximized(v));
+    const promise = onMaximizedChange((v) => setIsMaximized(v));
     return () => {
       mounted = false;
-      unsub();
+      void promise.then((unlisten) => unlisten());
     };
   }, []);
 
@@ -93,7 +101,7 @@ export default function App() {
       {/* 顶部导航 —— 自定义标题栏（无边框窗口下替代原生标题栏） */}
       <header
         className="glass-card z-30 flex h-10 shrink-0 select-none items-center justify-between border-b border-default px-3 app-drag-region"
-        onDoubleClick={() => void window.api.window.maximize()}
+        onDoubleClick={() => void maximize()}
       >
         <div className="flex items-center gap-2">
           <div
@@ -151,14 +159,14 @@ export default function App() {
           {/* 窗口控制按钮 */}
           <div className="ml-1 flex items-center">
             <WindowControlButton
-              onClick={() => void window.api.window.minimize()}
+              onClick={() => void minimize()}
               aria-label="最小化"
               title="最小化"
             >
               <Minus className="h-3.5 w-3.5" strokeWidth={2} />
             </WindowControlButton>
             <WindowControlButton
-              onClick={() => void window.api.window.maximize()}
+              onClick={() => void maximize()}
               aria-label={isMaximized ? "还原" : "最大化"}
               title={isMaximized ? "还原" : "最大化"}
             >
@@ -169,7 +177,7 @@ export default function App() {
               )}
             </WindowControlButton>
             <WindowControlButton
-              onClick={() => void window.api.window.close()}
+              onClick={() => void close()}
               aria-label="关闭"
               title="关闭"
               hoverColor="hover:bg-rose-500 hover:text-white"
@@ -231,7 +239,7 @@ export default function App() {
             <div className="mb-4 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>请查看日志以排查问题</div>
             <button
               type="button"
-              onClick={() => void window.api.app.restartBackend()}
+              onClick={() => void restartBackend()}
               className="btn-primary w-full"
             >
               重启后端

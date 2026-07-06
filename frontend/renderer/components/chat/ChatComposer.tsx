@@ -21,6 +21,7 @@ import { usePermissionStore } from "@/stores/permission";
 import { PermissionToggle } from "./PermissionToggle";
 import { ModelToggle } from "./ModelToggle";
 import { ModeToggle } from "./ModeToggle";
+import { openFile, openFolder, saveDroppedFile } from "@/lib/api/dialog";
 
 /**
  * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）。
@@ -254,7 +255,7 @@ export function ChatComposer({
   // 若当前无 thread，则先创建会话；授权失败走 dropError 通道统一展示。
   const handleAttachWorkspace = async () => {
     setDropError(null);
-    const result = (await window.api.dialog.openFolder()) as
+    const result = (await openFolder()) as
       | { canceled?: boolean; filePaths?: string[] }
       | undefined;
     if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
@@ -296,7 +297,7 @@ export function ChatComposer({
   const handleAttachFile = async () => {
     setDropError(null);
     try {
-      const result = (await window.api.dialog.openFile({
+      const result = (await openFile({
         properties: ["openFile", "multiSelections"],
       })) as { canceled?: boolean; filePaths?: string[] } | undefined;
       const filePaths = result?.filePaths ?? [];
@@ -307,7 +308,7 @@ export function ChatComposer({
         const filePath = filePaths[i]!;
         const fileName = fileNames[i]!;
         try {
-          const relPath = await window.api.dialog.saveDroppedFile(filePath, fileName);
+          const relPath = await saveDroppedFile(filePath, fileName);
           setInput((s) => `${s}<file>${relPath}</file> `);
         } catch (err) {
           setDropError(
@@ -340,7 +341,7 @@ export function ChatComposer({
     for (const file of files) {
       try {
         const filePath = (file as File & { path: string }).path;
-        const relPath = await window.api.dialog.saveDroppedFile(filePath, file.name);
+        const relPath = await saveDroppedFile(filePath, file.name);
         setInput((s) => `${s}<file>${relPath}</file> `);
       } catch (err) {
         setDropError(

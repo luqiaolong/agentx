@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { BrowserRouter } from "react-router-dom";
 import App from "@/App";
 import { useSceneStore } from "@/stores/scene";
+import { installApiMock } from "./api-mock";
 
 // persist 会在模块导入时捕获 storage，必须在 import 前替换（同 scene.test.ts / settings.test.ts）。
 vi.hoisted(() => {
@@ -148,7 +149,7 @@ const mockApi = {
 };
 
 beforeAll(() => {
-  (globalThis.window as unknown as { api: unknown }).api = mockApi;
+  installApiMock(mockApi);
 });
 
 beforeEach(() => {

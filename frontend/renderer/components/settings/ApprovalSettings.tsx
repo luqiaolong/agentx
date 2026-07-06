@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Save, Check } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
+import { getApprovalConfig, setApprovalConfig } from "@/lib/api/settings";
+import { reloadBackendConfig } from "@/lib/api/app";
 
 const BYTES_PER_MB = 1024 * 1024;
 
@@ -26,7 +28,7 @@ export function ApprovalSettings() {
   useEffect(() => {
     void (async () => {
       try {
-        const cfg = await window.api.settings.getApprovalConfig();
+        const cfg = await getApprovalConfig();
         setApprovalMaxWait(cfg.approvalMaxWait ?? 0);
         // 用后端值同步前端缓存，避免两边漂移
         if (typeof cfg.autoApproveAfterSeconds === "number") {
@@ -48,13 +50,13 @@ export function ApprovalSettings() {
     setMaxUploadBytes(bytes);
     try {
       // 三个字段全部写入 electron-store，后端从 getApprovalConfig() 读取
-      await window.api.settings.setApprovalConfig({
+      await setApprovalConfig({
         autoApproveAfterSeconds,
         approvalMaxWait,
         maxUploadBytes: bytes,
       });
       // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {

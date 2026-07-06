@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { skills as skillsApi } from "@/lib/api/http";
 
 export interface SkillSummary {
   name: string;
@@ -22,7 +23,7 @@ export const useSkillsStore = create<SkillsState>()((set) => ({
   fetchSkills: async () => {
     set({ loading: true, error: null });
     try {
-      const { skills } = await window.api.skills.list();
+      const { skills } = await skillsApi.list();
       set({ skills, loading: false });
     } catch (e) {
       set({

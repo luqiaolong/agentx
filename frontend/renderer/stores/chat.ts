@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
 import type { ApprovalRequest } from "../../shared/api-types";
+import { sandbox, memory } from "@/lib/api/http";
 
 /**
  * parts-based 消息模型（chat-rendering-trace-v2 D3）。
@@ -485,7 +486,7 @@ export const useChatStore = create<ChatState>()(
           if (workspacePath) {
             const sess = get().sessions[id];
             if (sess && !sess.manuallyRevokedPaths.includes(workspacePath)) {
-              window.api?.sandbox?.authorize?.(id, workspacePath, true, "chip")?.catch?.(() => {});
+              sandbox.authorize(id, workspacePath, true, "chip").catch(() => {});
             }
           }
           return id;
@@ -541,14 +542,14 @@ export const useChatStore = create<ChatState>()(
           if (workspacePath) {
             const sess = get().sessions[id];
             if (sess && !sess.manuallyRevokedPaths.includes(workspacePath)) {
-              window.api?.sandbox?.authorize?.(id, workspacePath, true, "chip")?.catch?.(() => {});
+              sandbox.authorize(id, workspacePath, true, "chip").catch(() => {});
             }
           }
         },
 
         revokeAndMark: async (sessionId, path) => {
           // 先调后端 revoke
-          await window.api.sandbox.revoke(sessionId, path);
+          await sandbox.revoke(sessionId, path);
           // 再写入 manuallyRevokedPaths
           set((s) => {
             const sess = s.sessions[sessionId];
@@ -567,7 +568,7 @@ export const useChatStore = create<ChatState>()(
 
         authorizeAndUnmark: async (sessionId, path, writable = true) => {
           // 先调后端 authorize（source=manual）
-          await window.api.sandbox.authorize(sessionId, path, writable, "manual");
+          await sandbox.authorize(sessionId, path, writable, "manual");
           // 再从 manuallyRevokedPaths 移除
           set((s) => {
             const sess = s.sessions[sessionId];
@@ -853,7 +854,7 @@ export const useChatStore = create<ChatState>()(
           // 导致 LangGraph INVALID_CHAT_HISTORY（best-effort，失败不阻塞前端）
           if (cid) {
             try {
-              window.api.memory.deleteThread(cid).catch(() => {
+              memory.deleteThread(cid).catch(() => {
                 /* 后端不可用或 thread 不存在时静默忽略 */
               });
             } catch {

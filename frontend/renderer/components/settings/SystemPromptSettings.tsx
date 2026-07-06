@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Save, Check } from "lucide-react";
+import { getSystemPrompt, setSystemPrompt } from "@/lib/api/settings";
+import { reloadBackendConfig } from "@/lib/api/app";
 
 export function SystemPromptSettings() {
   const [value, setValue] = useState("");
@@ -9,7 +11,7 @@ export function SystemPromptSettings() {
   useEffect(() => {
     void (async () => {
       try {
-        const prompt = await window.api.settings.getSystemPrompt();
+        const prompt = await getSystemPrompt();
         setValue(prompt ?? "");
       } catch {
         // ignore
@@ -20,9 +22,9 @@ export function SystemPromptSettings() {
   const save = async () => {
     setError(null);
     try {
-      await window.api.settings.setSystemPrompt(value);
+      await setSystemPrompt(value);
       // 热更新后端配置，无需重启
-      await window.api.app.reloadBackendConfig();
+      await reloadBackendConfig();
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
     } catch (err) {
