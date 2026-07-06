@@ -52,7 +52,7 @@
   --text-3xs: 0.625rem;    /* 10px — badges, timestamps, meta */
   --text-2xs: 0.6875rem;   /* 11px — section headers, labels */
   --text-xs:  0.75rem;     /* 12px — secondary text, descriptions */
-  --text-sm:  0.9375rem;    /* 15px — body text, list items, messages */
+  --text-sm:  0.875rem;     /* 14px — body text, list items, messages (Qoder-style) */
   --text-base: 1rem;        /* 16px — composer input, primary actions */
   --text-lg:  1.125rem;     /* 18px — modal titles, emphasized headings */
   --text-xl:  1.25rem;      /* 20px — only for hero/empty states */

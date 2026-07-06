@@ -81,8 +81,8 @@ export function ReasoningBlock({
   // 流式时显示「思考中…」+ 跳动圆点
   if (!done && text.length === 0) {
     return (
-      <div className="flex items-center gap-1.5 rounded-md bg-muted-c/10 px-2.5 py-1.5 text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
-        <Brain className="h-3 w-3" />
+      <div className="flex items-center gap-1.5 rounded-md bg-muted-c/5 px-2 py-1 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+        <Brain className="h-2.5 w-2.5" />
         <span>思考中</span>
         <span className="flex gap-0.5">
           <span className="h-1 w-1 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
@@ -95,23 +95,23 @@ export function ReasoningBlock({
 
   // 完成或流式有内容：折叠卡片
   return (
-    <div className="w-full">
+    <div className="w-full rounded-md bg-muted-c/5 px-2 py-1">
       <button
         type="button"
         onClick={toggleExpanded}
-        className="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-muted-c transition-colors hover:bg-muted-c/5"
-        style={{ fontSize: 'var(--fs-msg-assist)' }}
+        className="flex w-full items-center gap-1.5 text-left text-muted-c/60 transition-colors hover:bg-muted-c/5"
+        style={{ fontSize: 'var(--fs-msg-tool)' }}
       >
-        <Brain className="h-3 w-3 shrink-0" />
+        <Brain className="h-2.5 w-2.5 shrink-0" />
         <span className="flex-1">
           {done ? `已思考 ${elapsedSec} 秒` : "思考中…"}
         </span>
         <ChevronDown
-          className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+          className={`h-2.5 w-2.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
         />
       </button>
       {expanded && text.length > 0 && (
-        <div className="w-full px-2 py-1 leading-relaxed text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
+        <div className="w-full py-1 leading-relaxed text-muted-c/50" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           <pre className="whitespace-pre-wrap font-mono">{text}</pre>
         </div>
       )}

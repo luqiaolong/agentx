@@ -64,39 +64,39 @@ export function ToolCallCard({
   const argsPreview = getArgsPreview(args);
 
   return (
-    <div className="w-full" style={{ fontSize: 'var(--fs-msg-assist)' }}>
+    <div className="w-full rounded-md bg-muted-c/5 px-2 py-1" style={{ fontSize: 'var(--fs-msg-tool)' }}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-1.5 px-2 py-0.5 text-left transition-colors hover:bg-muted-c/5"
+        className="flex w-full items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5"
       >
-        <Wrench className="h-3 w-3 shrink-0 text-muted-c" />
-        <span className="font-mono text-muted-c">{toolName}</span>
+        <Wrench className="h-2.5 w-2.5 shrink-0 text-muted-c/60" />
+        <span className="font-mono text-muted-c/70">{toolName}</span>
         {argsPreview && (
-          <span className="truncate font-mono text-muted-c/70">({argsPreview})</span>
+          <span className="truncate font-mono text-muted-c/40">({argsPreview})</span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {status === "running" && (
             <>
-              <Loader2 className="h-3 w-3 animate-spin text-amber-600 dark:text-amber-400" />
-              <span className="text-amber-600 dark:text-amber-400">运行中</span>
+              <Loader2 className="h-2.5 w-2.5 animate-spin text-amber-600/70 dark:text-amber-400/70" />
+              <span className="text-amber-600/70 dark:text-amber-400/70">运行中</span>
             </>
           )}
           {status === "complete" && (
             <>
-              <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-              <span className="text-emerald-600 dark:text-emerald-400">完成</span>
+              <Check className="h-2.5 w-2.5 text-emerald-600/70 dark:text-emerald-400/70" />
+              <span className="text-emerald-600/70 dark:text-emerald-400/70">完成</span>
             </>
           )}
           {status === "error" && (
             <>
-              <X className="h-3 w-3 text-rose-500 dark:text-rose-400" />
-              <span className="text-rose-600 dark:text-rose-400">失败</span>
+              <X className="h-2.5 w-2.5 text-rose-500/70 dark:text-rose-400/70" />
+              <span className="text-rose-600/70 dark:text-rose-400/70">失败</span>
             </>
           )}
         </span>
         <ChevronDown
-          className={`h-3 w-3 shrink-0 text-muted-c transition-transform ${expanded ? "rotate-180" : ""}`}
+          className={`h-2.5 w-2.5 shrink-0 text-muted-c/50 transition-transform ${expanded ? "rotate-180" : ""}`}
         />
       </button>
       {expanded && (
