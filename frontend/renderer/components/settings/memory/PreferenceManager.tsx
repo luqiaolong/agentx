@@ -165,10 +165,10 @@ export function PreferenceManager() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Heart className="h-3.5 w-3.5 text-muted-c" />
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+          <h4 className="font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
             用户偏好（data/config/profile.json）
           </h4>
-          <span className="rounded-full bg-subtle px-2 py-0.5 text-[10px] text-secondary-c">
+          <span className="rounded-full bg-subtle px-2 py-0.5 text-secondary-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
             {entries.length}
           </span>
         </div>
@@ -195,7 +195,7 @@ export function PreferenceManager() {
 
       {/* 自动抽取开关 */}
       <label className="flex cursor-pointer items-center justify-between rounded-lg border border-default bg-surface px-3 py-2">
-        <span className="flex items-center gap-1.5 text-xs text-secondary-c">
+        <span className="flex items-center gap-1.5 text-secondary-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
           <Sparkles className="h-3.5 w-3.5 text-brand-500" />
           对话结束后自动抽取画像
         </span>
@@ -212,14 +212,14 @@ export function PreferenceManager() {
       </label>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{errMsg}</span>
         </div>
       )}
 
       {entries.length === 0 && !draft && (
-        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
+        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>
           暂无偏好条目
         </p>
       )}
@@ -229,17 +229,18 @@ export function PreferenceManager() {
           {entries.map((entry) => (
             <li
               key={entry.key}
-              className="rounded-lg border border-default bg-surface px-2.5 py-2 text-xs"
+              className="rounded-lg border border-default bg-surface px-2.5 py-2"
+              style={{ fontSize: 'var(--fs-settings-desc)' }}
             >
               <div className="flex items-center gap-2">
                 <span className="font-mono text-secondary-c">{entry.key}</span>
-                <span className="rounded-full bg-brand-600/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-500">
+                <span className="rounded-full bg-brand-600/10 px-1.5 py-0.5 font-medium text-brand-500" style={{ fontSize: 'var(--fs-settings-badge)' }}>
                   preference
                 </span>
-                <span className="rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-muted-c">
+                <span className="rounded-full bg-subtle px-1.5 py-0.5 text-muted-c" style={{ fontSize: 'var(--fs-settings-badge)' }}>
                   {sourceLabel(entry.source)}
                 </span>
-                <span className="ml-auto text-[10px] text-muted-c">
+                <span className="ml-auto text-muted-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
                   {formatTime(entry.updated_at)}
                 </span>
                 <button
@@ -255,8 +256,9 @@ export function PreferenceManager() {
                   <>
                     <button
                       type="button"
-                      className="rounded px-1.5 py-0.5 text-[10px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                      className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
                       onClick={() => remove(entry.key)}
+                      style={{ fontSize: 'var(--fs-settings-form-hint)' }}
                     >
                       确认
                     </button>
@@ -292,7 +294,7 @@ export function PreferenceManager() {
       {draft && (
         <div className="space-y-2 rounded-lg border border-default bg-surface p-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               Key
             </label>
             <input
@@ -302,14 +304,15 @@ export function PreferenceManager() {
                 setDraft((s) => (s ? { ...s, key: e.target.value } : s))
               }
               placeholder="prefers_concise_reply"
-              className="input-field font-mono text-[11px]"
+              className="input-field font-mono"
               disabled={!draft.isNew}
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
           <div>
-            <label className="mb-1 flex items-center justify-between text-xs font-medium text-secondary-c">
+            <label className="mb-1 flex items-center justify-between font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               <span>Content</span>
-              <span className="text-[10px] text-muted-c">
+              <span className="text-muted-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
                 {draft.content.length}/{CONTENT_MAX}
               </span>
             </label>
@@ -320,11 +323,12 @@ export function PreferenceManager() {
               }
               rows={3}
               placeholder="例如：用户喜欢简洁回复、偏好中文输出..."
-              className="input-field resize-y text-[11px] leading-relaxed"
+              className="input-field resize-y leading-relaxed"
               maxLength={CONTENT_MAX}
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
-          {draftErr && <p className="text-[11px] text-rose-500">{draftErr}</p>}
+          {draftErr && <p className="text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{draftErr}</p>}
           <div className="flex items-center gap-2">
             <button type="button" onClick={saveDraft} className="btn-primary">
               <Save className="h-3.5 w-3.5" />

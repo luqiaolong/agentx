@@ -23,19 +23,19 @@ function AgentRow({ agent }: { agent: TeamAgentState }) {
 
   return (
     <div className="border-l border-default pl-2.5 py-1">
-      <div className="flex items-center gap-1.5 text-xs">
+      <div className="flex items-center gap-1.5" style={{ fontSize: 'var(--fs-msg-assist)' }}>
         {icon}
         <span className="font-medium text-primary-c">{agent.agent}</span>
         <ChevronRight className="h-2.5 w-2.5 opacity-40" />
         <span className="text-muted-c truncate">{agent.purpose}</span>
       </div>
       {agent.message && agent.status === "running" && (
-        <div className="mt-0.5 text-2xs text-muted-c/80 pl-4">
+        <div className="mt-0.5 text-muted-c/80 pl-4" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           {agent.message}
         </div>
       )}
       {agent.summary && (agent.status === "done" || agent.status === "error") && (
-        <div className="mt-0.5 text-2xs text-secondary-c pl-4 line-clamp-4 whitespace-pre-wrap">
+        <div className="mt-0.5 text-secondary-c pl-4 line-clamp-4 whitespace-pre-wrap" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           {agent.summary}
         </div>
       )}
@@ -60,14 +60,14 @@ export function TeamNodeCard({
     );
 
   return (
-    <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-2 text-xs dark:border-indigo-900/50 dark:bg-indigo-950/20">
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-2 dark:border-indigo-900/50 dark:bg-indigo-950/20" style={{ fontSize: 'var(--fs-msg-assist)' }}>
       <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-indigo-900 dark:text-indigo-200">
         {headerIcon}
         <Users className="h-3.5 w-3.5" />
         Agent Team {status === "running" ? "执行中" : status === "done" ? "已完成" : "失败"}
       </div>
       {reasoning && (
-        <div className="mb-1.5 text-2xs opacity-70 text-indigo-800 dark:text-indigo-300">
+        <div className="mb-1.5 opacity-70 text-indigo-800 dark:text-indigo-300" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           {reasoning}
         </div>
       )}
@@ -77,7 +77,7 @@ export function TeamNodeCard({
         ))}
       </div>
       {status === "done" && doneAt && (
-        <div className="mt-1 text-2xs text-muted-c/60">
+        <div className="mt-1 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           完成于 {new Date(doneAt).toLocaleTimeString()}
         </div>
       )}

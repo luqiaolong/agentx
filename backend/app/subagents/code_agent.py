@@ -80,7 +80,7 @@ def build_code_agent(thread_id: str) -> Any:
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_fs_tools(thread_id)
     kwargs: dict[str, Any] = {}
-    # 合并用户配置的 system_prompt 与 think 标签指令
+    # 合并用户配置的角色定义与 think 标签指令
     prompt = cfg.system_prompt or ""
     prompt = prompt + _THINK_PROMPT_SUFFIX
     kwargs["prompt"] = prompt

@@ -10,16 +10,16 @@ export function TodoProgress({
   return (
     <div className="mx-auto w-full max-w-3xl border-t border-default px-4 py-2.5">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-c">
+        <span className="font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
           任务进度
         </span>
-        <span className="text-xs text-muted-c">
+        <span className="text-muted-c" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
           {completedTodos}/{todos.length}
         </span>
       </div>
       <ul className="space-y-1">
         {todos.map((t, i) => (
-          <li key={i} className="flex items-start gap-2 text-xs">
+          <li key={i} className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
             <span
               className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
                 t.done ? "border-brand-500 bg-brand-500 text-white" : "border-strong"

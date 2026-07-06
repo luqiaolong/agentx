@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "child_process";
 import type { ChildProcess, SpawnOptions } from "child_process";
 import * as http from "http";
 import { appendLog } from "../logger";
-import type { CustomSubagentsMap, SubagentsConfig, ToolsConfig, McpServerConfig } from "../store";
+import type { CustomSubagentsMap, SubagentsConfig, TeamSubagentsConfig, ToolsConfig, McpServerConfig } from "../store";
 
 /**
  * 杀掉指定进程及其全部子进程。
@@ -55,6 +55,7 @@ export interface PythonCredentials {
   milvusAuthEnabled?: boolean;
   // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取
   subagentsConfig?: SubagentsConfig;
+  teamSubagentsConfig?: TeamSubagentsConfig;
   customSubagentsConfig?: CustomSubagentsMap;
   toolsConfig?: ToolsConfig;
   profileAutoExtract?: boolean;
@@ -115,6 +116,7 @@ function buildEnv(opts: PythonSpawnOptions): NodeJS.ProcessEnv {
   // T11/T12/T13 子代理 + 工具 + 用户画像自动抽取配置通过 JSON 字符串注入，
   // 后端 pydantic-settings 会用 field_validator 反序列化并与默认值字段级合并
   if (c.subagentsConfig) env.AGENTX_SUBAGENTS_CONFIG = JSON.stringify(c.subagentsConfig);
+  if (c.teamSubagentsConfig) env.AGENTX_TEAM_SUBAGENTS_CONFIG = JSON.stringify(c.teamSubagentsConfig);
   if (c.customSubagentsConfig) env.AGENTX_CUSTOM_SUBAGENTS_CONFIG = JSON.stringify(c.customSubagentsConfig);
   if (c.toolsConfig) env.AGENTX_TOOLS_CONFIG = JSON.stringify(c.toolsConfig);
   if (c.profileAutoExtract !== undefined) env.AGENTX_PROFILE_AUTO_EXTRACT = String(c.profileAutoExtract);

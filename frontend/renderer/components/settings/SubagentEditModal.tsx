@@ -14,17 +14,17 @@ const ALL_TOOLS: string[] = [
 export interface SubagentEditModalData {
   /** 内置子代理 key（"code"/"rag"/"web"）；自定义子代理为 undefined */
   builtinKey?: "code" | "rag" | "web";
+  /** 软件开发专家团角色 key；自定义子代理为 undefined */
+  teamKey?: "frontend_dev" | "backend_dev" | "tester" | "architect" | "devops" | "ui_designer" | "product_manager";
   /** 自定义子代理 key（创建后不可改）；内置子代理为 undefined */
   customKey?: string;
-  /** 显示名称（内置只读，自定义可编辑） */
+  /** 显示名称（内置/团队只读，自定义可编辑） */
   name: string;
-  /** 描述（内置只读，自定义可编辑） */
-  description: string;
   enabled: boolean;
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string;
+  triggerDescription: string;
 }
 
 interface Props {
@@ -47,27 +47,28 @@ export function SubagentEditModal({
   onSave,
 }: Props) {
   const [data, setData] = useState<SubagentEditModalData | null>(initial);
-  const [keywordText, setKeywordText] = useState("");
+  const [triggerText, setTriggerText] = useState("");
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   // 当弹窗打开/切换时同步本地状态；open 变化时总是重置，避免关闭后重新打开同一子代理时显示旧值
   useEffect(() => {
     if (open && initial) {
       setData(initial);
-      setKeywordText(initial.keywords);
+      setTriggerText(initial.triggerDescription);
       setErrMsg(null);
     } else if (!open) {
       setData(null);
-      setKeywordText("");
+      setTriggerText("");
       setErrMsg(null);
     }
   }, [open, initial]);
 
   const isBuiltin = data?.builtinKey !== undefined;
+  const isTeam = data?.teamKey !== undefined;
 
   // 校验：新建自定义时 key 必须合法且唯一
   const keyError = useMemo(() => {
-    if (!data || !isNew || isBuiltin) return null;
+    if (!data || !isNew || isBuiltin || isTeam) return null;
     const key = data.customKey?.trim() ?? "";
     if (!key) return "key 不能为空";
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(key)) {
@@ -80,7 +81,7 @@ export function SubagentEditModal({
       return `key "${key}" 与内置子代理冲突`;
     }
     return null;
-  }, [data, isNew, isBuiltin, existingCustomKeys]);
+  }, [data, isNew, isBuiltin, isTeam, existingCustomKeys]);
 
   if (!open || !data) return null;
 
@@ -107,9 +108,9 @@ export function SubagentEditModal({
     }
     onSave({
       ...data,
-      customKey: isBuiltin ? undefined : data.customKey?.trim(),
+      customKey: isBuiltin || isTeam ? undefined : data.customKey?.trim(),
       name: data.name.trim(),
-      keywords: keywordText.trim(),
+      triggerDescription: triggerText.trim(),
     });
   };
 
@@ -127,15 +128,21 @@ export function SubagentEditModal({
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-default px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-primary-c">
+            <span className="font-semibold text-primary-c" style={{ fontSize: 'var(--fs-settings-header)' }}>
               {isNew
                 ? "新建子代理"
-                : `编辑子代理：${data.name || data.builtinKey || data.customKey}`}
+                : `编辑子代理：${data.name || data.builtinKey || data.teamKey || data.customKey}`}
             </span>
             {isBuiltin && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-muted-c">
+              <span className="inline-flex items-center gap-1 rounded-full bg-subtle px-1.5 py-0.5 text-muted-c" style={{ fontSize: 'var(--fs-settings-badge)' }}>
                 <Lock className="h-2.5 w-2.5" />
                 内置
+              </span>
+            )}
+            {isTeam && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-brand-600 dark:text-brand-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
+                <Lock className="h-2.5 w-2.5" />
+                团队角色
               </span>
             )}
           </div>
@@ -152,16 +159,16 @@ export function SubagentEditModal({
         {/* 内容 */}
         <div className="space-y-3 px-4 py-3">
           {errMsg && (
-            <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+            <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
               <span>{errMsg}</span>
             </div>
           )}
 
           {/* key 字段（仅自定义子代理显示；新建时可编辑） */}
-          {!isBuiltin && (
+          {!isBuiltin && !isTeam && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-secondary-c">
+              <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
                 Key（唯一标识，{isNew ? "创建后不可修改" : "不可修改"}）
               </label>
               <input
@@ -170,11 +177,12 @@ export function SubagentEditModal({
                 onChange={(e) => update({ customKey: e.target.value })}
                 disabled={!isNew}
                 placeholder="如：my_helper"
-                className={`input-field font-mono text-[11px] ${
+                className={`input-field font-mono ${
                   !isNew ? "cursor-not-allowed opacity-60" : ""
                 }`}
+                style={{ fontSize: 'var(--fs-settings-form-input)' }}
               />
-              <p className="mt-1 text-[11px] text-muted-c">
+              <p className="mt-1 text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
                 Router 按此 key 加载自定义子代理；仅字母数字 / 下划线 / 连字符。
               </p>
             </div>
@@ -182,37 +190,24 @@ export function SubagentEditModal({
 
           {/* 名称 */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
-              名称{isBuiltin ? "（内置只读）" : ""}
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
+              名称{isBuiltin || isTeam ? "（只读）" : ""}
             </label>
             <input
               type="text"
               value={data.name}
               onChange={(e) => update({ name: e.target.value })}
-              disabled={isBuiltin}
-              className={`input-field text-xs ${
-                isBuiltin ? "cursor-not-allowed opacity-60" : ""
+              disabled={isBuiltin || isTeam}
+              className={`input-field ${
+                isBuiltin || isTeam ? "cursor-not-allowed opacity-60" : ""
               }`}
-            />
-          </div>
-
-          {/* 描述 */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
-              描述
-            </label>
-            <input
-              type="text"
-              value={data.description}
-              onChange={(e) => update({ description: e.target.value })}
-              placeholder="如：用于代码检索与文件读取"
-              className="input-field text-xs"
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
 
           {/* 启用开关 */}
           <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-secondary-c">启用</label>
+            <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>启用</label>
             <button
               type="button"
               role="switch"
@@ -228,10 +223,10 @@ export function SubagentEditModal({
           {/* 温度 */}
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs font-medium text-secondary-c">
+              <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
                 Temperature
               </label>
-              <span className="rounded-full bg-subtle px-2 py-0.5 text-[11px] font-medium text-primary-c">
+              <span className="rounded-full bg-subtle px-2 py-0.5 font-medium text-primary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
                 {data.temperature.toFixed(1)}
               </span>
             </div>
@@ -248,7 +243,7 @@ export function SubagentEditModal({
 
           {/* 系统提示词 */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               系统提示词（留空使用后端默认）
             </label>
             <textarea
@@ -256,30 +251,32 @@ export function SubagentEditModal({
               onChange={(e) => update({ systemPrompt: e.target.value })}
               rows={3}
               placeholder="对该子代理的额外指令"
-              className="input-field resize-y font-mono text-[11px] leading-relaxed"
+              className="input-field resize-y font-mono leading-relaxed"
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
 
           {/* 触发条件 — 放在系统提示词下方，作为降级路由的辅助配置 */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               触发条件
             </label>
             <textarea
-              value={keywordText}
-              onChange={(e) => setKeywordText(e.target.value)}
+              value={triggerText}
+              onChange={(e) => setTriggerText(e.target.value)}
               rows={2}
               placeholder="描述该子代理的触发场景，供LLM语义分析使用"
-              className="input-field resize-y font-mono text-[11px] leading-relaxed"
+              className="input-field resize-y font-mono leading-relaxed"
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
-            <p className="mt-1 text-[11px] text-muted-c">
+            <p className="mt-1 text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
               LLM 语义路由失败时的降级匹配条件。主路由已改为 LLM 分析子代理功能描述，此字段仅作为备用。
             </p>
           </div>
 
           {/* 工具复选框 */}
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-secondary-c">
+            <label className="mb-1.5 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               绑定工具（危险工具已禁用）
             </label>
             <div className="grid grid-cols-2 gap-1.5">
@@ -288,7 +285,8 @@ export function SubagentEditModal({
                 return (
                   <label
                     key={tool}
-                    className="flex cursor-pointer items-center gap-1.5 rounded border border-default bg-subtle/40 px-2 py-1 text-[11px] hover:bg-hover-soft"
+                    className="flex cursor-pointer items-center gap-1.5 rounded border border-default bg-subtle/40 px-2 py-1 hover:bg-hover-soft"
+                    style={{ fontSize: 'var(--fs-settings-form-label)' }}
                   >
                     <input
                       type="checkbox"

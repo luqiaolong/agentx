@@ -31,6 +31,7 @@ from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.llm import get_chat_model
 from app.paths.deep_path import run_deep_path
+from app.paths.team_path import run_team_path
 from app.router.classifier import classify_message
 from app.router.state import RouterState
 from app.subagents import run_code_agent, run_custom_agent, run_rag_agent, run_web_agent
@@ -150,13 +151,33 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 # LLM 子代理路由 system prompt
 _SUBAGENT_ROUTER_PROMPT = (
     "你是子代理路由决策器。根据用户消息，选择最合适的子代理来处理。\n\n"
-    "可用子代理及其触发条件：\n"
+    "可用子代理及其触发场景：\n"
     "{descriptions}\n\n"
     "规则：\n"
     "1. 只输出子代理名称（如 code / rag / web），不要解释\n"
-    "2. 根据每个子代理的触发条件，判断哪个最匹配用户意图\n"
+    "2. 根据每个子代理的触发场景描述，判断哪个最匹配用户意图\n"
     "3. 如果都不匹配，选 code 作为默认兜底"
 )
+
+
+def _extract_keywords_from_trigger(trigger: str) -> list[str]:
+    """从触发条件描述中提取关键词（用于降级匹配）。
+
+    策略：按中文标点、英文逗号、顿号分词，过滤短词和常见虚词。
+    """
+    if not trigger:
+        return []
+    import re
+    # 按常见分隔符拆分
+    parts = re.split(r'[，,、；;。\.\s]+', trigger)
+    keywords = []
+    stop_words = {"用户", "问题", "涉及", "需要", "获取", "相关", "时", "触发", "的", "是", "和", "或", "等", "建议", "如下", "包括", "以及", "与", "及", "如", "例如", "比如", "比如", "例如", "比如"}
+    for p in parts:
+        p = p.strip()
+        # 保留有意义的词（2-20 字符，非纯数字，非停用词）
+        if 2 <= len(p) <= 20 and not p.isdigit() and p not in stop_words:
+            keywords.append(p)
+    return keywords
 
 
 async def _llm_select_subagent(message: str) -> str | None:
@@ -169,7 +190,7 @@ async def _llm_select_subagent(message: str) -> str | None:
     subagents = settings.subagents
     tools_enabled = settings.tools_enabled
 
-    # 构建可用子代理触发条件
+    # 构建可用子代理触发场景描述
     available: list[str] = []
     for name in ("code", "rag", "web"):
         cfg = subagents[name]
@@ -177,7 +198,7 @@ async def _llm_select_subagent(message: str) -> str | None:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             continue
-        trigger = ", ".join(cfg.keywords) if cfg.keywords else ""
+        trigger = cfg.trigger_description or ""
         available.append(f"- {name}: {trigger}")
 
     custom = settings.custom_subagents
@@ -188,7 +209,7 @@ async def _llm_select_subagent(message: str) -> str | None:
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             continue
-        trigger = ", ".join(cfg.keywords) if cfg.keywords else ""
+        trigger = cfg.trigger_description or ""
         custom_available.append(f"- {key}: {trigger}")
 
     all_available = available + custom_available
@@ -247,15 +268,15 @@ async def _llm_select_subagent(message: str) -> str | None:
 
 
 def _keyword_select_subagent(message: str) -> str | None:
-    """触发条件回退：LLM 不可用时，使用触发条件描述进行简单关键词匹配。
+    """触发条件回退：LLM 不可用时，从 trigger_description 提取关键词进行匹配。
 
     Returns:
         "code" / "rag" / "web" / 自定义子代理 key / None
         - None 表示命中的子代理被禁用或工具全禁用，退回路径 A
 
     匹配优先级：
-    1. 内置子代理（web → rag → code，按触发条件描述中的关键词命中）
-    2. 自定义子代理（按 key 字典序，触发条件描述命中）
+    1. 内置子代理（web → rag → code，按 trigger_description 提取的关键词命中）
+    2. 自定义子代理（按 key 字典序，trigger_description 提取的关键词命中）
     3. 默认 code（若可用）
     """
     settings = get_settings()
@@ -267,8 +288,12 @@ def _keyword_select_subagent(message: str) -> str | None:
         cfg = subagents[agent_name]
         if not cfg.enabled:
             continue
-        # 检查触发条件描述命中（空列表不匹配任何子代理）
-        if cfg.keywords is not None and not any(kw in message for kw in cfg.keywords):
+        # 从 trigger_description 提取关键词进行匹配
+        keywords = _extract_keywords_from_trigger(cfg.trigger_description or "")
+        # keywords 为空列表（trigger_description 为空）时，不匹配任何消息（跳过）
+        if not keywords:
+            continue
+        if not any(kw in message for kw in keywords):
             continue
         # 检查绑定的工具是否全部被禁用
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
@@ -276,13 +301,17 @@ def _keyword_select_subagent(message: str) -> str | None:
             return None
         return agent_name
 
-    # 2. 自定义子代理：按 key 字典序遍历，触发条件描述命中即返回
+    # 2. 自定义子代理：按 key 字典序遍历，trigger_description 提取的关键词命中即返回
     custom = settings.custom_subagents
     for key in sorted(custom.keys()):
         cfg = custom[key]
         if not cfg.enabled:
             continue
-        if cfg.keywords is not None and not any(kw in message for kw in cfg.keywords):
+        keywords = _extract_keywords_from_trigger(cfg.trigger_description or "")
+        # keywords 为空列表（trigger_description 为空）时，不匹配任何消息（跳过）
+        if not keywords:
+            continue
+        if not any(kw in message for kw in keywords):
             continue
         if not any(tools_enabled.get(t, True) for t in cfg.tools):
             logger.warning(
@@ -663,14 +692,15 @@ async def run_router(
     checkpointer: Any = None,
     permission_mode: str = "standard",
     scene_prompt: str | None = None,
+    agent_mode: str = "agent",
 ) -> AsyncIterator[dict[str, str]]:
     """运行 Router，yield SSE 事件。
 
     流程:
     1. 解析 ``@skill:<name>`` 标记，提取 skill content（注入路径 A system prompt）
     2. 从 checkpointer 加载 ``thread_id`` 的历史 ``messages``（若提供 checkpointer）
-    3. 调 classify_message 获取分类
-    4. 按分类驱动对应路径的流式生成器，传入截断后的历史
+    3. 若 ``agent_mode == "agent_team"``，直接进入 AgentTeam 路径（路径 D）
+    4. 否则调 classify_message 获取分类，按分类驱动对应路径的流式生成器
     5. 将路径事件转为 SSE 格式（token / todo_update / approval_request / done / error）
 
     Args:
@@ -681,6 +711,7 @@ async def run_router(
             仅影响路径 C（DeepAgent）的危险工具审批与目录越界扩展授权。
         scene_prompt: 可选场景 prompt（前端场景切换器注入），非空时覆盖
             ``default_system_prompt``（路径 A/B）或 ``_DEEP_SYSTEM_PROMPT``（路径 C）。
+        agent_mode: 代理模式，"agent"（单代理，默认）或 "agent_team"（多代理协作）。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -734,7 +765,19 @@ async def run_router(
             "classification": classification,
         }
 
-        if classification == "CHAT":
+        if agent_mode == "agent_team":
+            # 路径 D：多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggregator）
+            async for sse in run_team_path(
+                cleaned_message,
+                thread_id,
+                state,
+                profile_prompt=profile_prompt,
+                history=history,
+                permission_mode=permission_mode,
+                scene_prompt=scene_prompt,
+            ):
+                yield sse
+        elif classification == "CHAT":
             # 路径 A：画像 + skill content 拼到 system prompt
             system_prompt_extra = ""
             if profile_prompt:

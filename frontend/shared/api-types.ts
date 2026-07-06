@@ -123,8 +123,7 @@ export interface SubagentConfig {
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string;
-  description: string;
+  triggerDescription: string;
 }
 
 export interface SubagentsConfig {
@@ -151,12 +150,11 @@ export interface TeamSubagentsConfig {
 export interface CustomSubagentEntry {
   key: string;
   name: string;
-  description: string;
+  systemPrompt: string;
   enabled: boolean;
   temperature: number;
-  systemPrompt: string;
   tools: string[];
-  keywords: string;
+  triggerDescription: string;
 }
 
 /** 自定义子代理 dict（key → entry）。 */
@@ -166,12 +164,11 @@ export type CustomSubagentsMap = Record<string, CustomSubagentEntry>;
 export interface CustomSubagentInput {
   key: string;
   name: string;
-  description?: string;
+  systemPrompt?: string;
   enabled?: boolean;
   temperature?: number;
-  systemPrompt?: string;
   tools?: string[];
-  keywords?: string;
+  triggerDescription?: string;
 }
 
 export interface ToolsConfig {

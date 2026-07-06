@@ -63,11 +63,12 @@ export function MemorySettings() {
               role="tab"
               aria-selected={isActive}
               onClick={() => setActive(t.id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium transition-colors ${
                 isActive
                   ? "bg-brand-600/10 text-brand-500"
                   : "text-secondary-c hover:bg-hover-soft hover:text-primary-c"
               }`}
+              style={{ fontSize: 'var(--fs-settings-nav)' }}
             >
               <t.Icon className="h-3.5 w-3.5" />
               {t.label}
@@ -76,7 +77,7 @@ export function MemorySettings() {
         })}
       </div>
 
-      <p className="text-[11px] text-muted-c">{activeTab.desc}</p>
+      <p className="text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>{activeTab.desc}</p>
 
       {active === "sessions" && <SessionManager />}
       {active === "profile" && <ProfileManager />}

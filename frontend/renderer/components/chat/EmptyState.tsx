@@ -9,14 +9,14 @@ export function EmptyState() {
       >
         <Sparkles className="h-7 w-7" style={{ color: "#4f46e5" }} />
       </div>
-      <h2 className="mb-1.5 text-lg font-semibold text-primary-c">开始与 Agent 对话</h2>
-      <p className="mb-5 max-w-sm text-sm text-muted-c">
+      <h2 className="mb-1.5 font-semibold text-primary-c" style={{ fontSize: 'var(--fs-msg-heading)' }}>开始与 Agent 对话</h2>
+      <p className="mb-5 max-w-sm text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
         输入{" "}
-        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/</code>{" "}
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-accent-500" style={{ fontSize: 'var(--fs-msg-code)' }}>/</code>{" "}
         调命令与技能，
-        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">@</code>{" "}
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-accent-500" style={{ fontSize: 'var(--fs-msg-code)' }}>@</code>{" "}
         附文件，输入{" "}
-        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-xs text-accent-500">/help</code>{" "}
+        <code className="rounded bg-subtle px-1.5 py-0.5 font-mono text-accent-500" style={{ fontSize: 'var(--fs-msg-code)' }}>/help</code>{" "}
         查看所有命令。
       </p>
       <div className="grid grid-cols-1 gap-2 text-left sm:grid-cols-2">
@@ -32,8 +32,8 @@ export function EmptyState() {
 function ExampleCard({ title, desc }: { title: string; desc: string }) {
   return (
     <div className="card cursor-pointer p-3 transition-colors hover:bg-hover-soft">
-      <div className="mb-0.5 text-xs font-semibold text-primary-c">{title}</div>
-      <div className="text-xs text-muted-c">{desc}</div>
+      <div className="mb-0.5 font-semibold text-primary-c" style={{ fontSize: 'var(--fs-card-title)' }}>{title}</div>
+      <div className="text-muted-c" style={{ fontSize: 'var(--fs-card-desc)' }}>{desc}</div>
     </div>
   );
 }

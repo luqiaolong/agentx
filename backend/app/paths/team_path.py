@@ -46,7 +46,7 @@ _BASE_EXPERTS = (
     "- deep: 执行需要写文件、编辑文件或系统命令的危险任务（会走审批）。\n"
 )
 
-# 软件开发团队角色（coding 场景下可用）
+# 软件开发专家团角色（coding 场景下可用）
 _TEAM_EXPERTS = (
     "- frontend_dev: 前端开发专家，擅长 React/Vue/HTML/CSS/JS/TS、组件开发、前端性能优化。\n"
     "- backend_dev: 后端开发专家，擅长 Python/Java/Go/Node.js、API 设计、数据库、业务逻辑。\n"
@@ -123,8 +123,10 @@ _SUBTASK_DONE_EVENT = "_subtask_done"
 
 # deep 子任务中需要实时透传到前端的事件类型
 # approval_request 必须直达前端，否则 DeepAgent 审批流会死锁
+# tool_result 必须透传，否则前端 tool_call 配对断裂
+# reasoning 透传供前端展示 deep 子任务的思考过程
 _PASSTHROUGH_EVENTS: frozenset[str] = frozenset(
-    {"approval_request", "todo_update", "delegation", "tool_call"}
+    {"approval_request", "todo_update", "delegation", "tool_call", "tool_result", "reasoning"}
 )
 
 
@@ -321,12 +323,17 @@ async def _run_subtask(
     scene_prompt: str | None,
     state: RouterState,
     profile_prompt: str,
+    task_index: int = 0,
 ) -> AsyncIterator[dict[str, str]]:
     """执行单个子任务，流式产出透传事件，最后产出 _subtask_done 哨兵。
 
     deep 子任务复用 DeepAgent 路径，其 approval_request / todo_update /
     delegation / tool_call 事件必须实时透传到前端——否则审批流会死锁。
     其余子代理（code/rag/web/custom）只产出文本与工具痕迹，无需透传。
+
+    Args:
+        task_index: 子任务序号，用于为 deep 子任务生成独立 thread_id，
+            避免并行 deep 子任务共享 checkpoint 与审批流冲突。
     """
     agent_name = task.agent
     input_text = task.input
@@ -341,9 +348,11 @@ async def _run_subtask(
         )
 
     if agent_name == "deep":
-        # deep 子任务复用 DeepAgent 路径，会走 interrupt_before 审批
+        # deep 子任务使用独立 thread_id，避免并行 deep 子任务共享 checkpoint
+        # 与 _pending_approvals 审批流冲突
+        deep_thread_id = f"{thread_id}-team-deep-{task_index}"
         deep_state: RouterState = {
-            "thread_id": thread_id,
+            "thread_id": deep_thread_id,
             "messages": [{"role": "user", "content": input_text}],
         }
         try:
@@ -360,17 +369,19 @@ async def _run_subtask(
                 if etype == "token":
                     collected_text.append(str(data))
                 elif etype == "tool_result":
+                    # 收集工具痕迹用于 summary，同时透传到前端（配对 tool_call）
                     try:
                         obj = json.loads(data) if isinstance(data, str) else data
                         if isinstance(obj, dict):
                             tool_traces.append(f"{obj.get('name', '?')}: {str(obj.get('result', ''))[:200]}")
                     except Exception:  # noqa: BLE001
                         pass
+                    yield event
                 elif etype == "error":
                     yield _done(False, f"deep 子任务失败: {data}")
                     return
                 elif etype in _PASSTHROUGH_EVENTS:
-                    # 透传审批/委派/工具事件到前端
+                    # 透传审批/委派/工具/推理事件到前端
                     yield event
         except Exception as exc:  # noqa: BLE001
             yield _done(False, f"deep 子任务异常: {exc}")
@@ -384,20 +395,33 @@ async def _run_subtask(
     elif agent_name == "web":
         async for event in run_web_agent(thread_id, input_text, history=history):
             _collect_event(event, collected_text, tool_traces)
-    # 软件开发团队角色：复用 code_agent 但注入角色专属 system_prompt
+    # 软件开发专家团角色：用 custom_agent 工厂构建专属 agent，复用 astream_events 事件流
     elif agent_name in ("frontend_dev", "backend_dev", "tester", "architect", "devops", "ui_designer", "product_manager"):
         cfg = get_settings().team_subagents.get(agent_name)
         if cfg and cfg.system_prompt:
-            # 使用 custom_agent 工厂，传入角色专属 system_prompt
+            # MUST 传 thread_id：_make_custom_tools 用 thread_id 绑定沙箱授权
             from app.subagents.custom_agent import build_custom_agent
             agent = build_custom_agent(
                 key=agent_name,
+                thread_id=thread_id,
                 system_prompt=cfg.system_prompt,
                 tools=cfg.tools,
                 temperature=cfg.temperature,
             )
-            async for event in agent(thread_id, input_text, history=history):
-                _collect_event(event, collected_text, tool_traces)
+            history_msgs = list(history) if history else []
+            inputs = {"messages": [*history_msgs, {"role": "user", "content": input_text}]}
+            async for event in agent.astream_events(inputs, version="v2"):
+                kind = event["event"]
+                ename = event.get("name", "")
+                edata = event.get("data", {}) or {}
+                if kind == "on_chat_model_stream":
+                    content = extract_chunk_text(edata.get("chunk"), strip=False)
+                    if content:
+                        collected_text.append(content)
+                elif kind == "on_tool_start":
+                    tool_traces.append(f"{ename}: {str(edata.get('input', ''))[:200]}")
+                elif kind == "on_tool_end":
+                    tool_traces.append(f"{ename}: {str(edata.get('output', ''))[:200]}")
         else:
             # 无专属配置时降级到 code_agent
             async for event in run_code_agent(thread_id, input_text, history=history):
@@ -584,11 +608,22 @@ async def run_team_path(
     """
     settings = get_settings()
 
-    # 触发门槛：简单任务降级提示（实际降级由调用方 graph.py 决定，
-    # 这里只发 warning 事件供调试）
+    # 简单任务降级：短消息 / 问候 / 翻译等无需 team 协作，直接走 chat 路径
+    # 避免浪费 Orchestrator + Aggregator 两次 LLM 调用
     downgrade, reason = _should_downgrade_to_single(message)
     if downgrade:
-        logger.info("team downgrade to single", reason=reason, message_len=len(message))
+        logger.info("team downgrade to chat", reason=reason, message_len=len(message))
+        # 延迟 import 避免循环依赖（graph.py 顶层 import team_path）
+        from app.router.graph import _run_chat_path
+        async for sse in _run_chat_path(
+            message,
+            thread_id,
+            system_prompt_extra=profile_prompt or None,
+            history=history,
+            scene_prompt=scene_prompt,
+        ):
+            yield sse
+        return
 
     max_tasks = settings.agent_team_max_tasks
     max_parallel = settings.agent_team_max_parallel
@@ -649,7 +684,7 @@ async def run_team_path(
         queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
         semaphore = asyncio.Semaphore(max_parallel)
 
-        async def _runner(t: TeamPlanTask) -> None:
+        async def _runner(t: TeamPlanTask, idx: int) -> None:
             async with semaphore:
                 # 实际开始执行时才发 running
                 await queue.put(
@@ -660,7 +695,8 @@ async def run_team_path(
                 )
                 try:
                     async for ev in _run_subtask(
-                        t, thread_id, history, permission_mode, scene_prompt, state, profile_prompt
+                        t, thread_id, history, permission_mode, scene_prompt, state, profile_prompt,
+                        task_index=idx,
                     ):
                         await queue.put(ev)
                 except Exception as exc:  # noqa: BLE001
@@ -675,7 +711,9 @@ async def run_team_path(
                         )
                     )
 
-        runner_tasks = [asyncio.create_task(_runner(t)) for t in valid_tasks]
+        runner_tasks = [
+            asyncio.create_task(_runner(t, idx)) for idx, t in enumerate(valid_tasks)
+        ]
 
         results: dict[str, TeamSubtaskResult] = {}
         done_count = 0

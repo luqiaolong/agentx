@@ -71,7 +71,7 @@ export function SessionManager() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Database className="h-3.5 w-3.5 text-muted-c" />
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+          <h4 className="font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
             会话状态（data/agentx.db）
           </h4>
         </div>
@@ -86,7 +86,7 @@ export function SessionManager() {
         </button>
       </div>
 
-      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/40 px-3 py-2 text-[11px]">
+      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/40 px-3 py-2" style={{ fontSize: 'var(--fs-settings-desc)' }}>
         <HardDrive className="h-3.5 w-3.5 text-brand-500" />
         <span className="text-secondary-c">数据库大小：</span>
         <span className="font-mono text-primary-c">{formatSize(dbSize)}</span>
@@ -94,14 +94,14 @@ export function SessionManager() {
       </div>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{errMsg}</span>
         </div>
       )}
 
       {threads.length === 0 ? (
-        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
+        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>
           暂无会话状态数据
         </p>
       ) : (
@@ -109,11 +109,12 @@ export function SessionManager() {
           {threads.map((t) => (
             <li
               key={t.thread_id}
-              className="flex items-center gap-2 rounded-lg border border-default bg-surface px-2.5 py-1.5 text-xs"
+              className="flex items-center gap-2 rounded-lg border border-default bg-surface px-2.5 py-1.5"
+              style={{ fontSize: 'var(--fs-settings-desc)' }}
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate font-mono text-secondary-c">{t.thread_id}</div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-c">
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
                   <span>{t.checkpoint_count} 个 checkpoint</span>
                   <span>·</span>
                   <span>{formatSize(t.size_bytes)}</span>
@@ -125,8 +126,9 @@ export function SessionManager() {
                 <>
                   <button
                     type="button"
-                    className="rounded px-1.5 py-0.5 text-[10px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                    className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
                     onClick={() => remove(t.thread_id)}
+                    style={{ fontSize: 'var(--fs-settings-form-hint)' }}
                   >
                     确认
                   </button>

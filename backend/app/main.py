@@ -263,6 +263,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="可选场景 prompt；非空时覆盖 default_system_prompt（场景切换器注入）",
     )
+    agent_mode: str = Field(
+        default="agent",
+        description='代理模式：agent（单代理，默认）或 agent_team（多代理协作）',
+    )
 
 
 class SkillSaveRequest(BaseModel):
@@ -339,6 +343,7 @@ class ConfigReloadRequest(BaseModel):
     default_system_prompt: str | None = None
     # 子代理 + 工具 + 用户画像
     subagents_config: dict[str, Any] | None = None
+    team_subagents_config: dict[str, Any] | None = None
     custom_subagents_config: dict[str, Any] | None = None
     tools_config: dict[str, Any] | None = None
     profile_auto_extract: bool | None = None
@@ -587,7 +592,13 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
     - ``tool_result``   — 工具调用结束（data 为 JSON ``{"id","name","result","source","error?"}``）。
     - ``delegation``    — 子代理委派标记（data 为 JSON ``{"target","source","message"}``）。
     - ``todo_update``   — DeepAgent 任务列表更新。
-    - ``approval_request`` — 危险工具审批请求（含 tool_name / args / preview）。
+    - ``approval_request`` — 危险工具/目录扩展审批请求（含 tool_name / args / preview）。
+    - ``team_plan``     — AgentTeam Orchestrator 生成的子任务计划（data 为 JSON
+                          ``{"plan": [{"agent","input","purpose"}], "reasoning": str}``）。
+    - ``team_progress`` — AgentTeam 子任务状态变化（data 为 JSON
+                          ``{"agent": str, "status": "running"|"done"|"error", "message?": str}``）。
+    - ``team_result``   — AgentTeam 子任务结果摘要（data 为 JSON ``{"agent": str, "summary": str}``）。
+    - ``team_done``     — AgentTeam 整体结束（data 为 JSON ``{"status": "done"|"error"}``）。
     - ``done``          — 流结束。
     - ``error``         — 错误（含消息）。
     """
@@ -610,14 +621,16 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             yield {"event": "done", "data": "{}"}
             return
 
-        # 其他消息：走 Router 三路径分发（传入 checkpointer 加载历史）
+        # 其他消息：走 Router 分发（传入 checkpointer 加载历史）
         checkpointer = await get_async_checkpointer()
+        effective_agent_mode = req.agent_mode if settings.agent_team_enabled else "agent"
         async for event in run_router(
             req.message,
             req.thread_id,
             checkpointer=checkpointer,
             permission_mode=req.permission_mode,
             scene_prompt=req.system_prompt,
+            agent_mode=effective_agent_mode,
         ):
             # 检查中止标志
             if _abort_flags.get(req.thread_id):
@@ -1012,6 +1025,8 @@ async def config_reload(req: ConfigReloadRequest) -> dict[str, Any]:
         env_overrides["AGENTX_DEFAULT_SYSTEM_PROMPT"] = req.default_system_prompt
     if req.subagents_config is not None:
         env_overrides["AGENTX_SUBAGENTS_CONFIG"] = json.dumps(req.subagents_config)
+    if req.team_subagents_config is not None:
+        env_overrides["AGENTX_TEAM_SUBAGENTS_CONFIG"] = json.dumps(req.team_subagents_config)
     if req.custom_subagents_config is not None:
         env_overrides["AGENTX_CUSTOM_SUBAGENTS_CONFIG"] = json.dumps(req.custom_subagents_config)
     if req.tools_config is not None:

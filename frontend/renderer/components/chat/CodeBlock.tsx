@@ -116,7 +116,7 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
     <div className="group relative my-2.5 overflow-hidden rounded-lg border border-default bg-[#f8fafc] dark:bg-[#0d1117]">
       {/* 顶栏：语言标签 + 复制按钮 + 展开/折叠 */}
       <div className="flex items-center justify-between border-b border-default bg-subtle/60 px-3 py-1">
-        <span className="font-mono text-[10px] font-medium uppercase tracking-wide text-muted-c">
+        <span className="font-mono font-medium uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           {language || "text"}
         </span>
         <div className="flex items-center gap-1">
@@ -124,7 +124,8 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+              style={{ fontSize: 'var(--fs-msg-tool)' }}
               aria-label={expanded ? "折叠代码" : "展开代码"}
             >
               {expanded ? (
@@ -143,7 +144,8 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+            style={{ fontSize: 'var(--fs-msg-tool)' }}
             aria-label="复制代码"
           >
             {copied ? (
@@ -164,16 +166,18 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
         {htmlLight && htmlDark ? (
           <>
             <div
-              className="shiki-wrap overflow-x-auto p-3 text-[13px] leading-relaxed dark:hidden"
+              className="shiki-wrap overflow-x-auto p-3 leading-relaxed dark:hidden"
+              style={{ fontSize: 'var(--fs-msg-code)' }}
               dangerouslySetInnerHTML={{ __html: htmlLight }}
             />
             <div
-              className="shiki-wrap hidden overflow-x-auto p-3 text-[13px] leading-relaxed dark:block"
+              className="shiki-wrap hidden overflow-x-auto p-3 leading-relaxed dark:block"
+              style={{ fontSize: 'var(--fs-msg-code)' }}
               dangerouslySetInnerHTML={{ __html: htmlDark }}
             />
           </>
         ) : (
-          <pre className="overflow-x-auto p-3 font-mono text-[13px] leading-relaxed text-secondary-c">
+          <pre className="overflow-x-auto p-3 font-mono leading-relaxed text-secondary-c" style={{ fontSize: 'var(--fs-msg-code)' }}>
             <code>{displayCode}</code>
           </pre>
         )}

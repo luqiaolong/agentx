@@ -29,9 +29,9 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-rose-500/10 text-rose-500 ring-1 ring-rose-500/20">
             <AlertTriangle className="h-6 w-6" />
           </div>
-          <div className="text-base font-semibold text-primary-c">渲染出错</div>
+          <div className="font-semibold text-primary-c" style={{ fontSize: 'var(--fs-msg-heading)' }}>渲染出错</div>
           {this.state.error && (
-            <div className="max-w-md break-words rounded-lg border border-default bg-subtle/50 px-3 py-2 text-xs text-secondary-c">
+            <div className="max-w-md break-words rounded-lg border border-default bg-subtle/50 px-3 py-2 text-secondary-c" style={{ fontSize: 'var(--fs-empty-desc)' }}>
               {this.state.error.message}
             </div>
           )}

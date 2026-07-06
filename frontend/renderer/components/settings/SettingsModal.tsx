@@ -98,13 +98,24 @@ export function SettingsModal() {
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, setOpen]);
 
-  // 关闭后恢复焦点到触发元素
+  // 关闭后恢复焦点到触发元素（仅当元素仍在文档中且未被遮挡时）
   useEffect(() => {
     if (isOpen) return;
-    if (triggerRef.current) {
-      triggerRef.current.focus?.();
-      triggerRef.current = null;
-    }
+    const el = triggerRef.current;
+    triggerRef.current = null;
+    if (!el) return;
+    // 延迟一帧，避开其他组件（如 ChatComposer）的同步 focus() 竞争
+    const t = window.setTimeout(() => {
+      // 仅当元素仍在文档中、未被禁用、且没有 modal/overlay 遮挡时才恢复焦点
+      if (
+        document.contains(el) &&
+        !(el as HTMLButtonElement).disabled &&
+        !document.querySelector('[aria-modal="true"]')
+      ) {
+        el.focus?.();
+      }
+    }, 0);
+    return () => window.clearTimeout(t);
   }, [isOpen]);
 
   // 打开时锁 body 滚动
@@ -163,12 +174,12 @@ export function SettingsModal() {
         aria-label="设置"
       >
         {/* 左侧 tab 导航 */}
-        <nav className="flex w-56 shrink-0 flex-col border-r border-default bg-subtle/40">
-          <div className="border-b border-default px-4 py-3.5">
-            <h2 className="text-sm font-semibold tracking-tight text-primary-c">设置</h2>
-            <p className="mt-0.5 text-[11px] text-muted-c">配置应用与后端</p>
+        <nav className="flex w-52 shrink-0 flex-col border-r border-default bg-subtle/40">
+          <div className="border-b border-default px-3 py-2.5">
+            <h2 className="font-semibold tracking-tight text-primary-c" style={{ fontSize: 'var(--fs-settings-header)' }}>设置</h2>
+            <p className="mt-0.5 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>配置应用与后端</p>
           </div>
-          <ul role="tablist" aria-orientation="vertical" className="flex-1 overflow-y-auto p-2">
+          <ul role="tablist" aria-orientation="vertical" className="flex-1 overflow-y-auto p-1.5">
             {TABS.map((t) => {
               const isActive = t.id === active;
               const tabId = `settings-tab-${t.id}`;
@@ -182,7 +193,7 @@ export function SettingsModal() {
                     aria-controls={PANEL_ID}
                     tabIndex={isActive ? 0 : -1}
                     onClick={() => setActive(t.id)}
-                    className={`group relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                    className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
                       isActive
                         ? "bg-brand-600/10 text-brand-500"
                         : "text-secondary-c hover:bg-hover-soft hover:text-primary-c"
@@ -190,12 +201,12 @@ export function SettingsModal() {
                   >
                     {isActive && (
                       <span
-                        className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-brand-500"
+                        className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-full bg-brand-500"
                         aria-hidden
                       />
                     )}
-                    <t.Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-brand-500" : "text-muted-c"}`} />
-                    <span className="truncate text-xs font-medium">{t.label}</span>
+                    <t.Icon className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-brand-500" : "text-muted-c"}`} />
+                    <span className="truncate font-medium" style={{ fontSize: 'var(--fs-settings-nav)' }}>{t.label}</span>
                   </button>
                 </li>
               );
@@ -205,10 +216,10 @@ export function SettingsModal() {
 
         {/* 右侧内容区 */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex items-center justify-between border-b border-default px-5 py-3.5">
+          <header className="flex items-center justify-between border-b border-default px-4 py-2.5">
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-primary-c">{activeTab.label}</h3>
-              <p className="mt-0.5 truncate text-[11px] text-muted-c">{activeTab.desc}</p>
+              <h3 className="font-semibold text-primary-c" style={{ fontSize: 'var(--fs-settings-header)' }}>{activeTab.label}</h3>
+              <p className="mt-0.5 truncate text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>{activeTab.desc}</p>
             </div>
             <button
               ref={closeBtnRef}
@@ -218,7 +229,7 @@ export function SettingsModal() {
               aria-label="关闭设置"
               title="关闭 (Esc)"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </header>
           <div
@@ -226,7 +237,7 @@ export function SettingsModal() {
             role="tabpanel"
             aria-labelledby={`settings-tab-${active}`}
             tabIndex={0}
-            className="flex-1 overflow-y-auto px-5 py-4"
+            className="flex-1 overflow-y-auto px-4 py-3"
           >
             {active === "prompt" && <SystemPromptSettings />}
             {active === "models" && <ModelProviderSettings />}

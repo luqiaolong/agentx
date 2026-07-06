@@ -141,17 +141,50 @@ _THINK_PROMPT_SUFFIX = (
     "这样用户可以看到你的推理过程。"
 )
 
-def build_custom_agent(key: str, thread_id: str) -> Any:
+def build_custom_agent(
+    key: str,
+    thread_id: str | None = None,
+    system_prompt: str | None = None,
+    tools: list[str] | None = None,
+    temperature: float | None = None,
+) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
+    支持两种调用模式：
+    1. 从配置加载：``build_custom_agent(key, thread_id)`` — 从 ``Settings.custom_subagents`` 读取配置。
+    2. 显式参数：``build_custom_agent(key, system_prompt=..., tools=..., temperature=...)`` —
+       用于软件开发专家团角色等动态构建场景。
+
     Args:
-        key: 自定义子代理 key（在 ``Settings.custom_subagents`` 中存在）。
-        thread_id: 会话 ID，用于沙箱授权校验。
+        key: 子代理 key（用于命名和日志）。
+        thread_id: 会话 ID，用于沙箱授权校验。模式 1 必须提供，模式 2 可选。
+        system_prompt: 显式指定 system prompt（模式 2）。
+        tools: 显式指定工具列表（模式 2）。
+        temperature: 显式指定温度（模式 2）。
 
     Raises:
-        KeyError: key 不存在于 custom_subagents。
+        KeyError: 模式 1 中 key 不存在于 custom_subagents。
+        ValueError: 模式 2 中未提供必要参数。
     """
     settings = get_settings()
+
+    # 模式 2：显式参数（用于 team 角色等动态构建）
+    if system_prompt is not None or tools is not None or temperature is not None:
+        if not tools:
+            logger.warning(
+                "custom agent has no tools bound, agent will be unreachable",
+                key=key,
+            )
+        _temp = temperature if temperature is not None else 0.2
+        model = get_chat_model(temperature=_temp, streaming=True)
+        _tools = _make_custom_tools(thread_id or "", tools or [])
+        kwargs: dict[str, Any] = {"name": f"custom_{key}"}
+        prompt = system_prompt or ""
+        prompt = prompt + _THINK_PROMPT_SUFFIX
+        kwargs["prompt"] = prompt
+        return create_react_agent(model, _tools, **kwargs)
+
+    # 模式 1：从配置加载
     custom = settings.custom_subagents
     if key not in custom:
         raise KeyError(f"custom subagent not found: {key}")
@@ -162,13 +195,12 @@ def build_custom_agent(key: str, thread_id: str) -> Any:
             key=key,
         )
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
-    tools = _make_custom_tools(thread_id, cfg.tools)
-    kwargs: dict[str, Any] = {"name": f"custom_{key}"}
-    # 合并用户配置的 system_prompt 与 think 标签指令
+    _tools = _make_custom_tools(thread_id or "", cfg.tools)
+    kwargs = {"name": f"custom_{key}"}
     prompt = cfg.system_prompt or ""
     prompt = prompt + _THINK_PROMPT_SUFFIX
     kwargs["prompt"] = prompt
-    return create_react_agent(model, tools, **kwargs)
+    return create_react_agent(model, _tools, **kwargs)
 
 
 async def run_custom_agent(
@@ -193,7 +225,7 @@ async def run_custom_agent(
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
     """
-    agent = build_custom_agent(key, thread_id)
+    agent = build_custom_agent(key, thread_id=thread_id)
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     source = f"custom-{key}"

@@ -43,11 +43,12 @@ export function StatusIndicator() {
     return (
       <span
         title={tip}
-        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors ${
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-colors ${
           ok
             ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
             : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
         }`}
+        style={{ fontSize: 'var(--fs-settings-badge)' }}
       >
         <Icon className="h-2.5 w-2.5" />
         {label}

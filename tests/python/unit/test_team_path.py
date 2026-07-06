@@ -325,7 +325,7 @@ async def test_run_team_path_emits_team_plan_progress_result(
     monkeypatch.setattr("app.paths.team_path.run_rag_agent", _fake_run_rag_agent)
 
     events = await _collect_events(
-        run_team_path("分析入口和文档", "t-team", {"thread_id": "t-team", "messages": []})
+        run_team_path("分析项目入口文件和文档结构", "t-team", {"thread_id": "t-team", "messages": []})
     )
 
     event_types = [e["event"] for e in events]
@@ -372,7 +372,7 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     monkeypatch.setattr("app.paths.team_path.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(
-        run_team_path("分析", "t-fail", {"thread_id": "t-fail", "messages": []})
+        run_team_path("分析项目的整体架构设计", "t-fail", {"thread_id": "t-fail", "messages": []})
     )
 
     error_events = [e for e in events if e["event"] == "error"]
@@ -404,7 +404,7 @@ async def test_run_team_path_partial_failure_continues(
     monkeypatch.setattr("app.paths.team_path.run_rag_agent", _fake_run_rag_agent)
 
     events = await _collect_events(
-        run_team_path("分析", "t-partial", {"thread_id": "t-partial", "messages": []})
+        run_team_path("分析项目的整体架构设计", "t-partial", {"thread_id": "t-partial", "messages": []})
     )
 
     # code 成功，rag 失败
@@ -424,7 +424,7 @@ async def test_run_team_path_invalid_plan_yields_error(
     monkeypatch.setattr("app.paths.team_path.get_chat_model", lambda **_: _make_fake_llm("不是 JSON"))
 
     events = await _collect_events(
-        run_team_path("分析", "t-invalid", {"thread_id": "t-invalid", "messages": []})
+        run_team_path("分析项目的整体架构设计", "t-invalid", {"thread_id": "t-invalid", "messages": []})
     )
 
     error_events = [e for e in events if e["event"] == "error"]
@@ -451,7 +451,7 @@ async def test_run_team_path_deep_subtask_propagates_approval_request(
     monkeypatch.setattr("app.paths.team_path.run_deep_path", _fake_run_deep_path)
 
     events = await _collect_events(
-        run_team_path("改配置", "t-deep", {"thread_id": "t-deep", "messages": []})
+        run_team_path("请修改配置文件中的数据库连接", "t-deep", {"thread_id": "t-deep", "messages": []})
     )
 
     # approval_request 必须出现在事件流中（Bug 2 回归测试）
@@ -484,7 +484,7 @@ async def test_run_team_path_token_data_is_plain_string(
     monkeypatch.setattr("app.paths.team_path.run_code_agent", _fake_run_code_agent)
 
     events = await _collect_events(
-        run_team_path("分析", "t-token", {"thread_id": "t-token", "messages": []})
+        run_team_path("分析项目的整体架构设计", "t-token", {"thread_id": "t-token", "messages": []})
     )
 
     tokens = [e for e in events if e["event"] == "token"]
@@ -492,6 +492,39 @@ async def test_run_team_path_token_data_is_plain_string(
     # token data 是纯字符串，不是 JSON——直接拼接即可，不应 json.loads
     for t in tokens:
         assert not t["data"].startswith('"'), f"token data 不应是 JSON 字符串: {t['data']!r}"
+
+
+# ============================================================
+# 4b. 降级测试
+# ============================================================
+
+
+async def test_run_team_path_downgrades_simple_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """简单短消息降级到 chat 路径，不触发 Orchestrator。"""
+    # mock chat path 的 LLM（_run_chat_path 延迟 import app.llm.get_chat_model）
+    async def _fake_astream(messages: Any) -> AsyncIterator:
+        yield SimpleNamespace(content="直接回答")
+
+    mock_llm = MagicMock()
+    mock_llm.astream = _fake_astream
+    monkeypatch.setattr("app.llm.get_chat_model", lambda **_: mock_llm)
+
+    # mock team Orchestrator LLM — 若被调用则测试失败
+    def _orchestrator_should_not_be_called(**_: Any) -> Any:
+        raise AssertionError("Orchestrator should not be called for simple message")
+    monkeypatch.setattr("app.paths.team_path.get_chat_model", _orchestrator_should_not_be_called)
+
+    events = await _collect_events(
+        run_team_path("你好", "t-simple", {"thread_id": "t-simple", "messages": []})
+    )
+
+    # 不应有 team_plan 事件
+    event_types = [e["event"] for e in events]
+    assert "team_plan" not in event_types
+    # 应有 token 事件（来自 chat path 降级）
+    assert "token" in event_types
 
 
 # ============================================================

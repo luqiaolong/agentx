@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import {
   Plus,
   MessageSquare,
@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   ScrollText,
+  Pencil,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { Session } from "@/stores/chat";
@@ -32,6 +33,7 @@ export function SessionList() {
   const createSession = useChatStore((s) => s.createSession);
   const switchSession = useChatStore((s) => s.switchSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
+  const renameSession = useChatStore((s) => s.renameSession);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
   const setLogsModalOpen = useSettingsStore((s) => s.setLogsModalOpen);
 
@@ -74,7 +76,25 @@ export function SessionList() {
     (document.activeElement as HTMLElement | null)?.blur();
     if (window.confirm(`确认删除会话「${title}」？`)) {
       deleteSession(id);
+      // confirm 关闭后延迟让 ChatComposer 的 focus 生效，避免竞争
+      window.setTimeout(() => {
+        const composer = document.querySelector('textarea[aria-label="消息输入框"]') as HTMLTextAreaElement | null;
+        composer?.focus();
+      }, 50);
     }
+  };
+
+  const handleRename = (id: string, currentTitle: string) => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    const newTitle = window.prompt("重命名会话", currentTitle);
+    if (newTitle && newTitle.trim() && newTitle.trim() !== currentTitle) {
+      renameSession(id, newTitle.trim());
+    }
+    // prompt 关闭后延迟让 ChatComposer 的 focus 生效，避免竞争
+    window.setTimeout(() => {
+      const composer = document.querySelector('textarea[aria-label="消息输入框"]') as HTMLTextAreaElement | null;
+      composer?.focus();
+    }, 50);
   };
 
   const handleSwitch = (id: string) => {
@@ -104,9 +124,9 @@ export function SessionList() {
   };
 
   return (
-    <div className="flex h-full flex-col px-1.5 py-2">
-      <div className="mb-1 flex items-center justify-between px-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-c">
+    <div className="flex h-full flex-col px-1 py-1.5">
+      <div className="mb-0.5 flex items-center justify-between px-1">
+        <span className="font-semibold uppercase tracking-wider text-muted-c" style={{ fontSize: 'var(--fs-sidebar-section)' }}>
           会话
         </span>
         <button
@@ -117,11 +137,7 @@ export function SessionList() {
           aria-label="在 Home 新建会话"
           title="在 Home 新建会话"
         >
-          {isStreaming ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plus className="h-3.5 w-3.5" />
-          )}
+          <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -134,6 +150,7 @@ export function SessionList() {
           currentId={currentId}
           isStreaming={isStreaming}
           onSwitch={handleSwitch}
+          onRename={handleRename}
           onDelete={handleDelete}
           onCreate={() => handleCreateInHome()}
           defaultOpen
@@ -149,6 +166,7 @@ export function SessionList() {
             currentId={currentId}
             isStreaming={isStreaming}
             onSwitch={handleSwitch}
+            onRename={handleRename}
             onDelete={handleDelete}
             onCreate={() => handleCreateInWorkspace(w.path)}
           />
@@ -159,7 +177,7 @@ export function SessionList() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-subtle">
               <MessageSquare className="h-4 w-4 text-muted-c" />
             </div>
-            <div className="text-xs text-muted-c">点击 + 新建会话</div>
+            <div className="text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>点击 + 新建会话</div>
           </div>
         )}
       </div>
@@ -174,7 +192,7 @@ export function SessionList() {
           title="设置"
         >
           <Settings className="h-3.5 w-3.5 text-muted-c" />
-          <span className="text-xs font-medium">设置</span>
+          <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>设置</span>
         </button>
         <button
           type="button"
@@ -185,7 +203,7 @@ export function SessionList() {
         >
           <span className="flex shrink-0 items-center gap-1.5 px-2 py-1.5">
             <ScrollText className="h-3.5 w-3.5 text-muted-c" />
-            <span className="whitespace-nowrap text-xs font-medium">日志</span>
+            <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>日志</span>
           </span>
         </button>
       </div>
@@ -201,6 +219,7 @@ interface SessionGroupProps {
   currentId: string | null;
   isStreaming: boolean;
   onSwitch: (id: string) => void;
+  onRename: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
   onCreate: () => void;
   defaultOpen?: boolean;
@@ -214,6 +233,7 @@ function SessionGroup({
   currentId,
   isStreaming,
   onSwitch,
+  onRename,
   onDelete,
   onCreate,
   defaultOpen = true,
@@ -241,7 +261,7 @@ function SessionGroup({
         <ChevronRight className="h-3 w-3 shrink-0 text-muted-c" />
       )}
       {icon}
-      <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wider">
+      <span className="min-w-0 flex-1 truncate font-semibold uppercase tracking-wider" style={{ fontSize: 'var(--fs-sidebar-group)' }}>
         {label}
       </span>
     </button>
@@ -290,27 +310,37 @@ function SessionGroup({
                       aria-hidden
                     />
                   )}
-                  {active && isStreaming && (
-                    <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-40" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
-                    </span>
+                  {active && isStreaming ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand-500" />
+                  ) : (
+                    <MessageSquare
+                      className={`h-3.5 w-3.5 shrink-0 ${
+                        active ? "text-brand-500" : "text-muted-c"
+                      }`}
+                    />
                   )}
-                  <MessageSquare
-                    className={`h-3.5 w-3.5 shrink-0 ${
-                      active ? "text-brand-500" : "text-muted-c"
-                    }`}
-                  />
                   <div className="min-w-0 flex-1">
                     <div
-                      className={`truncate text-xs font-medium leading-tight ${active ? "text-primary-c" : "text-secondary-c"}`}
+                      className={`truncate font-medium leading-snug ${active ? "text-primary-c" : "text-secondary-c"}`}
+                      style={{ fontSize: 'var(--fs-sidebar-item)' }}
                     >
                       {s.title}
                     </div>
-                    <div className="text-[10px] leading-tight text-muted-c">
+                    <div className="leading-snug text-muted-c" style={{ fontSize: 'var(--fs-sidebar-meta)' }}>
                       {new Date(s.createdAt).toLocaleString()}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRename(s.id, s.title);
+                    }}
+                    className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-brand-500/10 hover:text-brand-500 group-hover:opacity-100"
+                    aria-label={`重命名会话 ${s.title}`}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => {

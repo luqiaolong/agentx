@@ -179,8 +179,7 @@ export interface SubagentConfig {
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string;
-  description: string;
+  triggerDescription: string;
 }
 
 export interface SubagentsConfig {
@@ -223,10 +222,8 @@ const DEFAULT_SUBAGENTS: SubagentsConfig = {
       "4. 使用 read_file、list_dir、glob、grep 等工具获取文件信息\n" +
       "5. 保持回答简洁，优先给出代码示例和具体文件路径",
     tools: ["read_file", "list_dir", "glob", "grep"],
-    keywords:
+    triggerDescription:
       "用户问题涉及代码文件、项目目录、程序报错、函数/类定义、import依赖、技术实现细节、代码审查或重构建议时触发。",
-    description:
-      "代码与文件操作专家：擅长读取、搜索、分析代码文件和目录结构，回答与代码、文件内容、项目结构、HTML/CSS/JS/Python/Java 等技术实现相关的问题。",
   },
   rag: {
     enabled: true,
@@ -239,9 +236,7 @@ const DEFAULT_SUBAGENTS: SubagentsConfig = {
       "4. 引用检索到的文档内容时保持原文含义，不随意扩展\n" +
       "5. 优先回答技术文档、API 文档、内部规范等知识库类型的问题",
     tools: ["rag_retrieve"],
-    keywords: "用户问题需要引用内部知识库、技术文档、API手册、产品规范或历史资料时触发。",
-    description:
-      "知识库检索专家：擅长从向量知识库中检索文档、知识点、技术文档，回答需要引用内部知识库资料的问题。",
+    triggerDescription: "用户问题需要引用内部知识库、技术文档、API手册、产品规范或历史资料时触发。",
   },
   web: {
     enabled: true,
@@ -254,9 +249,7 @@ const DEFAULT_SUBAGENTS: SubagentsConfig = {
       "4. 对于时效性强的信息（如版本号、价格、事件），优先使用搜索而非依赖训练数据\n" +
       "5. 如果搜索无结果，明确告知用户并建议调整查询词",
     tools: ["web_search"],
-    keywords: "用户问题需要获取互联网实时信息、最新新闻、当前版本号、市场价格、事件动态或外部资料时触发。",
-    description:
-      "联网搜索专家：擅长搜索互联网上的实时信息、新闻、资料，回答需要最新外部信息的问题。",
+    triggerDescription: "用户问题需要获取互联网实时信息、最新新闻、当前版本号、市场价格、事件动态或外部资料时触发。",
   },
 };
 
@@ -275,9 +268,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部前端规范和组件文档\n" +
       "7. 保持回答简洁，给出具体代码示例、文件路径和重构建议",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "前端,React,Vue,HTML,CSS,JS,TypeScript,组件,界面,Hooks,状态管理,工程化,性能优化,Lighthouse",
-    description:
-      "前端开发专家：精通 React/Vue/Angular、HTML5/CSS3、JavaScript/TypeScript、前端工程化（Vite/Webpack）、状态管理（Redux/Pinia/Zustand）、组件库（Ant Design/Element Plus/Shadcn UI）、响应式设计、PWA、前端性能优化（Lighthouse/Core Web Vitals）、可访问性（a11y）等，负责界面实现、组件架构设计、前端性能调优与代码审查。",
+    triggerDescription: "前端开发相关问题：React/Vue/Angular、HTML/CSS/JS/TypeScript、组件、状态管理、前端工程化、性能优化、Lighthouse。",
   },
   backend_dev: {
     enabled: true,
@@ -292,9 +283,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部后端规范、API 文档和数据库设计\n" +
       "7. 保持回答简洁，给出具体代码示例、文件路径和架构改进建议",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "后端,API,数据库,Python,Java,Go,Node,服务,接口,RESTful,GraphQL,消息队列,缓存,微服务",
-    description:
-      "后端开发专家：精通 Python（Django/FastAPI/Flask）、Java（Spring Boot）、Go（Gin/Echo）、Node.js（Express/NestJS）、数据库设计与优化（PostgreSQL/MySQL/MongoDB/Redis）、RESTful/GraphQL API 设计、消息队列（Kafka/RabbitMQ）、缓存策略、分布式事务、微服务通信（gRPC/HTTP），负责服务端架构、业务逻辑实现、数据库设计与性能调优。",
+    triggerDescription: "后端开发相关问题：Python/Java/Go/Node、API设计、数据库、消息队列、缓存、微服务、RESTful/GraphQL。",
   },
   tester: {
     enabled: true,
@@ -309,9 +298,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部测试规范和质量门禁标准\n" +
       "7. 保持回答简洁，给出可执行的测试代码示例、覆盖率提升方案和缺陷预防建议",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "测试,单元测试,集成测试,E2E,pytest,jest,覆盖率,质量,TDD,BDD,Mock,性能测试,自动化测试",
-    description:
-      "测试专家：精通单元测试（pytest/Jest/Mocha）、集成测试（Postman/Newman）、E2E 测试（Cypress/Playwright/Selenium）、性能测试（k6/JMeter）、测试覆盖率分析（coverage/Istanbul）、TDD/BDD 实践、自动化测试流水线集成、缺陷追踪与质量度量，负责测试策略制定、用例设计、自动化测试框架搭建与质量门禁保障。",
+    triggerDescription: "测试相关问题：单元测试、集成测试、E2E测试、pytest/jest、覆盖率、TDD/BDD、Mock、性能测试、质量门禁。",
   },
   architect: {
     enabled: true,
@@ -326,9 +313,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部架构规范、技术债务记录和演进文档\n" +
       "7. 保持回答简洁，给出架构图描述（Mermaid/PlantUML）、关键决策依据和风险评估",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "架构,设计,选型,性能,扩展,微服务,系统,方案,DDD,设计模式,高并发,高可用,云原生,Serverless",
-    description:
-      "架构专家：精通系统架构设计（单体/微服务/Serverless）、技术选型评估、领域驱动设计（DDD）、设计模式、性能优化（高并发/低延迟/高可用）、数据架构（分库分表/CDC/数据湖）、安全架构（OAuth2/JWT/零信任）、云原生架构（Kubernetes/Service Mesh）、成本优化与容量规划，负责技术愿景、架构评审、技术债务治理与演进路线设计。",
+    triggerDescription: "架构相关问题：系统设计、技术选型、DDD、设计模式、高并发/高可用、微服务、云原生、性能优化、扩展性。",
   },
   devops: {
     enabled: true,
@@ -343,9 +328,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部运维规范、部署手册和应急预案\n" +
       "7. 保持回答简洁，给出可执行的配置示例、脚本代码和故障排查流程",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "部署,CI/CD,Docker,K8s,运维,流水线,监控,Nginx,Prometheus,Grafana,Terraform,云原生,SRE",
-    description:
-      "运维专家：精通 CI/CD 流水线（GitHub Actions/GitLab CI/Jenkins）、容器化（Docker/Containerd）、Kubernetes 编排（Helm/Kustomize）、基础设施即代码（Terraform/Pulumi/Ansible）、云平台（AWS/Azure/GCP/阿里云）、监控告警（Prometheus/Grafana/ELK/Loki）、日志追踪（Jaeger/Zipkin）、SRE 实践、混沌工程、蓝绿/金丝雀发布，负责 DevOps 文化推广、自动化运维体系建设与系统稳定性保障。",
+    triggerDescription: "运维相关问题：CI/CD、Docker/Kubernetes、监控告警、Prometheus/Grafana、Nginx、Terraform、云平台、SRE。",
   },
   ui_designer: {
     enabled: true,
@@ -360,9 +343,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部设计规范、品牌指南和组件使用文档\n" +
       "7. 保持回答简洁，给出具体的设计建议、规范代码（CSS/Tailwind）和验收标准",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "UI,设计,界面,交互,视觉,样式,Figma,用户体验,WCAG,设计系统,Design Tokens,可用性测试,A/B测试",
-    description:
-      "UI 设计师：精通界面设计（Figma/Sketch/Adobe XD）、交互设计（原型/动效/用户流程）、设计系统构建（Tokens/组件库/规范文档）、视觉设计（色彩理论/排版/图标）、用户体验研究（用户访谈/可用性测试/A/B 测试）、响应式设计、无障碍设计（WCAG）、设计-开发协作（DevHandoff），负责设计质量把控、设计系统演进与跨团队协作。",
+    triggerDescription: "UI设计相关问题：界面设计、交互设计、Figma、设计系统、视觉设计、用户体验、WCAG、响应式设计、A/B测试。",
   },
   product_manager: {
     enabled: true,
@@ -377,9 +358,7 @@ const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
       "6. 使用 rag_retrieve 检索项目内部产品文档、历史需求和用户反馈\n" +
       "7. 保持回答简洁，给出可执行的产品方案、功能清单、验收标准和数据度量指标",
     tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
-    keywords: "需求,产品,PRD,用户故事,功能,优先级,迭代,RICE,Kano,Scrum,敏捷,竞品分析,数据驱动,A/B测试",
-    description:
-      "产品专家：精通需求分析（用户调研/竞品分析/数据分析）、PRD 撰写（功能描述/验收标准/原型标注）、用户故事地图、敏捷产品管理（Scrum/Kanban）、优先级排序（RICE/Kano/WSJF）、产品路线图规划、数据驱动决策（AARRR/漏斗分析）、A/B 测试设计、用户体验旅程设计，负责产品愿景、功能规划、迭代节奏把控与商业价值最大化。",
+    triggerDescription: "产品相关问题：需求分析、PRD、用户故事、优先级排序、Scrum/Kanban、竞品分析、数据驱动、A/B测试。",
   },
 };
 
@@ -414,8 +393,7 @@ function sanitizeSubagent(raw: unknown, def: SubagentConfig): SubagentConfig {
     temperature: clampTemp(r.temperature),
     systemPrompt: strOrDef(r.systemPrompt, def.systemPrompt),
     tools: strArr(r.tools, def.tools),
-    keywords: strOrDef(r.keywords, def.keywords),
-    description: strOrDef(r.description, def.description),
+    triggerDescription: strOrDef(r.triggerDescription, def.triggerDescription),
   };
 }
 
@@ -485,12 +463,11 @@ export function setProfileAutoExtract(v: boolean): void {
 export interface CustomSubagentEntry {
   key: string;
   name: string;
-  description: string;
   enabled: boolean;
   temperature: number;
   systemPrompt: string;
   tools: string[];
-  keywords: string;
+  triggerDescription: string;
 }
 
 export type CustomSubagentsMap = Record<string, CustomSubagentEntry>;
@@ -498,12 +475,11 @@ export type CustomSubagentsMap = Record<string, CustomSubagentEntry>;
 export interface CustomSubagentInput {
   key: string;
   name: string;
-  description?: string;
   enabled?: boolean;
   temperature?: number;
   systemPrompt?: string;
   tools?: string[];
-  keywords?: string;
+  triggerDescription?: string;
 }
 
 // 内置子代理 key（自定义 key 不允许冲突）
@@ -564,7 +540,6 @@ function sanitizeCustomEntry(
     typeof r.key === "string" ? r.key : typeof fallbackKey === "string" ? fallbackKey : "";
   if (!CUSTOM_KEY_RE.test(key) || BUILTIN_SUBAGENT_KEYS.has(key)) return null;
   const name = typeof r.name === "string" && r.name.trim() ? r.name.trim() : key;
-  const description = typeof r.description === "string" ? r.description : "";
   const enabled = typeof r.enabled === "boolean" ? r.enabled : true;
   const temperature =
     typeof r.temperature === "number" && Number.isFinite(r.temperature)
@@ -572,16 +547,15 @@ function sanitizeCustomEntry(
       : 0.2;
   const systemPrompt = typeof r.systemPrompt === "string" ? r.systemPrompt : "";
   const tools = sanitizeCustomTools(r.tools);
-  const keywords = typeof r.keywords === "string" ? r.keywords : "";
+  const triggerDescription = typeof r.triggerDescription === "string" ? r.triggerDescription : "";
   return {
     key,
     name,
-    description,
     enabled,
     temperature,
     systemPrompt,
     tools,
-    keywords,
+    triggerDescription,
   };
 }
 
@@ -624,12 +598,11 @@ export function addCustomSubagent(input: CustomSubagentInput): CustomSubagentEnt
   const entry = sanitizeCustomEntry({
     key: input.key,
     name: input.name,
-    description: input.description ?? "",
     enabled: input.enabled ?? true,
     temperature: input.temperature ?? 0.2,
     systemPrompt: input.systemPrompt ?? "",
     tools: input.tools ?? [],
-    keywords: input.keywords ?? "",
+    triggerDescription: input.triggerDescription ?? "",
   });
   if (!entry) throw new Error("子代理配置无效");
   existing[input.key] = entry;

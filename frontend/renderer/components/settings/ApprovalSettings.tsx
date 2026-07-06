@@ -66,8 +66,8 @@ export function ApprovalSettings() {
     <div className="space-y-4">
       <div>
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-medium text-secondary-c">自动批准等待秒数</label>
-          <span className="rounded-full bg-subtle px-2 py-0.5 text-[11px] font-medium text-primary-c">
+          <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>自动批准等待秒数</label>
+          <span className="rounded-full bg-subtle px-2 py-0.5 font-medium text-primary-c" style={{ fontSize: 'var(--fs-settings-badge)' }}>
             {autoApproveAfterSeconds}s（0=禁用）
           </span>
         </div>
@@ -79,12 +79,12 @@ export function ApprovalSettings() {
           onChange={(e) => setAutoApproveAfterSeconds(Number(e.target.value))}
           className="w-full accent-brand-500"
         />
-        <p className="mt-1 text-[11px] text-muted-c">
+        <p className="mt-1 text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           非零值时，危险操作等待指定秒数后自动批准。0 表示必须手动批准。
         </p>
       </div>
       <div>
-        <label className="mb-1 block text-xs font-medium text-secondary-c">
+        <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
           审批最大等待秒数（0=无限）
         </label>
         <input
@@ -96,7 +96,7 @@ export function ApprovalSettings() {
         />
       </div>
       <div>
-        <label className="mb-1 block text-xs font-medium text-secondary-c">最大上传大小（MB）</label>
+        <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>最大上传大小（MB）</label>
         <input
           type="number"
           min={0}
@@ -111,14 +111,14 @@ export function ApprovalSettings() {
           保存
         </button>
         {saved && (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
             <Check className="h-3 w-3" />
             已保存
           </span>
         )}
       </div>
       {error && (
-        <p className="text-xs text-rose-600 dark:text-rose-400">保存失败：{error}</p>
+        <p className="text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>保存失败：{error}</p>
       )}
     </div>
   );

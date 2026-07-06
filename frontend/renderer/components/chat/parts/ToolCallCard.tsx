@@ -64,7 +64,7 @@ export function ToolCallCard({
   const argsPreview = getArgsPreview(args);
 
   return (
-    <div className="w-full text-xs">
+    <div className="w-full" style={{ fontSize: 'var(--fs-msg-assist)' }}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -103,30 +103,30 @@ export function ToolCallCard({
         <div className="w-full px-2 py-1">
           {args != null && (
             <div className="mb-1">
-              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
+              <div className="mb-0.5 font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-msg-tool)' }}>
                 Args
               </div>
-              <pre className="overflow-auto bg-muted-c/5 p-1 font-mono text-[11px]">
+              <pre className="overflow-auto bg-muted-c/5 p-1 font-mono" style={{ fontSize: 'var(--fs-msg-code)' }}>
                 {formatJson(args)}
               </pre>
             </div>
           )}
           {result != null && (
             <div className="mb-1">
-              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-c">
+              <div className="mb-0.5 font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-msg-tool)' }}>
                 Result
               </div>
-              <pre className="overflow-auto bg-muted-c/5 p-1 font-mono text-[11px]">
+              <pre className="overflow-auto bg-muted-c/5 p-1 font-mono" style={{ fontSize: 'var(--fs-msg-code)' }}>
                 {formatJson(result)}
               </pre>
             </div>
           )}
           {error && (
             <div>
-              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-500">
+              <div className="mb-0.5 font-semibold uppercase tracking-wide text-rose-500" style={{ fontSize: 'var(--fs-msg-tool)' }}>
                 Error
               </div>
-              <pre className="overflow-auto bg-rose-500/5 p-1 font-mono text-[11px] text-rose-600 dark:text-rose-400">
+              <pre className="overflow-auto bg-rose-500/5 p-1 font-mono text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-msg-code)' }}>
                 {error}
               </pre>
             </div>

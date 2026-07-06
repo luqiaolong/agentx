@@ -95,7 +95,7 @@ export function LogsModal() {
         <header className="flex items-center justify-between border-b border-default px-5 py-3.5">
           <div className="flex items-center gap-2">
             <ScrollText className="h-4 w-4 text-muted-c" />
-            <h2 className="text-sm font-semibold tracking-tight text-primary-c">日志</h2>
+            <h2 className="font-semibold tracking-tight text-primary-c" style={{ fontSize: 'var(--fs-settings-header)' }}>日志</h2>
           </div>
           <button
             ref={closeBtnRef}

@@ -75,7 +75,7 @@ export function LogViewer({ fillParent = false }: LogViewerProps = {}) {
   return (
     <div className={`flex min-h-0 flex-col ${fillParent ? "h-full" : ""}`}>
       {err && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           {err}
         </div>
       )}
@@ -83,7 +83,7 @@ export function LogViewer({ fillParent = false }: LogViewerProps = {}) {
         <pre
           ref={preRef}
           onScroll={handleScroll}
-          className={`relative overflow-auto rounded-md border border-default/50 bg-app px-2.5 py-2 font-mono text-[11px] leading-snug text-primary-c ${
+          className={`relative overflow-auto rounded-md border border-default/50 bg-app px-2.5 py-2 font-mono leading-snug text-primary-c ${
             fillParent ? "min-h-0 flex-1" : "max-h-[calc(100vh-220px)]"
           }`}
         >
@@ -93,7 +93,8 @@ export function LogViewer({ fillParent = false }: LogViewerProps = {}) {
           <button
             type="button"
             onClick={jumpToBottom}
-            className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md border border-default/60 bg-surface/95 px-2 py-1 text-[11px] font-medium text-primary-c shadow-pop backdrop-blur hover:bg-hover-soft"
+            className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-md border border-default/60 bg-surface/95 px-2 py-1 font-medium text-primary-c shadow-pop backdrop-blur hover:bg-hover-soft"
+            style={{ fontSize: 'var(--fs-settings-badge)' }}
             aria-label="跳到底部"
             title="跳到底部"
           >

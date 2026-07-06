@@ -81,7 +81,7 @@ export function ReasoningBlock({
   // 流式时显示「思考中…」+ 跳动圆点
   if (!done && text.length === 0) {
     return (
-      <div className="flex items-center gap-1.5 rounded-md bg-muted-c/10 px-2.5 py-1.5 text-xs text-muted-c">
+      <div className="flex items-center gap-1.5 rounded-md bg-muted-c/10 px-2.5 py-1.5 text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
         <Brain className="h-3 w-3" />
         <span>思考中</span>
         <span className="flex gap-0.5">
@@ -99,7 +99,8 @@ export function ReasoningBlock({
       <button
         type="button"
         onClick={toggleExpanded}
-        className="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-xs text-muted-c transition-colors hover:bg-muted-c/5"
+        className="flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-muted-c transition-colors hover:bg-muted-c/5"
+        style={{ fontSize: 'var(--fs-msg-assist)' }}
       >
         <Brain className="h-3 w-3 shrink-0" />
         <span className="flex-1">
@@ -110,7 +111,7 @@ export function ReasoningBlock({
         />
       </button>
       {expanded && text.length > 0 && (
-        <div className="w-full px-2 py-1 text-xs leading-relaxed text-muted-c">
+        <div className="w-full px-2 py-1 leading-relaxed text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
           <pre className="whitespace-pre-wrap font-mono">{text}</pre>
         </div>
       )}

@@ -20,6 +20,7 @@ import { useChatStore } from "@/stores/chat";
 import { usePermissionStore } from "@/stores/permission";
 import { PermissionToggle } from "./PermissionToggle";
 import { ModelToggle } from "./ModelToggle";
+import { ModeToggle } from "./ModeToggle";
 
 /**
  * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）。
@@ -70,17 +71,29 @@ export function ChatComposer({
     // 切会话时复位权限模式：permission 是会话级状态，
     // 跨会话残留 full_trust 会导致新会话直接放行危险工具。
     usePermissionStore.getState().reset();
-    textareaRef.current?.focus();
+    // 延迟 focus，避免与 SessionList 的 confirm/blur 或 SettingsModal 的焦点恢复竞争
+    const t = window.setTimeout(() => {
+      if (!document.querySelector('[aria-modal="true"]')) {
+        textareaRef.current?.focus();
+      }
+    }, 0);
     // 依赖 currentId：会话变化时上述全部副作用触发一次。
     // 故意不复位 isStreaming/dragOver：流式状态由父组件控制，
     // 拖拽状态由用户当前手势决定，不应被切会话擦掉。
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => window.clearTimeout(t);
   }, [currentId]);
 
   // SSE 流结束后自动恢复焦点，让用户可以继续输入（无需手动点击）
   useEffect(() => {
     if (!isStreaming) {
-      textareaRef.current?.focus();
+      // 延迟 focus，避免与 modal/overlay 的焦点恢复竞争
+      const t = window.setTimeout(() => {
+        if (!document.querySelector('[aria-modal="true"]')) {
+          textareaRef.current?.focus();
+        }
+      }, 0);
+      return () => window.clearTimeout(t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStreaming]);
@@ -340,7 +353,7 @@ export function ChatComposer({
   const canSend = input.trim().length > 0 && !isStreaming;
 
   return (
-    <div className="border-t border-default bg-surface px-4 py-1.5">
+    <div className="border-t border-default bg-surface px-3 py-2">
       <div className="mx-auto max-w-3xl">
         <div
           className={`chat-composer relative px-3 pb-1.5 pt-2 ${
@@ -371,12 +384,14 @@ export function ChatComposer({
             />
 
             {/* 底部 Toolbar：左 = workspace，右 = context + Model + Permission + Send */}
-            <div className="mt-1.5 flex items-center justify-between gap-1 pt-1.5">
-              {/* LEFT — 仅 workspace（[/] [@] 已在 M2 清理中删除，可继续以输入 "/" / 拖拽文件取代） */}
+            <div className="mt-1.5 flex items-center justify-between gap-1.5 pt-1.5">
+              {/* LEFT — 模式切换 + workspace（[/] [@] 已在 M2 清理中删除，可继续以输入 "/" / 拖拽文件取代） */}
               <div className="flex items-center gap-1">
+                <ModeToggle />
                 {showWorkspaceChip && workspacePath ? (
                   <span
-                    className="group/ws inline-flex max-w-[160px] items-center gap-1 rounded-md border border-brand-500/25 bg-brand-600/10 pl-1.5 pr-1 py-0.5 text-[10.5px] font-medium text-brand-500 transition-colors hover:bg-brand-600/15"
+                    className="group/ws inline-flex max-w-[180px] items-center gap-1.5 rounded-lg border border-brand-500/25 bg-brand-600/10 pl-2 pr-1.5 py-1 font-medium text-brand-500 transition-colors hover:bg-brand-600/15"
+                    style={{ fontSize: 'var(--fs-composer-chip)' }}
                     title={workspaceChipTitle}
                   >
                     <Folder
@@ -464,7 +479,7 @@ export function ChatComposer({
           </div>
 
           {dragOver && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-brand-500/5 text-xs font-medium text-brand-500">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-brand-500/5 font-medium text-brand-500" style={{ fontSize: 'var(--fs-composer-placeholder)' }}>
               <Paperclip className="mr-1.5 h-3.5 w-3.5" />
               释放以附加文件
             </div>

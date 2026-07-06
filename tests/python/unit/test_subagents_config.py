@@ -66,8 +66,10 @@ def test_subagent_settings_fields() -> None:
         temperature=0.5,
         system_prompt="you are a coder",
         tools=["read_file"],
-        keywords=["写代码"],
+        trigger_description="用户问题涉及写代码时触发。",
     )
+    assert isinstance(cfg.trigger_description, str)
+    assert cfg.trigger_description == "用户问题涉及写代码时触发。"
     assert isinstance(cfg.enabled, bool)
     assert cfg.enabled is True
     assert isinstance(cfg.temperature, float)
@@ -76,8 +78,6 @@ def test_subagent_settings_fields() -> None:
     assert cfg.system_prompt == "you are a coder"
     assert isinstance(cfg.tools, list)
     assert cfg.tools == ["read_file"]
-    assert isinstance(cfg.keywords, list)
-    assert cfg.keywords == ["写代码"]
 
 
 def test_subagent_settings_defaults() -> None:
@@ -87,7 +87,7 @@ def test_subagent_settings_defaults() -> None:
     assert cfg.temperature == 0.2
     assert cfg.system_prompt == ""
     assert cfg.tools == []
-    assert cfg.keywords == []
+    assert cfg.trigger_description == ""
 
 
 # ============================================================
@@ -106,21 +106,17 @@ def test_subagents_default_when_no_env() -> None:
     assert subagents["code"].enabled is True
     assert subagents["code"].temperature == 0.2
     assert subagents["code"].tools == ["read_file", "list_dir", "glob", "grep"]
-    assert subagents["code"].keywords == ["代码", "文件", "目录", "报错", "函数", "类", "import", "依赖", "技术", "实现", "审查", "重构"]
+    assert "代码" in subagents["code"].trigger_description
 
     # rag 默认值
     assert subagents["rag"].enabled is True
     assert subagents["rag"].tools == ["rag_retrieve"]
-    assert subagents["rag"].keywords == [
-        "知识库", "文档库", "检索", "向量", "rag", "知识", "文档"
-    ]
+    assert "知识库" in subagents["rag"].trigger_description
 
     # web 默认值
     assert subagents["web"].enabled is True
     assert subagents["web"].tools == ["web_search"]
-    assert subagents["web"].keywords == [
-        "搜索", "网页", "联网", "查一下", "search", "web", "google", "百度"
-    ]
+    assert "互联网" in subagents["web"].trigger_description
 
 
 def test_subagents_env_partial_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,7 +136,7 @@ def test_subagents_env_partial_override(monkeypatch: pytest.MonkeyPatch) -> None
     # system_prompt 有默认长文本，不校验具体内容
     assert subagents["code"].system_prompt != ""
     assert subagents["code"].tools == ["read_file", "list_dir", "glob", "grep"]
-    assert subagents["code"].keywords == ["代码", "文件", "目录", "报错", "函数", "类", "import", "依赖", "技术", "实现", "审查", "重构"]
+    assert "代码" in subagents["code"].trigger_description
 
     # rag/web 不受影响
     assert subagents["rag"].temperature == 0.2
@@ -157,7 +153,7 @@ def test_subagents_env_full_override(monkeypatch: pytest.MonkeyPatch) -> None:
                 "temperature": 0.8,
                 "system_prompt": "你是代码专家",
                 "tools": ["read_file"],
-                "keywords": ["写代码", "编程"],
+                "trigger_description": "用户问题涉及写代码或编程时触发。",
             }
         }),
     )
@@ -168,7 +164,7 @@ def test_subagents_env_full_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert code_cfg.temperature == 0.8
     assert code_cfg.system_prompt == "你是代码专家"
     assert code_cfg.tools == ["read_file"]
-    assert code_cfg.keywords == ["写代码", "编程"]
+    assert "写代码" in code_cfg.trigger_description
 
 
 @pytest.mark.xfail(
@@ -198,8 +194,8 @@ def test_subagents_env_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     assert subagents["code"].enabled is True
 
 
-def test_subagents_env_keywords_string_coerced_to_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    """env JSON 中 keywords 为字符串时，自动转为单元素列表（防御性转换）。
+def test_subagents_env_trigger_description_string_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """env JSON 中 trigger_description 为字符串时，直接保留（防御性转换）。
 
     前端配置注入时可能误传字符串（如语义描述），后端需兼容。
     """
@@ -207,30 +203,56 @@ def test_subagents_env_keywords_string_coerced_to_list(monkeypatch: pytest.Monke
         "AGENTX_SUBAGENTS_CONFIG",
         json.dumps({
             "code": {
-                "keywords": "用户问题涉及代码、文件、目录、技术实现、调试排错、依赖分析或代码审查时触发。",
+                "trigger_description": "用户问题涉及代码、文件、目录、技术实现、调试排错、依赖分析或代码审查时触发。",
             }
         }),
     )
     get_settings.cache_clear()
 
     code_cfg = get_settings().subagents["code"]
-    assert isinstance(code_cfg.keywords, list)
-    assert len(code_cfg.keywords) == 1
-    assert code_cfg.keywords[0].startswith("用户问题涉及代码")
+    assert isinstance(code_cfg.trigger_description, str)
+    assert "代码" in code_cfg.trigger_description
 
 
-def test_subagents_env_keywords_empty_string_becomes_empty_list(
+def test_subagents_env_trigger_description_empty_string_becomes_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """env JSON 中 keywords 为空字符串时，转为空列表。"""
+    """env JSON 中 trigger_description 为空字符串时，保持为空字符串。"""
     monkeypatch.setenv(
         "AGENTX_SUBAGENTS_CONFIG",
-        json.dumps({"code": {"keywords": "   "}}),
+        json.dumps({"code": {"trigger_description": "   "}}),
     )
     get_settings.cache_clear()
 
     code_cfg = get_settings().subagents["code"]
-    assert code_cfg.keywords == []
+    assert code_cfg.trigger_description == "   "
+
+
+@pytest.mark.xfail(
+    reason="backend bug: pydantic-settings v2 的 EnvSettingsSource 在 @field_validator "
+           "运行前自动 json.loads 复杂类型字段，无效 JSON 直接抛 SettingsError，"
+           "config._parse_json_env 的 fallback 到 {} 无法生效。需后端修复（如改用 "
+           "str 字段 + validator 解析，或覆写 prepare_field_value）",
+    raises=Exception,
+    strict=True,
+)
+def test_subagents_env_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """env JSON 是无效字符串，验证 fallback 到默认值（不抛异常）。
+
+    期望行为：无效 JSON → _parse_json_env 返回空 dict → subagents 返回默认值。
+    实际行为：pydantic-settings 在 validator 之前抛 SettingsError（xfail）。
+    """
+    monkeypatch.setenv("AGENTX_SUBAGENTS_CONFIG", "not-a-valid-json{{{")
+    get_settings.cache_clear()
+
+    settings = get_settings()
+    # 无效 JSON → _parse_json_env 应返回空 dict
+    assert settings.subagents_config == {}
+
+    subagents = settings.subagents
+    assert set(subagents.keys()) == {"code", "rag", "web"}
+    assert subagents["code"].temperature == 0.2
+    assert subagents["code"].enabled is True
 
 
 # ============================================================
@@ -323,23 +345,27 @@ def test_select_subagent_empty_keywords_no_match(
     """
     mock_settings = _make_mock_settings(
         subagents_overrides={
-            "web": {"keywords": []},
+            "web": {"trigger_description": ""},
+            "rag": {"trigger_description": ""},
             "code": {"enabled": False},  # 排除 code 兜底干扰
         }
     )
     monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
 
-    # "搜索一下" 默认会匹配 web，但 keywords 为空 → 不匹配 → None
+    # "搜索一下" 不匹配任何子代理（web/rag 空 trigger_description，code 禁用）→ None
     result = _select_subagent("搜索一下")
     assert result is None
 
 
-def test_select_subagent_custom_keywords_match(
+def test_select_subagent_custom_trigger_description_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """web.keywords=["搜一下", "查查"]，发「帮我搜一下」消息匹配 web。"""
+    """web.trigger_description 含短关键词 "搜一下"，发「帮我搜一下」消息匹配 web。"""
     mock_settings = _make_mock_settings(
-        subagents_overrides={"web": {"keywords": ["搜一下", "查查"]}}
+        subagents_overrides={
+            "web": {"trigger_description": "搜一下、查查"},
+            "rag": {"trigger_description": ""},
+        }
     )
     monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
 
@@ -347,13 +373,13 @@ def test_select_subagent_custom_keywords_match(
     assert result == "web"
 
 
-def test_select_subagent_keywords_no_match(
+def test_select_subagent_trigger_description_no_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """web.keywords=["搜索"], 发「写代码」消息不匹配 web。"""
+    """web.trigger_description="搜索"，发「写代码」消息不匹配 web。"""
     mock_settings = _make_mock_settings(
         subagents_overrides={
-            "web": {"keywords": ["搜索"]},
+            "web": {"trigger_description": "用户问题涉及搜索时触发。"},
             "code": {"enabled": False},  # 排除 code 兜底干扰
         }
     )
@@ -367,9 +393,9 @@ def test_select_subagent_keywords_no_match(
 def test_select_subagent_code_empty_keywords_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """code.keywords=[] (默认), 仍可作为 fallback 匹配（如有工具可用）。
+    """code.trigger_description="" (默认), 仍可作为 fallback 匹配（如有工具可用）。
 
-    code 是兜底子代理：即使 keywords 为空（不匹配任何关键词），
+    code 是兜底子代理：即使 trigger_description 为空（不匹配任何关键词），
     当其他子代理都不匹配时，code 仍会被选为 fallback（若 enabled 且工具可用）。
     """
     mock_settings = _make_mock_settings()  # 全默认

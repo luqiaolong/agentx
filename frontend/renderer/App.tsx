@@ -14,6 +14,8 @@ import { useSceneStore } from "./stores/scene";
 
 type PythonStatus = "starting" | "ready" | "crashed" | "giving_up" | null;
 
+import { useAgentModeStore } from "./stores/agentMode";
+
 export default function App() {
   const [pythonStatus, setPythonStatus] = useState<PythonStatus>(null);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -21,6 +23,16 @@ export default function App() {
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const scene = useSceneStore((s) => s.scene);
   const setScene = useSceneStore((s) => s.setScene);
+  const agentMode = useAgentModeStore((s) => s.mode);
+  const setAgentMode = useAgentModeStore((s) => s.setMode);
+
+  // 场景切换时：如果从 coding 切到 work 且当前是 agent_team 模式，自动切回 agent 模式
+  const handleSceneChange = (s: "work" | "coding") => {
+    setScene(s);
+    if (s === "work" && agentMode === "agent_team") {
+      setAgentMode("agent");
+    }
+  };
 
   // 订阅 Python 后端启动状态
   useEffect(() => {
@@ -80,24 +92,24 @@ export default function App() {
     <div className="flex h-screen w-screen flex-col bg-app text-primary-c">
       {/* 顶部导航 —— 自定义标题栏（无边框窗口下替代原生标题栏） */}
       <header
-        className="glass-card z-30 flex h-12 shrink-0 select-none items-center justify-between border-b border-default px-4 app-drag-region"
+        className="glass-card z-30 flex h-10 shrink-0 select-none items-center justify-between border-b border-default px-3 app-drag-region"
         onDoubleClick={() => void window.api.window.maximize()}
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <div
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-soft"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-white shadow-soft"
             style={{ backgroundColor: "#4f46e5" }}
             aria-hidden
           >
-            <Bot className="h-5 w-5" strokeWidth={2.5} />
+            <Bot className="h-4 w-4" strokeWidth={2.5} />
           </div>
-          <span className="text-sm font-semibold tracking-tight">AgentX</span>
-          <span className="ml-1 rounded-full bg-subtle px-2 py-0.5 text-[10px] font-medium text-secondary-c">
+          <span className="font-semibold tracking-tight" style={{ fontSize: 'var(--fs-brand)' }}>AgentX</span>
+          <span className="ml-1 rounded-full bg-subtle px-1.5 py-px font-medium text-secondary-c" style={{ fontSize: 'var(--fs-version)' }}>
             v0.1
           </span>
           {/* 场景切换器：Work / Coding，影响 system prompt 注入 */}
           <div
-            className="app-no-drag ml-2 inline-flex items-center rounded-md border border-default bg-surface"
+            className="app-no-drag ml-1.5 inline-flex items-center rounded-md border border-default bg-surface"
             role="tablist"
             aria-label="场景切换"
           >
@@ -107,12 +119,13 @@ export default function App() {
                 type="button"
                 role="tab"
                 aria-selected={scene === s}
-                onClick={() => setScene(s)}
-                className={`h-6 px-2.5 text-[11px] font-medium transition-colors ${
+                onClick={() => handleSceneChange(s)}
+                className={`h-5 px-2 font-medium transition-colors ${
                   scene === s
                     ? "bg-brand-600 text-white"
                     : "text-secondary-c hover:text-primary-c"
                 }`}
+                style={{ fontSize: 'var(--fs-scene-tab)' }}
                 title={s === "work" ? "工作场景" : "编程场景"}
               >
                 {s === "work" ? "Work" : "Coding"}
@@ -202,7 +215,7 @@ export default function App() {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm">
           <div className="glass-card flex items-center gap-3 rounded-xl border border-default px-6 py-4 shadow-pop">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-brand-500" />
-            <span className="text-sm font-medium">后端启动中…</span>
+            <span className="font-medium" style={{ fontSize: 'var(--fs-brand)' }}>后端启动中…</span>
           </div>
         </div>
       )}
@@ -214,8 +227,8 @@ export default function App() {
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-rose-100 text-rose-600">
               <Settings className="h-5 w-5" />
             </div>
-            <div className="mb-1 text-sm font-semibold">后端启动失败</div>
-            <div className="mb-4 text-xs text-muted-c">请查看日志以排查问题</div>
+            <div className="mb-1 font-semibold" style={{ fontSize: 'var(--fs-brand)' }}>后端启动失败</div>
+            <div className="mb-4 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>请查看日志以排查问题</div>
             <button
               type="button"
               onClick={() => void window.api.app.restartBackend()}

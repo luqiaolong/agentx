@@ -93,14 +93,15 @@ export function PermissionToggle({
         title={current.description}
         className={[
           // 与左侧 Slash/AtSign/FolderPlus 同款 btn-icon，高 h-7（28px），
-          // 文字尺寸 11px 与左侧 text-[11px] 一致，整体 visual rhythm 一致
+          // 文字尺寸 12px 与左侧 text-xs 一致，整体 visual rhythm 一致
           "btn-icon group inline-flex h-7 w-auto items-center gap-1 px-1.5",
-          "text-[11px] leading-none",
+          "leading-none",
           open ? "bg-hover-soft" : "",
           isFullTrust
             ? "text-amber-700 hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-300"
             : "",
         ].join(" ")}
+        style={{ fontSize: 'var(--fs-composer-toolbar)' }}
       >
         <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span className="font-medium">{current.short}</span>
@@ -123,38 +124,10 @@ export function PermissionToggle({
             exit={{ opacity: 0, y: 4, scale: 0.98 }}
             transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
             className={[
-              "absolute bottom-full right-0 z-50 mb-1.5 w-[320px]",
-              "overflow-hidden rounded-lg border border-default bg-surface/95 backdrop-blur-md",
-              "shadow-[0_8px_28px_-12px_rgba(0,0,0,0.5),0_2px_6px_-2px_rgba(0,0,0,0.3)]",
+              "absolute bottom-full right-0 z-50 mb-1.5 w-[200px]",
+              "overflow-hidden rounded-md border border-default bg-surface shadow-pop",
             ].join(" ")}
           >
-            <div className="border-b border-default bg-subtle/60 px-3 py-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-c">
-                  权限模式 · 当前生效
-                </span>
-                <span
-                  className={[
-                    "rounded-full px-1.5 py-px text-[10px] font-medium",
-                    isFullTrust
-                      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                      : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-                  ].join(" ")}
-                >
-                  scope: {current.scope}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-secondary-c">
-                <FolderOpen className="h-3 w-3" aria-hidden="true" />
-                <span
-                  className="truncate font-medium"
-                  title={effectivePath ?? "Home（未授权目录）"}
-                >
-                  {effectivePath ?? "Home（未授权目录）"}
-                </span>
-              </div>
-            </div>
-
             <div className="p-1">
               {OPTIONS.map((opt) => {
                 const active = opt.value === mode;
@@ -165,9 +138,10 @@ export function PermissionToggle({
                     type="button"
                     role="option"
                     aria-selected={active}
+                    title={opt.description}
                     onClick={() => choose(opt.value)}
                     className={[
-                      "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left",
+                      "group flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left",
                       "transition-colors duration-100 outline-none",
                       active
                         ? opt.value === "full_trust"
@@ -178,39 +152,25 @@ export function PermissionToggle({
                   >
                     <OptIcon
                       className={[
-                        "mt-0.5 h-3.5 w-3.5 shrink-0",
+                        "h-3.5 w-3.5 shrink-0",
                         opt.value === "full_trust"
                           ? "text-amber-600 dark:text-amber-400"
                           : "text-brand-500",
                       ].join(" ")}
                       aria-hidden="true"
                     />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[12px] font-medium text-primary-c">
-                          {opt.label}
-                        </span>
-                        {active && (
-                          <Check
-                            className="h-3 w-3 shrink-0 text-brand-500"
-                            aria-hidden="true"
-                          />
-                        )}
-                      </div>
-                      <div className="mt-0.5 text-[10.5px] leading-tight text-muted-c">
-                        {opt.description}
-                      </div>
-                    </div>
-                    <kbd className="mt-0.5 hidden shrink-0 rounded border border-default bg-subtle px-1 py-px text-[9px] font-mono text-muted-c sm:inline-block">
-                      {opt.scope}
-                    </kbd>
+                    <span className="min-w-0 flex-1 truncate font-medium text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
+                      {opt.label}
+                    </span>
+                    {active && (
+                      <Check
+                        className="h-3 w-3 shrink-0 text-brand-500"
+                        aria-hidden="true"
+                      />
+                    )}
                   </button>
                 );
               })}
-            </div>
-
-            <div className="border-t border-default bg-subtle/40 px-3 py-1.5 text-[10px] text-muted-c">
-              <span className="font-mono">Esc</span> 关闭 · 切换会话自动复位为「当前工作区」
             </div>
           </motion.div>
         )}

@@ -93,7 +93,7 @@ interface ServerRowProps {
 function StatusBadge({ status }: { status: McpServerStatus }): JSX.Element {
   if (!status.enabled) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-secondary-c">
+      <span className="inline-flex items-center gap-1 rounded-full bg-subtle px-1.5 py-0.5 text-secondary-c" style={{ fontSize: 'var(--fs-settings-badge)' }}>
         <XCircle className="h-3 w-3" />
         已禁用
       </span>
@@ -101,14 +101,14 @@ function StatusBadge({ status }: { status: McpServerStatus }): JSX.Element {
   }
   if (status.connected) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600 dark:text-emerald-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
         <CheckCircle2 className="h-3 w-3" />
         已连接 · {status.tool_count} 工具
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-400">
+    <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-1.5 py-0.5 text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
       <XCircle className="h-3 w-3" />
       连接失败
     </span>
@@ -127,7 +127,7 @@ function ServerRow({
   const TransportIcon = status.transport === "stdio" ? Terminal : Globe;
 
   return (
-    <li className="rounded-lg border border-default bg-surface px-3 py-2.5 text-xs">
+    <li className="rounded-lg border border-default bg-surface px-3 py-2.5" style={{ fontSize: 'var(--fs-settings-desc)' }}>
       <div className="flex items-start gap-2">
         <TransportIcon className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
         <div className="min-w-0 flex-1">
@@ -137,12 +137,12 @@ function ServerRow({
             </span>
             <StatusBadge status={status} />
             {status.trusted && (
-              <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+              <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-amber-600 dark:text-amber-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
                 trusted
               </span>
             )}
           </div>
-          <div className="mt-1 truncate text-[11px] text-muted-c">
+          <div className="mt-1 truncate text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
             {status.transport === "stdio" ? (
               <>
                 <span className="font-mono">{status.command || "?"}</span>
@@ -155,14 +155,14 @@ function ServerRow({
             )}
           </div>
           {status.error && (
-            <div className="mt-1 flex items-start gap-1 text-[10px] text-rose-600 dark:text-rose-400">
+            <div className="mt-1 flex items-start gap-1 text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
               <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
               <span className="break-all">{status.error}</span>
             </div>
           )}
           {testResult && (
             <div
-              className={`mt-1.5 rounded-md border px-2 py-1 text-[10px] ${
+              className={`mt-1.5 rounded-md border px-2 py-1 ${
                 testResult.ok
                   ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
                   : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300"
@@ -214,7 +214,8 @@ function ServerRow({
             <>
               <button
                 type="button"
-                className="rounded px-1.5 py-0.5 text-[10px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                style={{ fontSize: 'var(--fs-settings-form-hint)' }}
                 onClick={() => {
                   onDelete();
                   setConfirmDelete(false);
@@ -313,7 +314,7 @@ function ServerEditor({
     <div className="space-y-3 rounded-lg border border-default bg-surface p-3">
       {/* 名称 */}
       <div className="flex items-center gap-2">
-        <label className="w-20 shrink-0 text-xs font-medium text-secondary-c">
+        <label className="w-20 shrink-0 font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
           名称
         </label>
         <input
@@ -321,7 +322,8 @@ function ServerEditor({
           value={draft.name}
           onChange={(e) => setDraft((s) => ({ ...s, name: e.target.value }))}
           placeholder="filesystem"
-          className="input-field font-mono text-[11px]"
+          className="input-field font-mono"
+          style={{ fontSize: 'var(--fs-settings-desc)' }}
           // name 在编辑已有 server 时不可改：
           // - 后端 key 用 name 索引（MultiServerMCPClient）
           // - 已连接 stdio 改名会留孤儿进程，与 runtime_dangerous tracking 不一致
@@ -330,14 +332,14 @@ function ServerEditor({
           disabled={!isNew}
         />
         {!isNew && (
-          <span className="text-[10px] text-muted-c">编辑时不可改名</span>
+          <span className="text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>编辑时不可改名</span>
         )}
       </div>
-      {nameErr && <p className="ml-22 text-[11px] text-rose-500">{nameErr}</p>}
+      {nameErr && <p className="ml-22 text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{nameErr}</p>}
 
       {/* 传输方式 */}
       <div className="flex items-start gap-2">
-        <label className="w-20 shrink-0 pt-1 text-xs font-medium text-secondary-c">
+        <label className="w-20 shrink-0 pt-1 font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
           传输方式
         </label>
         <div className="flex-1 space-y-1">
@@ -346,7 +348,7 @@ function ServerEditor({
             return (
               <label
                 key={t.value}
-                className={`flex cursor-pointer items-start gap-2 rounded border px-2 py-1.5 text-[11px] ${
+                className={`flex cursor-pointer items-start gap-2 rounded border px-2 py-1.5 ${
                   selected
                     ? "border-brand-500 bg-brand-600/5"
                     : "border-default bg-subtle/40 hover:bg-hover-soft"
@@ -365,7 +367,7 @@ function ServerEditor({
                   <div className="font-mono font-medium text-primary-c">
                     {t.label}
                   </div>
-                  <div className="text-[10px] text-muted-c">{t.desc}</div>
+                  <div className="text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{t.desc}</div>
                 </div>
               </label>
             );
@@ -377,7 +379,7 @@ function ServerEditor({
       {isStdio && (
         <>
           <div className="flex items-center gap-2">
-            <label className="w-20 shrink-0 text-xs font-medium text-secondary-c">
+            <label className="w-20 shrink-0 font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               command
             </label>
             <input
@@ -387,11 +389,12 @@ function ServerEditor({
                 setDraft((s) => ({ ...s, command: e.target.value }))
               }
               placeholder="npx"
-              className="input-field font-mono text-[11px]"
+              className="input-field font-mono"
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               args（每行一个参数）
             </label>
             <textarea
@@ -399,11 +402,12 @@ function ServerEditor({
               onChange={(e) => setArgsText(e.target.value)}
               rows={3}
               placeholder={"-y\n@modelcontextprotocol/server-filesystem\nd:/workspace"}
-              className="input-field resize-y font-mono text-[11px] leading-relaxed"
+              className="input-field resize-y font-mono leading-relaxed"
+              style={{ fontSize: 'var(--fs-settings-desc)' }}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               env（KEY=VALUE 每行一个，可选）
             </label>
             <textarea
@@ -411,7 +415,8 @@ function ServerEditor({
               onChange={(e) => setEnvText(e.target.value)}
               rows={2}
               placeholder={"API_KEY=xxx\nDEBUG=true"}
-              className="input-field resize-y font-mono text-[11px] leading-relaxed"
+              className="input-field resize-y font-mono leading-relaxed"
+              style={{ fontSize: 'var(--fs-settings-desc)' }}
             />
           </div>
         </>
@@ -420,7 +425,7 @@ function ServerEditor({
       {/* HTTP 传输字段 */}
       {!isStdio && (
         <div className="flex items-center gap-2">
-          <label className="w-20 shrink-0 text-xs font-medium text-secondary-c">
+          <label className="w-20 shrink-0 font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
             URL
           </label>
           <input
@@ -428,7 +433,8 @@ function ServerEditor({
             value={draft.url ?? ""}
             onChange={(e) => setDraft((s) => ({ ...s, url: e.target.value }))}
             placeholder="http://localhost:8000/mcp"
-            className="input-field font-mono text-[11px]"
+            className="input-field font-mono"
+            style={{ fontSize: 'var(--fs-settings-desc)' }}
           />
         </div>
       )}
@@ -436,7 +442,7 @@ function ServerEditor({
       {/* 开关 */}
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2">
-          <label className="text-xs font-medium text-secondary-c">启用</label>
+          <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>启用</label>
           <button
             type="button"
             role="switch"
@@ -449,7 +455,7 @@ function ServerEditor({
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs font-medium text-secondary-c">
+          <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
             trusted（可信）
           </label>
           <button
@@ -465,7 +471,7 @@ function ServerEditor({
         </div>
       </div>
       {!draft.trusted && (
-        <div className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+        <div className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
           <span>
             未标记 trusted 的 server，其工具调用将经 DeepAgent 审批流（interrupt_before）。
@@ -654,7 +660,7 @@ export function McpSettings(): JSX.Element {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/40 px-3 py-2 text-[11px] text-muted-c">
+      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/40 px-3 py-2 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
         <Plug className="h-3.5 w-3.5 shrink-0" />
         <span>
           配置外部 MCP (Model Context Protocol) server。MCP 工具仅暴露给 DeepAgent
@@ -663,14 +669,14 @@ export function McpSettings(): JSX.Element {
       </div>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{errMsg}</span>
         </div>
       )}
 
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-c">
+        <div className="flex items-center gap-1.5 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
           <span className="rounded-full bg-subtle px-2 py-0.5">
             {servers.length} 个 server
           </span>
@@ -697,7 +703,7 @@ export function McpSettings(): JSX.Element {
       </div>
 
       {servers.length === 0 && !editing && (
-        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
+        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
           暂无 MCP server，点击「新建」添加第一个 server
         </p>
       )}
@@ -747,7 +753,7 @@ export function McpSettings(): JSX.Element {
           {restarting ? "重启中…" : "保存并重启后端"}
         </button>
         {saved && (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
             <CheckCircle2 className="h-3 w-3" />
             已保存并生效
           </span>

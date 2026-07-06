@@ -207,8 +207,8 @@ function MessageParts({
               onKeyDown={handleEditKeyDown}
               onBlur={() => setIsEditing(false)}
               rows={2}
-              className="block w-full resize-none rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 pr-24 pb-8 text-base leading-relaxed text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-              style={{ minHeight: "48px" }}
+              className="block w-full resize-none rounded-xl rounded-br-md bg-brand-600 px-3 py-2 pr-24 pb-8 leading-snug text-white shadow-soft placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+              style={{ minHeight: "48px", fontSize: 'var(--fs-msg-user)' }}
             />
             {/* 模型选择 + 发送按钮：编辑框右下角 */}
             <div className="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-1">
@@ -235,7 +235,7 @@ function MessageParts({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <div className="relative max-w-[80%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 text-base leading-relaxed text-white shadow-soft">
+        <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-600 px-3 py-2 leading-snug text-white shadow-soft" style={{ fontSize: 'var(--fs-msg-user)' }}>
           {userText}
         </div>
         {/* 编辑按钮：消息右侧，hover 时显示 */}
@@ -260,7 +260,7 @@ function MessageParts({
       .join("") || message.content;
     return (
       <div className="flex justify-start">
-        <div className="max-w-[80%] overflow-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+        <div className="max-w-[80%] overflow-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200" style={{ fontSize: 'var(--fs-msg-assist)' }}>
           <pre className="whitespace-pre-wrap font-mono">{text}</pre>
         </div>
       </div>
@@ -278,9 +278,9 @@ function MessageParts({
         >
           <Sparkles className="h-3.5 w-3.5" />
         </div>
-        <div className="flex w-full flex-col gap-1.5 rounded-2xl rounded-tl-md bg-surface px-3 py-2 shadow-soft">
+        <div className="flex w-full flex-col gap-1 rounded-xl rounded-tl-md bg-surface px-2.5 py-1.5 shadow-soft">
           {items.length === 0 && !hasContent && isStreamingLast && (
-            <span className="flex items-center gap-1.5 text-base text-muted-c">
+            <span className="flex items-center gap-1.5 text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
               <span className="flex gap-0.5">
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />

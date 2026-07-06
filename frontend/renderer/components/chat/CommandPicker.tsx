@@ -84,10 +84,10 @@ export function CommandPicker({ onSelect, onClose }: Props) {
       {/* 头部 */}
       <div className="flex items-center gap-2 border-b border-default px-3 py-1.5">
         <Search className="h-3.5 w-3.5 text-muted-c" />
-        <span className="flex-1 text-xs font-semibold text-primary-c">
+        <span className="flex-1 font-semibold text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
           命令与技能
         </span>
-        <span className="text-2xs text-muted-c">
+        <span className="text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
           ↑↓ 选择 · Enter 确认 · Esc 关闭
         </span>
         <button
@@ -103,16 +103,16 @@ export function CommandPicker({ onSelect, onClose }: Props) {
       {/* 内容 */}
       <div className="max-h-96 overflow-y-auto py-1" ref={containerRef}>
         {loading && (
-          <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-c">
+          <div className="flex items-center gap-2 px-3 py-4 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             加载技能…
           </div>
         )}
         {error && (
-          <div className="px-3 py-3 text-xs text-rose-500">{error}</div>
+          <div className="px-3 py-3 text-rose-500" style={{ fontSize: 'var(--fs-popover-item)' }}>{error}</div>
         )}
         {!loading && entries.length === 0 && (
-          <div className="px-3 py-4 text-center text-xs text-muted-c">
+          <div className="px-3 py-4 text-center text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
             没有匹配的命令或技能
           </div>
         )}
@@ -165,7 +165,7 @@ export function CommandPicker({ onSelect, onClose }: Props) {
 
 function SectionHeader({ label }: { label: string }) {
   return (
-    <div className="sticky top-0 z-10 bg-subtle px-3 py-0.5 text-2xs font-semibold uppercase tracking-wider text-muted-c">
+    <div className="sticky top-0 z-10 bg-subtle px-3 py-0.5 font-semibold uppercase tracking-wider text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
       {label}
     </div>
   );
@@ -205,18 +205,18 @@ function CommandRow({
         >
           <Icon className="h-3 w-3" />
         </div>
-        <span className="shrink-0 truncate text-xs font-medium text-primary-c">
+        <span className="shrink-0 truncate font-medium text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
           {entry.kind === "builtin" ? "/" : ""}
           {entry.title}
         </span>
         {entry.kind === "builtin" && entry.builtin?.takesArgument && (
-          <span className="shrink-0 rounded bg-subtle px-1 py-0.5 font-mono text-2xs text-muted-c">
+          <span className="shrink-0 rounded bg-subtle px-1 py-0.5 font-mono text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
             {entry.builtin.argumentHint}
           </span>
         )}
         <ScopeBadge scope={entry.scope} />
         {entry.description && (
-          <span className="min-w-0 flex-1 truncate pl-2 text-xs text-muted-c">
+          <span className="min-w-0 flex-1 truncate pl-2 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
             {entry.description}
           </span>
         )}
@@ -236,7 +236,8 @@ function ScopeBadge({ scope }: { scope: CommandEntry["scope"] }) {
   const meta = map[scope];
   return (
     <span
-      className={`shrink-0 rounded px-1 py-0.5 text-2xs font-medium ${meta.tone}`}
+      className={`shrink-0 rounded px-1 py-0.5 font-medium ${meta.tone}`}
+      style={{ fontSize: 'var(--fs-popover-hint)' }}
     >
       {meta.label}
     </span>

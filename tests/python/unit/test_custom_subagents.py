@@ -98,12 +98,9 @@ def test_parse_custom_subagents_basic() -> None:
         "my_helper": {
             "key": "my_helper",
             "name": "我的助手",
-            "description": "测试用",
-            "enabled": True,
-            "temperature": 0.5,
-            "system_prompt": "you are helper",
+            "systemPrompt": "you are helper",
             "tools": ["read_file", "glob"],
-            "keywords": ["帮忙", "助手"],
+            "triggerDescription": "帮忙、助手",
         }
     }
     result = _parse_custom_subagents(raw)
@@ -112,12 +109,11 @@ def test_parse_custom_subagents_basic() -> None:
     assert isinstance(entry, CustomSubagentEntry)
     assert entry.key == "my_helper"
     assert entry.name == "我的助手"
-    assert entry.description == "测试用"
     assert entry.enabled is True
-    assert entry.temperature == 0.5
+    assert entry.temperature == 0.2
     assert entry.system_prompt == "you are helper"
     assert entry.tools == ["read_file", "glob"]
-    assert entry.keywords == ["帮忙", "助手"]
+    assert entry.trigger_description == "帮忙、助手"
 
 
 def test_parse_custom_subagents_rejects_builtin_key() -> None:
@@ -191,12 +187,9 @@ def test_custom_subagents_env_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
         "my_agent": {
             "key": "my_agent",
             "name": "我的代理",
-            "description": "测试",
-            "enabled": True,
-            "temperature": 0.3,
-            "system_prompt": "",
-            "tools": ["read_file", "glob"],
-            "keywords": ["帮我"],
+            "systemPrompt": "",
+            "tools": ["read_file"],
+            "triggerDescription": "帮我",
         }
     }
     monkeypatch.setenv(
@@ -208,7 +201,7 @@ def test_custom_subagents_env_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "my_agent" in custom
     entry = custom["my_agent"]
     assert entry.name == "我的代理"
-    assert entry.tools == ["read_file", "glob"]
+    assert entry.tools == ["read_file"]
 
 
 def test_custom_subagents_env_dangerous_tools_filtered(
@@ -245,12 +238,11 @@ def test_select_subagent_custom_matched_after_builtin(
         "my_agent": CustomSubagentEntry(
             key="my_agent",
             name="MyAgent",
-            description="",
+            system_prompt="",
             enabled=True,
             temperature=0.2,
-            system_prompt="",
             tools=["read_file"],
-            keywords=["特殊词"],
+            trigger_description="特殊词",
         ),
     }
     mock_settings = _make_mock_settings_with_custom(custom_subagents=custom)
@@ -269,19 +261,20 @@ def test_select_subagent_builtin_takes_priority_over_custom(
         "my_agent": CustomSubagentEntry(
             key="my_agent",
             name="MyAgent",
-            description="",
+            system_prompt="",
             enabled=True,
             temperature=0.2,
-            system_prompt="",
             tools=["read_file"],
-            keywords=["搜索"],  # 与 web 关键词冲突
+            trigger_description="搜一下、查查",  # 与 web 自定义短关键词冲突
         ),
     }
     mock_settings = _make_mock_settings_with_custom(custom_subagents=custom)
+    # 覆盖 web 的 trigger_description 为短关键词，确保与自定义冲突
+    mock_settings.subagents["web"] = mock_settings.subagents["web"].model_copy(update={"trigger_description": "搜一下、查查"})
     monkeypatch.setattr("app.router.graph.get_settings", lambda: mock_settings)
 
-    # "搜索" 同时命中内置 web 与自定义，优先内置
-    result = _select_subagent("搜索")
+    # "帮我搜一下" 同时命中内置 web 与自定义，优先内置
+    result = _select_subagent("帮我搜一下")
     assert result == "web"
 
 
@@ -293,12 +286,11 @@ def test_select_subagent_custom_disabled_skipped(
         "my_agent": CustomSubagentEntry(
             key="my_agent",
             name="MyAgent",
-            description="",
+            system_prompt="",
             enabled=False,
             temperature=0.2,
-            system_prompt="",
             tools=["read_file"],
-            keywords=["特殊词"],
+            trigger_description="特殊词",
         ),
     }
     # 同时禁用内置 code 兜底，确保返回 None
@@ -320,12 +312,11 @@ def test_select_subagent_custom_all_tools_disabled_returns_none(
         "my_agent": CustomSubagentEntry(
             key="my_agent",
             name="MyAgent",
-            description="",
+            system_prompt="",
             enabled=True,
             temperature=0.2,
-            system_prompt="",
             tools=["read_file"],
-            keywords=["特殊词"],
+            trigger_description="特殊词",
         ),
     }
     mock_settings = _make_mock_settings_with_custom(
@@ -347,22 +338,20 @@ def test_select_subagent_custom_sorted_by_key(
         "z_agent": CustomSubagentEntry(
             key="z_agent",
             name="Z",
-            description="",
+            system_prompt="",
             enabled=True,
             temperature=0.2,
-            system_prompt="",
             tools=["read_file"],
-            keywords=["共同词"],
+            trigger_description="共同词",
         ),
         "a_agent": CustomSubagentEntry(
             key="a_agent",
             name="A",
-            description="",
+            system_prompt="",
             enabled=True,
             temperature=0.2,
-            system_prompt="",
             tools=["read_file"],
-            keywords=["共同词"],
+            trigger_description="共同词",
         ),
     }
     mock_settings = _make_mock_settings_with_custom(

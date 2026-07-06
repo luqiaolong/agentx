@@ -96,7 +96,7 @@ export function ContextUsage() {
       {open && (
         <div className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 rounded-lg border border-default bg-surface px-4 py-3 shadow-pop min-w-[200px] z-50">
           {/* 数字详情 */}
-          <div className="flex items-center gap-2 text-sm whitespace-nowrap">
+          <div className="flex items-center gap-2 whitespace-nowrap" style={{ fontSize: 'var(--fs-composer-toolbar)' }}>
             <span className="font-semibold text-primary-c">{pct}%</span>
             <span className="text-muted-c">
               {tokens >= 1000
@@ -110,7 +110,7 @@ export function ContextUsage() {
             <span className="text-muted-c">Context used</span>
           </div>
           {activeLabel && (
-            <div className="mt-0.5 text-xs text-muted-c">{activeLabel}</div>
+            <div className="mt-0.5 text-muted-c" style={{ fontSize: 'var(--fs-composer-toolbar)' }}>{activeLabel}</div>
           )}
 
           {/* Compact 按钮 */}
@@ -118,7 +118,8 @@ export function ContextUsage() {
             type="button"
             onClick={handleCompact}
             disabled={compacting || !currentId}
-            className="mt-2 w-full rounded bg-neutral-700 px-2 py-1 text-[11px] font-medium text-primary-c transition-colors hover:bg-neutral-600 disabled:opacity-50"
+            className="mt-2 w-full rounded bg-neutral-700 px-2 py-1 font-medium text-primary-c transition-colors hover:bg-neutral-600 disabled:opacity-50"
+            style={{ fontSize: 'var(--fs-composer-toolbar)' }}
           >
             {compacting ? "Compacting..." : "Compact Chat"}
           </button>
@@ -126,9 +127,10 @@ export function ContextUsage() {
           {/* 结果反馈 */}
           {compactResult && (
             <div
-              className={`mt-2 text-xs ${
+              className={`mt-2 ${
                 compactResult.ok ? "text-muted-c" : "text-red-400"
               }`}
+              style={{ fontSize: 'var(--fs-composer-toolbar)' }}
             >
               {compactResult.ok
                 ? `Compressed ${compactResult.compressedCount} messages`

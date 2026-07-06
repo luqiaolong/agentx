@@ -110,7 +110,7 @@ export function FileTree() {
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center text-xs">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
           <button
             type="button"
             onClick={() => goTo(-1)}
@@ -135,21 +135,21 @@ export function FileTree() {
 
       {/* 错误 */}
       {err && (
-        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           {err}
         </div>
       )}
 
       {/* 列表 */}
       {loading ? (
-        <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-c">
+        <div className="flex items-center gap-2 px-2 py-3 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
           <RefreshCw className="h-3 w-3 animate-spin" />
           加载中…
         </div>
       ) : entries.length === 0 ? (
         <div className="flex flex-col items-center gap-1.5 py-6 text-center">
           <FolderOpen className="h-5 w-5 text-muted-c" />
-          <div className="text-xs text-muted-c">空目录</div>
+          <div className="text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>空目录</div>
         </div>
       ) : (
         <ul className="space-y-0.5">
@@ -167,11 +167,11 @@ export function FileTree() {
                 ) : (
                   <FileText className="h-3.5 w-3.5 shrink-0 text-muted-c" />
                 )}
-                <span className="min-w-0 flex-1 truncate text-xs text-secondary-c group-hover:text-primary-c">
+                <span className="min-w-0 flex-1 truncate text-secondary-c group-hover:text-primary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
                   {e.name}
                 </span>
                 {e.type === "file" && (
-                  <span className="shrink-0 text-[10px] text-muted-c">
+                  <span className="shrink-0 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-size)' }}>
                     {formatSize(e.size)}
                   </span>
                 )}

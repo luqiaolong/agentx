@@ -114,6 +114,39 @@ class SessionSandbox:
 
     # ---- internal helpers ----
 
+    def _get_authorized_set(self, thread_id: str, source: str = "authorized_dirs") -> set[tuple[Path, bool]]:
+        """安全获取授权集合，防御非 set 类型（如 list）导致迭代错误。"""
+        container = self.authorized_dirs if source == "authorized_dirs" else self._temp_authorized
+        raw = container.get(thread_id, set())
+        if isinstance(raw, set):
+            return raw
+        if isinstance(raw, (list, tuple)):
+            logger.warning(
+                "{} type mismatch for thread_id={}, expected set got {}. Converting to set.",
+                source,
+                thread_id,
+                type(raw).__name__,
+            )
+            try:
+                return set(raw)
+            except TypeError as exc:
+                logger.error(
+                    "{} conversion failed for thread_id={}: {}. Value: {}. Falling back to empty set.",
+                    source,
+                    thread_id,
+                    exc,
+                    raw,
+                )
+                return set()
+        logger.error(
+            "{} type error for thread_id={}, expected set got {}. Value: {}. Falling back to empty set.",
+            source,
+            thread_id,
+            type(raw).__name__,
+            raw,
+        )
+        return set()
+
     @staticmethod
     def _normalize(path: str | Path) -> Path:
         """规范化路径。相对路径基于 PROJECT_ROOT 解析（非 CWD）。
@@ -168,10 +201,10 @@ class SessionSandbox:
         for base in _DEFAULT_WHITELIST:
             if _is_under(resolved, base):
                 return
-        for auth_path, _writable in self.authorized_dirs.get(thread_id, set()):
+        for auth_path, _writable in self._get_authorized_set(thread_id, "authorized_dirs"):
             if _is_under(resolved, auth_path):
                 return
-        for auth_path, _writable in self._temp_authorized.get(thread_id, set()):
+        for auth_path, _writable in self._get_authorized_set(thread_id, "_temp_authorized"):
             if _is_under(resolved, auth_path):
                 return
         self._deny(thread_id, path, "deny_read")
@@ -193,12 +226,12 @@ class SessionSandbox:
             if _is_under(resolved, base):
                 return
         matched = False
-        for auth_path, writable in self.authorized_dirs.get(thread_id, set()):
+        for auth_path, writable in self._get_authorized_set(thread_id, "authorized_dirs"):
             if _is_under(resolved, auth_path):
                 matched = True
                 if writable:
                     return
-        for auth_path, writable in self._temp_authorized.get(thread_id, set()):
+        for auth_path, writable in self._get_authorized_set(thread_id, "_temp_authorized"):
             if _is_under(resolved, auth_path):
                 matched = True
                 if writable:
@@ -307,7 +340,7 @@ class SessionSandbox:
     def list_authorized(self, thread_id: str) -> list[tuple[Path, bool]]:
         """返回 [(path, writable), ...]（按路径排序，结果确定性）。"""
         return sorted(
-            self.authorized_dirs.get(thread_id, set()),
+            self._get_authorized_set(thread_id, "authorized_dirs"),
             key=lambda e: str(e[0]),
         )
 
@@ -323,7 +356,7 @@ class SessionSandbox:
 
     def snapshot(self, thread_id: str) -> list[str]:
         """导出授权目录为字符串列表（用于写入 checkpoint authorized_dirs 字段）。"""
-        return sorted(str(p) for (p, _w) in self.authorized_dirs.get(thread_id, set()))
+        return sorted(str(p) for (p, _w) in self._get_authorized_set(thread_id, "authorized_dirs"))
 
     def is_path_authorized(self, thread_id: str, path: str | Path, writable: bool = False) -> bool:
         """检查路径是否已授权（用于 directory_extension 预检查，不抛异常）。
@@ -343,10 +376,10 @@ class SessionSandbox:
         for base in _DEFAULT_WHITELIST:
             if _is_under(resolved, base):
                 return True
-        for auth_path, w in self.authorized_dirs.get(thread_id, set()):
+        for auth_path, w in self._get_authorized_set(thread_id, "authorized_dirs"):
             if _is_under(resolved, auth_path) and (not writable or w):
                 return True
-        for auth_path, w in self._temp_authorized.get(thread_id, set()):
+        for auth_path, w in self._get_authorized_set(thread_id, "_temp_authorized"):
             if _is_under(resolved, auth_path) and (not writable or w):
                 return True
         return False

@@ -28,10 +28,12 @@ def _make_fake_run_router(captured: dict):
         checkpointer: object | None = None,
         permission_mode: str = "standard",
         scene_prompt: str | None = None,
+        agent_mode: str = "agent",
     ) -> AsyncIterator[dict[str, str]]:
         captured["scene_prompt"] = scene_prompt
         captured["message"] = message
         captured["thread_id"] = thread_id
+        captured["agent_mode"] = agent_mode
         yield {"event": "done", "data": "{}"}
 
     return fake_run_router

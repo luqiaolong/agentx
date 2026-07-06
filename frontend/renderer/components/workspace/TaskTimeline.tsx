@@ -70,12 +70,13 @@ function TaskCard({ task }: { task: Task }) {
         <cfg.Icon
           className={`h-3.5 w-3.5 shrink-0 ${cfg.color} ${cfg.spin ? "animate-spin" : ""}`}
         />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-primary-c">
+        <span className="min-w-0 flex-1 truncate font-medium text-primary-c" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
           {task.title}
         </span>
         {/* 状态标签 */}
         <span
-          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${cfg.bg} ${cfg.color}`}
+          className={`shrink-0 rounded-full px-1.5 py-0.5 font-medium ${cfg.bg} ${cfg.color}`}
+          style={{ fontSize: 'var(--fs-settings-badge)' }}
         >
           {cfg.label}
         </span>
@@ -92,7 +93,7 @@ function TaskCard({ task }: { task: Task }) {
       </div>
 
       {/* 元信息行：时间 + 进度 */}
-      <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-c">
+      <div className="mt-1 flex items-center gap-2 text-muted-c" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
         {task.createdAt > 0 && (
           <span className="inline-flex items-center gap-0.5">
             <Clock className="h-2.5 w-2.5" />
@@ -146,7 +147,7 @@ function TaskCard({ task }: { task: Task }) {
       {hasTodos && expanded && (
         <ul className="mt-2 space-y-1 border-t border-default pt-2">
           {task.todos?.map((todo, i) => (
-            <li key={i} className="flex items-start gap-1.5 text-[11px]">
+            <li key={i} className="flex items-start gap-1.5" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
               <span
                 className={`mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border ${
                   todo.done
@@ -190,8 +191,8 @@ export function TaskTimeline() {
         <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-subtle">
           <ListChecks className="h-5 w-5 text-muted-c" />
         </div>
-        <div className="text-xs font-medium text-secondary-c">暂无任务</div>
-        <div className="text-[10px] text-muted-c">
+        <div className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-empty-title)' }}>暂无任务</div>
+        <div className="text-muted-c" style={{ fontSize: 'var(--fs-empty-desc)' }}>
           发起深度任务后将在此显示进度
         </div>
       </div>

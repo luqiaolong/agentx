@@ -260,6 +260,10 @@ agentx/
 | `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
 | `todo_update` | JSON `{"todos": [{text, done, args?}]}` | DeepAgent 任务进度 |
 | `approval_request` | JSON `{"thread_id","tool_name","args","preview"}` | 危险工具审批请求 |
+| `team_plan` | JSON `{"plan": [{agent, input, purpose}], "reasoning": str}` | AgentTeam Orchestrator 生成的子任务计划 |
+| `team_progress` | JSON `{"agent": str, "status": "running"|"done"|"error", "message?": str}` | AgentTeam 子任务状态变化 |
+| `team_result` | JSON `{"agent": str, "summary": str}` | AgentTeam 子任务结果摘要 |
+| `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
 | `done` | `"{}"` | 流结束 |
 | `error` | 错误消息字符串 | 错误 |
 

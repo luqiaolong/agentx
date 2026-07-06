@@ -82,7 +82,7 @@ export function MilvusCredentialsForm() {
     return (
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
             <Database className="h-4 w-4" />
             Milvus 凭证已配置
           </span>
@@ -91,7 +91,7 @@ export function MilvusCredentialsForm() {
           </button>
         </div>
         {errMsg && (
-          <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
             <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>{errMsg}</span>
           </div>
@@ -103,14 +103,14 @@ export function MilvusCredentialsForm() {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{errMsg}</span>
         </div>
       )}
 
       <div>
-        <label className="mb-1 block text-xs font-medium text-secondary-c">用户名</label>
+        <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>用户名</label>
         <input
           {...register("user", {
             validate: (v) =>
@@ -118,13 +118,14 @@ export function MilvusCredentialsForm() {
           })}
           className="input-field"
           disabled={submitting}
+          style={{ fontSize: 'var(--fs-settings-form-input)' }}
         />
         {errors.user && (
-          <span className="mt-1 block text-xs text-rose-500">{errors.user.message}</span>
+          <span className="mt-1 block text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{errors.user.message}</span>
         )}
       </div>
       <div>
-        <label className="mb-1 block text-xs font-medium text-secondary-c">密码</label>
+        <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>密码</label>
         <input
           type="password"
           {...register("password", {
@@ -133,59 +134,64 @@ export function MilvusCredentialsForm() {
           })}
           className="input-field"
           disabled={submitting}
+          style={{ fontSize: 'var(--fs-settings-form-input)' }}
         />
         {errors.password && (
-          <span className="mt-1 block text-xs text-rose-500">{errors.password.message}</span>
+          <span className="mt-1 block text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{errors.password.message}</span>
         )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs font-medium text-secondary-c">Host</label>
+          <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Host</label>
           <input
             type="text"
             value={host}
             onChange={(e) => setHost(e.target.value)}
             className="input-field font-mono"
             disabled={submitting}
+            style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-secondary-c">Port</label>
+          <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Port</label>
           <input
             type="text"
             value={port}
             onChange={(e) => setPort(e.target.value)}
             className="input-field font-mono"
             disabled={submitting}
+            style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs font-medium text-secondary-c">DB</label>
+          <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>DB</label>
           <input
             type="text"
             value={db}
             onChange={(e) => setDb(e.target.value)}
             className="input-field font-mono"
             disabled={submitting}
+            style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-secondary-c">Collection</label>
+          <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Collection</label>
           <input
             type="text"
             value={collection}
             onChange={(e) => setCollection(e.target.value)}
             className="input-field font-mono"
             disabled={submitting}
+            style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
         </div>
       </div>
 
       <div>
-        <label className="mb-1 block text-xs font-medium text-secondary-c">Embedding URL</label>
+        <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Embedding URL</label>
         <input
           type="text"
           value={embeddingUrl}
@@ -193,11 +199,12 @@ export function MilvusCredentialsForm() {
           placeholder="http://127.0.0.1:8080"
           className="input-field font-mono"
           disabled={submitting}
+          style={{ fontSize: 'var(--fs-settings-form-input)' }}
         />
-        <p className="mt-1 text-[11px] text-muted-c">TEI 文本嵌入服务地址，留空使用后端默认值。</p>
+        <p className="mt-1 text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>TEI 文本嵌入服务地址，留空使用后端默认值。</p>
       </div>
 
-      <label className="flex cursor-pointer items-center gap-2 text-xs text-secondary-c">
+      <label className="flex cursor-pointer items-center gap-2 text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
         <input
           type="checkbox"
           checked={authEnabled}
@@ -214,7 +221,7 @@ export function MilvusCredentialsForm() {
           {submitting ? "保存中…" : "保存"}
         </button>
         {saved && (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400" style={{ fontSize: 'var(--fs-settings-desc)' }}>
             <Check className="h-3 w-3" />
             已保存
           </span>

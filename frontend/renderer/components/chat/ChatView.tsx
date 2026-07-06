@@ -378,7 +378,7 @@ export function ChatView() {
       {/* 错误提示 */}
       {(errorMsg || dropError) && (
         <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-          <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+          <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300" style={{ fontSize: 'var(--fs-msg-assist)' }}>
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{errorMsg ?? dropError}</span>
           </div>

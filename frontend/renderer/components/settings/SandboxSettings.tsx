@@ -30,7 +30,7 @@ export function SandboxSettings() {
 
   if (!threadId) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/50 px-3 py-2.5 text-xs text-muted-c">
+      <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/50 px-3 py-2.5 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
         <FolderLock className="h-3.5 w-3.5" />
         请先选择会话以查看授权目录
       </div>
@@ -49,7 +49,7 @@ export function SandboxSettings() {
 
   return (
     <div className="space-y-3">
-      <label className="flex cursor-pointer items-center gap-2 text-xs text-secondary-c">
+      <label className="flex cursor-pointer items-center gap-2 text-secondary-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
         <input
           type="checkbox"
           checked={persistAuthorizedDirs}
@@ -59,18 +59,19 @@ export function SandboxSettings() {
         跨会话保留授权目录
       </label>
       {dirs.length === 0 ? (
-        <p className="text-xs text-muted-c">暂无授权目录</p>
+        <p className="text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>暂无授权目录</p>
       ) : (
         <ul className="space-y-1">
           {dirs.map((d) => (
             <li
               key={d.path}
-              className="flex items-center justify-between gap-2 rounded-lg border border-default bg-subtle/40 px-2.5 py-1.5 text-xs"
+              className="flex items-center justify-between gap-2 rounded-lg border border-default bg-subtle/40 px-2.5 py-1.5"
+              style={{ fontSize: 'var(--fs-settings-desc)' }}
             >
               <span className="min-w-0 flex-1 truncate font-mono text-secondary-c">
                 {d.path}
                 {d.writable && (
-                  <span className="ml-1.5 rounded bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                  <span className="ml-1.5 rounded bg-amber-500/10 px-1 py-0.5 text-amber-600 dark:text-amber-400" style={{ fontSize: 'var(--fs-settings-badge)' }}>
                     可写
                   </span>
                 )}
@@ -88,7 +89,7 @@ export function SandboxSettings() {
         </ul>
       )}
       {error && (
-        <p className="text-xs text-rose-600 dark:text-rose-400">撤销失败：{error}</p>
+        <p className="text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>撤销失败：{error}</p>
       )}
     </div>
   );

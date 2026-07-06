@@ -32,13 +32,14 @@ export function SystemPromptSettings() {
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-muted-c">留空则使用后端默认提示词</p>
+      <p className="text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>留空则使用后端默认提示词</p>
       <textarea
         value={value}
         onChange={(e) => setValue(e.target.value)}
         rows={6}
         placeholder="留空使用后端默认"
         className="input-field resize-y font-mono leading-relaxed"
+        style={{ fontSize: 'var(--fs-settings-form-input)' }}
       />
       <div className="flex items-center gap-2">
         <button type="button" onClick={save} className="btn-primary">
@@ -46,14 +47,14 @@ export function SystemPromptSettings() {
           保存
         </button>
         {saved && (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400" style={{ fontSize: 'var(--fs-settings-desc)' }}>
             <Check className="h-3 w-3" />
             已保存
           </span>
         )}
       </div>
       {error && (
-        <p className="text-xs text-rose-600 dark:text-rose-400">保存失败：{error}</p>
+        <p className="text-rose-600 dark:text-rose-400" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>保存失败：{error}</p>
       )}
     </div>
   );

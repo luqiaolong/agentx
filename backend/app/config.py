@@ -40,18 +40,29 @@ _ALL_TOOLS = [
 
 
 class SubagentSettings(BaseModel):
-    """单个子代理的可配置项。"""
+    """单个子代理的可配置项。
+
+    字段说明：
+    - system_prompt: 角色定义（合并原 description + system_prompt）。
+      既作为 LLM 的系统提示词，也作为 UI 展示的描述。
+    - trigger_description: 触发条件描述（短句）。用于 LLM 语义路由决策
+      和降级关键词匹配（从短句中提取关键词）。
+    """
 
     enabled: bool = True
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    keywords: list[str] = Field(default_factory=list)
-    description: str = ""
+    trigger_description: str = ""
 
 
 # 内置子代理键名集合（与 _default_subagents 一致，用于区分内置/自定义）
 BUILTIN_SUBAGENT_KEYS: frozenset[str] = frozenset({"code", "rag", "web"})
+
+# 内置软件开发专家团角色键名集合（仅用于 AgentTeam 多代理协作）
+BUILTIN_TEAM_KEYS: frozenset[str] = frozenset({
+    "frontend_dev", "backend_dev", "tester", "architect", "devops", "ui_designer", "product_manager"
+})
 
 # 自定义子代理禁止绑定的危险工具（与 claude.md §10 安全红线一致）
 # subagent 无 interrupt_before 审批流，暴露写/编辑/shell 会绕过 DeepAgent 审批
@@ -63,7 +74,7 @@ FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
 class CustomSubagentEntry(BaseModel):
     """自定义子代理条目（含展示元数据）。
 
-    与 ``SubagentSettings`` 的差异：额外含 ``name`` / ``description`` 用于 UI 展示。
+    与 ``SubagentSettings`` 的差异：额外含 ``name`` / ``system_prompt`` 用于 UI 展示。
 
     ``key`` 字段严格校验：仅允许 ``[a-zA-Z0-9_-]{1,64}``（与前端
     ``frontend/main/store.ts::sanitizeCustomEntry::CUSTOM_KEY_RE`` 一致）。
@@ -72,20 +83,14 @@ class CustomSubagentEntry(BaseModel):
 
     key: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     name: str
-    description: str = ""
+    system_prompt: str = ""
     enabled: bool = True
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
-    system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    keywords: list[str] = Field(default_factory=list)
+    trigger_description: str = ""
 
 
-# 内置子代理默认描述
-_DEFAULT_CODE_DESCRIPTION = "代码与文件操作专家：擅长读取、搜索、分析代码文件和目录结构，回答与代码、文件内容、项目结构、HTML/CSS/JS/Python/Java 等技术实现相关的问题。"
-_DEFAULT_RAG_DESCRIPTION = "知识库检索专家：擅长从向量知识库中检索文档、知识点、技术文档，回答需要引用内部知识库资料的问题。"
-_DEFAULT_WEB_DESCRIPTION = "联网搜索专家：擅长搜索互联网上的实时信息、新闻、资料，回答需要最新外部信息的问题。"
-
-# 内置子代理默认系统提示词
+# 内置子代理默认角色定义（合并原 description + system_prompt）
 _DEFAULT_CODE_SYSTEM_PROMPT = (
     "你是代码与文件操作专家。你的职责是帮助用户处理代码相关的问题：\n"
     "1. 读取、搜索、分析代码文件和目录结构\n"
@@ -111,24 +116,142 @@ _DEFAULT_WEB_SYSTEM_PROMPT = (
     "5. 如果搜索无结果，明确告知用户并建议调整查询词"
 )
 
+# 内置子代理默认触发条件描述（短句，供 LLM 语义路由和降级关键词匹配）
+_DEFAULT_CODE_TRIGGER_DESCRIPTION = "用户问题涉及代码文件、项目目录、程序报错、函数/类定义、import依赖、技术实现细节、代码审查或重构建议时触发。"
+_DEFAULT_RAG_TRIGGER_DESCRIPTION = "用户问题需要引用内部知识库、技术文档、API手册、产品规范或历史资料时触发。"
+_DEFAULT_WEB_TRIGGER_DESCRIPTION = "用户问题需要获取互联网实时信息、最新新闻、当前版本号、市场价格、事件动态或外部资料时触发。"
+
+# ---- 软件开发专家团角色默认配置 ----
+_DEFAULT_FRONTEND_DEV_SYSTEM_PROMPT = (
+    "你是前端开发专家。你的职责是帮助用户解决前端相关的问题：\n"
+    "1. 分析 React、Vue、Angular 等框架的代码问题，包括 Hooks 使用、生命周期、状态管理\n"
+    "2. 处理 HTML、CSS、JavaScript/TypeScript 的 bug 和优化，包括类型安全、泛型、类型推断\n"
+    "3. 关注前端性能（Lighthouse/Core Web Vitals）、响应式设计、组件化开发与前端工程化（Vite/Webpack）\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看前端代码和配置文件\n"
+    "5. 使用 web_search 获取最新前端技术动态和最佳实践\n"
+    "6. 使用 rag_retrieve 检索项目内部前端规范和组件文档\n"
+    "7. 保持回答简洁，给出具体代码示例、文件路径和重构建议"
+)
+_DEFAULT_BACKEND_DEV_SYSTEM_PROMPT = (
+    "你是后端开发专家。你的职责是帮助用户解决后端相关的问题：\n"
+    "1. 分析 Python（Django/FastAPI/Flask）、Java（Spring Boot）、Go（Gin/Echo）、Node.js（NestJS/Express）等后端代码\n"
+    "2. 处理 RESTful/GraphQL API 设计、数据库设计与优化（SQL/NoSQL）、业务逻辑实现\n"
+    "3. 关注性能优化（缓存/异步/连接池）、并发处理（协程/线程/锁）、安全实践（OWASP/注入/XSS）\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看后端代码和配置文件\n"
+    "5. 使用 web_search 获取最新后端技术动态和框架版本信息\n"
+    "6. 使用 rag_retrieve 检索项目内部后端规范、API 文档和数据库设计\n"
+    "7. 保持回答简洁，给出具体代码示例、文件路径和架构改进建议"
+)
+_DEFAULT_TESTER_SYSTEM_PROMPT = (
+    "你是测试专家。你的职责是帮助用户保障代码质量：\n"
+    "1. 设计单元测试（pytest/Jest/Mocha）、集成测试（API/DB/MQ）、E2E 测试（Cypress/Playwright）用例\n"
+    "2. 分析测试覆盖率（行/分支/函数覆盖率），找出测试盲区和边界条件遗漏\n"
+    "3. 推荐测试框架和最佳实践（TDD/BDD、Mock/Stub、Fixture、参数化测试）\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看代码和测试文件\n"
+    "5. 使用 web_search 获取最新测试框架版本和测试策略最佳实践\n"
+    "6. 使用 rag_retrieve 检索项目内部测试规范和质量门禁标准\n"
+    "7. 保持回答简洁，给出可执行的测试代码示例、覆盖率提升方案和缺陷预防建议"
+)
+_DEFAULT_ARCHITECT_SYSTEM_PROMPT = (
+    "你是架构专家。你的职责是帮助用户进行系统设计和技术决策：\n"
+    "1. 分析系统架构的合理性（耦合度、内聚性、扩展性），给出改进建议和重构方案\n"
+    "2. 进行技术选型，比较不同方案的优劣（性能/成本/生态/团队能力匹配度）\n"
+    "3. 关注性能（高并发/低延迟/高可用）、可扩展性（水平/垂直扩展）、可维护性、安全性（纵深防御）\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看项目结构和关键代码\n"
+    "5. 使用 web_search 获取最新架构模式、技术趋势和业界最佳实践\n"
+    "6. 使用 rag_retrieve 检索项目内部架构规范、技术债务记录和演进文档\n"
+    "7. 保持回答简洁，给出架构图描述（Mermaid/PlantUML）、关键决策依据和风险评估"
+)
+_DEFAULT_DEVOPS_SYSTEM_PROMPT = (
+    "你是运维专家。你的职责是帮助用户解决部署和运维问题：\n"
+    "1. 设计 CI/CD 流水线（GitHub Actions/GitLab CI/Jenkins），优化构建、测试、部署流程\n"
+    "2. 配置 Docker、Kubernetes（Deployment/Service/Ingress/ConfigMap/Secret）、Nginx 等基础设施\n"
+    "3. 设计监控告警方案（Prometheus/Grafana/ELK/Loki/Alertmanager），保障系统稳定性（SLO/SLI）\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看配置文件（Dockerfile/yaml/nginx.conf）\n"
+    "5. 使用 web_search 获取最新 DevOps 工具版本、云原生最佳实践和安全配置建议\n"
+    "6. 使用 rag_retrieve 检索项目内部运维规范、部署手册和应急预案\n"
+    "7. 保持回答简洁，给出可执行的配置示例、脚本代码和故障排查流程"
+)
+_DEFAULT_UI_DESIGNER_SYSTEM_PROMPT = (
+    "你是 UI 设计师。你的职责是帮助用户优化界面和交互体验：\n"
+    "1. 评审界面设计，给出视觉（色彩/排版/图标/间距）和交互（动效/反馈/流程）改进建议\n"
+    "2. 维护设计系统（Design Tokens/组件库/规范文档），确保跨平台组件风格一致性\n"
+    "3. 关注用户体验（易用性/效率/满意度）、可访问性（WCAG 2.1 AA/键盘导航/屏幕阅读器）、响应式设计\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看样式代码（CSS/SCSS/Tailwind/Styled Components）\n"
+    "5. 使用 web_search 获取最新设计趋势、组件库更新和 UX 研究方法论\n"
+    "6. 使用 rag_retrieve 检索项目内部设计规范、品牌指南和组件使用文档\n"
+    "7. 保持回答简洁，给出具体的设计建议、规范代码（CSS/Tailwind）和验收标准"
+)
+_DEFAULT_PRODUCT_MANAGER_SYSTEM_PROMPT = (
+    "你是产品专家。你的职责是帮助用户梳理需求和规划功能：\n"
+    "1. 分析用户需求（痛点/场景/目标用户），转化为清晰的产品功能描述和验收标准\n"
+    "2. 撰写 PRD（产品需求文档）、用户故事（User Story/Acceptance Criteria）、原型标注\n"
+    "3. 进行优先级排序（RICE/Kano/WSJF），制定迭代计划（Sprint Planning/Release Planning）\n"
+    "4. 使用 read_file、list_dir、glob、grep 等工具查看项目文档（PRD/需求文档/会议纪要）\n"
+    "5. 使用 web_search 获取竞品分析、行业趋势和用户研究方法\n"
+    "6. 使用 rag_retrieve 检索项目内部产品文档、历史需求和用户反馈\n"
+    "7. 保持回答简洁，给出可执行的产品方案、功能清单、验收标准和数据度量指标"
+)
+
+_DEFAULT_FRONTEND_DEV_TRIGGER_DESCRIPTION = "前端开发相关问题：React/Vue/Angular、HTML/CSS/JS/TypeScript、组件、状态管理、前端工程化、性能优化、Lighthouse。"
+_DEFAULT_BACKEND_DEV_TRIGGER_DESCRIPTION = "后端开发相关问题：Python/Java/Go/Node、API设计、数据库、消息队列、缓存、微服务、RESTful/GraphQL。"
+_DEFAULT_TESTER_TRIGGER_DESCRIPTION = "测试相关问题：单元测试、集成测试、E2E测试、pytest/jest、覆盖率、TDD/BDD、Mock、性能测试、质量门禁。"
+_DEFAULT_ARCHITECT_TRIGGER_DESCRIPTION = "架构相关问题：系统设计、技术选型、DDD、设计模式、高并发/高可用、微服务、云原生、性能优化、扩展性。"
+_DEFAULT_DEVOPS_TRIGGER_DESCRIPTION = "运维相关问题：CI/CD、Docker/Kubernetes、监控告警、Prometheus/Grafana、Nginx、Terraform、云平台、SRE。"
+_DEFAULT_UI_DESIGNER_TRIGGER_DESCRIPTION = "UI设计相关问题：界面设计、交互设计、Figma、设计系统、视觉设计、用户体验、WCAG、响应式设计、A/B测试。"
+_DEFAULT_PRODUCT_MANAGER_TRIGGER_DESCRIPTION = "产品相关问题：需求分析、PRD、用户故事、优先级排序、Scrum/Kanban、竞品分析、数据驱动、A/B测试。"
+
+_DEFAULT_TEAM_TOOLS = ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"]
+
+
+def _default_team_subagents() -> dict[str, SubagentSettings]:
+    """默认软件开发团队角色配置。"""
+    return {
+        "frontend_dev": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_FRONTEND_DEV_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_FRONTEND_DEV_TRIGGER_DESCRIPTION,
+        ),
+        "backend_dev": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_BACKEND_DEV_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_BACKEND_DEV_TRIGGER_DESCRIPTION,
+        ),
+        "tester": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_TESTER_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_TESTER_TRIGGER_DESCRIPTION,
+        ),
+        "architect": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_ARCHITECT_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_ARCHITECT_TRIGGER_DESCRIPTION,
+        ),
+        "devops": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_DEVOPS_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_DEVOPS_TRIGGER_DESCRIPTION,
+        ),
+        "ui_designer": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_UI_DESIGNER_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_UI_DESIGNER_TRIGGER_DESCRIPTION,
+        ),
+        "product_manager": SubagentSettings(
+            enabled=True, temperature=0.2, system_prompt=_DEFAULT_PRODUCT_MANAGER_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_PRODUCT_MANAGER_TRIGGER_DESCRIPTION,
+        ),
+    }
+
 
 def _default_subagents() -> dict[str, SubagentSettings]:
     """默认子代理配置（与原硬编码一致）。"""
     return {
         "code": SubagentSettings(
             enabled=True, temperature=0.2, system_prompt=_DEFAULT_CODE_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_CODE_TOOLS), keywords=_DEFAULT_CODE_KEYWORDS,
-            description=_DEFAULT_CODE_DESCRIPTION,
+            tools=list(_DEFAULT_CODE_TOOLS), trigger_description=_DEFAULT_CODE_TRIGGER_DESCRIPTION,
         ),
         "rag": SubagentSettings(
             enabled=True, temperature=0.2, system_prompt=_DEFAULT_RAG_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_RAG_TOOLS), keywords=_DEFAULT_RAG_KEYWORDS,
-            description=_DEFAULT_RAG_DESCRIPTION,
+            tools=list(_DEFAULT_RAG_TOOLS), trigger_description=_DEFAULT_RAG_TRIGGER_DESCRIPTION,
         ),
         "web": SubagentSettings(
             enabled=True, temperature=0.2, system_prompt=_DEFAULT_WEB_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_WEB_TOOLS), keywords=_DEFAULT_WEB_KEYWORDS,
-            description=_DEFAULT_WEB_DESCRIPTION,
+            tools=list(_DEFAULT_WEB_TOOLS), trigger_description=_DEFAULT_WEB_TRIGGER_DESCRIPTION,
         ),
     }
 
@@ -188,12 +311,11 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
             entry = CustomSubagentEntry(
                 key=key,
                 name=str(val.get("name", key)),
-                description=str(val.get("description", "")),
+                system_prompt=str(val.get("system_prompt") or val.get("systemPrompt") or ""),
                 enabled=bool(val.get("enabled", True)),
                 temperature=float(val.get("temperature", 0.2)),
-                system_prompt=str(val.get("system_prompt", "")),
                 tools=_sanitize_custom_tools(list(val.get("tools", []))),
-                keywords=list(val.get("keywords", [])) if isinstance(val.get("keywords"), list) else [str(val.get("keywords", ""))] if val.get("keywords") else [],
+                trigger_description=str(val.get("trigger_description") or val.get("triggerDescription") or ""),
             )
         except (TypeError, ValueError, ValidationError) as exc:
             logger.warning(
@@ -307,11 +429,24 @@ class Settings(BaseSettings):
     # AGENTX_MCP_SERVERS_CONFIG: JSON 字符串，MCP server 配置数组
     # 见 app.mcp.config.McpServerConfig，由 Electron Main 从 electron-store 注入
     mcp_servers_config: list[Any] = Field(default_factory=list)
+    # AGENTX_TEAM_SUBAGENTS_CONFIG: JSON 字符串，软件开发团队角色配置
+    # 形如 {"frontend_dev":{"enabled":false,"temperature":0.5,...}}
+    team_subagents_config: dict[str, Any] = Field(default_factory=dict)
+
+    # ---- Agent Team 配置 ----
+    agent_team_enabled: bool = True  # 总开关
+    agent_team_max_tasks: int = Field(default=5, ge=1, le=10)
+    agent_team_max_parallel: int = Field(default=3, ge=1, le=5)
+    agent_team_result_max_chars: int = Field(default=2000, ge=500, le=8000)
+    agent_team_subtask_timeout: int = Field(
+        default=300, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
+    )
 
     @field_validator(
         "subagents_config",
         "custom_subagents_config",
         "tools_config",
+        "team_subagents_config",
         mode="before",
     )
     @classmethod
@@ -345,12 +480,52 @@ class Settings(BaseSettings):
                 # 用 env 值覆盖默认值（字段级覆盖）
                 merged = defaults[name].model_dump()
                 merged.update(raw)
-                # 防御性转换：keywords 可能是字符串（前端配置注入时误传）
-                _kw = merged.get("keywords")
-                if isinstance(_kw, str):
-                    merged["keywords"] = [_kw] if _kw.strip() else []
-                elif not isinstance(_kw, list):
-                    merged["keywords"] = []
+                # 兼容前端 camelCase：systemPrompt → system_prompt
+                if "systemPrompt" in raw:
+                    merged["system_prompt"] = raw["systemPrompt"]
+                # 兼容旧字段名（向后兼容）：description → system_prompt
+                if "description" in raw:
+                    merged["system_prompt"] = raw["description"]
+                # 兼容前端 camelCase：triggerDescription → trigger_description
+                if "triggerDescription" in raw:
+                    merged["trigger_description"] = raw["triggerDescription"]
+                # 兼容旧字段名（向后兼容）：keywords → trigger_description
+                if "keywords" in raw:
+                    kw = raw["keywords"]
+                    if isinstance(kw, str):
+                        merged["trigger_description"] = kw
+                    elif isinstance(kw, list):
+                        merged["trigger_description"] = ", ".join(kw)
+                defaults[name] = SubagentSettings(**merged)
+        return defaults
+
+    @property
+    def team_subagents(self) -> dict[str, SubagentSettings]:
+        """返回软件开发团队角色配置（合并默认值，env 覆盖默认）。
+
+        与 ``subagents`` 类似，但仅用于 AgentTeam 多代理协作场景。
+        """
+        defaults = _default_team_subagents()
+        for name, raw in self.team_subagents_config.items():
+            if name in defaults and isinstance(raw, dict):
+                merged = defaults[name].model_dump()
+                merged.update(raw)
+                # 兼容前端 camelCase：systemPrompt → system_prompt
+                if "systemPrompt" in raw:
+                    merged["system_prompt"] = raw["systemPrompt"]
+                # 兼容旧字段名（向后兼容）：description → system_prompt
+                if "description" in raw:
+                    merged["system_prompt"] = raw["description"]
+                # 兼容前端 camelCase：triggerDescription → trigger_description
+                if "triggerDescription" in raw:
+                    merged["trigger_description"] = raw["triggerDescription"]
+                # 兼容旧字段名（向后兼容）：keywords → trigger_description
+                if "keywords" in raw:
+                    kw = raw["keywords"]
+                    if isinstance(kw, str):
+                        merged["trigger_description"] = kw
+                    elif isinstance(kw, list):
+                        merged["trigger_description"] = ", ".join(kw)
                 defaults[name] = SubagentSettings(**merged)
         return defaults
 

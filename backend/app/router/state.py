@@ -23,3 +23,7 @@ class RouterState(TypedDict, total=False):
     classification: str
     todos: list[dict[str, Any]]
     errors: list[str]
+    # AgentTeam 模式透传与中间状态
+    agent_mode: str
+    team_plan: list[dict[str, Any]]
+    team_blackboard: dict[str, Any]

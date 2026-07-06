@@ -123,10 +123,10 @@ export function SkillsManager() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <FileText className="h-3.5 w-3.5 text-muted-c" />
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+          <h4 className="font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
             技能文件（data/skills/*.md）
           </h4>
-          <span className="rounded-full bg-subtle px-2 py-0.5 text-[10px] text-secondary-c">
+          <span className="rounded-full bg-subtle px-2 py-0.5 text-secondary-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
             {skills.length}
           </span>
         </div>
@@ -148,14 +148,14 @@ export function SkillsManager() {
       </div>
 
       {errMsg && (
-        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+        <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
           <span>{errMsg}</span>
         </div>
       )}
 
       {skills.length === 0 && !editing && (
-        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-xs text-muted-c">
+        <p className="rounded-md border border-dashed border-default px-3 py-4 text-center text-muted-c" style={{ fontSize: 'var(--fs-empty-title)' }}>
           暂无技能文件，点击「新建」创建第一个技能
         </p>
       )}
@@ -165,11 +165,12 @@ export function SkillsManager() {
           {skills.map((s) => (
             <li
               key={s.name}
-              className="flex items-center gap-2 rounded-lg border border-default bg-surface px-2.5 py-1.5 text-xs"
+              className="flex items-center gap-2 rounded-lg border border-default bg-surface px-2.5 py-1.5"
+              style={{ fontSize: 'var(--fs-settings-desc)' }}
             >
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-secondary-c">{s.name}.md</div>
-                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-c">
+                <div className="mt-0.5 flex items-center gap-2 text-muted-c" style={{ fontSize: 'var(--fs-card-meta)' }}>
                   <span>{formatSize(s.size)}</span>
                   <span>·</span>
                   <span>{formatMtime(s.mtime)}</span>
@@ -188,8 +189,9 @@ export function SkillsManager() {
                 <>
                   <button
                     type="button"
-                    className="rounded px-1.5 py-0.5 text-[10px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                    className="rounded px-1.5 py-0.5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
                     onClick={() => remove(s.name)}
+                    style={{ fontSize: 'var(--fs-settings-form-hint)' }}
                   >
                     确认
                   </button>
@@ -221,7 +223,7 @@ export function SkillsManager() {
       {editing && (
         <div className="space-y-2 rounded-lg border border-default bg-surface p-3">
           <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-secondary-c">名称</label>
+            <label className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>名称</label>
             <input
               type="text"
               value={editing.name}
@@ -229,16 +231,17 @@ export function SkillsManager() {
                 setEditing((s) => (s ? { ...s, name: e.target.value } : s))
               }
               placeholder="my-skill"
-              className="input-field font-mono text-[11px]"
+              className="input-field font-mono"
               disabled={!editing.isNew}
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
-            <span className="text-[10px] text-muted-c">.md</span>
+            <span className="text-muted-c" style={{ fontSize: 'var(--fs-card-meta)' }}>.md</span>
           </div>
           {nameErr && (
-            <p className="text-[11px] text-rose-500">{nameErr}</p>
+            <p className="text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{nameErr}</p>
           )}
           <div>
-            <label className="mb-1 block text-xs font-medium text-secondary-c">
+            <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               内容（YAML frontmatter + Markdown）
             </label>
             <textarea
@@ -248,7 +251,8 @@ export function SkillsManager() {
               }
               rows={10}
               placeholder={"---\ndescription: ...\ntrigger: ...\ntools: [...]\n---\n\n# 内容"}
-              className="input-field resize-y font-mono text-[11px] leading-relaxed"
+              className="input-field resize-y font-mono leading-relaxed"
+              style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
           <div className="flex items-center gap-2">

@@ -35,7 +35,7 @@ export function useModelLabel(): string {
 export function ModelLabel({ className = "" }: { className?: string }) {
   const label = useModelLabel();
   return (
-    <span className={`inline-flex items-center gap-1 text-xs text-muted-c ${className}`}>
+    <span className={`inline-flex items-center gap-1 text-muted-c ${className}`} style={{ fontSize: 'var(--fs-composer-toolbar)' }}>
       <Cpu className="h-3 w-3 shrink-0" aria-hidden="true" />
       <span className="truncate">{label}</span>
     </span>
@@ -106,9 +106,10 @@ export function ModelToggle() {
         title={triggerTitle}
         className={[
           "btn-icon group inline-flex h-7 w-auto items-center gap-1 px-1.5",
-          "text-xs leading-none",
+          "leading-none",
           open ? "bg-hover-soft text-primary-c" : "",
         ].join(" ")}
+        style={{ fontSize: 'var(--fs-composer-toolbar)' }}
       >
         <Cpu className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span className="max-w-[140px] truncate font-medium">
@@ -132,7 +133,7 @@ export function ModelToggle() {
           >
             <div className="max-h-64 overflow-auto p-1">
               {entries.length === 0 ? (
-                <div className="px-3 py-3 text-xs text-muted-c">
+                <div className="px-3 py-3 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
                   暂无模型条目。打开「设置 → 模型」添加。
                 </div>
               ) : (
@@ -167,10 +168,10 @@ export function ModelToggle() {
                         aria-hidden="true"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-medium text-primary-c leading-snug">
+                        <div className="truncate font-medium text-primary-c leading-snug" style={{ fontSize: 'var(--fs-popover-item)' }}>
                           {entry.label}
                         </div>
-                        <div className="truncate text-2xs text-muted-c leading-snug">
+                        <div className="truncate text-muted-c leading-snug" style={{ fontSize: 'var(--fs-popover-hint)' }}>
                           {entry.model}
                           {ctx ? ` · ${ctx}` : ""}
                         </div>
@@ -188,7 +189,7 @@ export function ModelToggle() {
             </div>
 
             {error && (
-              <div className="border-t border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              <div className="border-t border-rose-200 bg-rose-50 px-3 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300" style={{ fontSize: 'var(--fs-popover-item)' }}>
                 切换失败：{error}
               </div>
             )}

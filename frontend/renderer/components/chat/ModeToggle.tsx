@@ -87,12 +87,13 @@ export function ModeToggle() {
         title={current.description}
         className={[
           "btn-icon group inline-flex h-7 w-auto items-center gap-1 px-1.5",
-          "text-[11px] leading-none",
+          "leading-none",
           open ? "bg-hover-soft" : "",
           isTeam
             ? "text-[#4f46e5] hover:text-[#4f46e5] dark:text-[#818cf8] dark:hover:text-[#818cf8]"
             : "",
         ].join(" ")}
+        style={{ fontSize: 'var(--fs-composer-toolbar)' }}
       >
         <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span className="font-medium">{current.short}</span>
@@ -150,7 +151,7 @@ export function ModeToggle() {
                       ].join(" ")}
                       aria-hidden="true"
                     />
-                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-primary-c">
+                    <span className="min-w-0 flex-1 truncate font-medium text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
                       {opt.label}
                     </span>
                     {active && (

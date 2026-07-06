@@ -316,7 +316,27 @@ async def list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
             raise ValueError(f"路径不在白名单内: {path}")
         sandbox = get_sandbox()
         # 检查目标是否位于该 thread_id 的任一授权目录之下
-        authorized = sandbox.authorized_dirs.get(thread_id, set())
+        raw_authorized = sandbox.authorized_dirs.get(thread_id, set())
+        # 防御性：确保 authorized 是可迭代的集合类型（set/list/tuple）
+        if isinstance(raw_authorized, (list, tuple)):
+            logger.warning(
+                "authorized_dirs type mismatch for thread_id={}, expected set got {}. "
+                "Converting to set to avoid iteration errors.",
+                thread_id,
+                type(raw_authorized).__name__,
+            )
+            authorized = set(raw_authorized)
+        elif not isinstance(raw_authorized, set):
+            logger.error(
+                "authorized_dirs type error for thread_id={}, expected set got {}. "
+                "Value: {}. Falling back to empty set.",
+                thread_id,
+                type(raw_authorized).__name__,
+                raw_authorized,
+            )
+            authorized = set()
+        else:
+            authorized = raw_authorized
         in_authorized = any(
             target == auth_path or auth_path in target.parents
             for (auth_path, _writable) in authorized

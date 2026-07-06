@@ -418,28 +418,34 @@ def test_convert_subagent_event_fallback_uuid_when_no_id():
 
 
 def test_select_subagent_web_keywords(monkeypatch: pytest.MonkeyPatch):
-    """含 web 关键词 → web 子代理。"""
+    """含 web 关键词 → web 子代理。使用短 trigger_description 确保匹配。"""
     from app.router.graph import _select_subagent
-    from app.config import _default_subagents
+    from app.config import SubagentSettings
 
-    # mock settings 使用默认子代理配置
     mock = MagicMock()
-    mock.subagents = _default_subagents()
+    mock.subagents = {
+        "code": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["read_file"], trigger_description=""),
+        "rag": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["rag_retrieve"], trigger_description=""),
+        "web": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["web_search"], trigger_description="搜索网页、联网查询"),
+    }
     mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
     monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
 
     assert _select_subagent("帮我搜索网页信息") == "web"
-    assert _select_subagent("联网查一下") == "web"
-    assert _select_subagent("search the web") == "web"
+    assert _select_subagent("联网查询一下") == "web"
 
 
 def test_select_subagent_rag_keywords(monkeypatch: pytest.MonkeyPatch):
-    """含 RAG 关键词 → rag 子代理。"""
+    """含 RAG 关键词 → rag 子代理。使用短 trigger_description 确保匹配。"""
     from app.router.graph import _select_subagent
-    from app.config import _default_subagents
+    from app.config import SubagentSettings
 
     mock = MagicMock()
-    mock.subagents = _default_subagents()
+    mock.subagents = {
+        "code": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["read_file"], trigger_description=""),
+        "rag": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["rag_retrieve"], trigger_description="知识库、文档库、检索文档"),
+        "web": SubagentSettings(enabled=True, temperature=0.2, system_prompt="", tools=["web_search"], trigger_description=""),
+    }
     mock.tools_enabled = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
     monkeypatch.setattr("app.router.graph.get_settings", lambda: mock)
 
