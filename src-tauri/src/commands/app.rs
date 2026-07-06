@@ -265,7 +265,7 @@ pub async fn app_reload_backend_config(app: AppHandle) -> Result<Value, String> 
         .map_err(|e| format!("解析响应失败: {}", e))
 }
 
-/// 读取当前激活 model entry 的 maxOutputTokens；若为正整数则返回，否则返回 None。
+/// 读取当前激活 model entry 的 maxOutputTokens；若为正有限数则返回，否则返回 None。
 ///
 /// 与 [frontend/main/index.ts:161-169](file:///d:/java/agentprojects/agentx/frontend/main/index.ts#L161-L169) 的 `getActiveModelMaxOutputTokens` 一致。
 fn get_active_model_max_output_tokens(app: &AppHandle) -> Option<f64> {
@@ -273,7 +273,7 @@ fn get_active_model_max_output_tokens(app: &AppHandle) -> Option<f64> {
     let entries = store::get_model_entries(app);
     let entry = entries.iter().find(|e| e.id == active_id)?;
     let v = entry.max_output_tokens?;
-    if v > 0.0 {
+    if v.is_finite() && v > 0.0 {
         Some(v)
     } else {
         None

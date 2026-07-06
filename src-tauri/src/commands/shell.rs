@@ -21,9 +21,10 @@ use tauri_plugin_shell::ShellExt;
 pub fn shell_reveal_in_folder(_app: AppHandle, path: String) {
     #[cfg(windows)]
     {
-        let _ = Command::new("explorer.exe")
-            .args(["/select,", &path])
-            .spawn();
+        // explorer.exe 期望 `/select,<path>` 作为单个参数；拆成两个独立参数
+        // 会导致 explorer 打开 Documents 而非选中目标文件。
+        let select_arg = format!("/select,{}", path);
+        let _ = Command::new("explorer.exe").arg(&select_arg).spawn();
     }
     #[cfg(target_os = "macos")]
     {

@@ -174,7 +174,12 @@ pub async fn dialog_save_dropped_file(
     let resolved_src = Path::new(&file_path)
         .canonicalize()
         .map_err(|_| format!("无法读取源文件: {}", file_name))?;
-    let lower_src = resolved_src.to_string_lossy().to_lowercase();
+    // Windows canonicalize() 添加 `\\?\` UNC 前缀（如 `\\?\C:\Windows`），
+    // 不剥离则 `starts_with("c:\\windows\\")` 永远不匹配，黑名单形同虚设。
+    let canonical = resolved_src.to_string_lossy().to_lowercase();
+    let lower_src = canonical
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&canonical);
     let system_prefixes = [
         "c:\\windows\\",
         "c:\\program files\\",
@@ -194,7 +199,7 @@ pub async fn dialog_save_dropped_file(
     ];
     if system_prefixes
         .iter()
-        .any(|p| lower_src.starts_with(p) || lower_src == p[..p.len() - 1])
+        .any(|p| lower_src.starts_with(p) || *lower_src == p[..p.len() - 1])
     {
         log::warn!(
             "saveDroppedFile rejected system path: {}",

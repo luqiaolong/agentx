@@ -13,8 +13,6 @@ use serde_json::Value;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
 
-use crate::store;
-
 const STORE_NAME: &str = "config.json";
 
 // 内置子代理 key（自定义 key 不允许冲突）
@@ -243,10 +241,4 @@ pub fn remove_custom_subagent(app: &AppHandle, key: &str) -> bool {
     existing.remove(key);
     set_custom_subagents_map(app, &existing);
     true
-}
-
-// 保持对 store::get_custom_subagents 的引用，避免 unused import 警告。
-#[allow(dead_code)]
-fn _ensure_store_import() {
-    let _ = store::get_custom_subagents;
 }

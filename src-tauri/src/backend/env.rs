@@ -72,9 +72,13 @@ fn inject_llm_config(app: &AppHandle, env: &mut HashMap<String, String>) {
     }
 }
 
-/// 注入审批配置（approvalMaxWait / maxUploadBytes）。
+/// 注入审批配置（autoApproveAfterSeconds / approvalMaxWait / maxUploadBytes）。
 fn inject_approval_config(app: &AppHandle, env: &mut HashMap<String, String>) {
     let approval = store::get_approval_config(app);
+    env.insert(
+        "AGENTX_AUTO_APPROVE_AFTER_SECONDS".into(),
+        approval.auto_approve_after_seconds.to_string(),
+    );
     env.insert(
         "AGENTX_APPROVAL_MAX_WAIT".into(),
         approval.approval_max_wait.to_string(),
@@ -148,13 +152,13 @@ fn inject_json_configs(app: &AppHandle, env: &mut HashMap<String, String>) {
     );
 }
 
-/// 注入当前激活模型的 `maxOutputTokens`（正整数才注入）。
+/// 注入当前激活模型的 `maxOutputTokens`（正有限数才注入）。
 fn inject_model_extra(app: &AppHandle, env: &mut HashMap<String, String>) {
     if let Some(active_id) = store::get_active_model_id(app) {
         let entries = store::get_model_entries(app);
         if let Some(entry) = entries.iter().find(|e| e.id == active_id) {
             if let Some(max_tokens) = entry.max_output_tokens {
-                if max_tokens > 0.0 {
+                if max_tokens.is_finite() && max_tokens > 0.0 {
                     env.insert("AGENTX_MAX_OUTPUT_TOKENS".into(), max_tokens.to_string());
                 }
             }
