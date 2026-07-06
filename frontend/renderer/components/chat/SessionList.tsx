@@ -253,7 +253,7 @@ function SessionGroup({
     <button
       type="button"
       onClick={() => setOpen((v) => !v)}
-      className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
+      className="flex min-w-0 flex-1 items-center gap-1 rounded pl-0 pr-1 py-0.5 text-left text-secondary-c transition-colors hover:bg-hover-soft hover:text-primary-c"
       aria-label={open ? `折叠 ${label}` : `展开 ${label}`}
       title={subtitle ?? label}
     >
@@ -303,12 +303,14 @@ function SessionGroup({
                       onSwitch(s.id);
                     }
                   }}
-                  className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-4 pr-1 transition-colors ${
+                  className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-0 pr-1 transition-colors ${
                     isStreaming
                       ? "cursor-not-allowed opacity-60"
                       : "hover:bg-hover-soft"
                   } ${active ? "bg-subtle" : ""}`}
                 >
+                  {/* 12px spacer (= Chevron 宽度) + 4px gap-1 = 16px，让小圆点和 icon 左边缘严格对齐 */}
+                  <span className="h-3.5 w-3 shrink-0" aria-hidden />
                   <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
                     {s.isRunning ? (
                       <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
