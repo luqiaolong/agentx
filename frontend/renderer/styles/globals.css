@@ -81,15 +81,15 @@
 
   /* Module-specific font-size tokens — single source of truth */
   /* Header bar */
-  --fs-brand:        var(--text-xs);       /* 12px — App brand name */
+  --fs-brand:        var(--text-sm);       /* 13px — App brand name */
   --fs-version:      var(--text-3xs);      /* 10px — version badge */
-  --fs-scene-tab:    var(--text-2xs);      /* 11px — Work/Coding tabs */
+  --fs-scene-tab:    var(--text-xs);       /* 12px — Work/Coding tabs */
   /* Sidebar */
   --fs-sidebar-section: var(--text-3xs);  /* 10px — "会话" section header */
   --fs-sidebar-group:   var(--text-3xs);  /* 10px — HOME/AGENTX group label */
-  --fs-sidebar-item:    var(--text-2xs);  /* 11px — session title */
+  --fs-sidebar-item:    var(--text-xs);   /* 12px — session title */
   --fs-sidebar-meta:    var(--text-3xs);  /* 10px — session timestamp */
-  --fs-sidebar-action:  var(--text-2xs);  /* 11px — 设置/日志 button */
+  --fs-sidebar-action:  var(--text-xs);   /* 12px — 设置/日志 button */
   /* Chat messages */
   --fs-msg-user:     var(--text-sm);      /* 13px — user bubble text */
   --fs-msg-assist:   var(--text-sm);      /* 13px — assistant text / prose */
@@ -100,32 +100,32 @@
   --fs-msg-tool:     var(--text-3xs);     /* 10px — tool-call labels */
   /* Chat composer */
   --fs-composer-placeholder: var(--text-base); /* 14px */
-  --fs-composer-toolbar:     var(--text-2xs);  /* 11px — model/permission/send */
+  --fs-composer-toolbar:     var(--text-xs);   /* 12px — model/permission/send */
   --fs-composer-chip:        var(--text-3xs);  /* 10px — workspace chip */
   /* Workspace panel */
   --fs-ws-section:   var(--text-3xs);      /* 10px — "工作区" header */
-  --fs-ws-tab:       var(--text-2xs);      /* 11px — 文件/任务 tab */
-  --fs-ws-task-title: var(--text-2xs);      /* 11px — task title */
+  --fs-ws-tab:       var(--text-xs);       /* 12px — 文件/任务 tab */
+  --fs-ws-task-title: var(--text-xs);       /* 12px — task title */
   --fs-ws-task-meta:  var(--text-3xs);      /* 10px — task time/todos */
-  --fs-ws-file-name: var(--text-2xs);       /* 11px — file tree name */
-  --fs-ws-file-size: var(--text-3xs);       /* 10px — file size */
+  --fs-ws-file-name: var(--text-xs);        /* 12px — file tree name */
+  --fs-ws-file-size: var(--text-3xs);        /* 10px — file size */
   /* Settings modal */
-  --fs-settings-nav:      var(--text-2xs);  /* 11px — left nav label */
-  --fs-settings-header:   var(--text-sm);    /* 13px — right panel title */
-  --fs-settings-desc:    var(--text-2xs);   /* 11px — description text */
-  --fs-settings-form-label: var(--text-2xs); /* 11px — form label */
+  --fs-settings-nav:      var(--text-xs);   /* 12px — left nav label */
+  --fs-settings-header:   var(--text-base);    /* 14px — right panel title */
+  --fs-settings-desc:    var(--text-xs);    /* 12px — description text */
+  --fs-settings-form-label: var(--text-xs); /* 12px — form label */
   --fs-settings-form-hint:  var(--text-3xs); /* 10px — hint / error */
   --fs-settings-form-input: var(--text-sm);  /* 13px — form input text */
   --fs-settings-badge:      var(--text-3xs); /* 10px — status badge */
   /* Cards / lists */
-  --fs-card-title:   var(--text-2xs);       /* 11px — card title */
+  --fs-card-title:   var(--text-xs);        /* 12px — card title */
   --fs-card-desc:    var(--text-3xs);       /* 10px — card description */
   --fs-card-meta:    var(--text-3xs);       /* 10px — card meta (time, count) */
   /* Popovers / dropdowns */
-  --fs-popover-item: var(--text-2xs);       /* 11px — dropdown item */
+  --fs-popover-item: var(--text-xs);        /* 12px — dropdown item */
   --fs-popover-hint: var(--text-3xs);       /* 10px — dropdown hint */
   /* Empty state / tips */
-  --fs-empty-title:  var(--text-2xs);       /* 11px */
+  --fs-empty-title:  var(--text-xs);        /* 12px */
   --fs-empty-desc:   var(--text-3xs);       /* 10px */
 
   /* Light theme (soft gray) */
