@@ -189,6 +189,17 @@ export interface SubagentsConfig {
   web: SubagentConfig;
 }
 
+// 软件开发专家团角色配置（与 backend/app/config.py _default_team_subagents() 一致）
+export interface TeamSubagentsConfig {
+  frontend_dev: SubagentConfig;
+  backend_dev: SubagentConfig;
+  tester: SubagentConfig;
+  architect: SubagentConfig;
+  devops: SubagentConfig;
+  ui_designer: SubagentConfig;
+  product_manager: SubagentConfig;
+}
+
 export interface ToolsConfig {
   read_file: boolean;
   list_dir: boolean;
@@ -249,6 +260,129 @@ const DEFAULT_SUBAGENTS: SubagentsConfig = {
   },
 };
 
+// 软件开发专家团角色默认配置
+const DEFAULT_TEAM_SUBAGENTS: TeamSubagentsConfig = {
+  frontend_dev: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是前端开发专家。你的职责是帮助用户解决前端相关的问题：\n" +
+      "1. 分析 React、Vue、Angular 等框架的代码问题，包括 Hooks 使用、生命周期、状态管理\n" +
+      "2. 处理 HTML、CSS、JavaScript/TypeScript 的 bug 和优化，包括类型安全、泛型、类型推断\n" +
+      "3. 关注前端性能（Lighthouse/Core Web Vitals）、响应式设计、组件化开发与前端工程化（Vite/Webpack）\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看前端代码和配置文件\n" +
+      "5. 使用 web_search 获取最新前端技术动态和最佳实践\n" +
+      "6. 使用 rag_retrieve 检索项目内部前端规范和组件文档\n" +
+      "7. 保持回答简洁，给出具体代码示例、文件路径和重构建议",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "前端,React,Vue,HTML,CSS,JS,TypeScript,组件,界面,Hooks,状态管理,工程化,性能优化,Lighthouse",
+    description:
+      "前端开发专家：精通 React/Vue/Angular、HTML5/CSS3、JavaScript/TypeScript、前端工程化（Vite/Webpack）、状态管理（Redux/Pinia/Zustand）、组件库（Ant Design/Element Plus/Shadcn UI）、响应式设计、PWA、前端性能优化（Lighthouse/Core Web Vitals）、可访问性（a11y）等，负责界面实现、组件架构设计、前端性能调优与代码审查。",
+  },
+  backend_dev: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是后端开发专家。你的职责是帮助用户解决后端相关的问题：\n" +
+      "1. 分析 Python（Django/FastAPI/Flask）、Java（Spring Boot）、Go（Gin/Echo）、Node.js（NestJS/Express）等后端代码\n" +
+      "2. 处理 RESTful/GraphQL API 设计、数据库设计与优化（SQL/NoSQL）、业务逻辑实现\n" +
+      "3. 关注性能优化（缓存/异步/连接池）、并发处理（协程/线程/锁）、安全实践（OWASP/注入/XSS）\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看后端代码和配置文件\n" +
+      "5. 使用 web_search 获取最新后端技术动态和框架版本信息\n" +
+      "6. 使用 rag_retrieve 检索项目内部后端规范、API 文档和数据库设计\n" +
+      "7. 保持回答简洁，给出具体代码示例、文件路径和架构改进建议",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "后端,API,数据库,Python,Java,Go,Node,服务,接口,RESTful,GraphQL,消息队列,缓存,微服务",
+    description:
+      "后端开发专家：精通 Python（Django/FastAPI/Flask）、Java（Spring Boot）、Go（Gin/Echo）、Node.js（Express/NestJS）、数据库设计与优化（PostgreSQL/MySQL/MongoDB/Redis）、RESTful/GraphQL API 设计、消息队列（Kafka/RabbitMQ）、缓存策略、分布式事务、微服务通信（gRPC/HTTP），负责服务端架构、业务逻辑实现、数据库设计与性能调优。",
+  },
+  tester: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是测试专家。你的职责是帮助用户保障代码质量：\n" +
+      "1. 设计单元测试（pytest/Jest/Mocha）、集成测试（API/DB/MQ）、E2E 测试（Cypress/Playwright）用例\n" +
+      "2. 分析测试覆盖率（行/分支/函数覆盖率），找出测试盲区和边界条件遗漏\n" +
+      "3. 推荐测试框架和最佳实践（TDD/BDD、Mock/Stub、Fixture、参数化测试）\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看代码和测试文件\n" +
+      "5. 使用 web_search 获取最新测试框架版本和测试策略最佳实践\n" +
+      "6. 使用 rag_retrieve 检索项目内部测试规范和质量门禁标准\n" +
+      "7. 保持回答简洁，给出可执行的测试代码示例、覆盖率提升方案和缺陷预防建议",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "测试,单元测试,集成测试,E2E,pytest,jest,覆盖率,质量,TDD,BDD,Mock,性能测试,自动化测试",
+    description:
+      "测试专家：精通单元测试（pytest/Jest/Mocha）、集成测试（Postman/Newman）、E2E 测试（Cypress/Playwright/Selenium）、性能测试（k6/JMeter）、测试覆盖率分析（coverage/Istanbul）、TDD/BDD 实践、自动化测试流水线集成、缺陷追踪与质量度量，负责测试策略制定、用例设计、自动化测试框架搭建与质量门禁保障。",
+  },
+  architect: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是架构专家。你的职责是帮助用户进行系统设计和技术决策：\n" +
+      "1. 分析系统架构的合理性（耦合度、内聚性、扩展性），给出改进建议和重构方案\n" +
+      "2. 进行技术选型，比较不同方案的优劣（性能/成本/生态/团队能力匹配度）\n" +
+      "3. 关注性能（高并发/低延迟/高可用）、可扩展性（水平/垂直扩展）、可维护性、安全性（纵深防御）\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看项目结构和关键代码\n" +
+      "5. 使用 web_search 获取最新架构模式、技术趋势和业界最佳实践\n" +
+      "6. 使用 rag_retrieve 检索项目内部架构规范、技术债务记录和演进文档\n" +
+      "7. 保持回答简洁，给出架构图描述（Mermaid/PlantUML）、关键决策依据和风险评估",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "架构,设计,选型,性能,扩展,微服务,系统,方案,DDD,设计模式,高并发,高可用,云原生,Serverless",
+    description:
+      "架构专家：精通系统架构设计（单体/微服务/Serverless）、技术选型评估、领域驱动设计（DDD）、设计模式、性能优化（高并发/低延迟/高可用）、数据架构（分库分表/CDC/数据湖）、安全架构（OAuth2/JWT/零信任）、云原生架构（Kubernetes/Service Mesh）、成本优化与容量规划，负责技术愿景、架构评审、技术债务治理与演进路线设计。",
+  },
+  devops: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是运维专家。你的职责是帮助用户解决部署和运维问题：\n" +
+      "1. 设计 CI/CD 流水线（GitHub Actions/GitLab CI/Jenkins），优化构建、测试、部署流程\n" +
+      "2. 配置 Docker、Kubernetes（Deployment/Service/Ingress/ConfigMap/Secret）、Nginx 等基础设施\n" +
+      "3. 设计监控告警方案（Prometheus/Grafana/ELK/Loki/Alertmanager），保障系统稳定性（SLO/SLI）\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看配置文件（Dockerfile/yaml/nginx.conf）\n" +
+      "5. 使用 web_search 获取最新 DevOps 工具版本、云原生最佳实践和安全配置建议\n" +
+      "6. 使用 rag_retrieve 检索项目内部运维规范、部署手册和应急预案\n" +
+      "7. 保持回答简洁，给出可执行的配置示例、脚本代码和故障排查流程",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "部署,CI/CD,Docker,K8s,运维,流水线,监控,Nginx,Prometheus,Grafana,Terraform,云原生,SRE",
+    description:
+      "运维专家：精通 CI/CD 流水线（GitHub Actions/GitLab CI/Jenkins）、容器化（Docker/Containerd）、Kubernetes 编排（Helm/Kustomize）、基础设施即代码（Terraform/Pulumi/Ansible）、云平台（AWS/Azure/GCP/阿里云）、监控告警（Prometheus/Grafana/ELK/Loki）、日志追踪（Jaeger/Zipkin）、SRE 实践、混沌工程、蓝绿/金丝雀发布，负责 DevOps 文化推广、自动化运维体系建设与系统稳定性保障。",
+  },
+  ui_designer: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是 UI 设计师。你的职责是帮助用户优化界面和交互体验：\n" +
+      "1. 评审界面设计，给出视觉（色彩/排版/图标/间距）和交互（动效/反馈/流程）改进建议\n" +
+      "2. 维护设计系统（Design Tokens/组件库/规范文档），确保跨平台组件风格一致性\n" +
+      "3. 关注用户体验（易用性/效率/满意度）、可访问性（WCAG 2.1 AA/键盘导航/屏幕阅读器）、响应式设计\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看样式代码（CSS/SCSS/Tailwind/Styled Components）\n" +
+      "5. 使用 web_search 获取最新设计趋势、组件库更新和 UX 研究方法论\n" +
+      "6. 使用 rag_retrieve 检索项目内部设计规范、品牌指南和组件使用文档\n" +
+      "7. 保持回答简洁，给出具体的设计建议、规范代码（CSS/Tailwind）和验收标准",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "UI,设计,界面,交互,视觉,样式,Figma,用户体验,WCAG,设计系统,Design Tokens,可用性测试,A/B测试",
+    description:
+      "UI 设计师：精通界面设计（Figma/Sketch/Adobe XD）、交互设计（原型/动效/用户流程）、设计系统构建（Tokens/组件库/规范文档）、视觉设计（色彩理论/排版/图标）、用户体验研究（用户访谈/可用性测试/A/B 测试）、响应式设计、无障碍设计（WCAG）、设计-开发协作（DevHandoff），负责设计质量把控、设计系统演进与跨团队协作。",
+  },
+  product_manager: {
+    enabled: true,
+    temperature: 0.2,
+    systemPrompt:
+      "你是产品专家。你的职责是帮助用户梳理需求和规划功能：\n" +
+      "1. 分析用户需求（痛点/场景/目标用户），转化为清晰的产品功能描述和验收标准\n" +
+      "2. 撰写 PRD（产品需求文档）、用户故事（User Story/Acceptance Criteria）、原型标注\n" +
+      "3. 进行优先级排序（RICE/Kano/WSJF），制定迭代计划（Sprint Planning/Release Planning）\n" +
+      "4. 使用 read_file、list_dir、glob、grep 等工具查看项目文档（PRD/需求文档/会议纪要）\n" +
+      "5. 使用 web_search 获取竞品分析、行业趋势和用户研究方法\n" +
+      "6. 使用 rag_retrieve 检索项目内部产品文档、历史需求和用户反馈\n" +
+      "7. 保持回答简洁，给出可执行的产品方案、功能清单、验收标准和数据度量指标",
+    tools: ["read_file", "list_dir", "glob", "grep", "web_search", "rag_retrieve"],
+    keywords: "需求,产品,PRD,用户故事,功能,优先级,迭代,RICE,Kano,Scrum,敏捷,竞品分析,数据驱动,A/B测试",
+    description:
+      "产品专家：精通需求分析（用户调研/竞品分析/数据分析）、PRD 撰写（功能描述/验收标准/原型标注）、用户故事地图、敏捷产品管理（Scrum/Kanban）、优先级排序（RICE/Kano/WSJF）、产品路线图规划、数据驱动决策（AARRR/漏斗分析）、A/B 测试设计、用户体验旅程设计，负责产品愿景、功能规划、迭代节奏把控与商业价值最大化。",
+  },
+};
+
 const DEFAULT_TOOLS: ToolsConfig = {
   read_file: true,
   list_dir: true,
@@ -262,6 +396,7 @@ const DEFAULT_TOOLS: ToolsConfig = {
 
 function sanitizeSubagent(raw: unknown, def: SubagentConfig): SubagentConfig {
   // 防御性：electron-store 中的旧数据可能字段缺失或类型错误，逐字段做安全合并
+  // 策略：空字符串回退到默认值，确保首次加载时显示完整配置而非空值
   if (!raw || typeof raw !== "object") return { ...def };
   const r = raw as Partial<SubagentConfig> & Record<string, unknown>;
   const clampTemp = (v: unknown): number =>
@@ -270,17 +405,17 @@ function sanitizeSubagent(raw: unknown, def: SubagentConfig): SubagentConfig {
       : def.temperature;
   const strArr = (v: unknown, fallback: string[]): string[] =>
     Array.isArray(v) && v.every((x) => typeof x === "string")
-      ? v
+      ? v.length > 0 ? v : fallback
       : fallback;
+  const strOrDef = (v: unknown, fallback: string): string =>
+    typeof v === "string" && v.trim().length > 0 ? v : fallback;
   return {
     enabled: typeof r.enabled === "boolean" ? r.enabled : def.enabled,
     temperature: clampTemp(r.temperature),
-    systemPrompt:
-      typeof r.systemPrompt === "string" ? r.systemPrompt : def.systemPrompt,
+    systemPrompt: strOrDef(r.systemPrompt, def.systemPrompt),
     tools: strArr(r.tools, def.tools),
-    keywords: typeof r.keywords === "string" ? r.keywords : def.keywords,
-    description:
-      typeof r.description === "string" ? r.description : def.description,
+    keywords: strOrDef(r.keywords, def.keywords),
+    description: strOrDef(r.description, def.description),
   };
 }
 
@@ -298,6 +433,27 @@ export function getSubagentsConfig(): SubagentsConfig {
 
 export function setSubagentsConfig(cfg: SubagentsConfig): void {
   store.set("subagents", cfg);
+}
+
+// 软件开发专家团角色配置持久化
+export function getTeamSubagentsConfig(): TeamSubagentsConfig {
+  const raw = store.get("teamSubagents") as
+    | Partial<Record<keyof TeamSubagentsConfig, unknown>>
+    | undefined;
+  if (!raw) return DEFAULT_TEAM_SUBAGENTS;
+  return {
+    frontend_dev: sanitizeSubagent(raw.frontend_dev, DEFAULT_TEAM_SUBAGENTS.frontend_dev),
+    backend_dev: sanitizeSubagent(raw.backend_dev, DEFAULT_TEAM_SUBAGENTS.backend_dev),
+    tester: sanitizeSubagent(raw.tester, DEFAULT_TEAM_SUBAGENTS.tester),
+    architect: sanitizeSubagent(raw.architect, DEFAULT_TEAM_SUBAGENTS.architect),
+    devops: sanitizeSubagent(raw.devops, DEFAULT_TEAM_SUBAGENTS.devops),
+    ui_designer: sanitizeSubagent(raw.ui_designer, DEFAULT_TEAM_SUBAGENTS.ui_designer),
+    product_manager: sanitizeSubagent(raw.product_manager, DEFAULT_TEAM_SUBAGENTS.product_manager),
+  };
+}
+
+export function setTeamSubagentsConfig(cfg: TeamSubagentsConfig): void {
+  store.set("teamSubagents", cfg);
 }
 
 export function getToolsConfig(): ToolsConfig {
@@ -605,12 +761,17 @@ function sanitizeModelEntry(raw: unknown): ModelEntry | null {
   const apiKey = typeof r.apiKey === "string" ? r.apiKey : "";
   const label = typeof r.label === "string" && r.label.trim() ? r.label.trim() : "";
   const createdAt = typeof r.createdAt === "number" ? r.createdAt : Date.now();
+  // contextWindow 接受正整数；非正数/null/undefined 统一规整为 undefined
+  const contextWindow =
+    typeof r.contextWindow === "number" && r.contextWindow > 0
+      ? r.contextWindow
+      : undefined;
   // maxOutputTokens 接受正整数；非正数/null/undefined 统一规整为 undefined，避免把 0/负数/字符串 传到后端
   const maxOutputTokens =
     typeof r.maxOutputTokens === "number" && r.maxOutputTokens > 0
       ? r.maxOutputTokens
       : undefined;
-  return { id, label, providerId, model, baseUrl, apiKey, createdAt, maxOutputTokens };
+  return { id, label, providerId, model, baseUrl, apiKey, createdAt, contextWindow, maxOutputTokens };
 }
 
 export function getModelEntries(): ModelEntry[] {

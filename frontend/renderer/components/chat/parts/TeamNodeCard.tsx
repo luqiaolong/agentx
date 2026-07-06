@@ -23,19 +23,19 @@ function AgentRow({ agent }: { agent: TeamAgentState }) {
 
   return (
     <div className="border-l border-default pl-2.5 py-1">
-      <div className="flex items-center gap-1.5 text-[11px]">
+      <div className="flex items-center gap-1.5 text-xs">
         {icon}
         <span className="font-medium text-primary-c">{agent.agent}</span>
         <ChevronRight className="h-2.5 w-2.5 opacity-40" />
         <span className="text-muted-c truncate">{agent.purpose}</span>
       </div>
       {agent.message && agent.status === "running" && (
-        <div className="mt-0.5 text-[10px] text-muted-c/80 pl-4">
+        <div className="mt-0.5 text-2xs text-muted-c/80 pl-4">
           {agent.message}
         </div>
       )}
       {agent.summary && (agent.status === "done" || agent.status === "error") && (
-        <div className="mt-0.5 text-[10px] text-secondary-c pl-4 line-clamp-4 whitespace-pre-wrap">
+        <div className="mt-0.5 text-2xs text-secondary-c pl-4 line-clamp-4 whitespace-pre-wrap">
           {agent.summary}
         </div>
       )}
@@ -67,7 +67,7 @@ export function TeamNodeCard({
         Agent Team {status === "running" ? "执行中" : status === "done" ? "已完成" : "失败"}
       </div>
       {reasoning && (
-        <div className="mb-1.5 text-[10px] opacity-70 text-indigo-800 dark:text-indigo-300">
+        <div className="mb-1.5 text-2xs opacity-70 text-indigo-800 dark:text-indigo-300">
           {reasoning}
         </div>
       )}
@@ -77,7 +77,7 @@ export function TeamNodeCard({
         ))}
       </div>
       {status === "done" && doneAt && (
-        <div className="mt-1 text-[10px] text-muted-c/60">
+        <div className="mt-1 text-2xs text-muted-c/60">
           完成于 {new Date(doneAt).toLocaleTimeString()}
         </div>
       )}

@@ -35,7 +35,7 @@ export function useModelLabel(): string {
 export function ModelLabel({ className = "" }: { className?: string }) {
   const label = useModelLabel();
   return (
-    <span className={`inline-flex items-center gap-1 text-[11px] text-muted-c ${className}`}>
+    <span className={`inline-flex items-center gap-1 text-xs text-muted-c ${className}`}>
       <Cpu className="h-3 w-3 shrink-0" aria-hidden="true" />
       <span className="truncate">{label}</span>
     </span>
@@ -106,7 +106,7 @@ export function ModelToggle() {
         title={triggerTitle}
         className={[
           "btn-icon group inline-flex h-7 w-auto items-center gap-1 px-1.5",
-          "text-[11px] leading-none",
+          "text-xs leading-none",
           open ? "bg-hover-soft text-primary-c" : "",
         ].join(" ")}
       >
@@ -126,53 +126,31 @@ export function ModelToggle() {
             exit={{ opacity: 0, y: 4, scale: 0.98 }}
             transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
             className={[
-              "absolute bottom-full right-0 z-50 mb-1.5 w-[300px]",
-              "overflow-hidden rounded-lg border border-default bg-surface/95 backdrop-blur-md",
-              "shadow-[0_8px_28px_-12px_rgba(0,0,0,0.5),0_2px_6px_-2px_rgba(0,0,0,0.3)]",
+              "absolute bottom-full right-0 z-50 mb-1.5 w-[160px]",
+              "overflow-hidden rounded-md border border-default bg-surface shadow-pop",
             ].join(" ")}
           >
-            <div className="border-b border-default bg-subtle/60 px-3 py-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-c">
-                  模型 · 当前生效
-                </span>
-                <span className="rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-                  {entries.length} 个
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-secondary-c">
-                <Cpu className="h-3 w-3" aria-hidden="true" />
-                <span
-                  className="truncate font-medium"
-                  title={triggerLabel}
-                >
-                  {triggerLabel}
-                </span>
-                {provider && (
-                  <span className="rounded bg-default px-1 font-mono text-[9px] text-muted-c">
-                    {provider}
-                  </span>
-                )}
-              </div>
-            </div>
-
             <div className="max-h-64 overflow-auto p-1">
               {entries.length === 0 ? (
-                <div className="px-3 py-3 text-[11px] text-muted-c">
+                <div className="px-3 py-3 text-xs text-muted-c">
                   暂无模型条目。打开「设置 → 模型」添加。
                 </div>
               ) : (
                 entries.map((entry) => {
                   const isActive = entry.id === activeId;
+                  const ctx = entry.contextWindow
+                    ? `${(entry.contextWindow / 1000).toFixed(0)}k`
+                    : "";
                   return (
                     <button
                       key={entry.id}
                       type="button"
                       role="option"
                       aria-selected={isActive}
+                      title={`${entry.model} · ${entry.providerId}`}
                       onClick={() => void choose(entry.id)}
                       className={[
-                        "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left",
+                        "group flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left",
                         "transition-colors duration-100 outline-none",
                         isActive
                           ? "bg-brand-500/10"
@@ -181,7 +159,7 @@ export function ModelToggle() {
                     >
                       <Cpu
                         className={[
-                          "mt-0.5 h-3.5 w-3.5 shrink-0",
+                          "h-3 w-3 shrink-0",
                           isActive
                             ? "text-brand-500"
                             : "text-muted-c",
@@ -189,21 +167,20 @@ export function ModelToggle() {
                         aria-hidden="true"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-[12px] font-medium text-primary-c">
-                            {entry.label}
-                          </span>
-                          {isActive && (
-                            <Check
-                              className="h-3 w-3 shrink-0 text-brand-500"
-                              aria-hidden="true"
-                            />
-                          )}
+                        <div className="truncate text-xs font-medium text-primary-c leading-snug">
+                          {entry.label}
                         </div>
-                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-c">
-                          {entry.model} · {entry.providerId}
+                        <div className="truncate text-2xs text-muted-c leading-snug">
+                          {entry.model}
+                          {ctx ? ` · ${ctx}` : ""}
                         </div>
                       </div>
+                      {isActive && (
+                        <Check
+                          className="h-3 w-3 shrink-0 text-brand-500"
+                          aria-hidden="true"
+                        />
+                      )}
                     </button>
                   );
                 })
@@ -211,14 +188,10 @@ export function ModelToggle() {
             </div>
 
             {error && (
-              <div className="border-t border-rose-200 bg-rose-50 px-3 py-1.5 text-[10.5px] text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+              <div className="border-t border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
                 切换失败：{error}
               </div>
             )}
-
-            <div className="border-t border-default bg-subtle/40 px-3 py-1.5 text-[10px] text-muted-c">
-              <span className="font-mono">Esc</span> 关闭 · 切换需 reload 后端配置
-            </div>
           </motion.div>
         )}
       </AnimatePresence>

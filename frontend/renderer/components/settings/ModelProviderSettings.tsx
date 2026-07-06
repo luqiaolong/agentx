@@ -21,6 +21,7 @@ import {
   ArrowDownToLine,
 } from "lucide-react";
 import type { ModelEntry, ModelProviderId } from "@/lib/utils";
+import { useModelStore } from "@/stores/model";
 
 // 服务商预设：默认模型名 / Base URL / 文档链接
 // 与 backend/app/llm.py 路由逻辑对齐：
@@ -106,6 +107,8 @@ function emptyEntry(): ModelEntry {
     baseUrl: "",
     apiKey: "",
     createdAt: Date.now(),
+    contextWindow: null,
+    maxOutputTokens: null,
   };
 }
 
@@ -158,32 +161,32 @@ function ModelRow({
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="font-semibold text-primary-c">{displayLabel}</span>
             <span
-              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${providerColor(
+              className={`rounded-full px-1.5 py-0.5 text-2xs font-medium ${providerColor(
                 entry.providerId,
               )}`}
             >
               {providerLabel(entry.providerId)}
             </span>
             {isActive && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-500">
+              <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-1.5 py-0.5 text-2xs font-medium text-brand-500">
                 <Sparkles className="h-2.5 w-2.5" />
                 使用中
               </span>
             )}
             {hasKey ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-2xs font-medium text-emerald-600 dark:text-emerald-400">
                 <Check className="h-2.5 w-2.5" />
                 密钥已配置
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-2xs font-medium text-amber-600 dark:text-amber-400">
                 <AlertCircle className="h-2.5 w-2.5" />
                 未配置密钥
               </span>
             )}
           </div>
           {/* 第二行：模型名 + Base URL */}
-          <div className="mt-1 truncate font-mono text-[11px] text-muted-c">
+          <div className="mt-1 truncate font-mono text-xs text-muted-c">
             <span className="text-secondary-c">{entry.model || "（未设置模型名）"}</span>
             <span className="mx-1.5 text-muted-c/50">·</span>
             <span className="break-all">{baseUrlDisplay}</span>
@@ -220,7 +223,7 @@ function ModelRow({
             <>
               <button
                 type="button"
-                className="cursor-pointer rounded px-1.5 py-0.5 text-[10px] text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                className="cursor-pointer rounded px-1.5 py-0.5 text-2xs text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
                 onClick={() => {
                   onDelete();
                   setConfirmDelete(false);
@@ -357,6 +360,8 @@ function ModelEditor({
         baseUrl: draft.baseUrl.trim(),
         apiKey: finalKey,
         createdAt: draft.createdAt || Date.now(),
+        contextWindow: draft.contextWindow,
+        maxOutputTokens: draft.maxOutputTokens,
       };
       await onSave(entry);
     } finally {
@@ -368,7 +373,7 @@ function ModelEditor({
     <div className="space-y-3 rounded-lg border border-brand-500/30 bg-brand-500/[0.03] p-3">
       {/* 服务商选择 */}
       <div role="radiogroup" aria-label="服务商类型">
-        <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+        <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-c">
           服务商类型
         </label>
         <div className="grid grid-cols-2 gap-1.5">
@@ -400,7 +405,7 @@ function ModelEditor({
                   <div className="text-xs font-medium text-primary-c">
                     {opt.label}
                   </div>
-                  <div className="text-[10px] text-muted-c">{opt.desc}</div>
+                  <div className="text-2xs text-muted-c">{opt.desc}</div>
                 </div>
               </button>
             );
@@ -410,7 +415,7 @@ function ModelEditor({
 
       {/* 显示名称（自定义必填，预设可选） */}
       <div>
-        <label className="mb-1 block text-[11px] font-medium text-secondary-c">
+        <label className="mb-1 block text-xs font-medium text-secondary-c">
           显示名称{isCustom ? "（必填）" : "（可选）"}
         </label>
         <input
@@ -422,14 +427,14 @@ function ModelEditor({
               ? "例如：我的中转服务"
               : `${providerLabel(draft.providerId)} · ${draft.model || "model"}`
           }
-          className="input-field text-[11px]"
+          className="input-field text-xs"
         />
-        {errs.label && <p className="mt-1 text-[10px] text-rose-500">{errs.label}</p>}
+        {errs.label && <p className="mt-1 text-2xs text-rose-500">{errs.label}</p>}
       </div>
 
       {/* 模型名称 */}
       <div>
-        <label className="mb-1 block text-[11px] font-medium text-secondary-c">
+        <label className="mb-1 block text-xs font-medium text-secondary-c">
           模型名称
         </label>
         <input
@@ -437,14 +442,14 @@ function ModelEditor({
           value={draft.model}
           onChange={(e) => setDraft((s) => ({ ...s, model: e.target.value }))}
           placeholder={preset?.defaultModel ?? "例如 gpt-4o-mini"}
-          className="input-field font-mono text-[11px]"
+          className="input-field font-mono text-xs"
         />
-        {errs.model && <p className="mt-1 text-[10px] text-rose-500">{errs.model}</p>}
+        {errs.model && <p className="mt-1 text-2xs text-rose-500">{errs.model}</p>}
       </div>
 
       {/* Base URL */}
       <div>
-        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+        <label className="mb-1 flex items-center gap-1 text-xs font-medium text-secondary-c">
           <Server className="h-3 w-3 text-muted-c" />
           API 地址{isCustom ? "（必填）" : preset ? "（可选，留空使用默认）" : ""}
         </label>
@@ -457,16 +462,16 @@ function ModelEditor({
               ? "https://api.example.com/v1"
               : preset?.defaultBaseUrl ?? ""
           }
-          className="input-field font-mono text-[11px]"
+          className="input-field font-mono text-xs"
         />
         {errs.baseUrl && (
-          <p className="mt-1 text-[10px] text-rose-500">{errs.baseUrl}</p>
+          <p className="mt-1 text-2xs text-rose-500">{errs.baseUrl}</p>
         )}
       </div>
 
       {/* API Key */}
       <div>
-        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+        <label className="mb-1 flex items-center gap-1 text-xs font-medium text-secondary-c">
           <KeyRound className="h-3 w-3 text-muted-c" />
           API Key
         </label>
@@ -480,7 +485,7 @@ function ModelEditor({
                 ? "输入新 Key 以替换（留空保留原密钥）"
                 : "输入 API Key"
             }
-            className="input-field pr-8 font-mono text-[11px]"
+            className="input-field pr-8 font-mono text-xs"
           />
           <button
             type="button"
@@ -492,13 +497,13 @@ function ModelEditor({
           </button>
         </div>
         {errs.apiKey && (
-          <p className="mt-1 text-[10px] text-rose-500">{errs.apiKey}</p>
+          <p className="mt-1 text-2xs text-rose-500">{errs.apiKey}</p>
         )}
       </div>
 
       {/* 上下文容量（k tokens = 实际 token × 1000 存储）*/}
       <div>
-        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+        <label className="mb-1 flex items-center gap-1 text-xs font-medium text-secondary-c">
           <Ruler className="h-3 w-3 text-muted-c" />
           上下文容量
           <span className="text-muted-c">（k tokens，输入上限）</span>
@@ -520,25 +525,25 @@ function ModelEditor({
             }));
           }}
           placeholder={preset ? String(preset.defaultContextK) : "例：128"}
-          className="input-field font-mono text-[11px]"
+          className="input-field font-mono text-xs"
         />
         {draft.contextWindow && draft.contextWindow > 0 && (
-          <p className="mt-1 text-[10px] text-muted-c">
+          <p className="mt-1 text-2xs text-muted-c">
             ≈ {draft.contextWindow.toLocaleString()} tokens · 决定右下角
             ContextUsage widget 的分母
           </p>
         )}
         {!draft.contextWindow && (
-          <p className="mt-1 text-[10px] text-muted-c">留空使用默认值 16000 tokens</p>
+          <p className="mt-1 text-2xs text-muted-c">留空使用默认值 16000 tokens</p>
         )}
         {errs.contextWindow && (
-          <p className="mt-1 text-[10px] text-rose-500">{errs.contextWindow}</p>
+          <p className="mt-1 text-2xs text-rose-500">{errs.contextWindow}</p>
         )}
       </div>
 
       {/* 输出 token 上限 */}
       <div>
-        <label className="mb-1 flex items-center gap-1 text-[11px] font-medium text-secondary-c">
+        <label className="mb-1 flex items-center gap-1 text-xs font-medium text-secondary-c">
           <ArrowDownToLine className="h-3 w-3 text-muted-c" />
           输出 token 上限
           <span className="text-muted-c">（k tokens，单次响应）</span>
@@ -560,11 +565,11 @@ function ModelEditor({
             }));
           }}
           placeholder={preset ? String(preset.defaultOutputK) : "例：4 / 8 / 16"}
-          className="input-field font-mono text-[11px]"
+          className="input-field font-mono text-xs"
         />
-        <p className="mt-1 text-[10px] text-muted-c">激活后传给后端 ChatOpenAI；留空不限制</p>
+        <p className="mt-1 text-2xs text-muted-c">激活后传给后端 ChatOpenAI；留空不限制</p>
         {errs.maxOutputTokens && (
-          <p className="mt-1 text-[10px] text-rose-500">{errs.maxOutputTokens}</p>
+          <p className="mt-1 text-2xs text-rose-500">{errs.maxOutputTokens}</p>
         )}
       </div>
 
@@ -574,7 +579,7 @@ function ModelEditor({
           href={preset.docs}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-[11px] text-muted-c transition-colors hover:text-brand-500"
+          className="inline-flex items-center gap-1 text-xs text-muted-c transition-colors hover:text-brand-500"
         >
           <ExternalLink className="h-3 w-3" />
           获取密钥
@@ -605,7 +610,7 @@ function ModelEditor({
           取消
         </button>
         {preset && (
-          <span className="ml-auto text-[10px] text-muted-c">
+          <span className="ml-auto text-2xs text-muted-c">
             {preset.label} 默认模型：{preset.defaultModel}
           </span>
         )}
@@ -680,6 +685,8 @@ export function ModelProviderSettings(): JSX.Element {
       setEditing(null);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
+      // 同步刷新 ModelToggle 的 useModelStore，确保输入框模型列表即时更新
+      await useModelStore.getState().load();
       // 若编辑的是当前激活条目，重新写入 legacy 槽位以同步新配置，并热更新后端
       if (wasActive) {
         try {
@@ -702,6 +709,8 @@ export function ModelProviderSettings(): JSX.Element {
       const next = entries.filter((e) => e.id !== id);
       await window.api.settings.setModelEntries(next);
       setEntries(next);
+      // 同步刷新 ModelToggle 的 useModelStore
+      await useModelStore.getState().load();
       // 若删除的是当前激活条目，清空激活标记（后端仍保留旧 env，直到激活其他条目）
       if (activeId === id) {
         setActiveId(null);
@@ -720,6 +729,8 @@ export function ModelProviderSettings(): JSX.Element {
     try {
       await window.api.settings.activateModel(id);
       setActiveId(id);
+      // 同步刷新 ModelToggle 的 useModelStore（激活状态变更）
+      await useModelStore.getState().load();
       // 热更新后端配置，无需重启
       await window.api.app.reloadBackendConfig();
       setHotReloaded(true);
@@ -764,16 +775,16 @@ export function ModelProviderSettings(): JSX.Element {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-c">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-c">
                 当前模型
               </span>
               {activeEntry ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-2xs font-medium text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="h-2.5 w-2.5" />
                   已激活
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-2xs font-medium text-amber-600 dark:text-amber-400">
                   <AlertCircle className="h-2.5 w-2.5" />
                   未配置
                 </span>
@@ -785,7 +796,7 @@ export function ModelProviderSettings(): JSX.Element {
                 : "尚未激活，请添加模型并点击「设为默认」"}
             </div>
             {activeEntry && (
-              <div className="mt-0.5 truncate text-[11px] text-muted-c">
+              <div className="mt-0.5 truncate text-xs text-muted-c">
                 {providerLabel(activeEntry.providerId)}
                 {activeEntry.baseUrl ? ` · ${activeEntry.baseUrl}` : ""}
               </div>
@@ -807,10 +818,10 @@ export function ModelProviderSettings(): JSX.Element {
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Cpu className="h-3 w-3 text-muted-c" />
-            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-c">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-c">
               已添加模型
             </h4>
-            <span className="rounded-full bg-subtle px-1.5 py-0.5 text-[10px] text-secondary-c">
+            <span className="rounded-full bg-subtle px-1.5 py-0.5 text-2xs text-secondary-c">
               {entries.length}
             </span>
           </div>
@@ -829,7 +840,7 @@ export function ModelProviderSettings(): JSX.Element {
           <div className="rounded-lg border border-dashed border-default px-3 py-6 text-center">
             <Cpu className="mx-auto mb-2 h-6 w-6 text-muted-c/50" />
             <p className="text-xs text-muted-c">暂无模型配置</p>
-            <p className="mt-1 text-[11px] text-muted-c">
+            <p className="mt-1 text-xs text-muted-c">
               点击「添加模型」选择服务商并填入密钥
             </p>
           </div>
@@ -863,7 +874,7 @@ export function ModelProviderSettings(): JSX.Element {
         )}
 
         {saved && (
-          <div className="mt-2 flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+          <div className="mt-2 flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-3 w-3" />
             已保存
           </div>
@@ -874,7 +885,7 @@ export function ModelProviderSettings(): JSX.Element {
       {hotReloaded && (
         <div className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900/50 dark:bg-emerald-950/30">
           <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
+          <span className="text-xs text-emerald-700 dark:text-emerald-300">
             模型配置已生效
           </span>
         </div>
@@ -882,7 +893,7 @@ export function ModelProviderSettings(): JSX.Element {
 
       {/* 手动重启后端（兜底） */}
       <div className="flex items-center justify-between rounded-lg border border-default bg-subtle/30 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-c">
+        <div className="flex items-center gap-1.5 text-xs text-muted-c">
           <RotateCw className="h-3 w-3 shrink-0" />
           <span>如遇异常可手动重启后端</span>
         </div>
@@ -898,7 +909,7 @@ export function ModelProviderSettings(): JSX.Element {
       </div>
 
       {/* 说明 */}
-      <p className="rounded-md bg-subtle/50 px-3 py-2 text-[11px] leading-relaxed text-muted-c">
+      <p className="rounded-md bg-subtle/50 px-3 py-2 text-xs leading-relaxed text-muted-c">
         后端通过 OpenAI 兼容协议调用 LLM。点击「设为默认」会将该模型的密钥与配置同步到后端并即时生效，
         无需重启。各模型条目的密钥经 safeStorage 加密存储于本地，切换模型时不会丢失。
       </p>
