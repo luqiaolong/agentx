@@ -63,11 +63,11 @@
   --fs-version:      var(--text-3xs);      /* 10px — version badge */
   --fs-scene-tab:    var(--text-2xs);      /* 11px — Work/Coding tabs */
   /* Sidebar */
-  --fs-sidebar-section: var(--text-3xs);  /* 10px — "会话" section header */
-  --fs-sidebar-group:   var(--text-3xs);  /* 10px — HOME/AGENTX group label */
-  --fs-sidebar-item:    var(--text-2xs);  /* 11px — session title */
-  --fs-sidebar-meta:    var(--text-3xs);  /* 10px — session timestamp */
-  --fs-sidebar-action:  var(--text-2xs);  /* 11px — 设置/日志 button */
+  --fs-sidebar-section: var(--text-2xs);  /* 11px - "会话" section header */
+  --fs-sidebar-group:   var(--text-2xs);  /* 11px - HOME/AGENTX group label */
+  --fs-sidebar-item:    var(--text-xs);   /* 12px - session title */
+  --fs-sidebar-meta:    var(--text-2xs);  /* 11px - session timestamp */
+  --fs-sidebar-action:  var(--text-xs);   /* 12px - 设置/日志 button */
   /* Chat messages */
   --fs-msg-user:     var(--text-sm);      /* 13px — user bubble text */
   --fs-msg-assist:   var(--text-sm);      /* 13px — assistant text / prose */
