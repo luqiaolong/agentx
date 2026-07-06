@@ -49,6 +49,7 @@ pub struct GitRepoStatus {
 
 /// `git:getStatus` 返回结构。
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitStatusResult {
     pub entries: Vec<GitStatusEntry>,
     pub repo_status: GitRepoStatus,

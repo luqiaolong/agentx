@@ -626,9 +626,9 @@ export function SubagentsSettings() {
           getTeamSubagentsConfig(),
           getCustomSubagents(),
         ]);
-        setConfig(cfg);
-        setTeamConfig(team);
-        setCustomMap(custom);
+        setConfig(cfg ?? EMPTY_CONFIG);
+        setTeamConfig(team ?? EMPTY_TEAM_CONFIG);
+        setCustomMap(custom ?? {});
       } catch {
         // 后端未就绪时保留默认值
       } finally {
