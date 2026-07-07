@@ -80,14 +80,14 @@ pub fn app_get_dev_mode(app: AppHandle) -> bool {
     store::get_dev_mode(&app)
 }
 
-/// `app:setDevMode` → 写入开发模式开关并重启后端（仅重启进程，不重启 Tauri 窗口）。
+/// `app:setDevMode` → 写入开发模式开关（不再自动重启后端）。
 ///
-/// 切换语义与前端「切换即重启」一致：true → 关闭旧 PythonHandle → 按新 dev_mode
-/// 重新 spawn；false 同理。返回的 `RestartResult` 与 `app:restartBackend` 一致。
+/// 切换语义与 `AGENTS.md §14.2` 一致：dev_mode 是持久化配置，切换只写 store；
+/// 下次应用启动或显式 `app:restartBackend` 时按新值 spawn。本命令不再访问
+/// PythonState（避免 stop+restart 链路把 dev_mode 切换与后端就绪事件流耦合）。
 #[tauri::command]
 pub async fn app_set_dev_mode(
     app: AppHandle,
-    state: State<'_, Mutex<Option<backend::handle::PythonHandle>>>,
     enabled: bool,
 ) -> Result<RestartResult, String> {
     let prev = store::get_dev_mode(&app);
@@ -100,9 +100,12 @@ pub async fn app_set_dev_mode(
     store::set_dev_mode(&app, enabled);
     logger::append_log(
         &app,
-        &format!("[main] devMode -> {} (restarting backend)", enabled),
+        &format!("[main] devMode -> {} (stored; backend restart deferred)", enabled),
     );
-    app_restart_backend(app, state).await
+    Ok(RestartResult {
+        ok: true,
+        message: Some("devMode stored; restart backend to apply".into()),
+    })
 }
 
 /// `app:getHomeWorkspaceDir` → 返回用户桌面目录路径。
