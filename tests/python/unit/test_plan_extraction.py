@@ -39,6 +39,26 @@ def test_extract_llm_natural_schema() -> None:
     assert data["plan"][0]["status"] == "pending"
 
 
+def test_extract_nested_plan_steps_schema() -> None:
+    """LLM 嵌套 schema: {"plan": {"steps": [...]}} 也能被提取并扁平化为 list。"""
+    text = (
+        '{"plan": {"steps": ['
+        '{"id": 1, "task": "读文件", "method": "read_file"},'
+        '{"id": 2, "task": "分析内容", "method": "llm"}'
+        ']}}'
+    )
+    result = extract_plan_or_update(text)
+    assert result is not None
+    kind, data = result
+    assert kind == "plan"
+    assert isinstance(data["plan"], list)
+    assert len(data["plan"]) == 2
+    assert data["plan"][0]["id"] == "1"
+    assert data["plan"][0]["title"] == "读文件"
+    assert data["plan"][1]["id"] == "2"
+    assert data["plan"][1]["title"] == "分析内容"
+
+
 def test_extract_plan_in_markdown_codeblock() -> None:
     """LLM 输出 ```json ... ``` 代码块包裹时仍能提取。"""
     text = '下面是计划：\n```json\n{"plan": [{"step": 1, "task": "读取", "method": "head"}]}\n```'
