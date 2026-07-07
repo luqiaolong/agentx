@@ -16,9 +16,11 @@ SSE 事件映射:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
+from app.approval import get_abort_event
 from app.utils.sse_events import (
     make_sse_event,
     make_todo_event,
@@ -51,7 +53,12 @@ async def _stream_agent_events(
     from langchain_core.messages import AIMessage, ToolMessage
     from app.utils.text import strip_think
 
+    thread_id = config.get("configurable", {}).get("thread_id", "")
+    abort_event = get_abort_event(thread_id)
+
     async for state in agent.astream(inputs, config=config, stream_mode="values"):
+        if abort_event.is_set():
+            raise asyncio.CancelledError("aborted")
         messages = state.get("messages", []) if hasattr(state, "get") else []
         if not messages:
             continue

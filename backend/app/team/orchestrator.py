@@ -27,6 +27,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, AsyncIterator
 
+from app.approval import get_abort_event
 from app.config import get_settings
 from app.deep.agent import run_deep_path  # noqa: F401 — 供 scheduler 经 orchestrator.run_deep_path 访问（monkeypatch 兼容）
 from app.llm import get_chat_model
@@ -179,6 +180,19 @@ async def run_team_path(
 
         async def _runner(t: TeamPlanTask, idx: int) -> None:
             async with semaphore:
+                abort_event = get_abort_event(thread_id)
+                if abort_event.is_set():
+                    await queue.put(
+                        make_team_event(
+                            _SUBTASK_DONE_EVENT,
+                            {
+                                "agent": t.agent,
+                                "success": False,
+                                "payload": "用户中止",
+                            },
+                        )
+                    )
+                    return
                 # 实际开始执行时才发 running
                 await queue.put(
                     make_team_event(

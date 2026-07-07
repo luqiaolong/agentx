@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import AsyncIterator
 
+from app.approval import get_abort_event
 from app.config import get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
@@ -61,8 +63,11 @@ async def run_chat_path(
         max_hold=get_settings().think_filter_max_hold,
         retain_think=True,
     )
+    abort_event = get_abort_event(thread_id)
     try:
         async for chunk in llm.astream(messages):
+            if abort_event.is_set():
+                raise asyncio.CancelledError("aborted")
             raw = extract_chunk_text(chunk, strip=False)
             cleaned = think_filter.feed(raw)
             # retain_think 模式：提取 reasoning chunk 并 yield reasoning 事件
@@ -75,6 +80,9 @@ async def run_chat_path(
         tail = think_filter.flush()
         if tail:
             yield make_sse_event("token", tail)
+    except asyncio.CancelledError:
+        logger.info("chat path aborted", thread_id=thread_id)
+        raise
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("chat path LLM stream failed", error=str(exc))
         yield make_sse_event("error", f"LLM 流式失败: {exc}")

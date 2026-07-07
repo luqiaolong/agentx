@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from app.approval.decision import ApprovalDecision
 
 __all__ = [
@@ -17,6 +19,7 @@ __all__ = [
     "set_abort",
     "is_aborted",
     "clear_abort",
+    "get_abort_event",
 ]
 
 
@@ -25,6 +28,9 @@ _pending_approvals: dict[str, ApprovalDecision] = {}
 
 # thread_id → 中止标志。SSE handler 每轮迭代检查。
 _abort_flags: dict[str, bool] = {}
+
+# thread_id → asyncio.Event，供 LLM 流式内部即时响应中止（无需轮询）。
+_abort_events: dict[str, asyncio.Event] = {}
 
 
 def submit_approval(thread_id: str, decision: ApprovalDecision) -> None:
@@ -38,8 +44,13 @@ def pop_approval(thread_id: str) -> ApprovalDecision | None:
 
 
 def set_abort(thread_id: str) -> None:
-    """设置中止标志，SSE handler 在下一轮迭代退出。"""
+    """设置中止标志并触发对应 asyncio.Event，供轮询和流式内部即时响应。"""
     _abort_flags[thread_id] = True
+    event = _abort_events.get(thread_id)
+    if event is None:
+        event = asyncio.Event()
+        _abort_events[thread_id] = event
+    event.set()
 
 
 def is_aborted(thread_id: str) -> bool:
@@ -50,3 +61,16 @@ def is_aborted(thread_id: str) -> bool:
 def clear_abort(thread_id: str) -> None:
     """清除中止标志（消费后清理）。"""
     _abort_flags.pop(thread_id, None)
+    event = _abort_events.pop(thread_id, None)
+    if event:
+        event.set()
+
+
+def get_abort_event(thread_id: str) -> asyncio.Event:
+    """获取或创建 thread_id 对应的中止事件。
+
+    流式生成器内部可通过 ``event.is_set()`` 即时检查中止，避免依赖轮询。
+    """
+    if thread_id not in _abort_events:
+        _abort_events[thread_id] = asyncio.Event()
+    return _abort_events[thread_id]
