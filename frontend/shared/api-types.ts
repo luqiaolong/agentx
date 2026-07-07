@@ -78,7 +78,15 @@ export interface ApprovalRequest {
 
 export type PermissionMode = "standard" | "full_trust";
 
-export type AgentMode = "agent" | "agent_team";
+/**
+ * 场景+模式枚举（单字段表达场景+模式）：
+ * - "work" — work 场景 Supervisor（全能 agent）
+ * - "coding" — coding 场景 Expert（专家 agent）
+ * - "coding_team" — coding 场景级 AgentTeam（多代理协作）
+ *
+ * 旧值 "agent" / "agent_team" 已废弃，前端 store 迁移时重置为 "work"。
+ */
+export type AgentMode = "work" | "coding" | "coding_team";
 
 export type ApprovalDecision = "approve" | "once" | "session" | "deny";
 
@@ -135,7 +143,6 @@ export interface SubagentConfig {
 }
 
 export interface SubagentsConfig {
-  code: SubagentConfig;
   rag: SubagentConfig;
   web: SubagentConfig;
 }

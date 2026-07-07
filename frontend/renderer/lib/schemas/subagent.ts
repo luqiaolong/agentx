@@ -24,7 +24,7 @@ export interface SubagentSchemaOptions {
 export function buildSubagentSchema(opts: SubagentSchemaOptions) {
   return z.object({
     builtinKey: z
-      .enum(["code", "rag", "web"])
+      .enum(["rag", "web"])
       .optional(),
     teamKey: z
       .enum([
@@ -69,7 +69,7 @@ export function buildSubagentSchema(opts: SubagentSchemaOptions) {
           path: ["customKey"],
           message: `key "${key}" 已存在`,
         });
-      } else if (["code", "rag", "web"].includes(key)) {
+      } else if (["rag", "web"].includes(key)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["customKey"],

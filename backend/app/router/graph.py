@@ -1,17 +1,20 @@
-"""LangGraph Router 入口：``run_router`` 编排分类 + 三路径分发。
+"""LangGraph Router 入口：``run_router`` 场景+模式直接分发。
 
-历史背景：本模块早期曾定义一个 LangGraph StateGraph（``classify_node`` /
-``chat_node`` / ``tool_node`` / ``deep_node`` / ``build_router_graph``），但路由流
-实际由 ``run_router`` SSE 生成器驱动（先调 ``classify_message``，再 dispatch 到
-``run_chat_path`` / ``run_tool_path`` / ``run_deep_path`` / ``run_team_path``），
-从未被生产代码使用。原图节点 + ``build_router_graph`` 已删除，保留本模块的
-SSE 编排、``@skill`` 标记解析与 checkpointer 历史加载。
+场景化架构（Supervisor + Expert）下，Router 不再做 CHAT / SINGLE_TOOL /
+DEEP_TASK / AgentTeam 四路径分类，而是根据前端传入的 ``agent_mode`` 直接
+分发到对应场景的 runner：
 
-路径实现已迁移到按能力域模块化的独立包：
-- 路径 A → ``app.chat.run``
-- 路径 B → ``app.subagents.dispatch``
-- 路径 C → ``app.deep.agent``
-- 路径 D → ``app.team.orchestrator``
+- ``agent_mode == "work"`` → ``run_work_supervisor``（Supervisor 全能 agent）
+- ``agent_mode == "coding"`` → ``run_coding_expert``（coding Expert）
+- ``agent_mode == "coding_team"`` → ``run_coding_team``（coding 场景级 AgentTeam）
+
+Router 保留的公共职责：
+1. ``@skill:<name>`` 标记解析（仅 work 场景注入 system prompt）
+2. workspace 授权同步
+3. 用户画像加载
+4. 从 checkpointer 加载历史 messages + 截断
+5. 收集 assistant 内容并写回 checkpointer
+6. 统一 yield ``done`` 事件
 """
 
 from __future__ import annotations
@@ -19,20 +22,21 @@ from __future__ import annotations
 import re
 from typing import Any, AsyncIterator
 
-from app.chat.run import run_chat_path
+from app.agents.expert import run_coding_expert
+from app.agents.supervisor import run_work_supervisor
+from app.agents.team import run_coding_team
 from app.config import get_settings
-from app.deep.agent import run_deep_path
 from app.memory.context import trim_messages_with_budget
 from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
-from app.router.classifier import classify_message
-from app.subagents.dispatch import run_tool_path
-from app.team.orchestrator import run_team_path
 from app.utils.sse_events import make_sse_event
 
 __all__ = ["run_router", "_parse_skill_tag"]
+
+# 合法 agent_mode 集合
+_VALID_AGENT_MODES: frozenset[str] = frozenset({"work", "coding", "coding_team"})
 
 
 # ============================================================
@@ -95,38 +99,55 @@ async def run_router(
     thread_id: str,
     checkpointer: Any = None,
     permission_mode: str = "standard",
-    scene_prompt: str | None = None,
-    agent_mode: str = "agent",
+    agent_mode: str = "work",
     workspace_path: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """运行 Router，yield SSE 事件。
+    """运行 Router，按 ``agent_mode`` 分发到对应场景 runner，yield SSE 事件。
 
     流程:
-    1. 解析 ``@skill:<name>`` 标记，提取 skill content（注入路径 A system prompt）
-    2. 从 checkpointer 加载 ``thread_id`` 的历史 ``messages``（若提供 checkpointer）
-    3. 若 ``agent_mode == "agent_team"``，直接进入 AgentTeam 路径（路径 D）
-    4. 否则调 classify_message 获取分类，按分类驱动对应路径的流式生成器
-    5. 将路径事件转为 SSE 格式（token / todo_update / approval_request / done / error）
+    1. 校验 ``agent_mode``，非法值直接 yield error
+    2. 解析 ``@skill:<name>`` 标记（仅 work 场景注入 system prompt）
+    3. 从请求字段同步 workspace 授权
+    4. 读取用户画像
+    5. 从 checkpointer 加载历史 messages（若提供）+ 截断到预算
+    6. 按 ``agent_mode`` 分发：
+       - ``"work"`` → ``run_work_supervisor``
+       - ``"coding"`` → ``run_coding_expert``
+       - ``"coding_team"`` → ``run_coding_team``
+    7. 收集 assistant token 内容，写回 checkpointer
+    8. 统一 yield ``done`` 事件
 
     Args:
         message: 用户消息。
         thread_id: 会话 ID。
-        checkpointer: 可选的 LangGraph checkpointer，用于加载历史 messages。
+        checkpointer: 可选的 LangGraph checkpointer，用于加载/写回历史 messages。
         permission_mode: 权限模式，"standard"（审批流）或 "full_trust"（会话内全量放行）。
-            仅影响路径 C（DeepAgent）的危险工具审批与目录越界扩展授权。
-        scene_prompt: 可选场景 prompt（前端场景切换器注入），非空时覆盖
-            ``default_system_prompt``（路径 A/B）或 ``_DEEP_SYSTEM_PROMPT``（路径 C）。
-        agent_mode: 代理模式，"agent"（单代理，默认）或 "agent_team"（多代理协作）。
+        agent_mode: 场景+模式枚举，``"work"`` / ``"coding"`` / ``"coding_team"``。
+            默认 ``"work"``（Supervisor 全能 agent）。
         workspace_path: 可选当前会话绑定的 workspace 绝对路径，非空时自动授权沙箱写入。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
     """
-    with trace_span("router.run", thread_id=thread_id, message_len=len(message)):
-        # 解析 @skill 标记（在 classify 之前）
+    with trace_span("router.run", thread_id=thread_id, message_len=len(message), agent_mode=agent_mode):
+        # ---- 1. 校验 agent_mode ----
+        if agent_mode not in _VALID_AGENT_MODES:
+            logger.warning(
+                "router.invalid_agent_mode",
+                thread_id=thread_id,
+                agent_mode=agent_mode,
+            )
+            yield make_sse_event(
+                "error",
+                f"无效的 agent_mode: '{agent_mode}'，合法值为 {sorted(_VALID_AGENT_MODES)}",
+            )
+            yield make_sse_event("done", "{}")
+            return
+
+        # ---- 2. 解析 @skill 标记 ----
         cleaned_message, skill_content = _parse_skill_tag(message)
 
-        # 从请求字段读取 workspace_path 并同步后端授权（不再解析消息正文 <workspace> 标签）
+        # ---- 3. workspace 授权同步 ----
         if workspace_path:
             from app.utils.security import get_sandbox
 
@@ -146,7 +167,7 @@ async def run_router(
                     error=str(exc),
                 )
 
-        # T9：读取用户画像，拼到 system prompt 前（路径 A 与路径 C 都注入）
+        # ---- 4. 读取用户画像 ----
         # build_profile_prompt 失败时返回空字符串，不影响主流程
         try:
             profile_prompt = build_profile_prompt()
@@ -154,7 +175,12 @@ async def run_router(
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
 
-        # 加载历史 messages（从 checkpointer）
+        # work 场景：skill_content 拼到 profile_prompt 前（作为 system prompt 前缀）
+        # coding / coding_team 场景：skill_content 不注入（Expert 有自己的 prompt 体系）
+        if agent_mode == "work" and skill_content:
+            profile_prompt = (skill_content + "\n" + profile_prompt).strip()
+
+        # ---- 5. 加载历史 messages（从 checkpointer）----
         history: list = []
         if checkpointer is not None:
             try:
@@ -163,7 +189,7 @@ async def run_router(
                 logger.warning("load history failed", error=str(exc))
                 history = []
 
-        # 截断历史到预算内（不含当前消息，当前消息在路径内部 append）
+        # 截断历史到预算内（不含当前消息，当前消息在 runner 内部 append）
         settings = get_settings()
         history = trim_messages_with_budget(
             history,
@@ -171,32 +197,15 @@ async def run_router(
             max_tokens=settings.context_max_tokens,
         )
 
-        # C3：重试路径一致性——若消息为"重试"且历史最后一条是路径 C/D，保持相同路径
-        # 避免用户点击"重试"时从 DeepAgent 路径切换到子代理路径导致上下文断裂
-        classification = await _classify_with_retry_consistency(
-            cleaned_message, thread_id, history, checkpointer
-        )
-
         logger.info(
             "router dispatch",
             thread_id=thread_id,
-            classification=classification,
+            agent_mode=agent_mode,
             message_len=len(cleaned_message),
             history_count=len(history),
         )
 
-        # 发送 classification 事件到前端，展示路由决策过程
-        yield make_sse_event("classification", {
-            "label": classification,
-            "reason": _get_classification_reason(classification, cleaned_message),
-        })
-
-        state: RouterState = {
-            "thread_id": thread_id,
-            "messages": [{"role": "user", "content": cleaned_message}],
-            "classification": classification,
-        }
-
+        # ---- 6. 场景分发 ----
         # 收集本次对话的 user + assistant 消息并写回 checkpointer
         assistant_content_parts: list[str] = []
 
@@ -206,65 +215,44 @@ async def run_router(
                     assistant_content_parts.append(str(sse.get("data", "")))
                 yield sse
 
-        if agent_mode == "agent_team":
-            # 路径 D：多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggregator）
+        if agent_mode == "work":
             async for sse in _collect_path_sse(
-                run_team_path(
+                run_work_supervisor(
                     cleaned_message,
                     thread_id,
-                    state,
                     profile_prompt=profile_prompt,
                     history=history,
                     permission_mode=permission_mode,
-                    scene_prompt=scene_prompt,
                     workspace_path=workspace_path,
                 )
             ):
                 yield sse
-        elif classification == "CHAT":
-            # 路径 A：画像 + skill content 拼到 system prompt
-            system_prompt_extra = ""
-            if profile_prompt:
-                system_prompt_extra += profile_prompt
-            if skill_content:
-                system_prompt_extra += skill_content
+        elif agent_mode == "coding":
             async for sse in _collect_path_sse(
-                run_chat_path(
-                    cleaned_message,
-                    thread_id,
-                    system_prompt_extra=system_prompt_extra,
-                    history=history,
-                    scene_prompt=scene_prompt,
-                )
-            ):
-                yield sse
-        elif classification == "SINGLE_TOOL":
-            async for sse in _collect_path_sse(
-                run_tool_path(
+                run_coding_expert(
                     cleaned_message,
                     thread_id,
                     profile_prompt=profile_prompt,
                     history=history,
-                    scene_prompt=scene_prompt,
+                    permission_mode=permission_mode,
                     workspace_path=workspace_path,
-                    checkpointer=checkpointer,
                 )
             ):
                 yield sse
-        else:  # DEEP_TASK
-            # 路径 C：画像传给 run_deep_path，由 deep_path 注入到 agent system prompt
-            # DeepAgent 自己通过 checkpointer 管理历史，run_router 不重复写入
-            async for sse in run_deep_path(
-                state,
-                cleaned_message,
-                profile_prompt=profile_prompt,
-                history=history,
-                permission_mode=permission_mode,
-                scene_prompt=scene_prompt,
-                workspace_path=workspace_path,
+        else:  # coding_team
+            async for sse in _collect_path_sse(
+                run_coding_team(
+                    cleaned_message,
+                    thread_id,
+                    profile_prompt=profile_prompt,
+                    history=history,
+                    permission_mode=permission_mode,
+                    workspace_path=workspace_path,
+                )
             ):
                 yield sse
 
+        # ---- 7. 写回 checkpointer ----
         assistant_content = "".join(assistant_content_parts).strip()
         if assistant_content and checkpointer is not None:
             from langchain_core.messages import AIMessage, HumanMessage
@@ -275,158 +263,8 @@ async def run_router(
             ]
             await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
 
+        # ---- 8. 统一 yield done ----
         yield make_sse_event("done", "{}")
-
-
-def _get_classification_reason(classification: str, message: str) -> str:
-    """根据分类结果生成人类可读的路由决策原因。
-
-    Args:
-        classification: 分类标签。
-        message: 用户消息（用于判断规则命中）。
-
-    Returns:
-        路由决策原因描述。
-    """
-    from app.router.classifier import (
-        _CHAT_KEYWORDS,
-        _DANGEROUS_TOOL_KEYWORDS,
-        _DEEP_TASK_KEYWORDS,
-        _SINGLE_TOOL_KEYWORDS,
-    )
-
-    # 检查危险工具关键词（最高优先级）
-    for kw in _DANGEROUS_TOOL_KEYWORDS:
-        if kw in message:
-            return f"消息包含危险操作关键词「{kw}」，需走审批流程"
-
-    # 检查工具关键词
-    for kw in _SINGLE_TOOL_KEYWORDS:
-        if kw in message:
-            return f"消息包含工具调用关键词「{kw}」，触发单工具路径"
-
-    # 检查深度任务关键词
-    for kw in _DEEP_TASK_KEYWORDS:
-        if kw in message:
-            return f"消息包含复杂任务关键词「{kw}」，触发深度任务路径"
-
-    # 检查闲聊关键词
-    for kw in _CHAT_KEYWORDS:
-        if kw in message:
-            return f"消息包含闲聊关键词「{kw}」，触发对话路径"
-
-    # 短消息
-    if len(message) <= 4:
-        return "短消息默认触发对话路径"
-
-    # 默认
-    if classification == "CHAT":
-        return "未命中特定规则，默认触发对话路径"
-    elif classification == "SINGLE_TOOL":
-        return "LLM 判定需要调用工具"
-    elif classification == "DEEP_TASK":
-        return "LLM 判定需要多步规划"
-    return "未知分类原因"
-
-
-async def _classify_with_retry_consistency(
-    message: str,
-    thread_id: str,
-    history: list,
-    checkpointer: Any,
-) -> str:
-    """分类消息，重试时保持与上次相同路径（方案 C）。
-
-    若消息为"重试"类意图（如"重试""再试一次""重新执行"），且历史最后一条消息
-    来自路径 C（DeepAgent）或路径 D（AgentTeam），则强制使用相同路径分类，
-    避免用户点击"重试"时从 DeepAgent 路径切换到子代理路径导致上下文断裂。
-
-    Args:
-        message: 清理后的用户消息。
-        thread_id: 会话 ID。
-        history: 历史 messages 列表。
-        checkpointer: LangGraph checkpointer。
-
-    Returns:
-        分类标签："CHAT" / "SINGLE_TOOL" / "DEEP_TASK"。
-    """
-    # 1. 先正常分类
-    try:
-        classification = await classify_message(message)
-    except Exception as exc:  # noqa: BLE001 — 分类器兜底
-        logger.warning("classify_message failed, fallback to CHAT", error=str(exc))
-        classification = "CHAT"
-
-    # 2. 重试一致性检测：消息是否为重试意图
-    retry_keywords = {"重试", "再试", "重新执行", "retry", "again", "重新来"}
-    is_retry = any(kw in message for kw in retry_keywords)
-    if not is_retry:
-        return classification
-
-    # 3. 从历史推断上次路径：检查 checkpoint 中的消息来源
-    # 若历史最后一条 assistant 消息来自 deep_agent / team，则上次是路径 C/D
-    last_path = _infer_last_path_from_history(history)
-    if last_path == "DEEP_TASK" and classification != "DEEP_TASK":
-        logger.info(
-            "retry consistency: force DEEP_TASK",
-            thread_id=thread_id,
-            original_classification=classification,
-        )
-        return "DEEP_TASK"
-    if last_path == "AGENT_TEAM" and classification != "DEEP_TASK":
-        # AgentTeam 模式由 agent_mode 控制，此处仅标记
-        logger.info(
-            "retry consistency: keep AGENT_TEAM",
-            thread_id=thread_id,
-            original_classification=classification,
-        )
-        return classification  # agent_mode 在 run_router 外层已处理
-
-    return classification
-
-
-def _infer_last_path_from_history(history: list) -> str | None:
-    """从历史消息推断上次使用的路径。
-
-    策略：检查历史最后几条 assistant 消息的 name 字段：
-    - "deep_agent" → 路径 C (DEEP_TASK)
-    - "team_" 前缀 / "orchestrator" → 路径 D (AGENT_TEAM)
-    - 无 name 或普通 assistant → 路径 A (CHAT)
-    - 子代理无 name 标记，依赖 classify_message 正常判断
-
-    Args:
-        history: 历史 messages 列表。
-
-    Returns:
-        "CHAT" / "SINGLE_TOOL" / "DEEP_TASK" / "AGENT_TEAM" / None。
-    """
-    if not history:
-        return None
-
-    # 从后向前找 assistant 消息
-    for msg in reversed(history):
-        msg_type = ""
-        if isinstance(msg, dict):
-            msg_type = msg.get("type", "")
-            name = msg.get("name", "")
-        else:
-            msg_type = getattr(msg, "type", "")
-            name = getattr(msg, "name", "") or ""
-
-        if msg_type != "ai":
-            continue
-
-        if name == "deep_agent":
-            return "DEEP_TASK"
-        if name.startswith("team_") or name == "orchestrator":
-            return "AGENT_TEAM"
-        # 普通 assistant 消息（路径 A 或路径 B）
-        if name in ("", "code_agent", "rag_agent", "web_agent"):
-            # 子代理没有 name 标记，返回 None 让正常分类生效
-            return None
-        return None
-
-    return None
 
 
 async def _load_history_from_checkpointer(

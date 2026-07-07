@@ -13,9 +13,6 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config.prompts.builtin import (
-    _DEFAULT_CODE_SYSTEM_PROMPT,
-    _DEFAULT_CODE_TOOLS,
-    _DEFAULT_CODE_TRIGGER_DESCRIPTION,
     _DEFAULT_RAG_SYSTEM_PROMPT,
     _DEFAULT_RAG_TOOLS,
     _DEFAULT_RAG_TRIGGER_DESCRIPTION,
@@ -86,7 +83,8 @@ class SubagentSettings(BaseModel):
 
 
 # 内置子代理键名集合（与 _default_subagents 一致，用于区分内置/自定义）
-BUILTIN_SUBAGENT_KEYS: frozenset[str] = frozenset({"code", "rag", "web"})
+# 场景化架构下 code 子代理已被 coding Expert 取代，仅保留 rag/web
+BUILTIN_SUBAGENT_KEYS: frozenset[str] = frozenset({"rag", "web"})
 
 # 内置软件开发专家团角色键名集合（仅用于 AgentTeam 多代理协作）
 BUILTIN_TEAM_KEYS: frozenset[str] = frozenset(
@@ -193,15 +191,8 @@ def _default_team_subagents() -> dict[str, SubagentSettings]:
 
 
 def _default_subagents() -> dict[str, SubagentSettings]:
-    """默认子代理配置（与原硬编码一致）。"""
+    """默认子代理配置（场景化架构下仅 rag/web，code 子代理已被 coding Expert 取代）。"""
     return {
-        "code": SubagentSettings(
-            enabled=True,
-            temperature=0.2,
-            system_prompt=_DEFAULT_CODE_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_CODE_TOOLS),
-            trigger_description=_DEFAULT_CODE_TRIGGER_DESCRIPTION,
-        ),
         "rag": SubagentSettings(
             enabled=True,
             temperature=0.2,

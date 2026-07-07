@@ -5,7 +5,6 @@ import type { ChatMessage } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import { useSettingsStore } from "@/stores/settings";
 import { useAgentModeStore } from "@/stores/agentMode";
-import { SCENE_PROMPTS, useSceneStore } from "@/stores/scene";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { AssistantUIThread } from "./AssistantUIThread";
@@ -20,6 +19,8 @@ import {
   type BuiltinCommand,
 } from "@/stores/commands";
 import { chat } from "@/lib/api/chat";
+import { parseMentions, buildMentionPayload, stripMentions } from "@/lib/mention";
+import { useMentionPickerStore } from "@/stores/mention";
 import { getVersion, reloadBackendConfig, initAgentsMd } from "@/lib/api/app";
 import { health as healthApi, skills as skillsApi } from "@/lib/api/http";
 import { getModelEntries, activateModel } from "@/lib/api/settings";
@@ -369,14 +370,41 @@ export function ChatView() {
     // 固定本次流式输出归属的 thread id，避免用户切会话后事件被路由错会话
     activeThreadIdRef.current = tid;
 
-    addMessage({ id: crypto.randomUUID(), role: "user", content, ts: Date.now() });
+    // 从 agent mode store 读取场景+模式（单字段表达场景+模式）
+    const agentMode = useAgentModeStore.getState().mode;
+
+    // @mention 处理：
+    // - work 模式：解析 @mention，构造 mention_targets 传后端强制委派；content 保留原文
+    // - coding/coding_team 模式：@mention 无意义，剥离标记后发送
+    let sendContent = content;
+    let mentionTargets: string[] | undefined;
+    if (agentMode === "work") {
+      // 后台预热 mentionable agent 缓存（若已缓存则立即返回）
+      void useMentionPickerStore.getState().fetchAgents();
+      const agentKeys = useMentionPickerStore
+        .getState()
+        .agents.map((a) => a.key);
+      const mentions = parseMentions(content, agentKeys);
+      const payload = buildMentionPayload(content, mentions);
+      sendContent = payload.content;
+      mentionTargets =
+        payload.mention_targets.length > 0 ? payload.mention_targets : undefined;
+    } else {
+      // coding / coding_team：@mention 无意义，剥离标记后发送
+      sendContent = stripMentions(content);
+    }
+
+    // 剥离后无内容（如用户仅输入了 @mention），不发送
+    if (!sendContent.trim()) return;
+
+    addMessage({ id: crypto.randomUUID(), role: "user", content: sendContent, ts: Date.now() });
     const pendingId = `pending-${crypto.randomUUID()}`;
     pendingIdRef.current = pendingId;
     addMessage({ id: pendingId, role: "assistant", content: "", ts: Date.now() });
 
     // 新一轮发送：重置任务追踪状态，让 todo_update 创建新任务而非更新旧任务
     currentTaskIdRef.current = null;
-    lastUserQueryRef.current = content;
+    lastUserQueryRef.current = sendContent;
     setTodos([]);
     setStreaming(true);
     setErrorMsg(null);
@@ -387,19 +415,15 @@ export function ChatView() {
       // 权限模式已下沉为会话级字段，从当前 session 读取
       const session = useChatStore.getState().sessions[tid];
       const permissionMode = session?.permissionMode ?? "standard";
-      // 从 agent mode store 读取用户级代理模式偏好
-      const agentMode = useAgentModeStore.getState().mode;
-      // 从 scene store 读取当前场景 prompt（不订阅，避免无谓重渲）
-      const scene = useSceneStore.getState().scene;
       const workspacePath = session?.workspacePath ?? null;
       await chat.send(
-        { role: "user", content },
+        { role: "user", content: sendContent },
         {
           threadId: tid,
           permissionMode,
           agentMode,
-          systemPrompt: SCENE_PROMPTS[scene],
           workspacePath,
+          mentionTargets,
           onError: (err) => setErrorMsg(err.message),
         },
       );

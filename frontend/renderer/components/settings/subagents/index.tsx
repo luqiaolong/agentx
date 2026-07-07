@@ -18,7 +18,6 @@ import type {
   CustomSubagentsMap,
   CustomSubagentEntry,
 } from "@/lib/utils";
-import { useSceneStore } from "@/stores/scene";
 import {
   getSubagentsConfig,
   setSubagentsConfig,
@@ -90,9 +89,6 @@ function SubagentGroup({
 }
 
 export function SubagentsSettings() {
-  const scene = useSceneStore((s) => s.scene);
-  const isCoding = scene === "coding";
-
   const [config, setConfig] = useState<SubagentsConfig>(EMPTY_CONFIG);
   const [teamConfig, setTeamConfig] = useState<TeamSubagentsConfig>(EMPTY_TEAM_CONFIG);
   const [customMap, setCustomMap] = useState<CustomSubagentsMap>({});
@@ -321,16 +317,13 @@ export function SubagentsSettings() {
 
   const builtinDisabledCount = useMemo(
     () =>
-      [config.code, config.rag, config.web].filter((c) => !c.enabled).length,
+      [config.rag, config.web].filter((c) => !c.enabled).length,
     [config],
   );
 
   const teamDisabledCount = useMemo(
-    () =>
-      isCoding
-        ? Object.values(teamConfig).filter((c) => !c.enabled).length
-        : 0,
-    [teamConfig, isCoding],
+    () => Object.values(teamConfig).filter((c) => !c.enabled).length,
+    [teamConfig],
   );
 
   const customDisabledCount = useMemo(
@@ -358,7 +351,7 @@ export function SubagentsSettings() {
       <div className="flex items-center gap-2 rounded-lg border border-default bg-subtle/40 px-3 py-2 text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
         <Bot className="h-3.5 w-3.5 shrink-0" />
         <span>
-          配置内置（Code/RAG/Web）与自定义子代理。所有卡片默认折叠，点击展开查看详情或编辑。
+          配置内置（RAG/Web）与自定义子代理。所有卡片默认折叠，点击展开查看详情或编辑。
           保存后需重启后端生效。
         </span>
       </div>
@@ -395,14 +388,13 @@ export function SubagentsSettings() {
         ))}
       </SubagentGroup>
 
-      {/* 软件开发专家团分组 — 仅在 Coding 场景下展示 */}
-      {isCoding && (
-        <SubagentGroup
-          title="软件开发专家团"
-          icon={Users}
-          count={TEAM_SUBAGENTS.length}
-          defaultOpen={false}
-        >
+      {/* 软件开发专家团分组 — 场景化架构下始终展示（与运行时场景解耦）*/}
+      <SubagentGroup
+        title="软件开发专家团"
+        icon={Users}
+        count={TEAM_SUBAGENTS.length}
+        defaultOpen={false}
+      >
           {TEAM_SUBAGENTS.map((meta) => (
             <SubagentCard
               key={meta.key}
@@ -415,8 +407,7 @@ export function SubagentsSettings() {
               onEdit={() => openEditTeam(meta)}
             />
           ))}
-        </SubagentGroup>
-      )}
+      </SubagentGroup>
 
       {/* 自定义子代理分组 */}
       <SubagentGroup

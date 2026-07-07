@@ -1,10 +1,11 @@
-"""POST /api/chat 的 system_prompt 字段集成测试。
+"""POST /api/chat 请求字段集成测试。
 
 不调真实 LLM / TEI / Milvus，全部 mock。验证：
-1. ChatRequest 带 system_prompt 字段被路径 A 接收
-2. system_prompt 非空时覆盖 default_system_prompt
-3. system_prompt 为 null 时回退 default_system_prompt
-4. 老客户端不传 system_prompt 字段，run_router 收到 scene_prompt=None（向后兼容）
+1. ChatRequest 接受 agent_mode 字段（新场景枚举）
+2. workspace_path 字段透传给 run_router
+3. 消息正文中的 <workspace> 标签不再被解析
+4. agent_mode="coding_team" 且 coding_team 未启用时降级为 "coding"
+5. system_prompt 字段仍被接受（向后兼容前端），但不传给 run_router
 """
 
 from __future__ import annotations
@@ -27,11 +28,9 @@ def _make_fake_run_router(captured: dict):
         thread_id: str,
         checkpointer: object | None = None,
         permission_mode: str = "standard",
-        scene_prompt: str | None = None,
-        agent_mode: str = "agent",
+        agent_mode: str = "work",
         workspace_path: str | None = None,
     ) -> AsyncIterator[dict[str, str]]:
-        captured["scene_prompt"] = scene_prompt
         captured["message"] = message
         captured["thread_id"] = thread_id
         captured["agent_mode"] = agent_mode
@@ -42,11 +41,8 @@ def _make_fake_run_router(captured: dict):
     return fake_run_router
 
 
-def test_chat_request_accepts_system_prompt_field(client: TestClient, monkeypatch) -> None:
-    """ChatRequest 接受 system_prompt 字段，且非空时覆盖 default。
-
-    通过 mock run_router 捕获 scene_prompt 入参，断言其等于请求中的 system_prompt。
-    """
+def test_chat_request_accepts_agent_mode_work(client: TestClient, monkeypatch) -> None:
+    """ChatRequest 接受 agent_mode="work"，并透传给 run_router。"""
     captured: dict = {}
     monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
 
@@ -55,38 +51,52 @@ def test_chat_request_accepts_system_prompt_field(client: TestClient, monkeypatc
         json={
             "message": "hello",
             "thread_id": "test-thread-1",
-            "system_prompt": "你是编程助手。",
+            "agent_mode": "work",
         },
     )
 
     assert resp.status_code == 200
-    assert captured["scene_prompt"] == "你是编程助手。"
+    assert captured["agent_mode"] == "work"
 
 
-def test_chat_request_system_prompt_null_falls_back(client: TestClient, monkeypatch) -> None:
-    """system_prompt 为 null 时 run_router 收到 scene_prompt=None。"""
+def test_chat_request_accepts_agent_mode_coding(client: TestClient, monkeypatch) -> None:
+    """ChatRequest 接受 agent_mode="coding"。"""
     captured: dict = {}
     monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
 
     client.post(
         "/api/chat",
-        json={"message": "hi", "thread_id": "t2", "system_prompt": None},
+        json={"message": "hi", "thread_id": "t-coding", "agent_mode": "coding"},
     )
 
-    assert captured["scene_prompt"] is None
+    assert captured["agent_mode"] == "coding"
 
 
-def test_chat_request_without_system_prompt_field(client: TestClient, monkeypatch) -> None:
-    """老客户端不传 system_prompt 字段，run_router 收到 scene_prompt=None（向后兼容）。"""
+def test_chat_request_accepts_agent_mode_coding_team(client: TestClient, monkeypatch) -> None:
+    """ChatRequest 接受 agent_mode="coding_team"。"""
     captured: dict = {}
     monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
 
     client.post(
         "/api/chat",
-        json={"message": "hi", "thread_id": "t3"},
+        json={"message": "hi", "thread_id": "t-team", "agent_mode": "coding_team"},
     )
 
-    assert captured["scene_prompt"] is None
+    # coding_team_enabled 默认 True，所以 agent_mode 保持 coding_team
+    assert captured["agent_mode"] == "coding_team"
+
+
+def test_chat_request_default_agent_mode_is_work(client: TestClient, monkeypatch) -> None:
+    """不传 agent_mode 字段时，默认为 "work"。"""
+    captured: dict = {}
+    monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
+
+    client.post(
+        "/api/chat",
+        json={"message": "hi", "thread_id": "t-default"},
+    )
+
+    assert captured["agent_mode"] == "work"
 
 
 def test_chat_request_passes_workspace_path(client: TestClient, monkeypatch) -> None:
@@ -122,3 +132,44 @@ def test_chat_request_no_workspace_tag_parsing(client: TestClient, monkeypatch) 
 
     assert captured["workspace_path"] is None
     assert captured["message"] == "<workspace>d:/projects/bar</workspace> hello"
+
+
+def test_chat_request_system_prompt_accepted_but_not_passed(client: TestClient, monkeypatch) -> None:
+    """system_prompt 字段仍被 API 接受（向后兼容前端），但不再传给 run_router。
+
+    新架构下，各场景有自己的 system_prompt 配置（Supervisor/Expert），
+    不再通过 API 参数覆盖。
+    """
+    captured: dict = {}
+    monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "message": "hello",
+            "thread_id": "t-sys-prompt",
+            "system_prompt": "你是编程助手。",
+            "agent_mode": "work",
+        },
+    )
+
+    assert resp.status_code == 200
+    # run_router 不再接收 scene_prompt 参数
+    assert "scene_prompt" not in captured or captured.get("scene_prompt") is None
+
+
+def test_chat_request_invalid_agent_mode_returns_422(client: TestClient, monkeypatch) -> None:
+    """无效 agent_mode 值 → 422 校验错误。"""
+    captured: dict = {}
+    monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "message": "hi",
+            "thread_id": "t-invalid",
+            "agent_mode": "invalid_mode",
+        },
+    )
+
+    assert resp.status_code == 422  # pydantic 校验失败

@@ -184,10 +184,14 @@ def _make_settings(
     web_enabled: bool = True,
     web_tools: list[str] | None = None,
 ) -> Any:
-    """构造一个可替换 subagents/tools_enabled 的 settings 对象。"""
+    """构造一个可替换 subagents/tools_enabled 的 settings 对象。
+
+    注: ``code_enabled`` 仅为参数兼容保留，场景化架构下 code 子代理已由
+    coding Expert 取代，_validate_task 对 ``agent="code"`` 直接返回 True，
+    不再读取 settings.subagents["code"]。
+    """
     settings = get_settings()
     settings.subagents_config = {
-        "code": {"enabled": code_enabled},
         "rag": {"enabled": rag_enabled},
         "web": {"enabled": web_enabled, "tools": web_tools or ["web_search"]},
     }
@@ -204,9 +208,13 @@ def test_validate_task_builtin_enabled() -> None:
 
 
 def test_validate_task_builtin_disabled() -> None:
-    """内置子代理被禁用时校验失败。"""
-    settings = _make_settings(code_enabled=False)
-    ok, err = _validate_task(TeamPlanTask("code", "读文件", ""), settings)
+    """内置子代理（rag）被禁用时校验失败。
+
+    注: code 已映射到 coding Expert，_validate_task 直接返回 True，
+    故用 rag 验证禁用校验逻辑。
+    """
+    settings = _make_settings(rag_enabled=False)
+    ok, err = _validate_task(TeamPlanTask("rag", "检索", ""), settings)
     assert ok is False
     assert "已禁用" in err
 
@@ -315,13 +323,13 @@ async def test_run_team_path_emits_team_plan_progress_result(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
-        yield {"type": "token", "content": "代码结果"}
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+        yield {"event": "token", "data": "代码结果"}
 
     async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "检索结果"}
 
-    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
     monkeypatch.setattr("app.team.orchestrator.run_rag_agent", _fake_run_rag_agent)
 
     events = await _collect_events(
@@ -364,12 +372,12 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
         if False:
             yield {}
 
-    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-fail", {"thread_id": "t-fail", "messages": []})
@@ -392,15 +400,15 @@ async def test_run_team_path_partial_failure_continues(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
-        yield {"type": "token", "content": "代码成功"}
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+        yield {"event": "token", "data": "代码成功"}
 
     async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         # 空输出 → 失败
         if False:
             yield {}
 
-    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
     monkeypatch.setattr("app.team.orchestrator.run_rag_agent", _fake_run_rag_agent)
 
     events = await _collect_events(
@@ -478,10 +486,10 @@ async def test_run_team_path_token_data_is_plain_string(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
-        yield {"type": "token", "content": "代码结果"}
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+        yield {"event": "token", "data": "代码结果"}
 
-    monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
+    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-token", {"thread_id": "t-token", "messages": []})
@@ -502,15 +510,9 @@ async def test_run_team_path_token_data_is_plain_string(
 async def test_run_team_path_downgrades_simple_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """简单短消息降级到 chat 路径，不触发 Orchestrator。"""
-    # mock chat path 的 LLM（chat/run.py 顶层 import get_chat_model）
-    async def _fake_astream(messages: Any) -> AsyncIterator:
-        yield SimpleNamespace(content="直接回答")
-
-    mock_llm = MagicMock()
-    mock_llm.astream = _fake_astream
-    monkeypatch.setattr("app.chat.run.get_chat_model", lambda **_: mock_llm)
-
+    """简单短消息降级：场景化架构下不再回退到 chat path，
+    改为直接 yield token（建议切换 work 模式）+ team_done 事件，不触发 Orchestrator。
+    """
     # mock team Orchestrator LLM — 若被调用则测试失败
     def _orchestrator_should_not_be_called(**_: Any) -> Any:
         raise AssertionError("Orchestrator should not be called for simple message")
@@ -523,8 +525,12 @@ async def test_run_team_path_downgrades_simple_message(
     # 不应有 team_plan 事件
     event_types = [e["event"] for e in events]
     assert "team_plan" not in event_types
-    # 应有 token 事件（来自 chat path 降级）
+    # 应有 token 事件（降级提示）+ team_done 事件
     assert "token" in event_types
+    assert "team_done" in event_types
+    # token 内容应包含切换模式提示
+    token_evt = next(e for e in events if e["event"] == "token")
+    assert "work" in token_evt["data"] or "切换" in token_evt["data"]
 
 
 # ============================================================

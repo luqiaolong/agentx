@@ -89,15 +89,17 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             yield {"event": "done", "data": "{}"}
             return
 
-        # 其他消息：走 Router 分发（传入 checkpointer 加载历史）
+        # 其他消息：走 Router 场景分发（传入 checkpointer 加载历史）
         checkpointer = await get_async_checkpointer()
-        effective_agent_mode = req.agent_mode if settings.agent_team_enabled else "agent"
+        # coding_team 模式受 agents.teams.coding.enabled 开关控制
+        effective_agent_mode = req.agent_mode
+        if req.agent_mode == "coding_team" and not settings.agents.coding_team_enabled:
+            effective_agent_mode = "coding"
         async for event in run_router(
             req.message,
             req.thread_id,
             checkpointer=checkpointer,
             permission_mode=req.permission_mode,
-            scene_prompt=req.system_prompt,
             agent_mode=effective_agent_mode,
             workspace_path=req.workspace_path,
         ):

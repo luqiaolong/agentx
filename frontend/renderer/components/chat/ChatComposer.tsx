@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Pause,
   Play,
@@ -9,6 +9,7 @@ import {
   Send,
 } from "lucide-react";
 import { CommandPicker } from "./CommandPicker";
+import { MentionPicker } from "./MentionPicker";
 import { ContextUsage } from "./ContextUsage";
 import { useFixedTextarea } from "@/hooks/useFixedTextarea";
 import {
@@ -16,19 +17,24 @@ import {
   useCommandPickerStore,
   type CommandEntry,
 } from "@/stores/commands";
+import { useMentionPickerStore } from "@/stores/mention";
+import { useAgentModeStore } from "@/stores/agentMode";
 import { useSkillsStore } from "@/stores/skills";
 import { useChatStore } from "@/stores/chat";
+import type { MentionableAgent } from "@/lib/api/agents";
 import { PermissionToggle } from "./PermissionToggle";
 import { ModelToggle } from "./ModelToggle";
 import { ModeToggle } from "./ModeToggle";
 import { openFile, openFolder, saveDroppedFile } from "@/lib/api/dialog";
 
 /**
- * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）。
+ * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）+ @mention 委派面板。
  *
  * 命令面板状态由 stores/commands.ts::useCommandPickerStore 持有：
  * - open / anchor / query / activeIndex
- * ChatComposer 只负责：检测 / 触发、键盘导航、关闭、把选中的 entry.insert 回填输入框。
+ * @mention 面板状态由 stores/mention.ts::useMentionPickerStore 持有（同构）：
+ * - 仅 work 模式下触发；coding/coding_team 模式下 @ 无意义
+ * ChatComposer 只负责：检测 / 或 @ 触发、键盘导航、关闭、把选中项回填输入框。
  * 内置命令的"执行"由 ChatView 接管（onSend 收到完整文本后再分发）。
  */
 export function ChatComposer({
@@ -75,6 +81,7 @@ export function ChatComposer({
   useEffect(() => {
     setInput("");
     resetPicker();
+    resetMentionPicker();
     // 延迟 focus，避免与 SessionList 的 confirm/blur 或 SettingsModal 的焦点恢复竞争
     const t = window.setTimeout(() => {
       if (!document.querySelector('[aria-modal="true"]')) {
@@ -112,9 +119,25 @@ export function ChatComposer({
   const setActiveIndex = useCommandPickerStore((s) => s.setActiveIndex);
   const resetPicker = useCommandPickerStore((s) => s.reset);
 
+  // @mention 面板状态（与命令面板同构，仅 work 模式下触发）
+  const agentMode = useAgentModeStore((s) => s.mode);
+  const mentionOpen = useMentionPickerStore((s) => s.open);
+  const setMentionOpen = useMentionPickerStore((s) => s.setOpen);
+  const setMentionAnchor = useMentionPickerStore((s) => s.setAnchor);
+  const setMentionQuery = useMentionPickerStore((s) => s.setQuery);
+  const mentionActiveIndex = useMentionPickerStore((s) => s.activeIndex);
+  const setMentionActiveIndex = useMentionPickerStore((s) => s.setActiveIndex);
+  const resetMentionPicker = useMentionPickerStore((s) => s.reset);
+  const mentionQuery = useMentionPickerStore((s) => s.query);
+  const mentionAgents = useMentionPickerStore((s) => s.agents);
+
   // 同步打开状态：当面板关闭时清空 query/anchor，避免残留影响下一次触发
   const handleClosePicker = () => {
     resetPicker();
+  };
+
+  const handleCloseMentionPicker = () => {
+    resetMentionPicker();
   };
 
   // 把 `/` 到当前光标的子串作为 query 写入 store。
@@ -131,22 +154,58 @@ export function ChatComposer({
     }
   };
 
-  // 检测输入末尾为 `/`，且 `/` 处于行首或紧跟空白 → 打开命令面板
+  // 把 `@` 到当前光标的子串作为 query 写入 mention store（与命令面板同构）。
+  const syncMentionQueryFromInput = (val: string, anchor: number) => {
+    const slice = val.slice(anchor + 1);
+    if (/\s/.test(slice) || slice.includes("\n")) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionAnchor(null);
+    } else {
+      setMentionQuery(slice);
+    }
+  };
+
+  // 检测输入末尾的 `@`（仅 work 模式）或 `/`，处于行首或紧跟空白 → 打开对应面板。
+  // 两个面板互斥：打开一个时关闭另一个，避免 @ 和 / 互相干扰。
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setInput(val);
-    if (val.endsWith("/")) {
-      const prev = val.length >= 2 ? val[val.length - 2] ?? "" : "";
-      if (prev === "" || /\s/.test(prev)) {
-        const anchor = val.length - 1;
-        setAnchor(anchor);
-        setQuery("");
-        setPickerOpen(true);
-      }
-    } else if (pickerOpen) {
+
+    const lastChar = val.length > 0 ? val[val.length - 1] ?? "" : "";
+    const prevChar = val.length >= 2 ? val[val.length - 2] ?? "" : "";
+    const atBoundary = prevChar === "" || /\s/.test(prevChar);
+
+    // 检测 `@` — 仅 work 模式，行首或紧跟空白后
+    if (lastChar === "@" && atBoundary && agentMode === "work") {
+      resetPicker();
+      const anchor = val.length - 1;
+      setMentionAnchor(anchor);
+      setMentionQuery("");
+      setMentionOpen(true);
+      return;
+    }
+
+    // 检测 `/` — 行首或紧跟空白后（原有逻辑）
+    if (lastChar === "/" && atBoundary) {
+      resetMentionPicker();
+      const anchor = val.length - 1;
+      setAnchor(anchor);
+      setQuery("");
+      setPickerOpen(true);
+      return;
+    }
+
+    // 同步 query（同一时刻最多一个面板打开）
+    if (pickerOpen) {
       const anchor = useCommandPickerStore.getState().anchor;
       if (anchor !== null && anchor < val.length) {
         syncQueryFromInput(val, anchor);
+      }
+    } else if (mentionOpen) {
+      const anchor = useMentionPickerStore.getState().anchor;
+      if (anchor !== null && anchor < val.length) {
+        syncMentionQueryFromInput(val, anchor);
       }
     }
   };
@@ -167,13 +226,39 @@ export function ChatComposer({
     textareaRef.current?.focus();
   };
 
+  // 选中 mention agent 后，把 `@key ` 替换到 anchor 位置（与 handleEntrySelect 同构）
+  const handleMentionSelect = (agent: MentionableAgent) => {
+    const anchor = useMentionPickerStore.getState().anchor;
+    setInput((s) => {
+      if (anchor === null || anchor >= s.length) {
+        return `${s}@${agent.key} `;
+      }
+      const tail = s.slice(anchor + 1);
+      const tailEnd = /\s/.test(tail) ? anchor + 1 + tail.search(/\s/) : s.length;
+      return `${s.slice(0, anchor)}@${agent.key} ${s.slice(tailEnd)}`;
+    });
+    resetMentionPicker();
+    textareaRef.current?.focus();
+  };
+
   const entries = buildCommandList(
     useCommandPickerStore.getState().query,
     skills,
   );
 
+  // mention 面板过滤列表（与 MentionPicker 内部过滤逻辑一致，供键盘导航使用）
+  const mentionEntries = useMemo(() => {
+    const q = mentionQuery.trim().toLowerCase();
+    if (!q) return mentionAgents;
+    return mentionAgents.filter(
+      (a) =>
+        a.key.toLowerCase().includes(q) ||
+        a.display_name.toLowerCase().includes(q),
+    );
+  }, [mentionQuery, mentionAgents]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 面板打开时拦截 ↑↓ Enter Esc，避免破坏 textarea 默认行为
+    // 命令面板打开时拦截 ↑↓ Enter Esc，避免破坏 textarea 默认行为
     if (pickerOpen && entries.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -198,10 +283,43 @@ export function ChatComposer({
       }
     }
 
+    // @mention 面板打开时拦截 ↑↓ Enter Esc（与命令面板互斥，同一时刻仅一个打开）
+    if (mentionOpen && mentionEntries.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionActiveIndex((mentionActiveIndex + 1) % mentionEntries.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionActiveIndex(
+          (mentionActiveIndex - 1 + mentionEntries.length) % mentionEntries.length,
+        );
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const agent = mentionEntries[mentionActiveIndex];
+        if (agent) handleMentionSelect(agent);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCloseMentionPicker();
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
-    } else if (e.key === "ArrowUp" && input.trim() === "" && !isStreaming && !pickerOpen) {
+    } else if (
+      e.key === "ArrowUp" &&
+      input.trim() === "" &&
+      !isStreaming &&
+      !pickerOpen &&
+      !mentionOpen
+    ) {
       // ↑ 键快速编辑上一条用户消息（参考 Cursor）
       e.preventDefault();
       const msgs = currentSession?.messages ?? [];
@@ -227,6 +345,8 @@ export function ChatComposer({
       }
     } else if (e.key === "Escape" && pickerOpen) {
       handleClosePicker();
+    } else if (e.key === "Escape" && mentionOpen) {
+      handleCloseMentionPicker();
     }
   };
 
@@ -236,6 +356,7 @@ export function ChatComposer({
     onSend(content);
     setInput("");
     handleClosePicker();
+    handleCloseMentionPicker();
   };
 
   const openCommandPickerManually = () => {
@@ -377,6 +498,13 @@ export function ChatComposer({
             />
           )}
 
+          {mentionOpen && (
+            <MentionPicker
+              onSelect={handleMentionSelect}
+              onClose={handleCloseMentionPicker}
+            />
+          )}
+
           <div className="relative">
             <textarea
               ref={textareaRef}
@@ -384,7 +512,7 @@ export function ChatComposer({
               onChange={handleChange}
               onKeyDown={handleKeyDown}
               rows={2}
-              placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
+              placeholder="输入消息，/ 调命令与技能，@ 委派 agent（work 模式），拖拽附文件"
               aria-label="消息输入框"
               className="input-borderless relative z-20 block w-full resize-none overflow-y-auto pb-2"
               style={{ height: `${textareaHeight}px` }}

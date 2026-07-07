@@ -7,8 +7,8 @@ import { ALL_TOOLS } from "@/lib/subagentConstants";
 import { buildSubagentSchema, type SubagentFormValues } from "@/lib/schemas/subagent";
 
 export interface SubagentEditModalData {
-  /** 内置子代理 key（"code"/"rag"/"web"）；自定义子代理为 undefined */
-  builtinKey?: "code" | "rag" | "web";
+  /** 内置子代理 key（"rag"/"web"）；自定义子代理为 undefined */
+  builtinKey?: "rag" | "web";
   /** 软件开发专家团角色 key；自定义子代理为 undefined */
   teamKey?: "frontend_dev" | "backend_dev" | "tester" | "architect" | "devops" | "ui_designer" | "product_manager";
   /** 自定义子代理 key（创建后不可改）；内置子代理为 undefined */

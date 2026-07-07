@@ -26,6 +26,8 @@ interface SendMessageOpts {
   systemPrompt?: string;
   agentMode?: AgentMode;
   workspacePath?: string | null;
+  /** work 模式下 @mention 解析出的目标 agent key 列表（强制委派目标） */
+  mentionTargets?: string[];
   onError?: (err: Error) => void;
 }
 
@@ -46,8 +48,9 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         thread_id: opts?.threadId ?? "",
         permission_mode: opts?.permissionMode ?? "standard",
         system_prompt: opts?.systemPrompt ?? null,
-        agent_mode: opts?.agentMode ?? "agent",
+        agent_mode: opts?.agentMode ?? "work",
         workspace_path: opts?.workspacePath ?? null,
+        mention_targets: opts?.mentionTargets ?? null,
       }),
     });
   } catch (err) {

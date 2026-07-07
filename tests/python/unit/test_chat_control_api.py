@@ -123,42 +123,24 @@ def test_chat_sse_abort_yields_error_event(client: TestClient, monkeypatch: pyte
     """SSE 流被 abort 后，下一轮迭代 yield ``error: 用户已中止``。
 
     触发链路：POST /api/chat 启动流 → 立刻 POST /api/chat/abort →
-    下一次 LLM astream chunk 检查到 _abort_flags[tid] → yield error 退出。
+    下一次场景 runner 检查到 _abort_flags[tid] → yield error 退出。
     """
-    from unittest.mock import AsyncMock, patch
-
-    from app.approval.state import _abort_flags
+    from unittest.mock import patch
 
     tid = "unit-test-sse-abort"
 
-    class _SlowFakeChunk:
-        content = "slow"
-
-    class _SlowChatModel:
-        async def astream(self, messages, **kwargs):
-            # 第一个 yield 前 sleep 50ms 模拟网络延迟，期间外部可设置 abort flag
-            import asyncio
-
-            await asyncio.sleep(0.05)
-            yield _SlowFakeChunk()
-
-    async def _classify_chat(message: str) -> str:
-        return "CHAT"
-
-    # 触发 abort 的协程：50ms 后设置 flag
-    async def _delayed_abort() -> None:
+    async def _fake_run_work_supervisor(*args, **kwargs):
+        # 模拟慢响应，期间外部可设置 abort flag
         import asyncio
-
-        await asyncio.sleep(0.02)
-        _abort_flags[tid] = True
+        await asyncio.sleep(0.05)
+        yield {"event": "token", "data": "slow"}
 
     import threading
 
-    with patch("app.router.graph.classify_message", new=_classify_chat), \
-         patch("app.chat.run.get_chat_model", return_value=_SlowChatModel()):
+    with patch("app.router.graph.run_work_supervisor", new=_fake_run_work_supervisor):
         threading.Thread(target=lambda: client.post("/api/chat/abort", json={"thread_id": tid})).start()
 
-        with client.stream("POST", "/api/chat", json={"message": "hi", "thread_id": tid}) as r:
+        with client.stream("POST", "/api/chat", json={"message": "hi", "thread_id": tid, "agent_mode": "work"}) as r:
             assert r.status_code == 200
             events: list[dict[str, str]] = []
             for line in r.iter_lines():
@@ -167,7 +149,7 @@ def test_chat_sse_abort_yields_error_event(client: TestClient, monkeypatch: pyte
                 events.append({"raw": line})
             # 至少能收到一个 error 事件
             joined = "\n".join(e["raw"] for e in events)
-            # 因为 abort 可能在 astream 之前触发，事件流可能直接结束；最宽松断言是连接正常关闭
+            # 因为 abort 可能在 runner 之前触发，事件流可能直接结束；最宽松断言是连接正常关闭
             assert r.status_code == 200
             # 如果产生了任何事件，至少不是无尽循环
             _ = joined

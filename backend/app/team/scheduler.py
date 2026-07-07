@@ -4,10 +4,10 @@
 - ``_SUBTASK_DONE_EVENT``：子任务完成哨兵事件类型（内部使用，绝不输出到前端）。
 - ``_PASSTHROUGH_EVENTS``：deep 子任务中需要实时透传到前端的事件类型集合。
 - ``_run_subtask``：执行单个子任务，流式产出透传事件 + 完成哨兵。
-- ``_collect_event``：从 code/rag/web/custom 子代理事件流中收集 token / tool_result。
+- ``_collect_event``：从 rag/web/custom 子代理事件流中收集 token / tool_result。
 
 注意：
-- ``_run_subtask`` 通过 ``app.team.orchestrator`` 模块属性访问 ``run_code_agent`` /
+- ``_run_subtask`` 通过 ``app.team.orchestrator`` 模块属性访问 ``run_coding_expert`` /
   ``run_rag_agent`` / ``run_web_agent`` / ``run_deep_path`` / ``run_custom_agent``，
   以便测试通过 ``monkeypatch.setattr("app.team.orchestrator.run_xxx", ...)`` 替换。
 - ``_run_subtask`` 内部对团队角色场景保留 ``from app.subagents.custom_agent import
@@ -136,10 +136,41 @@ async def _run_subtask(
             yield _done(False, f"deep 子任务异常: {exc}")
             return
     elif agent_name == "code":
-        async for event in orchestrator.run_code_agent(
-            thread_id, input_text, history=history, workspace_path=workspace_path
-        ):
-            _collect_event(event, collected_text, tool_traces)
+        # code 子任务映射到 coding Expert（场景化架构）
+        # coding Expert 使用独立 thread_id，避免并行子任务共享 checkpoint
+        code_thread_id = f"{thread_id}-team-code-{task_index}"
+        try:
+            async for event in orchestrator.run_coding_expert(
+                input_text,
+                code_thread_id,
+                profile_prompt=profile_prompt,
+                history=history,
+                permission_mode=permission_mode,
+                workspace_path=workspace_path,
+            ):
+                if abort_event.is_set():
+                    yield _done(False, "用户中止")
+                    return
+                etype = event.get("event", "")
+                data = event.get("data", "")
+                if etype == "token":
+                    collected_text.append(str(data))
+                elif etype == "tool_result":
+                    try:
+                        obj = json.loads(data) if isinstance(data, str) else data
+                        if isinstance(obj, dict):
+                            tool_traces.append(f"{obj.get('name', '?')}: {str(obj.get('result', ''))[:200]}")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    yield event
+                elif etype == "error":
+                    yield _done(False, f"coding Expert 子任务失败: {data}")
+                    return
+                elif etype in _PASSTHROUGH_EVENTS:
+                    yield event
+        except Exception as exc:  # noqa: BLE001
+            yield _done(False, f"coding Expert 子任务异常: {exc}")
+            return
     elif agent_name == "rag":
         async for event in orchestrator.run_rag_agent(
             thread_id, input_text, history=history, workspace_path=workspace_path
@@ -183,11 +214,39 @@ async def _run_subtask(
                 elif kind == "on_tool_end":
                     tool_traces.append(f"{ename}: {str(edata.get('output', ''))[:200]}")
         else:
-            # 无专属配置时降级到 code_agent
-            async for event in orchestrator.run_code_agent(
-                thread_id, input_text, history=history, workspace_path=workspace_path
-            ):
-                _collect_event(event, collected_text, tool_traces)
+            # 无专属配置时降级到 coding Expert
+            fallback_thread_id = f"{thread_id}-team-fallback-{task_index}"
+            try:
+                async for event in orchestrator.run_coding_expert(
+                    input_text,
+                    fallback_thread_id,
+                    history=history,
+                    permission_mode=permission_mode,
+                    workspace_path=workspace_path,
+                ):
+                    if abort_event.is_set():
+                        yield _done(False, "用户中止")
+                        return
+                    etype = event.get("event", "")
+                    data = event.get("data", "")
+                    if etype == "token":
+                        collected_text.append(str(data))
+                    elif etype == "tool_result":
+                        try:
+                            obj = json.loads(data) if isinstance(data, str) else data
+                            if isinstance(obj, dict):
+                                tool_traces.append(f"{obj.get('name', '?')}: {str(obj.get('result', ''))[:200]}")
+                        except Exception:  # noqa: BLE001
+                            pass
+                        yield event
+                    elif etype == "error":
+                        yield _done(False, f"降级 coding Expert 子任务失败: {data}")
+                        return
+                    elif etype in _PASSTHROUGH_EVENTS:
+                        yield event
+            except Exception as exc:  # noqa: BLE001
+                yield _done(False, f"降级 coding Expert 子任务异常: {exc}")
+                return
     elif agent_name.startswith("custom-"):
         key = agent_name[len("custom-"):]
         async for event in orchestrator.run_custom_agent(
