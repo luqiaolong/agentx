@@ -14,6 +14,9 @@ function buildSessionShell(
   raw: Record<string, unknown>,
   messages: ChatMessage[],
 ): Session {
+  const rawMode = raw.permissionMode;
+  const permissionMode =
+    rawMode === "standard" || rawMode === "full_trust" ? rawMode : "standard";
   return {
     id: typeof raw.id === "string" ? raw.id : id,
     title: typeof raw.title === "string" ? raw.title : DEFAULT_TITLE,
@@ -27,6 +30,7 @@ function buildSessionShell(
       Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
     isRunning: false,
     hasNewResult: false,
+    permissionMode,
   };
 }
 
@@ -77,6 +81,7 @@ export function migrateV0toV1(persisted: unknown): Partial<ChatState> {
     manuallyRevokedPaths: [],
     isRunning: false,
     hasNewResult: false,
+    permissionMode: "standard",
   };
   return { sessions: { [id]: session }, currentId: id };
 }
@@ -140,3 +145,10 @@ export function migrateV2toV3(persisted: unknown): Partial<ChatState> {
  * 函数体与 migrateV1toV2 完全一致（仅补字段语义不同），共用 rebuildSessionShells。
  */
 export const migrateV3toV4 = rebuildSessionShells;
+
+/**
+ * v4 -> v5：所有 session 补 permissionMode 字段（缺省为 "standard"）。
+ *
+ * permissionMode 从全局 PermissionStore 下沉为会话级字段，持久化到 localStorage。
+ */
+export const migrateV4toV5 = rebuildSessionShells;

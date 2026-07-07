@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
+import React, { useState, type ComponentProps } from "react";
 import { installApiMock } from "./api-mock";
+import type { PermissionMode } from "@/stores/permission";
 
 const approveSubmit = vi.fn().mockResolvedValue(undefined);
 vi.hoisted(() => {
@@ -28,12 +30,10 @@ installApiMock({
 
 import { PermissionToggle } from "@/components/chat/PermissionToggle";
 import { ApprovalDialog } from "@/components/chat/ApprovalDialog";
-import { usePermissionStore } from "@/stores/permission";
 import { useChatStore } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
 
 beforeEach(() => {
-  usePermissionStore.setState({ mode: "workspace" });
   useChatStore.setState({
     sessions: {},
     currentId: null,
@@ -44,10 +44,15 @@ beforeEach(() => {
   approveSubmit.mockClear();
 });
 
+function ToggleWrapper(props: Omit<ComponentProps<typeof PermissionToggle>, "mode" | "onChange">) {
+  const [mode, setMode] = useState<PermissionMode>("standard");
+  return <PermissionToggle {...props} mode={mode} onChange={setMode} />;
+}
+
 describe("PermissionToggle 紧凑命令栏", () => {
   it("trigger 单行显示：图标 + 短标签 + chevron（不再显示目录名）", () => {
     const { container } = render(
-      <PermissionToggle
+      <ToggleWrapper
         workspacePath="D:\\projects\\agentx"
         homeWorkspacePath={null}
       />,
@@ -67,7 +72,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
 
   it("workspace 路径不在 trigger 中展示", () => {
     const { container } = render(
-      <PermissionToggle
+      <ToggleWrapper
         workspacePath="D:\\very-long-root\\deeply-nested\\workspace-folder-name"
         homeWorkspacePath={null}
       />,
@@ -81,7 +86,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
 
   it("Home 状态不在 trigger 中展示", () => {
     const { container } = render(
-      <PermissionToggle workspacePath={null} homeWorkspacePath={null} />,
+      <ToggleWrapper workspacePath={null} homeWorkspacePath={null} />,
     );
     const trigger = container.querySelector(
       'button[aria-haspopup="listbox"]',
@@ -90,9 +95,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
   });
 
   it("无 workspace 时 popover 展开并显示选项", async () => {
-    render(
-      <PermissionToggle workspacePath={null} homeWorkspacePath={null} />,
-    );
+    render(<ToggleWrapper workspacePath={null} homeWorkspacePath={null} />);
     const trigger = document.querySelector(
       'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
@@ -106,7 +109,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
 
   it("有 workspace 时 popover 展开并显示选项", async () => {
     render(
-      <PermissionToggle
+      <ToggleWrapper
         workspacePath="D:\\projects\\agentx"
         homeWorkspacePath={null}
       />,
@@ -124,7 +127,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
 
   it("点击 trigger 展开面板，再次点击关闭", async () => {
     const { container, queryByRole } = render(
-      <PermissionToggle
+      <ToggleWrapper
         workspacePath="/tmp/p"
         homeWorkspacePath={null}
       />,
@@ -145,7 +148,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
 
   it("面板含两个 option", async () => {
     const { getAllByRole, queryByText } = render(
-      <PermissionToggle
+      <ToggleWrapper
         workspacePath="/tmp/proj"
         homeWorkspacePath={null}
       />,
@@ -162,13 +165,21 @@ describe("PermissionToggle 紧凑命令栏", () => {
     expect(queryByText("完全授权")).not.toBeNull();
   });
 
-  it("点击 option 切换 store 状态并关闭面板", async () => {
-    render(
-      <PermissionToggle
-        workspacePath="/tmp/p"
-        homeWorkspacePath={null}
-      />,
-    );
+  it("点击 option 切换 mode 并关闭面板", async () => {
+    let currentMode: PermissionMode = "standard";
+    function ControlledToggle() {
+      const [mode, setMode] = useState<PermissionMode>("standard");
+      currentMode = mode;
+      return (
+        <PermissionToggle
+          workspacePath="/tmp/p"
+          homeWorkspacePath={null}
+          mode={mode}
+          onChange={setMode}
+        />
+      );
+    }
+    render(<ControlledToggle />);
     const trigger = document.querySelector(
       'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
@@ -181,17 +192,12 @@ describe("PermissionToggle 紧凑命令栏", () => {
     await act(async () => {
       fullTrustOpt.click();
     });
-    expect(usePermissionStore.getState().mode).toBe("full_trust");
+    expect(currentMode).toBe("full_trust");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("Esc 关闭面板", async () => {
-    render(
-      <PermissionToggle
-        workspacePath="/tmp/p"
-        homeWorkspacePath={null}
-      />,
-    );
+    render(<ToggleWrapper workspacePath="/tmp/p" homeWorkspacePath={null} />);
     const trigger = document.querySelector(
       'button[aria-haspopup="listbox"]',
     ) as HTMLButtonElement;
@@ -203,12 +209,6 @@ describe("PermissionToggle 紧凑命令栏", () => {
       fireEvent.keyDown(document, { key: "Escape" });
     });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("reset() 复位为 workspace", () => {
-    usePermissionStore.setState({ mode: "full_trust" });
-    usePermissionStore.getState().reset();
-    expect(usePermissionStore.getState().mode).toBe("workspace");
   });
 });
 

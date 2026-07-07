@@ -8,6 +8,7 @@ import {
   migrateV1toV2,
   migrateV2toV3,
   migrateV3toV4,
+  migrateV4toV5,
 } from "./migrations";
 import { deriveContent, findSessionIdByMessageId } from "./messageOps";
 import { createQuotaGuardedStorage } from "./quotaStorage";
@@ -107,6 +108,12 @@ export interface Session {
    * 用户点击切换到该会话后设为 false。
    */
   hasNewResult: boolean;
+  /**
+   * 会话级权限模式：
+   * - "standard"：标准审批流
+   * - "full_trust"：session 内全放行
+   */
+  permissionMode: "standard" | "full_trust";
 }
 
 export interface ChatState {
@@ -201,12 +208,18 @@ export interface ChatState {
    * 返回被删除的消息中最后一条 user 消息的 content（用于回填输入框）。
    */
   deleteMessagesAfter: (messageId: string) => string | null;
+  /**
+   * 删除指定单条消息（用于 error 时清理空 pending assistant 消息）。
+   */
+  deleteMessage: (messageId: string) => void;
   setStreaming: (v: boolean) => void;
   setApprovalRequest: (req: ApprovalRequest | null) => void;
   /** 设置指定会话的执行状态。 */
   setSessionRunning: (id: string, running: boolean) => void;
   /** 清除指定会话的新结果标记。 */
   clearSessionNewResult: (id: string) => void;
+  /** 设置指定会话的权限模式。 */
+  setSessionPermissionMode: (id: string, mode: "standard" | "full_trust") => void;
 }
 
 function createSessionRecord(id: string, workspacePath: string | null = null): Session {
@@ -219,6 +232,7 @@ function createSessionRecord(id: string, workspacePath: string | null = null): S
     manuallyRevokedPaths: [],
     isRunning: false,
     hasNewResult: false,
+    permissionMode: "standard",
   };
 }
 
@@ -292,6 +306,7 @@ export const useChatStore = create<ChatState>()(
         },
 
         moveSessionToWorkspace: async (id, workspacePath) => {
+          const oldPath = get().sessions[id]?.workspacePath ?? null;
           set((s) => {
             const sess = s.sessions[id];
             if (!sess) return s;
@@ -310,7 +325,18 @@ export const useChatStore = create<ChatState>()(
               try {
                 await sandbox.authorize(id, workspacePath, true, "chip");
               } catch {
-                // 失败静默：不阻塞 workspace 迁移；后端工具执行时会再校验并提示用户
+                // 授权失败：回滚 workspacePath，避免用户看到已切换实际未授权
+                set((s) => {
+                  const sessRollback = s.sessions[id];
+                  if (!sessRollback) return s;
+                  return {
+                    sessions: {
+                      ...s.sessions,
+                      [id]: { ...sessRollback, workspacePath: oldPath },
+                    },
+                  };
+                });
+                throw new Error("workspace authorize failed");
               }
             }
           }
@@ -633,6 +659,18 @@ export const useChatStore = create<ChatState>()(
           return lastUserContent;
         },
 
+        deleteMessage: (messageId) => {
+          set((s) => {
+            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.filter((m) => m.id !== messageId);
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
         setStreaming: (v) => set({ isStreaming: v }),
 
         setApprovalRequest: (req) => set({ approvalRequest: req }),
@@ -660,11 +698,23 @@ export const useChatStore = create<ChatState>()(
               },
             };
           }),
+
+        setSessionPermissionMode: (id, mode) =>
+          set((s) => {
+            const sess = s.sessions[id];
+            if (!sess) return s;
+            return {
+              sessions: {
+                ...s.sessions,
+                [id]: { ...sess, permissionMode: mode },
+              },
+            };
+          }),
       }),
       {
         name: "agentx-chat",
         storage: createJSONStorage(() => createQuotaGuardedStorage()),
-        version: 4,
+        version: 5,
         migrate: (persisted, version) => {
           let state: Partial<ChatState> = persisted as Partial<ChatState>;
           if (version < 1) {
@@ -678,6 +728,9 @@ export const useChatStore = create<ChatState>()(
           }
           if (version < 4) {
             state = migrateV3toV4(state);
+          }
+          if (version < 5) {
+            state = migrateV4toV5(state);
           }
           return state;
         },
@@ -698,6 +751,7 @@ export const useChatStore = create<ChatState>()(
           currentId: s.currentId,
           homeWorkspacePath: s.homeWorkspacePath,
         }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       },
     ),
     { name: "chat-store" },

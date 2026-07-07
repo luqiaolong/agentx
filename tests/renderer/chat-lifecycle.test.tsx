@@ -48,6 +48,8 @@ const chatMock = vi.hoisted(() => {
       }),
       send: vi.fn().mockResolvedValue(undefined),
       abort: vi.fn().mockResolvedValue(undefined),
+      pause: vi.fn().mockResolvedValue(undefined),
+      resume: vi.fn().mockResolvedValue(undefined),
       compact: vi.fn().mockResolvedValue(undefined),
     },
   };
@@ -78,10 +80,11 @@ installApiMock({
 // 顶层 hook 容器组件：把 useChatStream 接到 ChatComposer 的 onSend 上，
 // 模拟 ChatView 的最小协作单元。
 function ChatHarness({ onError }: { onError?: (msg: string | null) => void }) {
-  const pendingIdRef = useRef<string>("");
+  const pendingIdRef = useRef<string | null>(null);
   const currentTaskIdRef = useRef<string | null>(null);
   const lastUserQueryRef = useRef<string>("");
   const [, setTodos] = useState<TodoItem[]>([]);
+  const [isPaused, setIsPaused] = useState(false);
   const setErrorMsg = (msg: string | null) => onError?.(msg);
   useChatStream({
     pendingIdRef,
@@ -89,10 +92,12 @@ function ChatHarness({ onError }: { onError?: (msg: string | null) => void }) {
     lastUserQueryRef,
     setTodos,
     setErrorMsg,
+    setPaused: setIsPaused,
   });
   return (
     <ChatComposer
       isStreaming={useChatStore.getState().isStreaming}
+      isPaused={isPaused}
       setDropError={() => {}}
       onSend={(content) => {
         // 模拟 ChatView 的发送流：先把 user 消息落 store，再开 pending assistant 占位
@@ -113,12 +118,19 @@ function ChatHarness({ onError }: { onError?: (msg: string | null) => void }) {
         });
         currentTaskIdRef.current = null;
         lastUserQueryRef.current = content;
+        setIsPaused(false);
         useChatStore.getState().setStreaming(true);
         void chatMock.chat.send({ role: "user", content }, { threadId: cid });
       }}
-      onAbort={() => {
+      onPause={() => {
         const cid = useChatStore.getState().currentId;
-        if (cid) void chatMock.chat.abort(cid);
+        if (cid) void chatMock.chat.pause(cid);
+        setIsPaused(true);
+      }}
+      onResume={() => {
+        const cid = useChatStore.getState().currentId;
+        if (cid) void chatMock.chat.resume(cid);
+        setIsPaused(false);
       }}
     />
   );
