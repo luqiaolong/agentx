@@ -135,10 +135,6 @@ _SKILL_CONTENT_MAX = 4000
 # @skill:<name> 标记正则
 _SKILL_TAG_RE = re.compile(r"@skill:(\S+)")
 
-# <workspace>path</workspace> 标记正则（前端 ChatComposer 附加当前工作区）
-# \s* 匹配标签后任意空白（包括空格、换行、制表符），避免残留污染 LLM 输入
-_WORKSPACE_TAG_RE = re.compile(r"<workspace>(.*?)</workspace>\s*", re.S)
-
 
 def _parse_skill_tag(message: str) -> tuple[str, str | None]:
     """解析用户消息中的所有 ``@skill:<name>`` 标记。
@@ -177,30 +173,6 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
     # 合并多余空白（移除标记后可能留下连续空格）
     cleaned = " ".join(cleaned.split())
     return (cleaned, skill_content)
-
-
-def _parse_workspace_tag(message: str) -> tuple[str, str | None]:
-    """解析前端附加的 ``<workspace>path</workspace>`` 工作区标记。
-
-    - 提取首个 ``<workspace>`` 标签内的绝对路径。
-    - 从用户消息中移除该标签，避免污染 LLM 看到的实际内容。
-    - 无标签或标签为空时返回 ``(message, None)``。
-
-    Examples:
-        >>> _parse_workspace_tag("<workspace>/tmp/foo</workspace> 帮我看看")
-        ("帮我看看", "/tmp/foo")
-        >>> _parse_workspace_tag("hello")
-        ("hello", None)
-    """
-    match = _WORKSPACE_TAG_RE.search(message)
-    if not match:
-        return (message, None)
-    workspace_path = match.group(1).strip()
-    cleaned = _WORKSPACE_TAG_RE.sub("", message, count=1).strip()
-    cleaned = " ".join(cleaned.split())
-    if not workspace_path:
-        return (cleaned, None)
-    return (cleaned, workspace_path)
 
 
 # ============================================================

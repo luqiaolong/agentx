@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.router.graph import _parse_workspace_tag, build_router_graph, run_router
+from app.router.graph import build_router_graph, run_router
 from app.utils.prompts import resolve_system_prompt
 
 
@@ -573,28 +573,8 @@ async def test_router_reset_preserves_authorized_dirs(
 
 
 # ============================================================
-# 6. <workspace> 标记解析与透传
+# 6. workspace_path 字段透传
 # ============================================================
-
-
-def test_parse_workspace_tag_extracts_path_and_cleans() -> None:
-    """解析首个 <workspace> 标签，移除标签并清理多余空白。"""
-    raw = "<workspace>D:\\proj</workspace> 帮我看看代码"
-    cleaned, path = _parse_workspace_tag(raw)
-    assert cleaned == "帮我看看代码"
-    assert path == "D:\\proj"
-
-
-def test_parse_workspace_tag_no_tag_returns_original() -> None:
-    cleaned, path = _parse_workspace_tag("hello world")
-    assert cleaned == "hello world"
-    assert path is None
-
-
-def test_parse_workspace_tag_empty_returns_none() -> None:
-    cleaned, path = _parse_workspace_tag("<workspace>  </workspace>  task")
-    assert cleaned == "task"
-    assert path is None
 
 
 async def test_run_router_passes_workspace_path_to_deep_path(
