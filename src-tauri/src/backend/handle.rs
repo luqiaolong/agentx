@@ -280,39 +280,116 @@ async fn spawn_child(
     // - `-NoExit` 让 powershell 进程不被 uv 退出连带销毁，开发关掉窗口才会结束；
     // - 双引号转义：`"` 变成 `\"`，`$` 在 powershell 里有特殊含义用 `` ` `` 转义；
     // - 我们这里只在命令行里传 cwd + uv 命令，没有用户注入，安全。
-    // 注意：dev 模式仅 Windows 可用，Unix 下退化为原 tokio 启动（直接 nix 进程组）。
-    #[cfg(windows)]
+    // 注意：Windows 用 PowerShell `-NoExit`；macOS 用 Terminal.app + AppleScript
+    // `do script`；Linux 优先 `x-terminal-emulator`，回退 `gnome-terminal` /
+    // `konsole`，全缺失降级 tokio。其它平台（非 Win/macOS/Linux）一律走 tokio。
     let mut use_powershell = dev_mode;
-    #[cfg(not(windows))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     let mut use_powershell = false;
 
     if use_powershell {
-        let cwd_str = cwd.to_string_lossy().to_string();
-        // 把 cwd 路径里的双引号转义，避免 powershell 解析错位
-        let cwd_escaped = cwd_str.replace('"', "`\"");
-        let ps_script = format!(
-            "Set-Location -LiteralPath \"{}\"; uv run python -m app.main",
-            cwd_escaped
-        );
-        let mut cmd = Command::new("powershell.exe");
-        cmd.args(["-NoExit", "-Command", &ps_script])
+        // ============ macOS：Terminal.app + AppleScript ============
+        #[cfg(target_os = "macos")]
+        {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            let cwd_escaped = cwd_str.replace('\'', "'\\''");
+            let ps_script = format!(
+                "cd '{}' && uv run python -m app.main; exec /bin/bash",
+                cwd_escaped
+            );
+            // 用 osascript 让 Terminal.app 新开窗口执行脚本
+            let mut cmd = Command::new("osascript");
+            cmd.args([
+                "-e",
+                &format!(
+                    r#"tell application "Terminal" to do script "{}""#,
+                    ps_script.replace('"', r#"\""#)
+                ),
+            ])
             .envs(env);
-        // dev 模式：让 PowerShell 窗口直接显示 stdout/stderr（开发者要的就是看实时日志），
-        // Rust 这边不接管 pipe。supervisor 用 `child.wait()` 阻塞等子进程退出。
-        // 不设置 current_dir：powershell 会用 Set-Location 切到 backend 目录
-        match cmd.spawn() {
-            Ok(child) => {
-                let ps_pid = child.id();
-                return Some((child, ps_pid));
+            match cmd.spawn() {
+                Ok(child) => return Some((child, None)),
+                Err(e) => {
+                    let msg = format!("dev-mode macos osascript spawn error: {}", e);
+                    log::warn!("{}", msg);
+                    logger::append_log(app, &msg);
+                    use_powershell = false;
+                }
             }
-            Err(e) => {
-                let msg = format!("dev-mode powershell spawn error: {}", e);
+        }
+
+        // ============ Linux：x-terminal-emulator / gnome-terminal / konsole ============
+        #[cfg(target_os = "linux")]
+        {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            let cwd_escaped = cwd_str.replace('\'', "'\\''");
+            let bash_script = format!(
+                "cd '{}' && uv run python -m app.main; exec bash",
+                cwd_escaped
+            );
+            let terminals: [(&str, Vec<&str>); 3] = [
+                ("x-terminal-emulator", vec!["-e", "bash", "-lc", &bash_script]),
+                ("gnome-terminal", vec!["--", "bash", "-lc", &bash_script]),
+                ("konsole", vec!["-e", "bash", "-lc", &bash_script]),
+            ];
+            let mut spawned = false;
+            for (term, args) in &terminals {
+                let mut cmd = Command::new(term);
+                cmd.args(args).envs(env);
+                match cmd.spawn() {
+                    Ok(child) => {
+                        spawned = true;
+                        return Some((child, None));
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "dev-mode linux terminal '{}' spawn error: {}",
+                            term,
+                            e
+                        );
+                        // 尝试下一个
+                        continue;
+                    }
+                }
+            }
+            if !spawned {
+                let msg = "dev-mode linux: no terminal emulator found (x-terminal-emulator/gnome-terminal/konsole), degraded to tokio".to_string();
                 log::warn!("{}", msg);
                 logger::append_log(app, &msg);
-                // powershell 拉起失败，降级走原 tokio 启动
-                #[allow(unused_assignments)]
-                {
-                    use_powershell = false;
+                use_powershell = false;
+            }
+        }
+
+        // ============ Windows：PowerShell -NoExit ============
+        #[cfg(windows)]
+        {
+            let cwd_str = cwd.to_string_lossy().to_string();
+            // 把 cwd 路径里的双引号转义，避免 powershell 解析错位
+            let cwd_escaped = cwd_str.replace('"', "`\"");
+            let ps_script = format!(
+                "Set-Location -LiteralPath \"{}\"; uv run python -m app.main",
+                cwd_escaped
+            );
+            let mut cmd = Command::new("powershell.exe");
+            cmd.args(["-NoExit", "-Command", &ps_script])
+                .envs(env);
+            // dev 模式：让 PowerShell 窗口直接显示 stdout/stderr（开发者要的就是看实时日志），
+            // Rust 这边不接管 pipe。supervisor 用 `child.wait()` 阻塞等子进程退出。
+            // 不设置 current_dir：powershell 会用 Set-Location 切到 backend 目录
+            match cmd.spawn() {
+                Ok(child) => {
+                    let ps_pid = child.id();
+                    return Some((child, ps_pid));
+                }
+                Err(e) => {
+                    let msg = format!("dev-mode powershell spawn error: {}", e);
+                    log::warn!("{}", msg);
+                    logger::append_log(app, &msg);
+                    // powershell 拉起失败，降级走原 tokio 启动
+                    #[allow(unused_assignments)]
+                    {
+                        use_powershell = false;
+                    }
                 }
             }
         }
