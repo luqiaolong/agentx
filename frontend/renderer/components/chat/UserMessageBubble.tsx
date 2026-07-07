@@ -97,7 +97,7 @@ export const UserMessageBubble = memo(function UserMessageBubble({
               aria-label="发送消息"
               title="发送 (Enter)"
             >
-              <Send className="h-3.5 w-3.5" />
+              <Send className="h-3 w-3" />
             </button>
           </div>
         </div>

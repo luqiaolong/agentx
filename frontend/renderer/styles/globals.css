@@ -445,9 +445,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 1.875rem;
-    width: 1.875rem;
-    border-radius: 0.625rem;
+    height: 1.5rem;
+    width: 1.5rem;
+    border-radius: 0.5rem;
     background-color: #4f46e5;
     color: var(--text-secondary);
     cursor: pointer;

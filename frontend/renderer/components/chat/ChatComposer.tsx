@@ -472,7 +472,7 @@ export function ChatComposer({
                     aria-label="继续生成"
                     title="继续"
                   >
-                    <Play className="h-3.5 w-3.5 fill-current" />
+                    <Play className="h-3 w-3 fill-current" />
                   </button>
                 ) : isStreaming ? (
                   <button
@@ -482,7 +482,7 @@ export function ChatComposer({
                     aria-label="暂停生成"
                     title="暂停"
                   >
-                    <Pause className="h-3 w-3 fill-current" />
+                    <Pause className="h-2.5 w-2.5 fill-current" />
                   </button>
                 ) : (
                   <button
@@ -493,7 +493,7 @@ export function ChatComposer({
                     aria-label="发送消息"
                     title="发送 (Enter)"
                   >
-                    <Send className="h-3.5 w-3.5" />
+                    <Send className="h-3 w-3" />
                   </button>
                 )}
               </div>
