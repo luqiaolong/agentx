@@ -23,6 +23,12 @@ _SINGLE_TOOL_KEYWORDS: tuple[str, ...] = (
     "打开",
     "查看",
     "显示",
+    "文件列表",
+    "有哪些文件",
+    "有什么文件",
+    "目录内容",
+    "ls",
+    "dir",
 )
 
 # 危险工具关键词：命中即 → DEEP_TASK（需要人工审批）
@@ -115,7 +121,8 @@ def _rule_classify(message: str) -> str | None:
             return "DEEP_TASK"
 
     # 3. 短消息且不含问号 → 闲聊（半角/全角问号均排除）
-    if len(message) < 10 and "?" not in message and "？" not in message:
+    # 阈值 <= 4 只过滤真正的短问候（如"你好""在吗"），避免文件查询等自然表达被误判
+    if len(message) <= 4 and "?" not in message and "？" not in message:
         return "CHAT"
 
     # 4. CHAT 关键词 → CHAT

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR
 from app.observability.logger import logger
@@ -408,10 +409,60 @@ def _glob_base(pattern: str) -> str:
     return base
 
 
+# 文件查看器最大字节数（默认 2 MiB）。超过该值的文件无法在 CodeViewer 内联展示。
+_MAX_VIEW_BYTES = 2 * 1024 * 1024
+
+
+async def read_workspace_file(path: str, thread_id: str | None = None) -> dict[str, Any]:
+    """读取沙箱白名单 / 已授权目录内的文本文件内容（仅供前端查看器使用）。
+
+    复用 ``SessionSandbox.check_read`` 完成白名单 + 授权校验，额外要求：
+    - 路径必须是文件（不能是目录）
+    - 文件大小超过 ``_MAX_VIEW_BYTES``（默认 2 MiB）→ 拒绝并提示用户
+    - 解码失败（binary 文件）→ 返回 ``{"binary": True, "size": ...}``
+
+    返回结构：
+        ``{"content": str, "size": int, "encoding": "utf-8"}``
+        或  ``{"binary": True, "size": int}``
+        或  校验失败时由调用方抛 ``ValueError`` / ``FileNotFoundError``。
+    """
+    # 1. 复用沙箱读校验（白名单 + 授权目录 + 系统关键目录）
+    sandbox = get_sandbox()
+    sandbox.check_read(thread_id or "", path)
+
+    # 2. 解析为实际目标路径
+    target = _resolve(path)
+
+    if not target.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
+    if target.is_dir():
+        raise ValueError(f"路径是目录而非文件: {path}")
+
+    stat = target.stat()
+    if stat.st_size > _MAX_VIEW_BYTES:
+        raise ValueError(
+            f"文件过大（{stat.st_size} 字节），超过 {_MAX_VIEW_BYTES} 字节上限，"
+            "请使用编辑器或专用工具查看"
+        )
+
+    # 用 bytes 读，再用 utf-8 解码；失败则视为 binary。
+    try:
+        data = target.read_bytes()
+    except OSError as exc:
+        raise FileNotFoundError(f"读取文件失败: {path} ({exc})") from exc
+
+    try:
+        text = data.decode("utf-8")
+        return {"content": text, "size": stat.st_size, "encoding": "utf-8"}
+    except UnicodeDecodeError:
+        return {"binary": True, "size": stat.st_size}
+
+
 __all__ = [
     "read_file",
     "list_dir",
     "list_workspace",
+    "read_workspace_file",
     "glob",
     "grep",
     "write_file",

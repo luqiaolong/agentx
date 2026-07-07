@@ -118,9 +118,9 @@ def test_rule_deep_keywords_returns_deep_task() -> None:
 
 def test_rule_deep_weak_keywords_requires_long_message() -> None:
     """弱信号关键词（帮我做/帮我写）需要长度 > 20 才命中。"""
-    # 长度 5 < 10，规则 2 命中（不含问号）→ CHAT，不会到规则 4
-    assert _rule_classify("帮我写代码") == "CHAT"
-    # 长度 10 >= 10，规则 2 不命中；弱关键词长度 10 <= 20 → None（走 LLM）
+    # 长度 5 > 4，短消息规则不命中；弱关键词长度 5 <= 20 → None（走 LLM）
+    assert _rule_classify("帮我写代码") is None
+    # 长度 10 > 4，短消息规则不命中；弱关键词长度 10 <= 20 → None（走 LLM）
     assert _rule_classify("请帮我写一下这个文档") is None
     # 长度 > 20，弱关键词命中 → DEEP_TASK
     long_msg = "请帮我写一份详细的项目设计文档，包含架构与里程碑"

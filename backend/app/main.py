@@ -6,6 +6,8 @@
 - ``POST /api/sandbox/authorize`` — 授权目录（拒绝系统关键目录 → 400）。
 - ``POST /api/sandbox/revoke``    — 撤销授权。
 - ``GET /api/sandbox/authorized/{thread_id}`` — 列出已授权目录。
+- ``GET /api/workspace/list``     — 沙箱白名单 / 已授权目录的条目列表。
+- ``GET /api/workspace/read``     — 读取沙箱内文本文件内容（CodeViewer 用，>2MiB 拒绝）。
 - ``POST /api/chat/approve``      — 提交危险操作审批决定（写入内存 dict）。
 - ``POST /api/chat/abort``        — 中止 SSE 流（写入内存 flag）。
 - ``POST /api/chat``              — SSE 流式响应（Router 三路径分发：CHAT / SINGLE_TOOL / DEEP_TASK）。
@@ -34,6 +36,7 @@ lifespan / 中间件 / app 实例 / ``__main__`` 入口。
 以下名称以本模块为「命名空间锚点」向后兼容 re-export（测试通过
 ``monkeypatch app.main.<name>`` 或 ``from app.main import <name>`` 访问）：
 - ``run_router`` / ``get_skills`` / ``reload_skills`` / ``list_workspace``
+  / ``read_workspace_file``
   / ``get_sandbox`` / ``get_async_checkpointer`` / ``get_mcp_manager`` / ``httpx``
   —— ``app.api.*`` 域文件内以延迟 ``from app.main import <name>`` 方式引用，
   保证 monkeypatch 在调用时生效。
@@ -72,7 +75,7 @@ from app.vectorstore import MilvusUnavailable, get_milvus_client
 # 使 monkeypatch 在调用时从 app.main 命名空间取到 fake。
 from app.router import run_router  # noqa: F401
 from app.memory.skills_loader import get_skills, reload_skills  # noqa: F401
-from app.tools.filesystem import list_workspace  # noqa: F401
+from app.tools.filesystem import list_workspace, read_workspace_file  # noqa: F401
 from app.utils.security import get_sandbox  # noqa: F401 — lifespan 亦用
 
 # ---- 向后兼容 re-export（测试 from app.main import X）----

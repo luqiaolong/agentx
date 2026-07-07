@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import { AlertCircle, ArrowDown } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { ChatMessage } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
@@ -9,6 +9,7 @@ import { SCENE_PROMPTS, useSceneStore } from "@/stores/scene";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { AssistantUIThread } from "./AssistantUIThread";
+import { ChatNavigation } from "./ChatNavigation";
 import { EmptyState } from "./EmptyState";
 import { TodoProgress } from "./TodoProgress";
 import { ChatComposer } from "./ChatComposer";
@@ -470,33 +471,14 @@ export function ChatView() {
         )}
         <div ref={bottomRef} />
 
-        {/* 右侧导航条 + 滚动到底部按钮 */}
-        <div className="absolute right-2 top-4 bottom-4 w-1.5 flex flex-col items-center">
-          {/* 导航条背景 */}
-          <div className="flex-1 w-full rounded-full bg-subtle/80 overflow-hidden relative">
-            {/* 当前视口进度指示（T9：由 scrollProgress state 驱动，rAF throttle 更新） */}
-            <div
-              className="absolute left-0 w-full rounded-full bg-muted-c/40 transition-all duration-150"
-              style={{
-                top: `${scrollProgress.top}%`,
-                height: `${scrollProgress.height}%`,
-              }}
-            />
-          </div>
-
-          {/* 滚动到底部按钮 */}
-          {showScrollBtn && (
-            <button
-              type="button"
-              onClick={scrollToBottom}
-              className="mt-2 flex h-6 w-6 items-center justify-center rounded-full bg-surface border border-default text-secondary-c shadow-soft transition-colors hover:bg-hover-soft hover:text-primary-c"
-              aria-label="滚动到底部"
-              title="滚动到底部"
-            >
-              <ArrowDown className="h-3 w-3" />
-            </button>
-          )}
-        </div>
+        {/* 右侧分段导航 + 一键回到底部 */}
+        <ChatNavigation
+          messages={messages}
+          scrollContainerRef={scrollContainerRef}
+          scrollProgress={scrollProgress}
+          showScrollBtn={showScrollBtn}
+          onScrollToBottom={scrollToBottom}
+        />
       </div>
 
       {/* 任务进度 */}

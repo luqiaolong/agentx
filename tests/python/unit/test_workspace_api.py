@@ -1,21 +1,26 @@
-"""Workspace 文件列表 API 单元测试：GET /api/workspace/list + list_workspace 函数。
+"""Workspace API 单元测试：list / read 端点 + filesystem 函数。
 
 覆盖：
 1. ``GET /api/workspace/list`` 合法路径 → 200 + ``{entries: [...]}``
 2. ``GET /api/workspace/list`` 非法路径（不在白名单）→ 400
-3. ``list_workspace`` 函数：真实临时目录 → 返回 type/size/mtime
-4. ``list_workspace`` 函数：非白名单路径 → ValueError
+3. ``GET /api/workspace/read`` 文本文件 → 200 + ``{content, size, encoding}``
+4. ``GET /api/workspace/read`` 未授权路径 → 400；不存在 → 404
+5. ``list_workspace`` 函数：真实临时目录 → 返回 type/size/mtime
+6. ``list_workspace`` 函数：非白名单路径 → ValueError
+7. ``read_workspace_file`` 函数：文本 / 二进制 / 目录 / 未授权
 """
 
 from __future__ import annotations
 
 import shutil
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR
-from app.tools.filesystem import list_workspace
+from app.tools.filesystem import list_workspace, read_workspace_file
+from app.utils.security import PathNotAuthorized
 
 
 # ============================================================
@@ -171,3 +176,132 @@ def test_list_workspace_rejects_arbitrary_relative() -> None:
     # 使用 ../ 逃逸 WORKSPACE_DIR，不在白名单内 → ValueError
     with pytest.raises(ValueError):
         asyncio.run(list_workspace("../../secrets"))
+
+
+# ============================================================
+# API 端点测试（read /api/workspace/read）
+# ============================================================
+
+
+def test_workspace_read_returns_text_content(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /api/workspace/read 文本文件 → 200 + content。"""
+    captured: list[tuple[str, str | None]] = []
+
+    async def _fake_read_workspace_file(
+        path: str, thread_id: str | None = None
+    ) -> dict[str, Any]:
+        captured.append((path, thread_id))
+        return {"content": "hello", "size": 5, "encoding": "utf-8"}
+
+    monkeypatch.setattr("app.main.read_workspace_file", _fake_read_workspace_file)
+
+    resp = client.get(
+        "/api/workspace/read",
+        params={"path": "data/workspace/foo.txt", "thread_id": "t1"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["content"] == "hello"
+    assert body["size"] == 5
+    assert body["encoding"] == "utf-8"
+    assert captured == [("data/workspace/foo.txt", "t1")]
+
+
+def test_workspace_read_returns_binary_flag(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """二进制文件 → 200 + binary: True（不报错）。"""
+
+    async def _fake_read_workspace_file(
+        path: str, thread_id: str | None = None
+    ) -> dict[str, Any]:
+        return {"binary": True, "size": 1024}
+
+    monkeypatch.setattr("app.main.read_workspace_file", _fake_read_workspace_file)
+
+    resp = client.get("/api/workspace/read", params={"path": "data/workspace/foo.bin"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["binary"] is True
+    assert body["size"] == 1024
+
+
+def test_workspace_read_rejects_unauthorized(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """未授权路径 → 400。"""
+
+    async def _fake_read_workspace_file(
+        path: str, thread_id: str | None = None
+    ) -> dict[str, Any]:
+        raise ValueError("路径不在白名单内且未授权: d:/secrets")
+
+    monkeypatch.setattr("app.main.read_workspace_file", _fake_read_workspace_file)
+
+    resp = client.get("/api/workspace/read", params={"path": "d:/secrets"})
+    assert resp.status_code == 400, resp.text
+    assert "白名单" in resp.json()["detail"]
+
+
+def test_workspace_read_not_found(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """文件不存在 → 404。"""
+
+    async def _fake_read_workspace_file(
+        path: str, thread_id: str | None = None
+    ) -> dict[str, Any]:
+        raise FileNotFoundError("文件不存在: missing.txt")
+
+    monkeypatch.setattr("app.main.read_workspace_file", _fake_read_workspace_file)
+
+    resp = client.get("/api/workspace/read", params={"path": "missing.txt"})
+    assert resp.status_code == 404, resp.text
+    assert "detail" in resp.json()
+
+
+# ============================================================
+# read_workspace_file 函数测试（真实临时目录）
+# ============================================================
+
+
+def test_read_workspace_file_text(workspace_temp_dir) -> None:
+    """读取 WORKSPACE_DIR 内文本文件返回内容。"""
+    import asyncio
+
+    rel = f"data/workspace/{workspace_temp_dir.name}/file1.txt"
+    result = asyncio.run(read_workspace_file(rel))
+    assert result == {"content": "hello", "size": 5, "encoding": "utf-8"}
+
+
+def test_read_workspace_file_rejects_directory(
+    workspace_temp_dir,
+) -> None:
+    """路径是目录 → ValueError。"""
+    import asyncio
+
+    rel = f"data/workspace/{workspace_temp_dir.name}/subdir"
+    with pytest.raises(ValueError, match="目录"):
+        asyncio.run(read_workspace_file(rel))
+
+
+def test_read_workspace_file_rejects_non_whitelisted() -> None:
+    """非白名单绝对路径 → PathNotAuthorized。"""
+    import asyncio
+
+    with pytest.raises(PathNotAuthorized):
+        asyncio.run(read_workspace_file(str(PROJECT_ROOT / "pyproject.toml")))
+
+
+def test_read_workspace_file_binary(workspace_temp_dir) -> None:
+    """二进制文件 → binary: True。"""
+    import asyncio
+
+    binary_file = workspace_temp_dir / "binary.bin"
+    binary_file.write_bytes(bytes(range(256)))
+    rel = f"data/workspace/{workspace_temp_dir.name}/binary.bin"
+    result = asyncio.run(read_workspace_file(rel))
+    assert result["binary"] is True
+    assert result["size"] == 256

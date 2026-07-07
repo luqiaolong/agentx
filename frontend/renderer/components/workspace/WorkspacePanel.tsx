@@ -86,9 +86,9 @@ export function WorkspacePanel({
       </div>
 
       {/* 内容 */}
-      <div className="flex flex-1 flex-col overflow-auto p-2">
+      <div className="flex flex-1 flex-col overflow-hidden p-2">
         {active === "tasks" && (
-          <div className="flex flex-1 min-h-0 flex-col">
+          <div className="flex h-full min-h-0 flex-col">
             {/* 任务状态条 */}
             {tasks.length > 0 && (
               <div className="flex items-center justify-between border-b border-default bg-subtle/50 px-2.5 py-1">
@@ -120,14 +120,14 @@ export function WorkspacePanel({
                 )}
               </div>
             )}
-            {/* 上方：精简任务列表 */}
-            <div className="flex flex-1 min-h-0 flex-col">
+            {/* 上方：精简任务列表 —— 占 2/5 */}
+            <div className="flex h-2/5 min-h-0 flex-col">
               <div className="flex-1 min-h-0 overflow-auto">
                 <CompactTaskList />
               </div>
             </div>
-            {/* 下方：上下文横向 Tab */}
-            <div className="flex flex-1 min-h-0 flex-col border-t border-default">
+            {/* 下方：上下文横向 Tab —— 占 3/5 */}
+            <div className="flex h-3/5 min-h-0 flex-col border-t border-default">
               <ContextTabPanel onFileClick={onFileClick} />
             </div>
           </div>

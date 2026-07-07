@@ -42,7 +42,6 @@ export function ContextTabPanel({
       <div className="flex items-center gap-0.5 border-b border-default px-2 pb-1">
         {(Object.keys(SUBTAB_CONFIG) as ContextSubTab[]).map((key) => {
           const cfg = SUBTAB_CONFIG[key];
-          const count = allFiles[key].length;
           const isActive = activeSub === key;
           return (
             <button
@@ -58,11 +57,6 @@ export function ContextTabPanel({
             >
               <cfg.Icon className="h-3 w-3" />
               <span>{cfg.label}</span>
-              {count > 0 && (
-                <span className={`ml-0.5 rounded-full px-1 py-px text-2xs ${isActive ? "bg-brand-500/20 text-brand-500 dark:text-brand-400" : "bg-subtle text-muted-c"}`} style={{ fontSize: 'var(--fs-ws-file-size)' }}>
-                  {count}
-                </span>
-              )}
             </button>
           );
         })}

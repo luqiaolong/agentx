@@ -13,7 +13,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
@@ -39,9 +39,6 @@ struct PythonInner {
     stopped: bool,
     /// 当前使用的命令（uv / python），uv 失败后切换到 python。
     current_command: CommandKind,
-    /// dev 模式下由 powershell.exe 启动，需要把 powershell PID 也记下来，
-    /// 关闭时同时杀掉 powershell 进程树（避免 8123 端口残留）。
-    dev_mode_powershell_pid: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -61,7 +58,6 @@ impl PythonHandle {
             current_pid: None,
             stopped: false,
             current_command: CommandKind::Uv,
-            dev_mode_powershell_pid: None,
         }));
 
         let inner_clone = inner.clone();
@@ -123,17 +119,14 @@ impl PythonHandle {
             let mut guard = self.inner.lock().await;
             guard.stopped = true;
         }
-        let (pid, ps_pid) = {
+        let pid = {
             let guard = self.inner.lock().await;
-            (guard.current_pid, guard.dev_mode_powershell_pid)
+            guard.current_pid
         };
         if let Some(pid) = pid {
             kill_tree(pid);
         }
-        // dev 模式：杀掉 powershell 宿主进程树，避免 8123 端口残留。
-        if let Some(ps_pid) = ps_pid {
-            kill_tree(ps_pid);
-        }
+        // dev_mode 下日志窗口由用户手动关闭，不需要在这里处理
     }
 }
 
@@ -148,11 +141,14 @@ impl Drop for PythonHandle {
 
 /// supervisor 循环：spawn → 等待退出 → 退避重试。
 ///
-/// dev_mode=true 走的是 **fire-and-forget** 路径：spawn PowerShell / Terminal.app / xterm
-/// 一次后立即返回，**绝不调用 `child.wait()`**。原因：dev_mode 下的宿主进程
-/// （PowerShell `-NoExit` / macOS Terminal / Linux xterm）会驻留到用户手动关闭，
-/// `wait()` 会**永远阻塞**，无法触发任何状态事件，违背"切换开发模式立即生效"的契约。
-/// readiness 由独立的 `wait_for_ready()` 检测端口来驱动，supervisor 不参与。
+/// dev_mode=true 时：
+/// - 打开一个独立的日志窗口（WebviewWindow），实时展示 Python 后端 stdout/stderr
+/// - 仍然走标准 tokio spawn（pipe stdout/stderr），但 supervisor 不 wait()，
+///   而是 fire-and-forget：启动 pipe 任务读取日志并 emit 到日志窗口后，
+///   supervisor 直接退出。readiness 由 `wait_for_ready()` 单独检测端口。
+/// - 关闭日志窗口不会杀 Python 进程；Python 进程由 stop() 通过 PID 管理。
+///
+/// dev_mode=false 时：标准 supervise 流程（spawn → pipe → wait → 退避重试）。
 async fn supervise(
     inner: Arc<Mutex<PythonInner>>,
     app: AppHandle,
@@ -180,40 +176,17 @@ async fn supervise(
     let spawn_result = spawn_child(&inner, &cwd, &env, &app, dev_mode).await;
 
     match spawn_result {
-        Some((child, ps_pid)) => {
-            // 记录 PID 供 stop() 使用：dev_mode 下 powershell 是独立进程，
-            // 但 stop() 时仍要杀 powershell 进程树（防止用户切回 false 后残留）。
+        Some(child) => {
             let child_pid_opt = child.id();
             {
                 let mut guard = inner.lock().await;
                 if let Some(pid) = child_pid_opt {
                     guard.current_pid = Some(pid);
                 }
-                guard.dev_mode_powershell_pid = ps_pid;
             }
 
-            if dev_mode {
-                // ============ dev_mode：fire-and-forget ============
-                // 关键：释放 child，让 powershell 进程独立存在。
-                // 这避免了 `child.wait().await` 因 `-NoExit` 永远阻塞的问题。
-                // 端口 ready 状态由调用方 `wait_for_ready()` 单独检测。
-                // 我们不调用 `drop` 或 `wait`：child handle drop 不会杀 powershell
-                // （它是 powershell 启动的孙进程，spurious kill 也是发生在孙进程上）。
-                drop(child);
-                log_info(
-                    "dev_mode python spawned via console; supervisor released (wait_for_ready owns ready detection)".into(),
-                );
-                // 监督任务直接退出——把控制权交给 wait_for_ready。
-                // 如果用户后续显式 stop()，我们的 stop() 实现会:
-                // 1) 通过 current_pid + dev_mode_powershell_pid 杀整棵树;
-                // 2) 设置 stopped=true，让正在跑的 wait_for_ready 检测到并退出。
-                return;
-            }
-
-            // ============ 生产模式：标准 supervise 流程 ============
+            // 无论 dev_mode 都启动 pipe 任务读取 stdout/stderr
             let mut child = child;
-            // pipe stdout/stderr 到日志（同时落盘到 {app_data_dir}/logs/agentx-YYYYMMDD.log，
-            // 供前端日志面板读取）
             let stdout_app = app.clone();
             if let Some(stdout) = child.stdout.take() {
                 tauri::async_runtime::spawn(pipe_to_log(stdout, "python", stdout_app));
@@ -223,6 +196,18 @@ async fn supervise(
                 tauri::async_runtime::spawn(pipe_to_log(stderr, "python:err", stderr_app));
             }
 
+            if dev_mode {
+                // ============ dev_mode：打开日志窗口 + fire-and-forget ============
+                open_log_window(&app);
+                log_info(
+                    "dev_mode: log window opened, supervisor released (wait_for_ready owns ready detection)".into(),
+                );
+                // 监督任务直接退出——pipe 任务在后台继续读取日志并 emit 到日志窗口。
+                // 端口 ready 状态由调用方 `wait_for_ready()` 单独检测。
+                return;
+            }
+
+            // ============ 生产模式：标准 supervise 流程 ============
             // 标准 supervise 循环：spawn → wait → 退避重试。
             let mut attempt: u32 = 0;
             loop {
@@ -230,7 +215,6 @@ async fn supervise(
                 {
                     let mut guard = inner.lock().await;
                     guard.current_pid = None;
-                    guard.dev_mode_powershell_pid = None;
                     if guard.stopped {
                         return;
                     }
@@ -269,8 +253,7 @@ async fn supervise(
                     MAX_RETRIES + 1
                 ));
 
-                // 重试：必须直接 spawn tokio 路径（重试仍按 dev_mode 决策；
-                // 但 dev_mode 分支已经 fire-and-forget 不会再到这，下面只走 tokio 命令）。
+                // 重试
                 let command_kind = {
                     let guard = inner.lock().await;
                     guard.current_command
@@ -323,8 +306,6 @@ async fn supervise(
             }
         }
         None => {
-            // spawn 失败（uv 不存在），已切换到 python。
-            // dev_mode 下不会到这里（dev_mode 走 console 路径，失败已降级 tokio）。
             log_warn("python spawn failed, uv may be missing".into());
             let _ = app.emit("python:status", PythonStatus::GivingUp);
         }
@@ -333,156 +314,19 @@ async fn supervise(
 
 /// spawn 子进程，uv 失败时回退到 python。
 ///
-/// 返回 `Some((child, ps_pid))` 表示 spawn 成功，`None` 表示 spawn 失败（uv 不存在且 python 也失败）。
-/// `ps_pid` 仅 dev 模式（PowerShell 宿主）下非空，供 `stop()` 杀整棵树避免端口残留。
+/// 返回 `Some(child)` 表示 spawn 成功，`None` 表示 spawn 失败（uv 不存在且 python 也失败）。
 /// uv spawn 失败时会自动切换到 python 命令并记录到 inner.current_command。
 async fn spawn_child(
     inner: &Arc<Mutex<PythonInner>>,
     cwd: &PathBuf,
     env: &HashMap<String, String>,
     app: &AppHandle,
-    dev_mode: bool,
-) -> Option<(Child, Option<u32>)> {
+    _dev_mode: bool,
+) -> Option<Child> {
     let command_kind = {
         let guard = inner.lock().await;
         guard.current_command
     };
-
-    // dev 模式（仅 Windows）：用 powershell 拉起 uv，保持窗口不退出。
-    // 命令形态：`powershell -NoExit -Command "cd <cwd>; uv run python -m app.main"`
-    // 关键点：
-    // - `-NoExit` 让 powershell 进程不被 uv 退出连带销毁，开发关掉窗口才会结束；
-    // - 双引号转义：`"` 变成 `\"`，`$` 在 powershell 里有特殊含义用 `` ` `` 转义；
-    // - 我们这里只在命令行里传 cwd + uv 命令，没有用户注入，安全。
-    // 注意：Windows 用 PowerShell `-NoExit`；macOS 用 Terminal.app + AppleScript
-    // `do script`；Linux 优先 `x-terminal-emulator`，回退 `gnome-terminal` /
-    // `konsole`，全缺失降级 tokio。其它平台（非 Win/macOS/Linux）一律走 tokio。
-    let mut use_powershell = dev_mode;
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let mut use_powershell = false;
-
-    if use_powershell {
-        // ============ macOS：Terminal.app + AppleScript ============
-        #[cfg(target_os = "macos")]
-        {
-            let cwd_str = cwd.to_string_lossy().to_string();
-            let cwd_escaped = cwd_str.replace('\'', "'\\''");
-            let ps_script = format!(
-                "cd '{}' && uv run python -m app.main; exec /bin/bash",
-                cwd_escaped
-            );
-            // 用 osascript 让 Terminal.app 新开窗口执行脚本
-            let mut cmd = Command::new("osascript");
-            cmd.args([
-                "-e",
-                &format!(
-                    r#"tell application "Terminal" to do script "{}""#,
-                    ps_script.replace('"', r#"\""#)
-                ),
-            ])
-            .envs(env);
-            match cmd.spawn() {
-                Ok(child) => return Some((child, None)),
-                Err(e) => {
-                    let msg = format!("dev-mode macos osascript spawn error: {}", e);
-                    log::warn!("{}", msg);
-                    logger::append_log(app, &msg);
-                    use_powershell = false;
-                }
-            }
-        }
-
-        // ============ Linux：x-terminal-emulator / gnome-terminal / konsole ============
-        #[cfg(target_os = "linux")]
-        {
-            let cwd_str = cwd.to_string_lossy().to_string();
-            let cwd_escaped = cwd_str.replace('\'', "'\\''");
-            let bash_script = format!(
-                "cd '{}' && uv run python -m app.main; exec bash",
-                cwd_escaped
-            );
-            let terminals: [(&str, Vec<&str>); 3] = [
-                ("x-terminal-emulator", vec!["-e", "bash", "-lc", &bash_script]),
-                ("gnome-terminal", vec!["--", "bash", "-lc", &bash_script]),
-                ("konsole", vec!["-e", "bash", "-lc", &bash_script]),
-            ];
-            let mut spawned = false;
-            for (term, args) in &terminals {
-                let mut cmd = Command::new(term);
-                cmd.args(args).envs(env);
-                match cmd.spawn() {
-                    Ok(child) => {
-                        spawned = true;
-                        return Some((child, None));
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "dev-mode linux terminal '{}' spawn error: {}",
-                            term,
-                            e
-                        );
-                        // 尝试下一个
-                        continue;
-                    }
-                }
-            }
-            if !spawned {
-                let msg = "dev-mode linux: no terminal emulator found (x-terminal-emulator/gnome-terminal/konsole), degraded to tokio".to_string();
-                log::warn!("{}", msg);
-                logger::append_log(app, &msg);
-                use_powershell = false;
-            }
-        }
-
-        // ============ Windows：PowerShell -NoExit ============
-        #[cfg(windows)]
-        {
-            let cwd_str = cwd.to_string_lossy().to_string();
-            // 把 cwd 路径里的双引号转义，避免 powershell 解析错位
-            let cwd_escaped = cwd_str.replace('"', "`\"");
-            let ps_script = format!(
-                "Set-Location -LiteralPath \"{}\"; uv run python -m app.main",
-                cwd_escaped
-            );
-            let mut cmd = Command::new("powershell.exe");
-            cmd.args(["-NoExit", "-Command", &ps_script])
-                .envs(env);
-            // 关键：Tauri 2.x GUI 应用的子系统是 `windows`（无控制台），
-            // 默认 spawn 出的 powershell 会**继承父进程的 0 控制台**而不显示窗口。
-            // 用 CREATE_NEW_CONSOLE 强制给 powershell 开一个新 console 窗口。
-            // 注意：CREATE_NEW_CONSOLE 与 DETACHED_PROCESS 互斥，不能同时用。
-            {
-                use windows::Win32::System::Threading::CREATE_NEW_CONSOLE;
-                cmd.creation_flags(CREATE_NEW_CONSOLE.0);
-            }
-            // dev 模式：让 PowerShell 窗口直接显示 stdout/stderr（开发者要的就是看实时日志），
-            // Rust 这边不接管 pipe。supervisor 已改造为 **fire-and-forget**，
-            // 不再 wait()（因为 `-NoExit` 让 powershell 永驻，wait 会永远阻塞）。
-            // 不设置 current_dir：powershell 会用 Set-Location 切到 backend 目录
-            match cmd.spawn() {
-                Ok(child) => {
-                    let ps_pid = child.id();
-                    let msg = format!(
-                        "dev-mode powershell spawned: pid={:?}, cwd={}",
-                        ps_pid, cwd_str
-                    );
-                    log::info!("{}", msg);
-                    logger::append_log(app, &msg);
-                    return Some((child, ps_pid));
-                }
-                Err(e) => {
-                    let msg = format!("dev-mode powershell spawn error: {}", e);
-                    log::warn!("{}", msg);
-                    logger::append_log(app, &msg);
-                    // powershell 拉起失败，降级走原 tokio 启动
-                    #[allow(unused_assignments)]
-                    {
-                        use_powershell = false;
-                    }
-                }
-            }
-        }
-    }
 
     let (program, args) = match command_kind {
         CommandKind::Uv => ("uv", vec!["run", "python", "-m", "app.main"]),
@@ -505,7 +349,7 @@ async fn spawn_child(
     }
 
     match cmd.spawn() {
-        Ok(child) => Some((child, None)),
+        Ok(child) => Some(child),
         Err(e) => {
             let msg = format!("python spawn error for {}: {}", program, e);
             log::warn!("{}", msg);
@@ -519,6 +363,45 @@ async fn spawn_child(
                 guard.current_command = CommandKind::Python;
             }
             None
+        }
+    }
+}
+
+/// 打开开发模式日志窗口（WebviewWindow）。
+///
+/// 日志窗口加载 `log-window.html`，实时展示 Python 后端 stdout/stderr。
+/// 窗口特性：无边框（自定义标题栏）、可调整大小、暗色主题。
+fn open_log_window(app: &AppHandle) {
+    // 若已存在则直接显示（避免 close→rebuild 的 label 冲突）
+    if let Some(existing) = app.get_webview_window("log") {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return;
+    }
+
+    let window_result = tauri::WebviewWindowBuilder::new(
+        app,
+        "log",
+        tauri::WebviewUrl::App("log-window.html".into()),
+    )
+    .title("AgentX Logs")
+    .inner_size(1200.0, 700.0)
+    .min_inner_size(600.0, 300.0)
+    .decorations(false)
+    .shadow(false)
+    .transparent(false)
+    .always_on_top(false)
+    .resizable(true)
+    .visible(false)
+    .build();
+
+    match window_result {
+        Ok(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        Err(e) => {
+            log::warn!("failed to open log window: {}", e);
         }
     }
 }
@@ -611,10 +494,10 @@ fn kill_tree(pid: u32) {
     }
 }
 
-/// 将子进程 stdout/stderr 管道内容写入 log。
+/// 将子进程 stdout/stderr 管道内容写入 log，同时 emit 到日志窗口。
 ///
 /// 同时写入 `logger::append_log` 落盘的日志文件（`{app_data_dir}/logs/agentx-YYYYMMDD.log`），
-/// 确保前端日志面板能读到 Python 后端输出。
+/// 并通过 `app.emit("log:append", trimmed)` 推送给日志窗口（WebviewWindow label="log"）。
 async fn pipe_to_log<R: tokio::io::AsyncRead + Unpin>(
     reader: R,
     prefix: &'static str,
@@ -633,6 +516,8 @@ async fn pipe_to_log<R: tokio::io::AsyncRead + Unpin>(
                     let entry = format!("[{}] {}", prefix, trimmed);
                     log::info!("{}", entry);
                     logger::append_log(&app, &entry);
+                    // 同时 emit 到日志窗口（开发模式下日志窗口会监听此事件）
+                    let _ = app.emit("log:append", trimmed);
                 }
             }
             Err(e) => {
