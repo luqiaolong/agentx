@@ -80,11 +80,11 @@ pub fn app_get_dev_mode(app: AppHandle) -> bool {
     store::get_dev_mode(&app)
 }
 
-/// `app:setDevMode` → 写入开发模式开关（不再自动重启后端）。
+/// `app:setDevMode` → 写入开发模式开关（仅持久化到 store，不重启后端）。
 ///
-/// 切换语义与 `AGENTS.md §14.2` 一致：dev_mode 是持久化配置，切换只写 store；
-/// 下次应用启动或显式 `app:restartBackend` 时按新值 spawn。本命令不再访问
-/// PythonState（避免 stop+restart 链路把 dev_mode 切换与后端就绪事件流耦合）。
+/// 切换语义与 `AGENTS.md §14.2` 一致：前端调用本命令写 store 后，会紧接着调用
+/// `app:restartBackend` 立即以新值 spawn。本命令不访问 PythonState（避免
+/// stop+restart 链路把 dev_mode 切换与后端就绪事件流耦合）。
 #[tauri::command]
 pub async fn app_set_dev_mode(
     app: AppHandle,

@@ -63,8 +63,9 @@ dirs = "5"
 libc = "0.2"
 
 # Windows DPAPI（解密 Electron safeStorage 加密的 enc: 凭证）
+# + CREATE_NEW_CONSOLE 标志（spawn PowerShell 时强制开新 console，否则 Tauri GUI app 没 console）
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.59", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+windows = { version = "0.59", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

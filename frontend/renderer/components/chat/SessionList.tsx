@@ -14,7 +14,7 @@ import {
 import { useChatStore } from "@/stores/chat";
 import type { Session } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
-import { getDevMode, setDevMode } from "@/lib/api/app";
+import { getDevMode, setDevMode, restartBackend } from "@/lib/api/app";
 
 /**
  * 左侧栏会话列表。
@@ -39,6 +39,7 @@ export function SessionList() {
 
   // 开发模式开关：持久化在 tauri-plugin-store（store key = `devMode`），
   // 开启时 Rust 用 PowerShell 启动 Python 后端（Windows），保留控制台窗口。
+  // 切换时立即重启后端以新模式 spawn（wait_for_ready 已保证不卡 mask）。
   const [devMode, setDevModeLocal] = useState(false);
   const [devModeBusy, setDevModeBusy] = useState(false);
 
@@ -63,15 +64,27 @@ export function SessionList() {
     setDevModeBusy(true);
     setDevModeLocal(next); // 乐观更新，失败时回滚
     try {
-      const result = await setDevMode(next);
-      // 后端不再 restart：不再依赖 PythonStatus 事件。仍弹一个轻量 toast 提示
-      // 「已写入，需重启后端生效」。
-      if (result?.message) {
-        window.alert(result.message);
+      // 1. 写入 store（持久化，下次启动也按此值）
+      await setDevMode(next);
+      // 2. 立即重启后端以新 dev_mode 值 spawn。
+      //    app_restart_backend → PythonHandle::start → store::get_dev_mode
+      //    → 走 console（Win: PowerShell / Mac: Terminal / Linux: xterm）或 tokio 路径。
+      //    wait_for_ready 会 emit Ready/GivingUp，mask 自动解开。
+      const result = await restartBackend();
+      if (!result.ok) {
+        // 后端重启超时但不致命（ GivingUp 事件已推到前端，mask 会显示"启动失败"）
+        window.alert(
+          result.message ?? "后端重启超时，请查看日志",
+        );
       }
     } catch (e) {
-      // 回滚
+      // 回滚本地态 + store（确保一致性）
       setDevModeLocal(!next);
+      try {
+        await setDevMode(!next);
+      } catch {
+        /* best-effort 回滚 */
+      }
       window.alert(
         "切换开发模式失败：" + (e instanceof Error ? e.message : String(e)),
       );
@@ -249,15 +262,15 @@ export function SessionList() {
           aria-pressed={devMode}
           title={
             devMode
-              ? "开发模式已写入 store；下次启动应用或 [设置→重启后端] 时按此值启用 console 启动"
-              : "开发模式：用终端（Win: PowerShell / Mac: Terminal / Linux: xterm）启动后端并保留窗口"
+              ? "开发模式已开启：后端以终端方式启动（Win: PowerShell / Mac: Terminal / Linux: xterm）。点击关闭将重启后端回到静默模式"
+              : "开发模式：点击开启后立即重启后端，用终端启动并保留窗口方便看日志。选项自动持久化"
           }
         >
           <Code2
             className={`h-3.5 w-3.5 ${devMode ? "text-brand-500" : "text-muted-c"}`}
           />
           <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>
-            {devModeBusy ? "切换中…" : devMode ? "开发模式·待重启" : "开发模式"}
+            {devModeBusy ? "切换中…" : devMode ? "开发模式·开" : "开发模式"}
           </span>
         </button>
       </div>

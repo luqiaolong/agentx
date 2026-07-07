@@ -61,10 +61,10 @@ export function getDevMode(): Promise<boolean> {
 }
 
 /**
- * 写入开发模式开关并重启 Python 后端。
- * - `enabled=true`：Rust 用 PowerShell 启动后端（Windows），保留控制台窗口方便看日志。
- * - `enabled=false`：恢复原 tokio 静默启动。
- * 仅重启 Python 进程，不重启 Tauri 窗口。
+ * 写入开发模式开关（仅持久化到 store，不重启后端）。
+ * - `enabled=true`：下次后端启动时 Rust 用终端拉起（Win: PowerShell / Mac: Terminal / Linux: xterm）。
+ * - `enabled=false`：恢复 tokio 静默启动。
+ * 调用方如需立即生效，应在调用本函数后接着调用 `restartBackend()`。
  */
 export function setDevMode(enabled: boolean): Promise<RestartResult> {
   return invoke<RestartResult>("app_set_dev_mode", { enabled });
