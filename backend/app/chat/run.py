@@ -64,6 +64,10 @@ async def run_chat_path(
         retain_think=True,
     )
     abort_event = get_abort_event(thread_id)
+    # 累积已完成 token 流（剥离 think 后），用于最后做 plan JSON 检测。
+    # 若 LLM 输出 {"plan": [...]} 形式的任务列表，仍让用户看到流式 token
+    # （避免响应卡顿），并在流结束 flush 后再 yield plan 事件供前端结构化展示。
+    accumulated_text: list[str] = []
     try:
         async for chunk in llm.astream(messages):
             if abort_event.is_set():
@@ -76,9 +80,11 @@ async def run_chat_path(
                 if reasoning:
                     yield make_sse_event("reasoning", {"content": reasoning, "source": "assistant"})
             if cleaned:
+                accumulated_text.append(cleaned)
                 yield make_sse_event("token", cleaned)
         tail = think_filter.flush()
         if tail:
+            accumulated_text.append(tail)
             yield make_sse_event("token", tail)
     except asyncio.CancelledError:
         logger.info("chat path aborted", thread_id=thread_id)
@@ -87,3 +93,16 @@ async def run_chat_path(
         logger.warning("chat path LLM stream failed", error=str(exc))
         yield make_sse_event("error", f"LLM 流式失败: {exc}")
         return
+
+    # 流结束：检测累积文本是否是结构化任务计划，命中则额外 yield plan 事件
+    full_text = "".join(accumulated_text).strip()
+    if full_text:
+        try:
+            from app.utils.plan_extraction import extract_plan_or_update
+
+            plan_info = extract_plan_or_update(full_text)
+            if plan_info is not None:
+                kind, plan_data = plan_info
+                yield make_sse_event(kind, plan_data)
+        except Exception as exc:  # noqa: BLE001 — 提取失败容错
+            logger.debug("plan extraction in chat path failed", error=str(exc))
