@@ -134,14 +134,15 @@ class SessionSandbox:
         return set()
 
     @staticmethod
-    def _normalize(path: str | Path) -> Path:
-        """规范化路径。相对路径基于 PROJECT_ROOT 解析（非 CWD）。
+    def _normalize(path: str | Path, base: str | Path | None = None) -> Path:
+        """规范化路径。相对路径基于 ``base`` 或 PROJECT_ROOT 解析（非 CWD）。
 
-        委托给 ``app.utils.paths.normalize_path``，保持向后兼容。
+        委托给 ``app.utils.paths.normalize_path``。``base`` 用于 fs 工具传入
+        workspace 上下文，避免 LLM 用相对路径时误解析到 PROJECT_ROOT 而非 workspace。
         """
         from app.utils.paths import normalize_path
 
-        return normalize_path(path)
+        return normalize_path(path, base=base)
 
     def _is_critical(self, resolved: Path) -> bool:
         """路径是否为系统关键目录、其祖先或其后代。
@@ -169,12 +170,17 @@ class SessionSandbox:
 
     # ---- public API ----
 
-    def check_read(self, thread_id: str, path: str | Path) -> None:
+    def check_read(
+        self, thread_id: str, path: str | Path, base: str | Path | None = None
+    ) -> None:
         """校验读权限。通过则返回 None；否则 raise PathNotAuthorized。
 
         full_trust 模式下跳过授权检查（仍拒绝系统关键目录）。
+
+        ``base`` 用于传入 workspace 上下文：相对路径基于 ``base`` 解析，
+        避免误解析到 PROJECT_ROOT。
         """
-        resolved = self._normalize(path)
+        resolved = self._normalize(path, base=base)
         if self._is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
@@ -192,13 +198,17 @@ class SessionSandbox:
         self._deny(thread_id, path, "deny_read")
         raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
 
-    def check_write(self, thread_id: str, path: str | Path) -> None:
+    def check_write(
+        self, thread_id: str, path: str | Path, base: str | Path | None = None
+    ) -> None:
         """校验写权限。授权目录默认只读，写需 writable=True；
         data/workspace 与 data/uploads 始终可写。
 
         full_trust 模式下跳过授权检查（仍拒绝系统关键目录）。
+
+        ``base`` 用于传入 workspace 上下文：相对路径基于 ``base`` 解析。
         """
-        resolved = self._normalize(path)
+        resolved = self._normalize(path, base=base)
         if self._is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
@@ -340,15 +350,23 @@ class SessionSandbox:
         """导出授权目录为字符串列表（用于写入 checkpoint authorized_dirs 字段）。"""
         return sorted(str(p) for (p, _w) in self._get_authorized_set(thread_id, "authorized_dirs"))
 
-    def is_path_authorized(self, thread_id: str, path: str | Path, writable: bool = False) -> bool:
+    def is_path_authorized(
+        self,
+        thread_id: str,
+        path: str | Path,
+        writable: bool = False,
+        base: str | Path | None = None,
+    ) -> bool:
         """检查路径是否已授权（用于 directory_extension 预检查，不抛异常）。
 
         - 系统关键目录：永远返回 False
         - full_trust 模式：永远返回 True（除系统关键目录）
         - 白名单 / authorized_dirs / _temp_authorized：返回 True
+
+        ``base`` 用于传入 workspace 上下文：相对路径基于 ``base`` 解析。
         """
         try:
-            resolved = self._normalize(path)
+            resolved = self._normalize(path, base=base)
         except Exception:  # noqa: BLE001
             return False
         if self._is_critical(resolved):
