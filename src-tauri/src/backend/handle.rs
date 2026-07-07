@@ -164,6 +164,10 @@ async fn supervise(
             MAX_RETRIES + 1
         ));
 
+        // 端口占用检测：若 8123 被旧 Python 进程占着（孤儿/上轮未清理），
+        // 先 kill 整棵进程树，避免 spawn 后 bind 失败。
+        ensure_port_free_or_kill();
+
         match spawn_child(&inner, &cwd, &env, &app).await {
             Some(mut child) => {
                 // 记录 PID 供 stop() 使用
@@ -279,6 +283,60 @@ async fn spawn_child(
                 guard.current_command = CommandKind::Python;
             }
             None
+        }
+    }
+}
+
+/// 检查端口是否被占用；若被占用则 kill 占用进程（孤儿防御）。
+///
+/// 解决场景：上轮 GUI 异常退出时 Tauri 主进程已死，但 uv/python 子进程仍在，
+/// 导致下轮 spawn 后 FastAPI bind 8123 失败（WinError 10048）。
+///
+/// 实现：
+/// - 跨平台统一通过解析 `netstat -ano` 输出找到占用端口的 PID（Windows）或
+///   使用 `lsof -ti`（Unix）。
+/// - 对找到的 PID 执行 `taskkill /T /F` / `kill -TERM`。
+fn ensure_port_free_or_kill() {
+    const PORT: u16 = 8123;
+    #[cfg(windows)]
+    {
+        let Ok(out) = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .output()
+        else {
+            return;
+        };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let needle = format!("127.0.0.1:{PORT}");
+        let pids: Vec<u32> = stdout
+            .lines()
+            .filter(|l| l.contains(&needle) && l.contains("LISTENING"))
+            .filter_map(|l| l.split_whitespace().last())
+            .filter_map(|s| s.parse::<u32>().ok())
+            .collect();
+        for pid in pids {
+            log::warn!("port {} 被 PID {} 占用，先行 kill", PORT, pid);
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .output();
+        }
+    }
+    #[cfg(unix)]
+    {
+        let Ok(out) = std::process::Command::new("lsof")
+            .args(["-ti", &format!("tcp:{PORT}")])
+            .output()
+        else {
+            return;
+        };
+        for pid in String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|s| s.trim().parse::<i32>().ok())
+        {
+            log::warn!("port {} 被 PID {} 占用，先行 kill", PORT, pid);
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
         }
     }
 }

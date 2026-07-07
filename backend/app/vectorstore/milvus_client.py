@@ -171,14 +171,43 @@ class MilvusClient:
             # 老版本无 list_databases，依赖 connect 阶段已校验，跳过
             databases = [settings.milvus_db]
         if settings.milvus_db not in databases:
+            # DB 不存在 → 尝试自动创建（需先切到 default DB）
             try:
+                await asyncio.to_thread(
+                    connections.connect,
+                    alias=_ALIAS,
+                    host=settings.milvus_host,
+                    port=str(settings.milvus_port),
+                    user=connect_user,
+                    password=connect_password,
+                    db_name="default",
+                )
+                await asyncio.to_thread(
+                    utility.create_database, settings.milvus_db, using=_ALIAS
+                )
+                logger.info(
+                    "Milvus database '{}' 自动创建成功", settings.milvus_db
+                )
+                # 重连到目标 DB
                 await asyncio.to_thread(connections.disconnect, _ALIAS)
-            except Exception:
-                pass
-            raise MilvusUnavailable(
-                f"db '{settings.milvus_db}' not found, please create via Attu "
-                f"or pymilvus create_database"
-            )
+                await asyncio.to_thread(
+                    connections.connect,
+                    alias=_ALIAS,
+                    host=settings.milvus_host,
+                    port=str(settings.milvus_port),
+                    user=connect_user,
+                    password=connect_password,
+                    db_name=settings.milvus_db,
+                )
+            except Exception as create_exc:
+                try:
+                    await asyncio.to_thread(connections.disconnect, _ALIAS)
+                except Exception:
+                    pass
+                raise MilvusUnavailable(
+                    f"db '{settings.milvus_db}' not found and auto-create failed: "
+                    f"{create_exc}; please create via Attu or pymilvus create_database"
+                ) from create_exc
 
         # 3. 自动创建 collection + partition + HNSW index
         try:
