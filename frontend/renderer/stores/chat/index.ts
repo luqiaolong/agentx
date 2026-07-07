@@ -146,6 +146,15 @@ export interface ChatState {
   /** 手动授权并清除 revoked 标记（handleAttachWorkspace 复用）。 */
   authorizeAndUnmark: (sessionId: string, path: string, writable?: boolean) => Promise<void>;
   setHomeWorkspacePath: (p: string | null) => void;
+  /**
+   * 后端就绪后重新授权所有会话的 workspacePath。
+   *
+   * 会话从 localStorage 恢复后，后端 authorized_dirs 可能丢失（DB 被清、
+   * 新机器等），导致 workspace 面板 list 接口 400。此方法在 backend ready
+   * 时遍历所有 session，对未在 manuallyRevokedPaths 中的 workspacePath
+   * 重新调 authorize（source=chip, writable=true）。best-effort，失败静默。
+   */
+  reauthorizeAllSessions: () => Promise<void>;
   // 当前会话消息操作（作用于 sessions[currentId]）
   /**
    * 添加消息。兼容旧 content 字段：
@@ -380,6 +389,26 @@ export const useChatStore = create<ChatState>()(
         },
 
         setHomeWorkspacePath: (p) => set({ homeWorkspacePath: p }),
+
+        reauthorizeAllSessions: async () => {
+          const { sessions, homeWorkspacePath } = get();
+          const tasks: Promise<void>[] = [];
+          for (const [id, sess] of Object.entries(sessions)) {
+            // session 显式绑定的 workspacePath 优先；Home session（null）回退到 homeWorkspacePath
+            const pathToAuthorize = sess.workspacePath ?? homeWorkspacePath;
+            if (!pathToAuthorize) continue;
+            if (sess.manuallyRevokedPaths.includes(pathToAuthorize)) continue;
+            tasks.push(
+              sandbox
+                .authorize(id, pathToAuthorize, true, "chip")
+                .then(() => undefined)
+                .catch(() => {
+                  /* best-effort：失败不阻塞，工具执行时后端会再校验 */
+                }),
+            );
+          }
+          await Promise.all(tasks);
+        },
 
         addMessage: (msg) => {
           set((s) => {

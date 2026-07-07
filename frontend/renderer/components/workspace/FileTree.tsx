@@ -189,9 +189,13 @@ export function FileTree() {
   const currentSession = useChatStore((s) =>
     s.currentId ? s.sessions[s.currentId] ?? null : null,
   );
-  const workspacePath = currentSession?.workspacePath ?? null;
+  const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
+  // 与 GitPanel 保持一致：session 优先，回退到 homeWorkspacePath
+  const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath ?? null;
 
   const rootPath = workspacePath ?? "";
+
+  const retryRef = useRef(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -207,8 +211,18 @@ export function FileTree() {
       });
       setEntries(sorted);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
       setEntries([]);
+      // 授权竞态：会话从 localStorage 恢复后后端 authorized_dirs 可能还没就绪。
+      // 等待 2.5s 后重试一次（reauthorizeAllSessions 在 backend ready 时触发）。
+      if (msg.includes("不在白名单内") && retryRef.current === 0) {
+        retryRef.current += 1;
+        window.setTimeout(() => {
+          retryRef.current = 0;
+          void refresh();
+        }, 2500);
+      }
     } finally {
       setLoading(false);
     }
