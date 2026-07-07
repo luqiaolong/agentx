@@ -422,6 +422,13 @@ agentx/
 - 后端 8123 端口由 [src-tauri/src/backend/handle.rs::PythonHandle::start](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/handle.rs)
   启动（`uv run python -m app.main`，uv 缺失则回退 `python -m app.main`）。
 - 崩溃退避：指数 1s/2s/4s 最多 3 次 → `giving_up` 状态由前端遮罩兜底。
+- **dev_mode 持久化且不再"切换即重启"**：切换 dev_mode 开关只写 store，不自动 restart_backend。
+  下次应用启动 / 显式 [设置→重启后端] 时按新值 spawn。dev_mode=true 时跨平台 console 拉起：
+  | 平台 | 命令 |
+  |---|---|
+  | Windows | `powershell -NoExit -Command "Set-Location -LiteralPath <cwd>; uv run python -m app.main"` |
+  | macOS   | `osascript -e 'tell application "Terminal" to do script "cd <cwd> && uv run python -m app.main; exec /bin/bash"'` |
+  | Linux   | `x-terminal-emulator -e bash -lc "cd <cwd> && uv run python -m app.main; exec bash"`（缺失则回退 gnome-terminal / konsole，全缺失降级 tokio） |
 - 关闭时 Windows 必须 `taskkill /T /F` 杀整棵进程树（uv→python 父子链），否则
   8123 端口被占用导致下次启动 Errno 10048。**完整的重启 SOP 见 §14.7**。
 - 配置存储统一走 `tauri-plugin-store`（文件 `config.json`），凭证用 `enc:` / `plain:`
@@ -473,6 +480,7 @@ agentx/
   后端依赖的 `AGENTX_*` 凭证 + 配置由 Rust 主进程通过
   [backend/env.rs::build_env](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/env.rs) 注入，
   直接起 uvicorn 会缺 key、缺 Milvus 密码、缺 tools / subagents config。
+- **dev_mode 切后不立刻重启**：在 UI 切换开发模式后，需要重启应用或显式 [设置→重启后端] 才能切换 spawn 方式。详见 §14.2。
 - **重启前必须两棵树一起端**。常见误区：以为只有 Tauri 进程在占端口，结果
   `tauri dev` 退出后 **vite watcher + uv + python** 仍残留。两棵树并行使用：
   ```powershell
