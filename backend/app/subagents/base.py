@@ -180,9 +180,13 @@ def make_git_tools(thread_id: str) -> list:
 
     @tool
     async def git_branches(repo_path: str) -> str:
-        """获取本地与远程分支列表。"""
+        """获取本地与远程分支列表。
+
+        输出格式：每行 ``<HEAD>\\t<refname:short>\\t<upstream:short>\\t<upstream:track>``。
+        使用 ``|`` 作分隔符以规避 Git 2.53 Windows 版对 ``--format`` 连续占位符的展开 bug。
+        """
         proc = await asyncio.create_subprocess_exec(
-            "git", "branch", "-a", "--format=%(HEAD)%x09%(refname:short)%x09%(upstream:short)%x09%(upstream:track)",
+            "git", "branch", "-a", "--format=%(HEAD)|%(refname:short)|%(upstream:short)|%(upstream:track)",
             cwd=repo_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
