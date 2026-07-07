@@ -117,42 +117,43 @@ export const EMPTY_CONFIG: SubagentsConfig = {
     enabled: true,
     temperature: 0.2,
     systemPrompt: "",
-    tools: [],
+    tools: ["read_file", "list_dir", "glob", "grep"],
     triggerDescription: "",
   },
   rag: {
     enabled: true,
     temperature: 0.2,
     systemPrompt: "",
-    tools: [],
+    tools: ["rag_retrieve"],
     triggerDescription: "",
   },
   web: {
     enabled: true,
     temperature: 0.2,
     systemPrompt: "",
-    tools: [],
+    tools: ["web_search"],
     triggerDescription: "",
   },
 };
 
 function normalizeSubagentConfig(
   raw: Partial<SubagentConfig> | unknown,
+  fallback: SubagentConfig = EMPTY_CONFIG.code,
 ): SubagentConfig {
   if (!raw || typeof raw !== "object") {
-    return { ...EMPTY_CONFIG.code };
+    return { ...fallback };
   }
   const r = raw as Partial<SubagentConfig>;
   return {
-    enabled: typeof r.enabled === "boolean" ? r.enabled : true,
+    enabled: typeof r.enabled === "boolean" ? r.enabled : fallback.enabled,
     temperature:
       typeof r.temperature === "number" && !Number.isNaN(r.temperature)
         ? r.temperature
-        : 0.2,
-    systemPrompt: typeof r.systemPrompt === "string" ? r.systemPrompt : "",
-    tools: Array.isArray(r.tools) ? r.tools.filter((t): t is string => typeof t === "string") : [],
+        : fallback.temperature,
+    systemPrompt: typeof r.systemPrompt === "string" ? r.systemPrompt : fallback.systemPrompt,
+    tools: Array.isArray(r.tools) ? r.tools.filter((t): t is string => typeof t === "string") : fallback.tools,
     triggerDescription:
-      typeof r.triggerDescription === "string" ? r.triggerDescription : "",
+      typeof r.triggerDescription === "string" ? r.triggerDescription : fallback.triggerDescription,
   };
 }
 
@@ -174,13 +175,13 @@ export function normalizeTeamSubagentsConfig(
 ): TeamSubagentsConfig {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<TeamSubagentsConfig>;
   return {
-    frontend_dev: normalizeSubagentConfig(r.frontend_dev),
-    backend_dev: normalizeSubagentConfig(r.backend_dev),
-    tester: normalizeSubagentConfig(r.tester),
-    architect: normalizeSubagentConfig(r.architect),
-    devops: normalizeSubagentConfig(r.devops),
-    ui_designer: normalizeSubagentConfig(r.ui_designer),
-    product_manager: normalizeSubagentConfig(r.product_manager),
+    frontend_dev: normalizeSubagentConfig(r.frontend_dev, EMPTY_TEAM_CONFIG.frontend_dev),
+    backend_dev: normalizeSubagentConfig(r.backend_dev, EMPTY_TEAM_CONFIG.backend_dev),
+    tester: normalizeSubagentConfig(r.tester, EMPTY_TEAM_CONFIG.tester),
+    architect: normalizeSubagentConfig(r.architect, EMPTY_TEAM_CONFIG.architect),
+    devops: normalizeSubagentConfig(r.devops, EMPTY_TEAM_CONFIG.devops),
+    ui_designer: normalizeSubagentConfig(r.ui_designer, EMPTY_TEAM_CONFIG.ui_designer),
+    product_manager: normalizeSubagentConfig(r.product_manager, EMPTY_TEAM_CONFIG.product_manager),
   };
 }
 

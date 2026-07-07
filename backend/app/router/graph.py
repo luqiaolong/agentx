@@ -185,6 +185,12 @@ async def run_router(
             history_count=len(history),
         )
 
+        # 发送 classification 事件到前端，展示路由决策过程
+        yield make_sse_event("classification", {
+            "label": classification,
+            "reason": _get_classification_reason(classification, cleaned_message),
+        })
+
         state: RouterState = {
             "thread_id": thread_id,
             "messages": [{"role": "user", "content": cleaned_message}],
@@ -270,6 +276,57 @@ async def run_router(
             await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
 
         yield make_sse_event("done", "{}")
+
+
+def _get_classification_reason(classification: str, message: str) -> str:
+    """根据分类结果生成人类可读的路由决策原因。
+
+    Args:
+        classification: 分类标签。
+        message: 用户消息（用于判断规则命中）。
+
+    Returns:
+        路由决策原因描述。
+    """
+    from app.router.classifier import (
+        _CHAT_KEYWORDS,
+        _DANGEROUS_TOOL_KEYWORDS,
+        _DEEP_TASK_KEYWORDS,
+        _SINGLE_TOOL_KEYWORDS,
+    )
+
+    # 检查危险工具关键词（最高优先级）
+    for kw in _DANGEROUS_TOOL_KEYWORDS:
+        if kw in message:
+            return f"消息包含危险操作关键词「{kw}」，需走审批流程"
+
+    # 检查工具关键词
+    for kw in _SINGLE_TOOL_KEYWORDS:
+        if kw in message:
+            return f"消息包含工具调用关键词「{kw}」，触发单工具路径"
+
+    # 检查深度任务关键词
+    for kw in _DEEP_TASK_KEYWORDS:
+        if kw in message:
+            return f"消息包含复杂任务关键词「{kw}」，触发深度任务路径"
+
+    # 检查闲聊关键词
+    for kw in _CHAT_KEYWORDS:
+        if kw in message:
+            return f"消息包含闲聊关键词「{kw}」，触发对话路径"
+
+    # 短消息
+    if len(message) <= 4:
+        return "短消息默认触发对话路径"
+
+    # 默认
+    if classification == "CHAT":
+        return "未命中特定规则，默认触发对话路径"
+    elif classification == "SINGLE_TOOL":
+        return "LLM 判定需要调用工具"
+    elif classification == "DEEP_TASK":
+        return "LLM 判定需要多步规划"
+    return "未知分类原因"
 
 
 async def _classify_with_retry_consistency(

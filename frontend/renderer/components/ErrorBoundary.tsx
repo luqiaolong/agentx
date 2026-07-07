@@ -1,6 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { AlertTriangle, RotateCcw, FileText } from "lucide-react";
-import { useSettingsStore } from "@/stores/settings";
+import { AlertTriangle, RotateCcw } from "lucide-react";
 import { restart } from "@/lib/api/app";
 
 interface Props {
@@ -37,18 +36,6 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
           )}
           <div className="flex gap-2">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => {
-                // 打开设置面板并跳到「日志」tab，便于用户排查渲染错误
-                useSettingsStore.getState().setPendingSettingsTab("logs");
-                useSettingsStore.getState().setSettingsOpen(true);
-              }}
-            >
-              <FileText className="h-3.5 w-3.5" />
-              查看日志
-            </button>
             <button type="button" className="btn-primary" onClick={() => void restart()}>
               <RotateCcw className="h-3.5 w-3.5" />
               重启应用

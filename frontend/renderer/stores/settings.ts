@@ -13,7 +13,6 @@ interface SettingsState {
   /**
    * 下次打开设置面板时初始聚焦的 tab id（与 SettingsModal 的 TabId 对应）。
    * null 表示使用默认值（"prompt"）。打开后会被清空，避免残留影响下次默认打开。
-   * 用于 ErrorBoundary 等场景直接跳转到 "logs" tab。
    */
   pendingSettingsTab: string | null;
   setPersistAuthorizedDirs: (v: boolean) => void;

@@ -30,6 +30,8 @@ export type ChatEvent =
     }
   // delegation 事件：Router 静态分类或 DeepAgent 动态委派
   | { type: "delegation"; target: string; source: string; message: string }
+  // classification 事件：Router 分类决策展示
+  | { type: "classification"; label: string; reason: string }
   // todo_update 事件：DeepAgent 任务级 todo 列表
   // 后端可能携带 task_id，用于多任务场景下按任务分组展示
   | { type: "todo_update"; todos: unknown; task_id?: string }

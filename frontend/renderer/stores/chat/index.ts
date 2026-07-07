@@ -73,6 +73,14 @@ export type MessagePart =
     }
   | { type: "delegation"; id: string; target: string; source: string; message: string }
   | {
+      type: "classification";
+      id: string;
+      /** 分类标签：CHAT / SINGLE_TOOL / DEEP_TASK */
+      label: string;
+      /** 路由决策原因 */
+      reason: string;
+    }
+  | {
       type: "team";
       id: string;
       plan: { agent: string; input: string; purpose: string }[];

@@ -1,9 +1,10 @@
-import { Fragment, memo, useMemo } from "react";
+import { Fragment, memo, useMemo, useState } from "react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
 import { ToolCallCard } from "./parts/ToolCallCard";
 import { DelegationCard } from "./parts/DelegationCard";
+import { ClassificationCard } from "./parts/ClassificationCard";
 import { TeamNodeCard } from "./parts/TeamNodeCard";
 import { ToolCallGroup } from "./parts/ToolCallGroup";
 
@@ -43,6 +44,7 @@ type OrphanToolResult = {
 
 /** 配对后的渲染项（按 parts 顺序 + tool-call/tool-result 合并 + tool-call-group 折叠）。 */
 type RenderItem =
+  | { kind: "classification"; part: Extract<MessagePart, { type: "classification" }> }
   | { kind: "delegation"; part: Extract<MessagePart, { type: "delegation" }> }
   | { kind: "reasoning"; part: Extract<MessagePart, { type: "reasoning" }> }
   | { kind: "tool-call"; part: PairedToolCall }
@@ -91,6 +93,9 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
 
   for (const p of parts) {
     switch (p.type) {
+      case "classification":
+        items.push({ kind: "classification", part: p });
+        break;
       case "delegation":
         items.push({ kind: "delegation", part: p });
         break;
@@ -197,6 +202,106 @@ function collapseToolCallGroups(items: RenderItem[]): RenderItem[] {
  * 从 AssistantUIThread.tsx 的 MessageParts assistant 分支迁移（T10 拆分）。
  * 包含 buildRenderItems 配对逻辑 + T5 text 真实顺序 + tool-call-group 折叠。
  */
+/**
+ * 子代理分组组件：delegation 在容器上方可折叠，下方容器内包含执行轨迹。
+ */
+function SubAgentGroup({
+  group,
+  groupIdx,
+  messageId,
+}: {
+  group: { delegationIdx: number; items: RenderItem[] };
+  groupIdx: number;
+  messageId: string;
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  const delegationItem = group.items[0];
+  const traceItems = group.items.slice(1);
+
+  return (
+    <div className="flex w-full flex-col gap-3">
+      {/* delegation 头部：可折叠 */}
+      {delegationItem?.kind === "delegation" && (
+        <DelegationCard
+          target={delegationItem.part.target}
+          message={delegationItem.part.message}
+          expanded={expanded}
+          onToggle={setExpanded}
+        />
+      )}
+      {/* 执行轨迹容器：展开时显示 */}
+      {expanded && traceItems.length > 0 && (
+        <div className="flex w-full flex-col gap-3 rounded-lg rounded-tl-md border border-default px-3 py-2 shadow-soft">
+          {traceItems.map((item, itemIdx) => {
+            const isSameKindAsPrev = itemIdx > 0 && traceItems[itemIdx - 1]?.kind === item.kind;
+            const blockClass = isSameKindAsPrev ? "gap-1" : "";
+            switch (item.kind) {
+              case "reasoning":
+                return (
+                  <div key={`r-${item.part.id}`} className={blockClass}>
+                    <ReasoningBlock
+                      partId={item.part.id}
+                      messageId={messageId}
+                      text={item.part.text}
+                      done={item.part.done}
+                      startedAt={item.part.startedAt}
+                      doneAt={item.part.doneAt}
+                    />
+                  </div>
+                );
+              case "tool-call":
+                return (
+                  <div key={`t-${item.part.id}`} className={blockClass}>
+                    <ToolCallCard
+                      toolName={item.part.toolName}
+                      args={item.part.args}
+                      status={item.part.status}
+                      result={item.part.result}
+                      error={item.part.error}
+                      source={item.part.source}
+                      startedAt={item.part.startedAt}
+                      arrivedAt={item.part.arrivedAt}
+                    />
+                  </div>
+                );
+              case "tool-call-group":
+                return (
+                  <div key={`g-${item.items[0]?.id ?? itemIdx}-${item.toolName}`} className={blockClass}>
+                    <ToolCallGroup
+                      toolName={item.toolName}
+                      items={item.items}
+                    />
+                  </div>
+                );
+              case "orphan-tool-result":
+                return (
+                  <div key={`o-${item.part.id}`} className={blockClass}>
+                    <ToolCallCard
+                      toolName={item.part.toolName}
+                      args={undefined}
+                      status={item.part.error ? "error" : "complete"}
+                      result={item.part.result}
+                      error={item.part.error}
+                    />
+                  </div>
+                );
+              case "text":
+                return (
+                  <div key={`x-${item.part.id}`} className={blockClass}>
+                    <TextPartView text={item.part.text} role="assistant" />
+                  </div>
+                );
+              default:
+                return null;
+            }
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const AssistantMessageParts = memo(function AssistantMessageParts({
   message,
   isStreamingLast,
@@ -207,96 +312,154 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
   const items = useMemo(() => buildRenderItems(message.parts), [message.parts]);
 
   const hasContent = items.length > 0;
+
+  // 空状态：独立加载卡片
+  if (items.length === 0 && !hasContent && isStreamingLast) {
+    return (
+      <div className="flex justify-start">
+        <div className="flex w-[95%]">
+          <div className="flex w-full items-center gap-1.5 rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
+            <span className="flex gap-0.5">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500" />
+            </span>
+            思考中
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 按 delegation 分组：同一个子代理的 parts 包裹在同一个容器中
+  // 子代理容器包含：delegation + reasoning + tool-call/tool-call-group/orphan-tool-result
+  // 最终 text 输出独立在卡片外
+  const groups = useMemo(() => {
+    const result: { delegationIdx: number; items: RenderItem[] }[] = [];
+    let currentGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      if (item.kind === "delegation") {
+        // 新的子代理分组开始，delegation 放入容器内作为头部
+        currentGroup = { delegationIdx: i, items: [item] };
+        result.push(currentGroup);
+      } else if (item.kind === "team") {
+        // team 独立成组，不归属任何子代理
+        result.push({ delegationIdx: i, items: [item] });
+        currentGroup = null;
+      } else if (currentGroup) {
+        // 属于当前子代理分组
+        // 但 text 是最终输出，不放入子代理卡片内
+        if (item.kind === "text") {
+          result.push({ delegationIdx: i, items: [item] });
+          currentGroup = null;
+        } else {
+          currentGroup.items.push(item);
+        }
+      } else {
+        // 无子代理归属的独立项（如直接出现的 reasoning/tool-call/text）
+        result.push({ delegationIdx: i, items: [item] });
+      }
+    }
+
+    return result;
+  }, [items]);
+
   return (
     <div className="flex justify-start">
-      <div className="flex w-[95%] gap-2">
-        <div className="flex w-full flex-col gap-1 rounded-lg rounded-tl-md bg-surface px-2 py-1 shadow-soft">
-          {items.length === 0 && !hasContent && isStreamingLast && (
-            <span className="flex items-center gap-1.5 text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
-              <span className="flex gap-0.5">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500" />
-              </span>
-              思考中
-            </span>
-          )}
-          {items.map((item, idx) => {
-            switch (item.kind) {
-              case "delegation":
-                return (
-                  <DelegationCard
-                    key={`d-${item.part.id}`}
-                    target={item.part.target}
-                    message={item.part.message}
-                  />
-                );
-              case "reasoning":
-                return (
-                  <ReasoningBlock
-                    key={`r-${item.part.id}`}
-                    partId={item.part.id}
-                    messageId={message.id}
-                    text={item.part.text}
-                    done={item.part.done}
-                    startedAt={item.part.startedAt}
-                    doneAt={item.part.doneAt}
-                  />
-                );
-              case "tool-call":
-                return (
-                  <ToolCallCard
-                    key={`t-${item.part.id}`}
-                    toolName={item.part.toolName}
-                    args={item.part.args}
-                    status={item.part.status}
-                    result={item.part.result}
-                    error={item.part.error}
-                    source={item.part.source}
-                    startedAt={item.part.startedAt}
-                    arrivedAt={item.part.arrivedAt}
-                  />
-                );
-              case "tool-call-group":
-                return (
-                  <ToolCallGroup
-                    key={`g-${item.items[0]?.id ?? idx}-${item.toolName}`}
-                    toolName={item.toolName}
-                    items={item.items}
-                  />
-                );
-              case "orphan-tool-result":
-                // 兜底：孤儿 tool-result 用 ToolCallCard 渲染为 complete 状态
-                return (
-                  <ToolCallCard
-                    key={`o-${item.part.id}`}
-                    toolName={item.part.toolName}
-                    args={undefined}
-                    status={item.part.error ? "error" : "complete"}
-                    result={item.part.result}
-                    error={item.part.error}
-                  />
-                );
-              case "text":
-                return (
-                  <Fragment key={`x-${item.part.id}`}>
-                    <TextPartView text={item.part.text} role="assistant" />
-                  </Fragment>
-                );
-              case "team":
-                return (
-                  <TeamNodeCard
-                    key={`team-${item.part.id}`}
-                    plan={item.part.plan}
-                    reasoning={item.part.reasoning}
-                    agents={item.part.agents}
-                    status={item.part.status}
-                    doneAt={item.part.doneAt}
-                  />
-                );
-              default:
-                return null;
+      <div className="flex w-[95%]">
+        <div className="flex w-full flex-col gap-3">
+          {groups.map((group, groupIdx) => {
+            const hasDelegation = group.items[0]?.kind === "delegation";
+            // 包含 delegation 的子代理分组：delegation 在容器上方，容器内只有执行轨迹
+            if (hasDelegation) {
+              return (
+                <SubAgentGroup
+                  key={`group-${groupIdx}-${group.delegationIdx}`}
+                  group={group}
+                  groupIdx={groupIdx}
+                  messageId={message.id}
+                />
+              );
             }
+            // 无 delegation 的独立项：各自独立卡片
+            return group.items.map((item, itemIdx) => {
+              switch (item.kind) {
+                case "classification":
+                  return (
+                    <ClassificationCard
+                      key={`c-${item.part.id}`}
+                      label={item.part.label}
+                      reason={item.part.reason}
+                    />
+                  );
+                case "reasoning":
+                  return (
+                    <ReasoningBlock
+                      key={`r-${item.part.id}`}
+                      partId={item.part.id}
+                      messageId={message.id}
+                      text={item.part.text}
+                      done={item.part.done}
+                      startedAt={item.part.startedAt}
+                      doneAt={item.part.doneAt}
+                    />
+                  );
+                case "tool-call":
+                  return (
+                    <ToolCallCard
+                      key={`t-${item.part.id}`}
+                      toolName={item.part.toolName}
+                      args={item.part.args}
+                      status={item.part.status}
+                      result={item.part.result}
+                      error={item.part.error}
+                      source={item.part.source}
+                      startedAt={item.part.startedAt}
+                      arrivedAt={item.part.arrivedAt}
+                    />
+                  );
+                case "tool-call-group":
+                  return (
+                    <ToolCallGroup
+                      key={`g-${item.items[0]?.id ?? itemIdx}-${item.toolName}`}
+                      toolName={item.toolName}
+                      items={item.items}
+                    />
+                  );
+                case "orphan-tool-result":
+                  return (
+                    <ToolCallCard
+                      key={`o-${item.part.id}`}
+                      toolName={item.part.toolName}
+                      args={undefined}
+                      status={item.part.error ? "error" : "complete"}
+                      result={item.part.result}
+                      error={item.part.error}
+                    />
+                  );
+                case "text":
+                  return (
+                    <Fragment key={`x-${item.part.id}`}>
+                      <TextPartView text={item.part.text} role="assistant" />
+                    </Fragment>
+                  );
+                case "team":
+                  return (
+                    <TeamNodeCard
+                      key={`team-${item.part.id}`}
+                      plan={item.part.plan}
+                      reasoning={item.part.reasoning}
+                      agents={item.part.agents}
+                      status={item.part.status}
+                      doneAt={item.part.doneAt}
+                    />
+                  );
+                default:
+                  return null;
+              }
+            });
           })}
         </div>
       </div>

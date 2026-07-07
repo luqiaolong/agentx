@@ -301,7 +301,7 @@ export default function App() {
       </div>
 
       <ApprovalDialog />
-      {/* 设置弹窗 —— 由侧边栏「设置」按钮触发，全局承载；内含「日志」tab */}
+      {/* 设置弹窗 —— 由侧边栏「设置」按钮触发，全局承载 */}
       <SettingsModal />
 
       {/* 代码查看弹窗 —— 由 Workspace 上下文面板文件点击触发 */}

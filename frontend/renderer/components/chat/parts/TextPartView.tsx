@@ -54,10 +54,12 @@ export function TextPartView({
   }
 
   return (
-    <div className="prose-chat">
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
-        {deferredText}
-      </ReactMarkdown>
+    <div className="rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
+      <div className="prose-chat">
+        <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+          {deferredText}
+        </ReactMarkdown>
+      </div>
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { invoke } from "@tauri-apps/api/core";
+import { read } from "@/lib/api/logs";
 import {
   Trash2,
   ScrollText,
@@ -37,23 +39,24 @@ const MAX_LINES = 5000;
  * ================================================================ */
 
 const DS = {
-  // Backgrounds
-  bgApp: "#111111",
-  bgSurface: "#1a1a1a",
-  bgSubtle: "#242424",
-  bgHover: "#2e2e2e",
-  // Borders
-  borderDefault: "#333333",
-  borderStrong: "#444444",
+  // Console-style backgrounds (darker, more contrast)
+  bgApp: "#0c0c0c",
+  bgSurface: "#141414",
+  bgSubtle: "#1a1a1a",
+  bgHover: "#252525",
+  // Borders (ultra-thin but visible)
+  borderDefault: "#2a2a2a",
+  borderStrong: "#3a3a3a",
+  borderWindow: "#3d3d3d",
   // Text
-  textPrimary: "#ececec",
-  textSecondary: "#c8c8c8",
-  textMuted: "#909090",
-  // Accents (level colors — keep distinct for readability)
-  levelError: "#f87171",
-  levelWarn: "#fbbf24",
-  levelInfo: "#60a5fa",
-  levelDebug: "#a78bfa",
+  textPrimary: "#e0e0e0",
+  textSecondary: "#a0a0a0",
+  textMuted: "#666666",
+  // Accents (console-style muted colors)
+  levelError: "#ff5f5f",
+  levelWarn: "#ffaf5f",
+  levelInfo: "#5fafd7",
+  levelDebug: "#af87ff",
   // Misc
   brandIndigo: "#4f46e5",
   success: "#22c55e",
@@ -150,16 +153,38 @@ function LogWindow() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
 
-  // 监听日志事件（使用 getCurrentWebviewWindow().listen 确保事件能正确接收）
+  // 初始加载：从日志文件读取历史日志（与设置菜单 LogViewer 取值一致）
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const result = await read(undefined, 500);
+        if (result.length > 0) {
+          const historyLines: LogLine[] = result.map((text) => {
+            const now = new Date();
+            return {
+              id: globalId++,
+              text,
+              timestamp: `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}.${now.getMilliseconds().toString().padStart(3, "0")}`,
+              level: detectLevel(text),
+            };
+          });
+          setLines(historyLines);
+        }
+      } catch (e) {
+        console.error("[LogWindow] failed to load history logs:", e);
+      }
+    };
+    loadHistory();
+  }, []);
+
+  // 监听实时日志事件（追加到已有日志后）
   useEffect(() => {
     let unlistenFn: UnlistenFn | null = null;
 
     const setup = async () => {
       try {
-        const win = getCurrentWebviewWindow();
-        console.log("[LogWindow] registering listener on window:", win.label);
-        unlistenFn = await win.listen<string>("log:append", (event) => {
-          console.log("[LogWindow] received log:append event:", event.payload);
+        console.log("[LogWindow] registering global listener for log:append");
+        unlistenFn = await listen<string>("log:append", (event) => {
           const text = event.payload;
           const now = new Date();
           const timestamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}.${now.getMilliseconds().toString().padStart(3, "0")}`;
@@ -173,7 +198,7 @@ function LogWindow() {
             return next;
           });
         });
-        console.log("[LogWindow] listener registered successfully");
+        console.log("[LogWindow] global listener registered successfully");
       } catch (e) {
         console.error("[LogWindow] failed to register listener:", e);
       }
@@ -216,13 +241,19 @@ function LogWindow() {
   const clearLogs = useCallback(() => setLines([]), []);
 
   const handleMinimize = useCallback(async () => {
-    const win = getCurrentWebviewWindow();
-    await win.minimize();
+    try {
+      await invoke("window_minimize_by_label", { label: "log" });
+    } catch (e) {
+      console.error("[LogWindow] minimize failed:", e);
+    }
   }, []);
 
   const handleClose = useCallback(async () => {
-    const win = getCurrentWebviewWindow();
-    await win.close();
+    try {
+      await invoke("window_close_by_label", { label: "log" });
+    } catch (e) {
+      console.error("[LogWindow] close failed:", e);
+    }
   }, []);
 
   const toggleSearch = useCallback(() => {
@@ -313,28 +344,26 @@ function LogWindow() {
         background: DS.bgApp,
         color: DS.textPrimary,
         fontFamily: DS.fontSans,
-        fontSize: 12,
-        lineHeight: "1.6",
+        fontSize: 11,
+        lineHeight: "1.5",
         overflow: "hidden",
         margin: 0,
         padding: 0,
-        border: "none",
+        border: `1px solid ${DS.borderWindow}`,
         outline: "none",
         boxSizing: "border-box",
       }}
     >
-      {/* ===== 标题栏 —— glass-card 风格，与主窗口一致 ===== */}
+      {/* ===== 标题栏 —— console 风格，紧凑 ===== */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 0 0 12px",
-          height: 40,
+          padding: "0 0 0 10px",
+          height: 32,
           borderBottom: `1px solid ${DS.borderDefault}`,
-          backgroundColor: "color-mix(in srgb, #1a1a1a 85%, transparent)",
-          backdropFilter: "blur(12px)",
-          WebkitBackdropFilter: "blur(12px)",
+          backgroundColor: DS.bgSurface,
           flexShrink: 0,
           userSelect: "none",
           // @ts-ignore
@@ -346,9 +375,9 @@ function LogWindow() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: 6,
             fontWeight: 600,
-            fontSize: 13,
+            fontSize: 12,
             fontFamily: DS.fontSans,
           }}
         >
@@ -357,21 +386,21 @@ function LogWindow() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 22,
-              height: 22,
-              borderRadius: 5,
+              width: 18,
+              height: 18,
+              borderRadius: 3,
               background: DS.brandIndigo,
               color: DS.textSecondary,
               boxShadow: "0 1px 3px 0 rgb(0 0 0 / 0.1)",
             }}
           >
-            <ScrollText size={13} />
+            <ScrollText size={11} />
           </div>
           <span style={{ color: DS.textPrimary, letterSpacing: 0.3 }}>AgentX</span>
           <span style={{ color: DS.textMuted, fontWeight: 400 }}>Logs</span>
 
           {/* 统计徽章 */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 3, marginLeft: 3 }}>
             {levelCounts.error > 0 && <LevelBadge color={DS.levelError} count={levelCounts.error} />}
             {levelCounts.warn > 0 && <LevelBadge color={DS.levelWarn} count={levelCounts.warn} />}
             <LevelBadge color={DS.textMuted} count={lines.length} label="总" />
@@ -588,10 +617,12 @@ function LogWindow() {
         style={{
           flex: 1,
           overflow: "auto",
-          padding: "4px 0",
+          padding: "2px 0",
           wordBreak: "break-all",
           whiteSpace: "pre-wrap",
           fontFamily: DS.fontMono,
+          fontSize: 10,
+          lineHeight: "1.4",
         }}
       >
         {filteredLines.length === 0 ? (
@@ -603,12 +634,12 @@ function LogWindow() {
               justifyContent: "center",
               height: "100%",
               color: DS.textMuted,
-              gap: 8,
+              gap: 6,
               fontFamily: DS.fontSans,
             }}
           >
-            <ScrollText size={32} opacity={0.3} />
-            <span style={{ fontSize: 13 }}>
+            <ScrollText size={28} opacity={0.3} />
+            <span style={{ fontSize: 11 }}>
               {lines.length === 0 ? "暂无日志，等待后端输出..." : "没有匹配的日志"}
             </span>
           </div>
@@ -626,8 +657,7 @@ function LogWindow() {
                   display: "flex",
                   alignItems: "flex-start",
                   gap: 0,
-                  padding: "2px 12px",
-                  borderBottom: `1px solid rgba(51, 51, 51, 0.4)`,
+                  padding: "1px 10px",
                   background: levelBg,
                   transition: "background 0.1s",
                 }}
@@ -638,45 +668,6 @@ function LogWindow() {
                   e.currentTarget.style.background = levelBg;
                 }}
               >
-                {/* 时间戳 */}
-                <span
-                  style={{
-                    color: DS.textMuted,
-                    marginRight: 10,
-                    userSelect: "none",
-                    fontSize: 11,
-                    minWidth: 70,
-                    flexShrink: 0,
-                    paddingTop: 1,
-                    fontFamily: DS.fontMono,
-                  }}
-                >
-                  {line.timestamp}
-                </span>
-
-                {/* 级别标签（紧凑） */}
-                {label && (
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 3,
-                      color: levelColor,
-                      fontSize: 10,
-                      fontWeight: 600,
-                      minWidth: 34,
-                      flexShrink: 0,
-                      marginRight: 8,
-                      paddingTop: 2,
-                      opacity: 0.85,
-                      fontFamily: DS.fontMono,
-                    }}
-                  >
-                    {icon}
-                    {label}
-                  </span>
-                )}
-
                 {/* 日志内容 */}
                 <span style={{ color: levelColor, flex: 1, paddingTop: 1, fontFamily: DS.fontMono }}>
                   {highlightText(line.text, searchQuery)}
@@ -694,17 +685,17 @@ function LogWindow() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "4px 12px",
+          padding: "3px 10px",
           borderTop: `1px solid ${DS.borderDefault}`,
-          background: DS.bgApp,
+          background: DS.bgSurface,
           flexShrink: 0,
-          fontSize: 11,
+          fontSize: 10,
           color: DS.textSecondary,
           userSelect: "none",
           fontFamily: DS.fontSans,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color: DS.textMuted }}>总计 {lines.length} 条</span>
           {filterLevel !== "all" && (
             <span style={{ color: DS.levelInfo }}>
@@ -717,24 +708,25 @@ function LogWindow() {
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 4,
+              gap: 3,
               color: DS.success,
               fontWeight: 500,
               fontFamily: DS.fontSans,
+              fontSize: 10,
             }}
           >
             <span
               style={{
-                width: 6,
-                height: 6,
+                width: 5,
+                height: 5,
                 borderRadius: "50%",
                 background: DS.success,
-                boxShadow: "0 0 6px rgba(34, 197, 94, 0.5)",
+                boxShadow: "0 0 4px rgba(34, 197, 94, 0.5)",
               }}
             />
             监听中
@@ -804,6 +796,8 @@ function IconButton({
         fontSize: 13,
         padding: 0,
         transition: "all 0.15s",
+        // @ts-ignore
+        WebkitAppRegion: "no-drag",
       }}
     >
       {icon}
@@ -845,6 +839,8 @@ function WindowControlButton({
         padding: 0,
         transition: "all 0.15s",
         borderRadius: 0,
+        // @ts-ignore
+        WebkitAppRegion: "no-drag",
       }}
     >
       {children}

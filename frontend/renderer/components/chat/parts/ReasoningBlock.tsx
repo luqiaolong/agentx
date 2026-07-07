@@ -129,7 +129,7 @@ function ReasoningBlockImpl({
   // 流式时（!done && text.length === 0）显示「思考中…」+ 跳动圆点
   if (!done && text.length === 0) {
     return (
-      <div className="flex items-center gap-1.5 rounded-md bg-muted-c/5 px-2 py-1 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+      <div className="flex items-center gap-1.5 rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
         <Brain className="h-2.5 w-2.5" />
         <span>思考中</span>
         <span className="flex gap-0.5">
@@ -144,7 +144,7 @@ function ReasoningBlockImpl({
   // 流式且有文本：展示可滚动预览区（不展示折叠卡片）
   if (!done && text.length > 0) {
     return (
-      <div className="w-full rounded-md bg-muted-c/5 px-2 py-1" data-testid="reasoning-stream-preview">
+      <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft" data-testid="reasoning-stream-preview">
         <div className="mb-0.5 flex items-center gap-1.5 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           <Brain className="h-2.5 w-2.5" />
           <span>思考中… {elapsedSec}s</span>
@@ -161,7 +161,7 @@ function ReasoningBlockImpl({
 
   // 完成时：折叠为「已思考 N 秒」，点击展开回看完整 reasoning
   return (
-    <div className="w-full rounded-md bg-muted-c/5 px-2 py-1">
+    <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
       <button
         type="button"
         onClick={toggleExpanded}

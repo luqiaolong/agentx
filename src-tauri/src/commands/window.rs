@@ -41,6 +41,24 @@ pub fn window_close(app: AppHandle) -> Result<(), String> {
     main.close().map_err(|e| e.to_string())
 }
 
+/// `window:minimize_by_label` → 最小化指定 label 的窗口。
+#[tauri::command]
+pub fn window_minimize_by_label(app: AppHandle, label: String) -> Result<(), String> {
+    let win = app
+        .get_webview_window(&label)
+        .ok_or(format!("window '{}' not found", label))?;
+    win.minimize().map_err(|e| e.to_string())
+}
+
+/// `window:close_by_label` → 关闭指定 label 的窗口。
+#[tauri::command]
+pub fn window_close_by_label(app: AppHandle, label: String) -> Result<(), String> {
+    let win = app
+        .get_webview_window(&label)
+        .ok_or(format!("window '{}' not found", label))?;
+    win.close().map_err(|e| e.to_string())
+}
+
 /// `window:isMaximized` → 查询主窗口是否最大化。
 #[tauri::command]
 pub fn window_is_maximized(app: AppHandle) -> bool {

@@ -26,6 +26,7 @@ def make_sse_event(event: str, data: Any) -> dict[str, str]:
         "tool_call",
         "tool_result",
         "delegation",
+        "classification",
         "team_plan",
         "team_progress",
         "team_result",

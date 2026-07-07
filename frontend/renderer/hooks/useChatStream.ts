@@ -174,6 +174,17 @@ export function useChatStream(args: UseChatStreamArgs) {
           }
           break;
         }
+        case "classification": {
+          if (pendingIdRef.current) {
+            addPart(pendingIdRef.current, {
+              type: "classification",
+              id: crypto.randomUUID(),
+              label: e.label,
+              reason: e.reason,
+            });
+          }
+          break;
+        }
         case "paused": {
           callbacksRef.current.setPaused?.(true);
           break;

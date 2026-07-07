@@ -85,11 +85,13 @@ pub fn run() {
             commands::shell::shell_reveal_in_folder,
             commands::shell::shell_open_in_editor,
             commands::shell::shell_open_external,
-            // === Window 命令（4 个）===
+            // === Window 命令（6 个）===
             commands::window::window_minimize,
             commands::window::window_maximize,
             commands::window::window_close,
             commands::window::window_is_maximized,
+            commands::window::window_minimize_by_label,
+            commands::window::window_close_by_label,
             // === Clipboard 命令（2 个）===
             commands::clipboard::clipboard_read,
             commands::clipboard::clipboard_write,

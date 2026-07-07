@@ -11,7 +11,6 @@ import {
   Brain,
   FileText,
   Plug,
-  ScrollText,
 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { useModalDialog } from "@/components/ui/hooks/useModalDialog";
@@ -25,7 +24,6 @@ import { ToolsSettings } from "./ToolsSettings";
 import { MemorySettings } from "./MemorySettings";
 import { McpSettings } from "./mcp";
 import { SkillsManager } from "./memory/SkillsManager";
-import { LogViewer } from "./LogViewer";
 
 type TabId =
   | "prompt"
@@ -37,8 +35,7 @@ type TabId =
   | "tools"
   | "knowledge"
   | "approval"
-  | "sandbox"
-  | "logs";
+  | "sandbox";
 
 interface TabDef {
   id: TabId;
@@ -58,7 +55,6 @@ const TABS: TabDef[] = [
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
   { id: "sandbox", label: "沙箱目录", desc: "持久化授权目录", Icon: FolderLock },
-  { id: "logs", label: "日志", desc: "后端运行日志（自动刷新）", Icon: ScrollText },
 ];
 
 const PANEL_ID = "settings-tabpanel";
@@ -74,7 +70,7 @@ export function SettingsModal() {
     onClose: () => setOpen(false),
   });
 
-  // 打开时：若有 pendingSettingsTab 则跳转到该 tab（如 ErrorBoundary 跳"日志"），
+  // 打开时：若有 pendingSettingsTab 则跳转到该 tab，
   // 否则重置到首个（系统提示词）。
   // 焦点恢复 / 初始聚焦 / body 锁 / ESC / Tab 陷阱由 useModalDialog 统一处理。
   useEffect(() => {
@@ -182,11 +178,6 @@ export function SettingsModal() {
             {active === "knowledge" && <MilvusCredentialsForm />}
             {active === "approval" && <ApprovalSettings />}
             {active === "sandbox" && <SandboxSettings />}
-            {active === "logs" && (
-              <div className="flex h-full min-h-[400px] flex-col">
-                <LogViewer />
-              </div>
-            )}
           </div>
         </div>
       </div>
