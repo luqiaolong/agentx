@@ -269,7 +269,7 @@ const SessionItem = memo(function SessionItem({
         </span>
         <div className="min-w-0 flex-1">
           <div
-            className={`truncate font-semibold leading-snug ${active ? "text-primary-c" : "text-secondary-c"}`}
+            className={`truncate font-semibold leading-snug ${active ? "text-primary-c" : "text-muted-c"}`}
             style={{ fontSize: 'var(--fs-sidebar-item)' }}
           >
             {s.title}
