@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app import main
+from app.approval import state as approval_state
 from app.main import app
 
 
@@ -25,6 +26,13 @@ async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+def _mock_checkpointer():
+    """返回一个 AsyncMock checkpointer，避免测试中创建真实 SQLite 连接。"""
+    mock = AsyncMock()
+    mock.aget = AsyncMock(return_value=None)
+    return mock
 
 
 async def _collect_sse_events(client: AsyncClient, url: str, json_body: dict) -> list[dict[str, str]]:
@@ -63,11 +71,13 @@ async def test_approval_request_event_shape(client: AsyncClient) -> None:
         "preview": "将写入文件: /tmp/test.txt",
     }
 
-    async def _fake(message: str, tid: str, checkpointer: object = None) -> AsyncIterator[dict[str, str]]:
+    async def _fake(message: str, tid: str, checkpointer: object = None, **kwargs) -> AsyncIterator[dict[str, str]]:
         yield {"event": "approval_request", "data": json.dumps(payload, ensure_ascii=False)}
         yield {"event": "done", "data": "{}"}
 
-    with patch("app.main.run_router", _fake):
+    with patch("app.main.run_router", _fake), patch(
+        "app.main.get_async_checkpointer", return_value=_mock_checkpointer()
+    ):
         events = await _collect_sse_events(
             client, "/api/chat", {"message": "写文件", "thread_id": thread_id}
         )
@@ -85,38 +95,38 @@ async def test_approval_request_event_shape(client: AsyncClient) -> None:
 async def test_approve_and_abort_endpoints(client: AsyncClient) -> None:
     """/api/chat/approve 与 /api/chat/abort 正确写入内存状态并返回 ok。"""
     thread_id = "approval-endpoints"
-    main._pending_approvals.pop(thread_id, None)
-    main._abort_flags.pop(thread_id, None)
+    approval_state._pending_approvals.pop(thread_id, None)
+    approval_state._abort_flags.pop(thread_id, None)
 
     resp = await client.post(
         "/api/chat/approve", json={"thread_id": thread_id, "approval": True}
     )
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
-    assert main._pending_approvals.get(thread_id) is True
+    assert approval_state._pending_approvals.get(thread_id).approved is True
 
     resp = await client.post(
         "/api/chat/approve", json={"thread_id": thread_id, "approval": False}
     )
     assert resp.status_code == 200
-    assert main._pending_approvals.get(thread_id) is False
+    assert approval_state._pending_approvals.get(thread_id).approved is False
 
     resp = await client.post("/api/chat/abort", json={"thread_id": thread_id})
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
-    assert main._abort_flags.get(thread_id) is True
+    assert approval_state._abort_flags.get(thread_id) is True
 
 
 @pytest.mark.integration
 async def test_full_approval_flow_auto_resume(client: AsyncClient) -> None:
     """完整审批流：chat 触发 approval_request → 提交 approve → 流恢复 → /reset 清理。"""
     thread_id = "approval-full-flow"
-    main._pending_approvals.pop(thread_id, None)
-    main._abort_flags.pop(thread_id, None)
+    approval_state._pending_approvals.pop(thread_id, None)
+    approval_state._abort_flags.pop(thread_id, None)
 
     approval_yielded = asyncio.Event()
 
-    async def _fake(message: str, tid: str, checkpointer: object = None) -> AsyncIterator[dict[str, str]]:
+    async def _fake(message: str, tid: str, checkpointer: object = None, **kwargs) -> AsyncIterator[dict[str, str]]:
         yield {
             "event": "todo_update",
             "data": json.dumps(
@@ -140,7 +150,8 @@ async def test_full_approval_flow_auto_resume(client: AsyncClient) -> None:
 
         # 等待审批决定
         for _ in range(100):  # 最多 5 秒
-            if main._pending_approvals.get(tid) is True:
+            decision = approval_state._pending_approvals.get(tid)
+            if decision is not None and decision.approved:
                 break
             await asyncio.sleep(0.05)
         else:
@@ -157,7 +168,9 @@ async def test_full_approval_flow_auto_resume(client: AsyncClient) -> None:
         yield {"event": "token", "data": "已完成写入"}
         yield {"event": "done", "data": "{}"}
 
-    with patch("app.main.run_router", _fake):
+    with patch("app.main.run_router", _fake), patch(
+        "app.main.get_async_checkpointer", return_value=_mock_checkpointer()
+    ):
         # 启动 SSE 流任务
         chat_task = asyncio.create_task(
             _collect_sse_events(
@@ -184,10 +197,11 @@ async def test_full_approval_flow_auto_resume(client: AsyncClient) -> None:
     ], event_names
     assert json.loads(events[1]["data"])["tool_name"] == "write_file"
 
-    # /reset 清理
-    reset_events = await _collect_sse_events(
-        client, "/api/chat", {"message": "/reset", "thread_id": thread_id}
-    )
+    # /reset 清理（同样需要 mock checkpointer 避免真实 SQLite 连接）
+    with patch("app.main.get_async_checkpointer", return_value=_mock_checkpointer()):
+        reset_events = await _collect_sse_events(
+            client, "/api/chat", {"message": "/reset", "thread_id": thread_id}
+        )
     assert any(
         e["event"] == "token" and "已清空" in e["data"] for e in reset_events
     )

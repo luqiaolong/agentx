@@ -31,13 +31,11 @@ _UNAUTHORIZED_WRITE = "路径 {path} 未授权，请通过 dialog 选择目录�
 def _resolve(path: str | Path) -> Path:
     """规范化路径，相对路径基于 PROJECT_ROOT 解析。
 
-    与 ``SessionSandbox._normalize`` 一致：LLM 工具调用常生成相对路径，
-    若用 ``Path(path)`` 默认基于 CWD（可能是 ``backend/``）解析会找不到文件。
+    委托给 ``app.utils.paths.normalize_path``，保持向后兼容。
     """
-    p = Path(path)
-    if not p.is_absolute():
-        p = PROJECT_ROOT / p
-    return p.resolve()
+    from app.utils.paths import normalize_path
+
+    return normalize_path(path)
 
 
 def _deny_read(path: str | Path) -> str:
