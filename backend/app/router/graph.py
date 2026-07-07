@@ -499,24 +499,85 @@ async def _append_messages_to_checkpointer(
 ) -> None:
     """将 ``new_messages`` 追加到 ``thread_id`` 的 checkpointer messages channel。
 
+    实现策略：通过 LangGraph 编译一个最小 ``StateGraph``（含 messages channel），
+    调用 ``graph.ainvoke`` 让 LangGraph 内部 schema 机制负责 channel_versions /
+    checkpoint_id / checkpoint_ns 等字段的正确序列化。直接手工 ``aput`` 会因为
+    缺少 ``checkpoint_ns`` / ``id`` 字段触发 ``InternalError: 'checkpoint_ns'``。
+
     兼容同步与异步 checkpointer（优先异步接口）。若 thread_id 尚无 checkpoint，
-    则创建一个最小新 checkpoint。
+    图会自动初始化首个 checkpoint。
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    # 兼容同步 checkpointer（如 SqliteSaver）—— 包一层 async 适配
+    async def _append_async() -> None:
+        from langchain_core.runnables import RunnableConfig
+        from langgraph.graph import END, START, MessagesState, StateGraph
+
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
+        # 读取已有 messages，与 new_messages 合并后重新调用 ainvoke
+        if hasattr(checkpointer, "aget"):
+            existing = await checkpointer.aget(config)
+        else:
+            existing = checkpointer.get(config)
+
+        existing_msgs: list = []
+        if existing and isinstance(existing, dict):
+            channel_values = existing.get("channel_values", {}) or {}
+            existing_msgs = list(channel_values.get("messages", []) or [])
+        combined_msgs = [*existing_msgs, *new_messages]
+
+        # 构建单节点最小图：passthrough 节点把 input.messages 直接 emit 到 output.messages
+        async def _passthrough(state: MessagesState) -> dict:
+            return {"messages": []}
+
+        graph = StateGraph(MessagesState)
+        graph.add_node("passthrough", _passthrough)
+        graph.add_edge(START, "passthrough")
+        graph.add_edge("passthrough", END)
+        compiled = graph.compile(checkpointer=checkpointer)
+        await compiled.ainvoke({"messages": combined_msgs}, config=config)
+
+    async def _append_sync() -> None:
+        # 同步 checkpointer 走线程池，避免阻塞事件循环
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _do() -> None:
+            from langchain_core.runnables import RunnableConfig
+            from langgraph.graph import END, START, MessagesState, StateGraph
+
+            config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+            existing = checkpointer.get(config)
+            existing_msgs: list = []
+            if existing and isinstance(existing, dict):
+                channel_values = existing.get("channel_values", {}) or {}
+                existing_msgs = list(channel_values.get("messages", []) or [])
+            combined_msgs = [*existing_msgs, *new_messages]
+
+            async def _passthrough(state: MessagesState) -> dict:
+                return {"messages": []}
+
+            graph = StateGraph(MessagesState)
+            graph.add_node("passthrough", _passthrough)
+            graph.add_edge(START, "passthrough")
+            graph.add_edge("passthrough", END)
+            compiled = graph.compile(checkpointer=checkpointer)
+            import asyncio as _aio
+            try:
+                _loop = _aio.get_event_loop()
+            except RuntimeError:
+                _loop = None
+            if _loop and _loop.is_running():
+                # 不会走到这里（同步路径），但保留防御
+                raise RuntimeError("cannot run async checkpointer from sync context with active loop")
+            _aio.run(compiled.ainvoke({"messages": combined_msgs}, config=config))
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(ThreadPoolExecutor(max_workers=1), _do)
+
     if hasattr(checkpointer, "aget"):
-        checkpoint = await checkpointer.aget(config)
+        await _append_async()
+    elif hasattr(checkpointer, "get"):
+        await _append_sync()
     else:
-        checkpoint = checkpointer.get(config)
-
-    if checkpoint is None:
-        checkpoint = {"channel_values": {}}
-    channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
-    messages = list(channel_values.get("messages", []))
-    messages.extend(new_messages)
-    new_channel_values = {**channel_values, "messages": messages}
-    new_checkpoint = {**checkpoint, "channel_values": new_channel_values}
-
-    if hasattr(checkpointer, "aput"):
-        await checkpointer.aput(config, new_checkpoint, {"messages": "any"}, [])
-    elif hasattr(checkpointer, "put"):
-        checkpointer.put(config, new_checkpoint, {"messages": "any"}, [])
+        raise TypeError(f"unsupported checkpointer: {type(checkpointer).__name__}")
