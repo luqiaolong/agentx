@@ -1,14 +1,14 @@
-"""Router 图单元测试：mock LLM + mock subagents，不调真实服务。
+"""Router 编排单元测试：mock LLM + mock subagents，不调真实服务。
 
 覆盖：
-1. build_router_graph 返回编译后的图实例
-2. CHAT 路径：mock classify_message → "CHAT" + mock LLM，验证 yield token 事件
-3. SINGLE_TOOL 路径：mock classify_message → "SINGLE_TOOL" + mock run_code_agent
+1. CHAT 路径：mock classify_message → "CHAT" + mock LLM，验证 yield token 事件
+2. SINGLE_TOOL 路径：mock classify_message → "SINGLE_TOOL" + mock run_code_agent
    - 验证 delegation 事件（路径 B 入口）
    - 验证 tool_call/tool_result 透传为同名 SSE 事件（含 source 字段）
    - 验证 token 经 ThinkFilter 分离后 yield reasoning + token
-4. DEEP_TASK 路径：mock classify_message → "DEEP_TASK" + mock run_deep_path，验证透传事件
-5. /reset 消息触发 checkpoint 清理 + 沙箱清理
+3. DEEP_TASK 路径：mock classify_message → "DEEP_TASK" + mock run_deep_path，验证透传事件
+4. /reset 消息触发 checkpoint 清理 + 沙箱清理
+5. workspace_path 字段透传
 """
 
 from __future__ import annotations
@@ -20,35 +20,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.router.graph import build_router_graph, run_router
+from app.router.graph import run_router
 from app.utils.prompts import resolve_system_prompt
-
-
-# ============================================================
-# 1. build_router_graph 返回编译后的图
-# ============================================================
-
-
-def test_build_router_graph_returns_compiled() -> None:
-    """build_router_graph() 返回非 None，且具备 astream 方法。"""
-    graph = build_router_graph()
-    assert graph is not None
-    # CompiledStateGraph 具备 astream / ainvoke 方法
-    assert hasattr(graph, "astream")
-    assert hasattr(graph, "ainvoke")
-
-
-def test_build_router_graph_with_checkpointer() -> None:
-    """build_router_graph(checkpointer=...) 接受 checkpointer 参数并编译成功。
-
-    LangGraph 1.2.7 的 ``ensure_valid_checkpointer`` 会校验 checkpointer 必须是
-    ``BaseCheckpointSaver`` 实例，故用真实 ``MemorySaver`` 而非 MagicMock。
-    """
-    from langgraph.checkpoint.memory import MemorySaver
-
-    fake_cp = MemorySaver()
-    graph = build_router_graph(checkpointer=fake_cp)
-    assert graph is not None
 
 
 # ============================================================
