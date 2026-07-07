@@ -1,32 +1,23 @@
-"""LangGraph Router 主图：分类 → 三路径分发。
+"""LangGraph Router 入口：``run_router`` 编排分类 + 三路径分发。
 
-节点:
-- classify_node: 调 classify_message，写入 state["classification"]
-- route_conditional: 根据 classification 路由到 chat_node / tool_node / deep_node
-- chat_node: 路径 A，LLM 直答 + 流式 token
-- tool_node: 路径 B，根据消息内容选择 subagent（code/rag/web）
-- deep_node: 路径 C，调 DeepAgent
+历史背景：本模块早期曾定义一个 LangGraph StateGraph（``classify_node`` /
+``chat_node`` / ``tool_node`` / ``deep_node`` / ``build_router_graph``），但路由流
+实际由 ``run_router`` SSE 生成器驱动（先调 ``classify_message``，再 dispatch 到
+``run_chat_path`` / ``run_tool_path`` / ``run_deep_path`` / ``run_team_path``），
+从未被生产代码使用。原图节点 + ``build_router_graph`` 已删除，保留本模块的
+SSE 编排、``@skill`` 标记解析与 checkpointer 历史加载。
 
-图结构: classify_node → [conditional] → {CHAT: chat_node, SINGLE_TOOL: tool_node, DEEP_TASK: deep_node} → END
-
-SSE 事件由 ``run_router`` 驱动：先分类，再按分类调用对应路径的流式生成器，
-将路径事件转为前端契约格式（token / todo_update / approval_request / done / error）。
-图本身用于结构化编排与状态持久化（checkpointer），token 级流式由路径生成器直接产出。
-
-注：路径实现已迁移到按能力域模块化的独立包：
+路径实现已迁移到按能力域模块化的独立包：
 - 路径 A → ``app.chat.run``
 - 路径 B → ``app.subagents.dispatch``
 - 路径 C → ``app.deep.agent``
 - 路径 D → ``app.team.orchestrator``
-本模块仅保留图结构、``run_router`` 编排、``@skill`` 标记解析与 checkpointer 历史加载。
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any, AsyncIterator
-
-from langgraph.graph import END, StateGraph
 
 from app.chat.run import run_chat_path
 from app.config import get_settings
@@ -37,92 +28,11 @@ from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.router.classifier import classify_message
-from app.router.state import RouterState
 from app.subagents.dispatch import run_tool_path
 from app.team.orchestrator import run_team_path
 from app.utils.sse_events import make_sse_event
 
-__all__ = ["build_router_graph", "run_router", "_parse_skill_tag"]
-
-
-# ============================================================
-# 图节点函数
-# ============================================================
-
-
-async def classify_node(state: RouterState) -> RouterState:
-    """分类节点：调 classify_message，将标签写入 state。
-
-    规则前置过滤 + LLM 分类均在 classify_message 内完成。
-    """
-    messages = state.get("messages", [])
-    message_text = ""
-    if messages:
-        last = messages[-1]
-        if isinstance(last, dict):
-            message_text = str(last.get("content", ""))
-        else:
-            message_text = str(getattr(last, "content", ""))
-
-    label = await classify_message(message_text)
-    logger.info("router.classify_node", label=label, message_len=len(message_text))
-    return {"classification": label}
-
-
-async def chat_node(state: RouterState) -> RouterState:
-    """路径 A 标记节点：标记进入闲聊路径，实际流式由 run_router 驱动。"""
-    return {"classification": state.get("classification", "CHAT")}
-
-
-async def tool_node(state: RouterState) -> RouterState:
-    """路径 B 标记节点：标记进入单工具路径，实际流式由 run_router 驱动。"""
-    return {"classification": state.get("classification", "SINGLE_TOOL")}
-
-
-async def deep_node(state: RouterState) -> RouterState:
-    """路径 C 标记节点：标记进入 DeepAgent 路径，实际流式由 run_router 驱动。"""
-    return {"classification": state.get("classification", "DEEP_TASK")}
-
-
-def route_conditional(state: RouterState) -> str:
-    """条件路由：根据 classification 返回目标节点名。"""
-    classification = state.get("classification", "CHAT")
-    return {
-        "CHAT": "chat",
-        "SINGLE_TOOL": "tool",
-        "DEEP_TASK": "deep",
-    }.get(classification, "chat")
-
-
-def build_router_graph(checkpointer: Any = None) -> Any:
-    """构建 Router 主图，返回 CompiledStateGraph。
-
-    Args:
-        checkpointer: 可选的 LangGraph checkpointer（用于状态持久化）。
-
-    Returns:
-        编译后的 StateGraph 实例。
-    """
-    graph = StateGraph(RouterState)
-    graph.add_node("classify", classify_node)
-    graph.add_node("chat", chat_node)
-    graph.add_node("tool", tool_node)
-    graph.add_node("deep", deep_node)
-
-    graph.set_entry_point("classify")
-    graph.add_conditional_edges(
-        "classify",
-        route_conditional,
-        {"chat": "chat", "tool": "tool", "deep": "deep"},
-    )
-    graph.add_edge("chat", END)
-    graph.add_edge("tool", END)
-    graph.add_edge("deep", END)
-
-    compile_kwargs: dict[str, Any] = {}
-    if checkpointer is not None:
-        compile_kwargs["checkpointer"] = checkpointer
-    return graph.compile(**compile_kwargs)
+__all__ = ["run_router", "_parse_skill_tag"]
 
 
 # ============================================================
