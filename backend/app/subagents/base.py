@@ -387,6 +387,7 @@ async def run_react_agent_stream(
     agent: Any,
     inputs: dict,
     source: str,
+    config: dict | None = None,
 ) -> AsyncIterator[dict]:
     """运行 ReAct agent 并 yield 标准化事件流。
 
@@ -402,8 +403,13 @@ async def run_react_agent_stream(
         agent: 已编译的 ReAct agent（CompiledStategraph）。
         inputs: agent 输入，形如 ``{"messages": [...]}``。
         source: 事件源标签（"code" / "rag" / "web" / 自定义 agent key）。
+        config: 可选的 LangGraph 运行配置，含 ``configurable`` 等。
+            若 agent 绑定了 checkpointer，必须提供 ``{"configurable": {"thread_id": ...}}``。
     """
-    async for event in agent.astream_events(inputs, version="v2"):
+    astream_kwargs: dict[str, Any] = {"version": "v2"}
+    if config is not None:
+        astream_kwargs["config"] = config
+    async for event in agent.astream_events(inputs, **astream_kwargs):
         kind = event["event"]
         name = event.get("name", "")
         data = event.get("data", {}) or {}

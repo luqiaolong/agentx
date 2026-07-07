@@ -65,7 +65,8 @@ async def run_rag_agent(
     agent = build_rag_agent(thread_id, checkpointer=checkpointer)
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
-    async for event in run_react_agent_stream(agent, inputs, source="rag"):
+    config = {"configurable": {"thread_id": thread_id}}
+    async for event in run_react_agent_stream(agent, inputs, source="rag", config=config):
         yield event
 
 

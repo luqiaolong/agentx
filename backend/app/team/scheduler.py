@@ -166,7 +166,8 @@ async def _run_subtask(
             )
             history_msgs = list(history) if history else []
             inputs = {"messages": [*history_msgs, {"role": "user", "content": input_text}]}
-            async for event in agent.astream_events(inputs, version="v2"):
+            config = {"configurable": {"thread_id": thread_id}}
+            async for event in agent.astream_events(inputs, version="v2", config=config):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")
                     return

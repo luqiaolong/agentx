@@ -235,7 +235,7 @@ async def run_custom_agent(
         thread_id: 会话 ID。
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
-        workspace_path: 当前会话绑定的 workspace 路径，fs 工具解析相对路径用。
+        workspace_path: 当前会话绑定的 workspace 绝对路径，fs 工具解析相对路径用。
         checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
     """
     agent = build_custom_agent(
@@ -244,7 +244,8 @@ async def run_custom_agent(
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     source = f"custom-{key}"
-    async for event in run_react_agent_stream(agent, inputs, source):
+    config = {"configurable": {"thread_id": thread_id}}
+    async for event in run_react_agent_stream(agent, inputs, source, config=config):
         yield event
 
 

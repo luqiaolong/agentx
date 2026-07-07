@@ -78,7 +78,8 @@ async def run_code_agent(
     )
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
-    async for event in run_react_agent_stream(agent, inputs, source="code"):
+    config = {"configurable": {"thread_id": thread_id}}
+    async for event in run_react_agent_stream(agent, inputs, source="code", config=config):
         yield event
 
 
