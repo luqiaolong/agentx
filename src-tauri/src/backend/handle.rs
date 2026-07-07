@@ -450,13 +450,10 @@ async fn spawn_child(
             // 关键：Tauri 2.x GUI 应用的子系统是 `windows`（无控制台），
             // 默认 spawn 出的 powershell 会**继承父进程的 0 控制台**而不显示窗口。
             // 用 CREATE_NEW_CONSOLE 强制给 powershell 开一个新 console 窗口。
-            // 用 DETACHED_PROCESS 让 powershell 进程脱离 AgentX 进程组，
-            // 即 AgentX 退出 / stop() 后不再通过 console 句柄串扰 powershell。
+            // 注意：CREATE_NEW_CONSOLE 与 DETACHED_PROCESS 互斥，不能同时用。
             {
-                use windows::Win32::System::Threading::{
-                    CREATE_NEW_CONSOLE, DETACHED_PROCESS,
-                };
-                cmd.creation_flags(CREATE_NEW_CONSOLE.0 | DETACHED_PROCESS.0);
+                use windows::Win32::System::Threading::CREATE_NEW_CONSOLE;
+                cmd.creation_flags(CREATE_NEW_CONSOLE.0);
             }
             // dev 模式：让 PowerShell 窗口直接显示 stdout/stderr（开发者要的就是看实时日志），
             // Rust 这边不接管 pipe。supervisor 已改造为 **fire-and-forget**，
