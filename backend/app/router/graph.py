@@ -343,6 +343,7 @@ async def run_router(
                 history=history,
                 scene_prompt=scene_prompt,
                 workspace_path=workspace_path,
+                checkpointer=checkpointer,
             ):
                 yield sse
         else:  # DEEP_TASK

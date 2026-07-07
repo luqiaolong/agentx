@@ -223,6 +223,7 @@ async def run_tool_path(
     history: list | None = None,
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
+    checkpointer: Any = None,
 ) -> AsyncIterator[dict[str, str]]:
     """路径 B：选择子代理并透传事件流。
 
@@ -233,6 +234,7 @@ async def run_tool_path(
         history: 历史 messages 列表（已截断），传给子代理拼到 inputs 前。
         scene_prompt: 可选场景 prompt，回退路径 A 时透传。
         workspace_path: 当前会话绑定的 workspace 绝对路径，子代理 fs 工具用其解析相对路径。
+        checkpointer: 可选的 LangGraph checkpointer，用于子代理状态持久化。
 
     Note:
         - 入口 yield ``delegation`` SSE 事件标识委派目标（spec D6）。
@@ -290,6 +292,7 @@ async def run_tool_path(
                 message,
                 history=history,
                 workspace_path=workspace_path,
+                checkpointer=checkpointer,
             ):
                 for sse in convert_subagent_event(event, think_filter, source=source):
                     yield sse
@@ -308,7 +311,11 @@ async def run_tool_path(
     )
     try:
         async for event in runner(
-            thread_id, message, history=history, workspace_path=workspace_path
+            thread_id,
+            message,
+            history=history,
+            workspace_path=workspace_path,
+            checkpointer=checkpointer,
         ):
             for sse in convert_subagent_event(event, think_filter, source=source):
                 yield sse

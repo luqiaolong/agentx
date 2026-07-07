@@ -25,10 +25,15 @@ from app.subagents.base import (
 )
 
 
-def build_code_agent(thread_id: str, workspace_path: str | None = None) -> Any:
+def build_code_agent(
+    thread_id: str,
+    workspace_path: str | None = None,
+    checkpointer: Any = None,
+) -> Any:
     """构建 Code 子代理 ReAct 子图，返回 CompiledStateGraph。
 
     ``workspace_path`` 用于沙箱授权时解析相对路径的基准。
+    ``checkpointer`` 可选的 LangGraph checkpointer，用于状态持久化。
     """
     settings = get_settings()
     cfg = settings.subagents["code"]
@@ -39,6 +44,8 @@ def build_code_agent(thread_id: str, workspace_path: str | None = None) -> Any:
     prompt = cfg.system_prompt or ""
     prompt = prompt + THINK_PROMPT_SUFFIX
     kwargs["prompt"] = prompt
+    if checkpointer is not None:
+        kwargs["checkpointer"] = checkpointer
     return create_react_agent(model, tools, name="code_agent", **kwargs)
 
 
@@ -47,6 +54,7 @@ async def run_code_agent(
     message: str,
     history: list | None = None,
     workspace_path: str | None = None,
+    checkpointer: Any = None,
 ) -> AsyncIterator[dict]:
     """运行 Code 子代理，yield 标准化事件流。
 
@@ -63,8 +71,11 @@ async def run_code_agent(
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
         workspace_path: 当前会话绑定的 workspace 绝对路径，相对路径解析基准。
+        checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
     """
-    agent = build_code_agent(thread_id, workspace_path=workspace_path)
+    agent = build_code_agent(
+        thread_id, workspace_path=workspace_path, checkpointer=checkpointer
+    )
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     async for event in run_react_agent_stream(agent, inputs, source="code"):
