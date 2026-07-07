@@ -177,6 +177,48 @@ export interface CustomSubagentInput {
   triggerDescription?: string;
 }
 
+// ---- Git ----
+
+export type GitFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "conflict";
+
+export interface GitStatusEntry {
+  path: string;
+  status: GitFileStatus;
+  staged: boolean;
+  originalPath?: string;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  email: string;
+  date: string;
+  parents: string[];
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  remote: boolean;
+  upstream?: string;
+}
+
+export interface GitRepoStatus {
+  currentBranch: string;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  isGitRepo: boolean;
+}
+
 export interface ToolsConfig {
   read_file: boolean;
   list_dir: boolean;

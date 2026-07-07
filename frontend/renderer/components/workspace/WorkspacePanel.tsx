@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ListChecks,
   X,
   Folder,
+  GitBranch,
 } from "lucide-react";
 import { useTasksStore } from "@/stores/tasks";
+import { useGitStore } from "@/stores/git";
+import { useChatStore } from "@/stores/chat";
 import { FileTree } from "./FileTree";
+import { GitPanel } from "./GitPanel";
 import { CompactTaskList } from "./CompactTaskList";
 import { ContextTabPanel } from "./ContextTabPanel";
 
@@ -13,7 +17,7 @@ import { ContextTabPanel } from "./ContextTabPanel";
 /*  WorkspacePanel — 主组件                                              */
 /* ------------------------------------------------------------------ */
 
-type Tab = "tasks" | "files";
+type Tab = "tasks" | "files" | "git";
 
 export function WorkspacePanel({
   onFileClick,
@@ -23,6 +27,19 @@ export function WorkspacePanel({
   const [active, setActive] = useState<Tab>("tasks");
   const tasks = useTasksStore((s) => s.tasks);
   const clearDone = useTasksStore((s) => s.clearDone);
+  const gitRepoStatus = useGitStore((s) => s.repoStatus);
+  const setGitRepoPath = useGitStore((s) => s.setRepoPath);
+  const currentSession = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId] ?? null : null,
+  );
+  const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
+  const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath;
+
+  useEffect(() => {
+    if (workspacePath) {
+      setGitRepoPath(workspacePath);
+    }
+  }, [workspacePath, setGitRepoPath]);
 
   const runningCount = tasks.filter((t) => t.status === "running").length;
   const doneCount = tasks.filter((t) => t.status === "done").length;
@@ -64,6 +81,7 @@ export function WorkspacePanel({
         <div className="flex items-center gap-0.5">
           {tabBtn("tasks", "任务", ListChecks)}
           {tabBtn("files", "文件", Folder)}
+          {tabBtn("git", "Git", GitBranch, gitRepoStatus.isGitRepo && !gitRepoStatus.clean ? 1 : undefined)}
         </div>
       </div>
 
@@ -116,6 +134,7 @@ export function WorkspacePanel({
           </div>
         )}
         {active === "files" && <FileTree />}
+        {active === "git" && <GitPanel />}
       </div>
     </div>
   );
