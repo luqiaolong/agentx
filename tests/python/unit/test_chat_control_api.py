@@ -24,7 +24,7 @@ def client() -> TestClient:
 
 def test_approve_true_records_pending_approval(client: TestClient) -> None:
     """POST /api/chat/approve approval=true → 写入 _pending_approvals[tid] = True。"""
-    from app.main import _pending_approvals
+    from app.approval.state import _pending_approvals
 
     tid = "unit-test-approve-1"
     _pending_approvals.pop(tid, None)
@@ -45,7 +45,7 @@ def test_approve_true_records_pending_approval(client: TestClient) -> None:
 
 def test_approve_false_records_pending_approval(client: TestClient) -> None:
     """POST /api/chat/approve approval=false → 写入 _pending_approvals[tid].approved = False。"""
-    from app.main import _pending_approvals
+    from app.approval.state import _pending_approvals
 
     tid = "unit-test-approve-2"
     _pending_approvals.pop(tid, None)
@@ -64,7 +64,7 @@ def test_approve_false_records_pending_approval(client: TestClient) -> None:
 
 def test_approve_overwrites_previous_decision(client: TestClient) -> None:
     """同一 thread_id 多次调用 approve，后值覆盖前值。"""
-    from app.main import _pending_approvals
+    from app.approval.state import _pending_approvals
 
     tid = "unit-test-approve-3"
     _pending_approvals.pop(tid, None)
@@ -85,7 +85,7 @@ def test_approve_overwrites_previous_decision(client: TestClient) -> None:
 
 def test_abort_sets_flag(client: TestClient) -> None:
     """POST /api/chat/abort → 设置 _abort_flags[tid] = True。"""
-    from app.main import _abort_flags
+    from app.approval.state import _abort_flags
 
     tid = "unit-test-abort-1"
     _abort_flags.pop(tid, None)
@@ -100,7 +100,7 @@ def test_abort_sets_flag(client: TestClient) -> None:
 
 def test_abort_idempotent(client: TestClient) -> None:
     """多次 abort 同一 tid 都成功（幂等）。"""
-    from app.main import _abort_flags
+    from app.approval.state import _abort_flags
 
     tid = "unit-test-abort-2"
     _abort_flags.pop(tid, None)
@@ -127,7 +127,7 @@ def test_chat_sse_abort_yields_error_event(client: TestClient, monkeypatch: pyte
     """
     from unittest.mock import AsyncMock, patch
 
-    from app.main import _abort_flags
+    from app.approval.state import _abort_flags
 
     tid = "unit-test-sse-abort"
 

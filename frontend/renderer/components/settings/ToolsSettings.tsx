@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   Wrench,
   Save,
@@ -16,6 +18,10 @@ import {
 import type { ToolsConfig } from "@/lib/utils";
 import { getApiKey, setApiKey, getToolsConfig, setToolsConfig } from "@/lib/api/settings";
 import { reloadBackendConfig } from "@/lib/api/app";
+import { toolsSchema, type ToolsFormValues } from "@/lib/schemas/tools";
+import { useConfigSave } from "@/hooks/useConfigSave";
+import { humanizeError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 
 // 工具元信息：键名与 backend/app/config.py _ALL_TOOLS 保持一致
 interface ToolMeta {
@@ -34,74 +40,34 @@ const TOOL_GROUPS: ToolGroup[] = [
   {
     title: "文件系统（只读）",
     tools: [
-      {
-        key: "read_file",
-        label: "read_file",
-        desc: "读取沙箱授权目录内的文件内容",
-        Icon: FolderOpen,
-      },
-      {
-        key: "list_dir",
-        label: "list_dir",
-        desc: "列出目录条目（含类型 / 大小 / 修改时间）",
-        Icon: FolderOpen,
-      },
-      {
-        key: "glob",
-        label: "glob",
-        desc: "按通配符匹配文件路径",
-        Icon: FileSearch,
-      },
-      {
-        key: "grep",
-        label: "grep",
-        desc: "在文件内容中正则搜索",
-        Icon: FileSearch,
-      },
+      { key: "read_file", label: "read_file", desc: "读取沙箱授权目录内的文件内容", Icon: FolderOpen },
+      { key: "list_dir", label: "list_dir", desc: "列出目录条目（含类型 / 大小 / 修改时间）", Icon: FolderOpen },
+      { key: "glob", label: "glob", desc: "按通配符匹配文件路径", Icon: FileSearch },
+      { key: "grep", label: "grep", desc: "在文件内容中正则搜索", Icon: FileSearch },
     ],
   },
   {
     title: "文件系统（写）",
     tools: [
-      {
-        key: "write_file",
-        label: "write_file",
-        desc: "写入或新建文件（覆盖式）",
-        Icon: FileEdit,
-      },
-      {
-        key: "edit_file",
-        label: "edit_file",
-        desc: "精确字符串替换编辑",
-        Icon: FileEdit,
-      },
+      { key: "write_file", label: "write_file", desc: "写入或新建文件（覆盖式）", Icon: FileEdit },
+      { key: "edit_file", label: "edit_file", desc: "精确字符串替换编辑", Icon: FileEdit },
     ],
   },
   {
     title: "网络",
     tools: [
-      {
-        key: "web_search",
-        label: "web_search",
-        desc: "联网搜索，需要在下方配置 Tavily API Key",
-        Icon: Globe,
-      },
+      { key: "web_search", label: "web_search", desc: "联网搜索，需要在下方配置 Tavily API Key", Icon: Globe },
     ],
   },
   {
     title: "知识库",
     tools: [
-      {
-        key: "rag_retrieve",
-        label: "rag_retrieve",
-        desc: "Milvus 向量检索（BGE-M3 嵌入）",
-        Icon: Database,
-      },
+      { key: "rag_retrieve", label: "rag_retrieve", desc: "Milvus 向量检索（BGE-M3 嵌入）", Icon: Database },
     ],
   },
 ];
 
-const DEFAULT_TOOLS: ToolsConfig = {
+const DEFAULT_TOOLS: ToolsFormValues = {
   read_file: true,
   list_dir: true,
   glob: true,
@@ -113,16 +79,28 @@ const DEFAULT_TOOLS: ToolsConfig = {
 };
 
 export function ToolsSettings() {
-  const [config, setConfig] = useState<ToolsConfig>(DEFAULT_TOOLS);
   const [loaded, setLoaded] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
 
-  // web_search 工具依赖的 Tavily API Key
+  const form = useForm<ToolsFormValues>({
+    resolver: zodResolver(toolsSchema),
+    defaultValues: DEFAULT_TOOLS,
+  });
+  const { register, getValues, setValue, watch, reset } = form;
+  const config = watch();
+
+  const { saved, error, save } = useConfigSave({
+    saver: async () => {
+      await setToolsConfig(getValues());
+      await reloadBackendConfig();
+    },
+  });
+
+  // web_search 工具依赖的 Tavily API Key（独立保存流程，保留 useState）
   const [tavilyKey, setTavilyKey] = useState("");
   const [tavilyConfigured, setTavilyConfigured] = useState(false);
   const [showTavily, setShowTavily] = useState(false);
   const [tavilySaved, setTavilySaved] = useState(false);
+  const [tavilyErr, setTavilyErr] = useState<string | null>(null);
 
   const loadTavily = useCallback(async () => {
     try {
@@ -137,7 +115,7 @@ export function ToolsSettings() {
     void (async () => {
       try {
         const cfg = await getToolsConfig();
-        setConfig(cfg);
+        reset(cfg);
       } catch {
         // 后端未就绪时保留默认值
       } finally {
@@ -145,10 +123,10 @@ export function ToolsSettings() {
       }
       await loadTavily();
     })();
-  }, [loadTavily]);
+  }, [reset, loadTavily]);
 
   const saveTavilyKey = async (): Promise<void> => {
-    setErrMsg(null);
+    setTavilyErr(null);
     const key = tavilyKey.trim();
     if (!key) return;
     try {
@@ -157,31 +135,14 @@ export function ToolsSettings() {
       setTavilyKey("");
       setTavilySaved(true);
       window.setTimeout(() => setTavilySaved(false), 2000);
-      // 热更新后端配置（tavily_api_key），无需重启
       await reloadBackendConfig();
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : String(e));
+      setTavilyErr(humanizeError(e));
+      logger.warn("ToolsSettings.saveTavilyKey failed", e);
     }
-  };
-
-  const toggle = (key: keyof ToolsConfig): void => {
-    setConfig((s) => ({ ...s, [key]: !s[key] }));
   };
 
   const allOff = Object.values(config).every((v) => !v);
-
-  const save = async (): Promise<void> => {
-    setErrMsg(null);
-    try {
-      await setToolsConfig(config);
-      // 热更新后端配置，无需重启
-      await reloadBackendConfig();
-      setSaved(true);
-      window.setTimeout(() => setSaved(false), 2000);
-    } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : String(e));
-    }
-  };
 
   if (!loaded) {
     return (
@@ -203,10 +164,10 @@ export function ToolsSettings() {
         </span>
       </div>
 
-      {errMsg && (
+      {(error || tavilyErr) && (
         <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-          <span>{errMsg}</span>
+          <span>{error ?? tavilyErr}</span>
         </div>
       )}
 
@@ -235,12 +196,14 @@ export function ToolsSettings() {
                     <div className="font-mono text-primary-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>{tool.label}</div>
                     <div className="truncate text-muted-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>{tool.desc}</div>
                   </div>
+                  {/* hidden register input for RHF state tracking + validation */}
+                  <input type="checkbox" {...register(tool.key)} className="hidden" />
                   <button
                     type="button"
                     role="switch"
                     aria-checked={enabled}
                     data-checked={enabled}
-                    onClick={() => toggle(tool.key)}
+                    onClick={() => setValue(tool.key, !enabled, { shouldValidate: false })}
                     aria-label={`切换 ${tool.label}`}
                     className="switch-track"
                   >
@@ -295,9 +258,7 @@ export function ToolsSettings() {
                 type={showTavily ? "text" : "password"}
                 value={tavilyKey}
                 onChange={(e) => setTavilyKey(e.target.value)}
-                placeholder={
-                  tavilyConfigured ? "输入新 Key 以替换" : "输入 API Key"
-                }
+                placeholder={tavilyConfigured ? "输入新 Key 以替换" : "输入 API Key"}
                 className="input-field pr-8 font-mono"
                 style={{ fontSize: 'var(--fs-settings-form-input)' }}
               />
@@ -307,11 +268,7 @@ export function ToolsSettings() {
                 onClick={() => setShowTavily((s) => !s)}
                 aria-label={showTavily ? "隐藏" : "显示"}
               >
-                {showTavily ? (
-                  <EyeOff className="h-3.5 w-3.5" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5" />
-                )}
+                {showTavily ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
             </div>
             <button
@@ -345,7 +302,7 @@ export function ToolsSettings() {
       </div>
 
       <div className="flex items-center gap-2">
-        <button type="button" onClick={save} className="btn-primary">
+        <button type="button" onClick={() => void save()} className="btn-primary">
           <Save className="h-3.5 w-3.5" />
           保存
         </button>

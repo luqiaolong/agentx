@@ -246,9 +246,27 @@ agentx/
 │   └── utils/                  ← security(沙箱) + text(ThinkFilter) + chunks + sse_events + prompts
 ├── frontend/
 │   ├── renderer/               ← React UI（chat/settings/workspace 组件）
-│   │   ├── lib/api/            ← 12 个 Tauri invoke + fetch 模块（替代 preload）
-│   │   ├── hooks/useChatStream.ts  ← SSE 流解析（直连 fetch 8123）
-│   │   └── stores/             ← zustand 状态（agentMode / chat / scene / skills / settings …）
+│   │   ├── lib/
+│   │   │   ├── api/            ← Tauri invoke + fetch 模块 + request.ts (apiGet/apiPost/apiPut/apiDelete)
+│   │   │   ├── schemas/        ← zod schemas (approval/mcp-server/model-entry/subagent/system-prompt/tools/sandbox/milvus)
+│   │   │   ├── format.ts       ← formatTime/formatDate/formatSize
+│   │   │   ├── validators.ts   ← KEY_RE/NAME_RE/validateKey/validateName
+│   │   │   ├── logger.ts       ← logger.warn/error
+│   │   │   ├── errors.ts       ← ApiError/humanizeError
+│   │   │   └── subagentConstants.ts ← ALL_TOOLS/emptyToolsConfig
+│   │   ├── hooks/
+│   │   │   ├── useChatStream.ts  ← SSE 流解析（直连 fetch 8123）
+│   │   │   ├── useCrudList.ts    ← 通用 CRUD 列表 hook
+│   │   │   ├── useConfigSave.ts  ← 配置保存 hook
+│   │   │   ├── usePopover.ts     ← Popover 状态 + 外部点击
+│   │   │   └── useModalDialog.ts ← Modal a11y (ESC/焦点/Tab 陷阱)
+│   │   ├── components/
+│   │   │   ├── ui/             ← 公共组件 (ErrorBanner/ConfirmButton + hooks/)
+│   │   │   ├── settings/       ← 拆分为子目录 (model-provider/subagents/mcp/memory)
+│   │   │   └── ...
+│   │   └── stores/
+│   │       ├── chat/           ← chat store 拆分 (index/migrations/quotaStorage/messageOps)
+│   │       └── ...             ← zustand 状态 (agentMode/scene/skills/settings)
 │   └── shared/api-types.ts     ← renderer/shared 共享类型
 ├── src-tauri/                  ← Rust 主进程（替代 Electron main + preload）
 │   ├── src/

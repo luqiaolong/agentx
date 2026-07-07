@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { memo, useState, useCallback, useEffect } from "react";
 import {
   RefreshCw,
   GitBranch,
@@ -22,26 +22,11 @@ import { useGitStore } from "@/stores/git";
 import { useChatStore } from "@/stores/chat";
 import { checkout, commit, discardChanges, stage, unstage } from "@/lib/api/git";
 import type { GitStatusEntry, GitCommit as GitCommitType, GitBranch as GitBranchType } from "../../../shared/api-types";
+import { formatTime } from "@/lib/format";
 
 /* ------------------------------------------------------------------ */
 /*  工具函数                                                            */
 /* ------------------------------------------------------------------ */
-
-function formatDate(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return "刚刚";
-  if (diffMins < 60) return `${diffMins} 分钟前`;
-  if (diffHours < 24) return `${diffHours} 小时前`;
-  if (diffDays < 7) return `${diffDays} 天前`;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 function statusIcon(entry: GitStatusEntry) {
   if (entry.status === "added") return <Plus className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />;
@@ -68,7 +53,7 @@ function statusLabel(entry: GitStatusEntry): string {
 /*  文件变更行                                                          */
 /* ------------------------------------------------------------------ */
 
-function StatusRow({
+const StatusRow = memo(function StatusRow({
   entry,
   onStage,
   onUnstage,
@@ -103,10 +88,43 @@ function StatusRow({
       </span>
       {/* 操作按钮（hover 显示） */}
       <div className={`shrink-0 flex items-center gap-0.5 ${hover ? "opacity-100" : "opacity-0"} transition-opacity`}>
+        {onStage && !entry.staged && (
+          <button
+            type="button"
+            onClick={() => onStage(entry.path)}
+            className="rounded p-0.5 text-muted-c hover:text-brand-500"
+            title="暂存"
+            aria-label="暂存"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
+        )}
+        {onUnstage && entry.staged && (
+          <button
+            type="button"
+            onClick={() => onUnstage(entry.path)}
+            className="rounded p-0.5 text-muted-c hover:text-brand-500"
+            title="取消暂存"
+            aria-label="取消暂存"
+          >
+            <Minus className="h-3 w-3" />
+          </button>
+        )}
+        {onDiscard && (
+          <button
+            type="button"
+            onClick={() => onDiscard(entry.path)}
+            className="rounded p-0.5 text-muted-c hover:text-rose-500"
+            title="丢弃"
+            aria-label="丢弃"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  提交历史行                                                          */
@@ -150,7 +168,7 @@ function CommitRow({ commit }: { commit: GitCommitType }) {
           </div>
           <div className="flex items-center gap-1">
             <Clock className="h-2.5 w-2.5" />
-            <span>{formatDate(commit.date)}</span>
+            <span>{formatTime(commit.date, "relative")}</span>
           </div>
           <div className="font-mono text-muted-c/70">{commit.hash}</div>
         </div>

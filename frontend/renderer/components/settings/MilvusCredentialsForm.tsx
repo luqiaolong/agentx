@@ -1,16 +1,10 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Database, Check, Save, AlertCircle } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { getMilvusCredentials, setMilvusCredentials, getKnowledgeConfig, setKnowledgeConfig } from "@/lib/api/settings";
-
-const schema = z.object({
-  user: z.string().min(1, "用户名不能为空"),
-  password: z.string().min(1, "密码不能为空"),
-});
-
-type FormValues = z.infer<typeof schema>;
+import { milvusCredentialsSchema, type MilvusCredentialsFormValues } from "@/lib/schemas/milvus";
 
 export function MilvusCredentialsForm() {
   const milvusConfigured = useSettingsStore((s) => s.milvusConfigured);
@@ -19,24 +13,32 @@ export function MilvusCredentialsForm() {
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
-  // 默认值须与 main/store.ts getKnowledgeConfig() 保持一致，避免后端未就绪时显示错位
-  const [host, setHost] = useState("192.168.1.4");
-  const [port, setPort] = useState("19530");
-  const [db, setDb] = useState("agentx");
-  const [collection, setCollection] = useState("agentx_knowledge");
-  const [embeddingUrl, setEmbeddingUrl] = useState("");
-  const [authEnabled, setAuthEnabled] = useState(false);
+
+  const form = useForm<MilvusCredentialsFormValues>({
+    resolver: zodResolver(milvusCredentialsSchema),
+    defaultValues: {
+      user: "",
+      password: "",
+      host: "192.168.1.4",
+      port: "19530",
+      db: "agentx",
+      collection: "agentx_knowledge",
+      embeddingUrl: "",
+      authEnabled: false,
+    },
+  });
+  const { register, handleSubmit, formState: { errors }, setValue, watch } = form;
 
   useEffect(() => {
     void (async () => {
       try {
         const cfg = await getKnowledgeConfig();
-        setHost(cfg.milvusHost ?? "192.168.1.4");
-        setPort(String(cfg.milvusPort ?? 19530));
-        setDb(cfg.milvusDb ?? "agentx");
-        setCollection(cfg.milvusCollection ?? "agentx_knowledge");
-        setEmbeddingUrl(cfg.embeddingUrl ?? "");
-        if (typeof cfg.milvusAuthEnabled === "boolean") setAuthEnabled(cfg.milvusAuthEnabled);
+        setValue("host", cfg.milvusHost ?? "192.168.1.4");
+        setValue("port", String(cfg.milvusPort ?? 19530));
+        setValue("db", cfg.milvusDb ?? "agentx");
+        setValue("collection", cfg.milvusCollection ?? "agentx_knowledge");
+        setValue("embeddingUrl", cfg.embeddingUrl ?? "");
+        if (typeof cfg.milvusAuthEnabled === "boolean") setValue("authEnabled", cfg.milvusAuthEnabled);
         // 用 electron-store 实际凭证状态校正前端标志，避免 localStorage 与后端漂移
         const cred = await getMilvusCredentials();
         setMilvusConfigured(!!(cred.user && cred.password));
@@ -44,27 +46,21 @@ export function MilvusCredentialsForm() {
         // ignore
       }
     })();
-  }, [setMilvusConfigured]);
+  }, [setMilvusConfigured, setValue]);
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<FormValues>({ defaultValues: { user: "", password: "" } });
-
-  const onSubmit = async (values: FormValues) => {
+  const onSubmit = async (values: MilvusCredentialsFormValues) => {
     setSubmitting(true);
     setErrMsg(null);
     try {
       // 两步保存：先写凭证，再写连接配置。任一失败都回滚状态并提示。
       await setMilvusCredentials(values.user, values.password);
       await setKnowledgeConfig({
-        milvusHost: host,
-        milvusPort: Number(port) || 19530,
-        milvusDb: db,
-        milvusCollection: collection,
-        embeddingUrl,
-        milvusAuthEnabled: authEnabled,
+        milvusHost: values.host,
+        milvusPort: Number(values.port) || 19530,
+        milvusDb: values.db,
+        milvusCollection: values.collection,
+        embeddingUrl: values.embeddingUrl,
+        milvusAuthEnabled: values.authEnabled,
       });
       // 仅当两步都成功才更新标志，避免半成功状态误导用户
       setMilvusConfigured(true);
@@ -101,6 +97,9 @@ export function MilvusCredentialsForm() {
     );
   }
 
+  // watch authEnabled 以便在凭证字段上条件渲染 disabled
+  const authEnabled = watch("authEnabled");
+
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
       {errMsg && (
@@ -113,12 +112,9 @@ export function MilvusCredentialsForm() {
       <div>
         <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>用户名</label>
         <input
-          {...register("user", {
-            validate: (v) =>
-              schema.shape.user.safeParse(v).success || "用户名不能为空",
-          })}
+          {...register("user")}
           className="input-field"
-          disabled={submitting}
+          disabled={submitting || !authEnabled}
           style={{ fontSize: 'var(--fs-settings-form-input)' }}
         />
         {errors.user && (
@@ -129,12 +125,9 @@ export function MilvusCredentialsForm() {
         <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>密码</label>
         <input
           type="password"
-          {...register("password", {
-            validate: (v) =>
-              schema.shape.password.safeParse(v).success || "密码不能为空",
-          })}
+          {...register("password")}
           className="input-field"
-          disabled={submitting}
+          disabled={submitting || !authEnabled}
           style={{ fontSize: 'var(--fs-settings-form-input)' }}
         />
         {errors.password && (
@@ -147,23 +140,27 @@ export function MilvusCredentialsForm() {
           <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Host</label>
           <input
             type="text"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
+            {...register("host")}
             className="input-field font-mono"
             disabled={submitting}
             style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
+          {errors.host && (
+            <span className="mt-1 block text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{errors.host.message}</span>
+          )}
         </div>
         <div>
           <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Port</label>
           <input
             type="text"
-            value={port}
-            onChange={(e) => setPort(e.target.value)}
+            {...register("port")}
             className="input-field font-mono"
             disabled={submitting}
             style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
+          {errors.port && (
+            <span className="mt-1 block text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{errors.port.message}</span>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -171,23 +168,27 @@ export function MilvusCredentialsForm() {
           <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>DB</label>
           <input
             type="text"
-            value={db}
-            onChange={(e) => setDb(e.target.value)}
+            {...register("db")}
             className="input-field font-mono"
             disabled={submitting}
             style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
+          {errors.db && (
+            <span className="mt-1 block text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{errors.db.message}</span>
+          )}
         </div>
         <div>
           <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Collection</label>
           <input
             type="text"
-            value={collection}
-            onChange={(e) => setCollection(e.target.value)}
+            {...register("collection")}
             className="input-field font-mono"
             disabled={submitting}
             style={{ fontSize: 'var(--fs-settings-form-input)' }}
           />
+          {errors.collection && (
+            <span className="mt-1 block text-rose-500" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>{errors.collection.message}</span>
+          )}
         </div>
       </div>
 
@@ -195,8 +196,7 @@ export function MilvusCredentialsForm() {
         <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>Embedding URL</label>
         <input
           type="text"
-          value={embeddingUrl}
-          onChange={(e) => setEmbeddingUrl(e.target.value)}
+          {...register("embeddingUrl")}
           placeholder="http://127.0.0.1:8080"
           className="input-field font-mono"
           disabled={submitting}
@@ -208,8 +208,7 @@ export function MilvusCredentialsForm() {
       <label className="flex cursor-pointer items-center gap-2 text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
         <input
           type="checkbox"
-          checked={authEnabled}
-          onChange={(e) => setAuthEnabled(e.target.checked)}
+          {...register("authEnabled")}
           className="h-3.5 w-3.5 rounded border-strong accent-brand-500"
           disabled={submitting}
         />

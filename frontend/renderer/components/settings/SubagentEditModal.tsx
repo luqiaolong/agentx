@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { X, Save, AlertTriangle, Lock } from "lucide-react";
-
-// 全部可选工具清单（与 SubagentsSettings 一致；危险工具对内置 subagent 也禁用绑定）
-const ALL_TOOLS: string[] = [
-  "read_file",
-  "list_dir",
-  "glob",
-  "grep",
-  "web_search",
-  "rag_retrieve",
-];
+import { useModalDialog } from "@/components/ui/hooks/useModalDialog";
+import { ALL_TOOLS } from "@/lib/subagentConstants";
+import { buildSubagentSchema, type SubagentFormValues } from "@/lib/schemas/subagent";
 
 export interface SubagentEditModalData {
   /** 内置子代理 key（"code"/"rag"/"web"）；自定义子代理为 undefined */
@@ -46,84 +41,90 @@ export function SubagentEditModal({
   onClose,
   onSave,
 }: Props) {
-  const [data, setData] = useState<SubagentEditModalData | null>(initial);
   const [triggerText, setTriggerText] = useState("");
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const { closeBtnRef, dialogRef } = useModalDialog({ open, onClose });
 
-  // 当弹窗打开/切换时同步本地状态；open 变化时总是重置，避免关闭后重新打开同一子代理时显示旧值
+  const isBuiltin = initial?.builtinKey !== undefined;
+  const isTeam = initial?.teamKey !== undefined;
+
+  // Schema 需根据当前模式动态构建（含 existingCustomKeys 唯一性校验）
+  const schema = useMemo(
+    () => buildSubagentSchema({ isNew, isBuiltin, isTeam, existingCustomKeys }),
+    [isNew, isBuiltin, isTeam, existingCustomKeys],
+  );
+
+  const form = useForm<SubagentFormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: initial ?? undefined,
+  });
+  const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = form;
+
+  // 当弹窗打开/切换时同步本地状态
   useEffect(() => {
     if (open && initial) {
-      setData(initial);
+      reset(initial);
       setTriggerText(initial.triggerDescription);
       setErrMsg(null);
     } else if (!open) {
-      setData(null);
+      reset();
       setTriggerText("");
       setErrMsg(null);
     }
-  }, [open, initial]);
+  }, [open, initial, reset]);
 
-  const isBuiltin = data?.builtinKey !== undefined;
-  const isTeam = data?.teamKey !== undefined;
+  if (!open || !initial) return null;
 
-  // 校验：新建自定义时 key 必须合法且唯一
-  const keyError = useMemo(() => {
-    if (!data || !isNew || isBuiltin || isTeam) return null;
-    const key = data.customKey?.trim() ?? "";
-    if (!key) return "key 不能为空";
-    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(key)) {
-      return "key 仅允许字母数字/下划线/连字符，1-64 字符";
-    }
-    if (existingCustomKeys.includes(key)) {
-      return `key "${key}" 已存在`;
-    }
-    if (["code", "rag", "web"].includes(key)) {
-      return `key "${key}" 与内置子代理冲突`;
-    }
-    return null;
-  }, [data, isNew, isBuiltin, isTeam, existingCustomKeys]);
-
-  if (!open || !data) return null;
-
-  const update = (patch: Partial<SubagentEditModalData>): void => {
-    setData((d) => (d ? { ...d, ...patch } : d));
-  };
+  const data = watch();
+  if (!data) return null;
 
   const toggleTool = (tool: string): void => {
-    const has = data.tools.includes(tool);
-    const next = has
-      ? data.tools.filter((t) => t !== tool)
-      : [...data.tools, tool];
-    update({ tools: next });
+    const has = data.tools?.includes(tool) ?? false;
+    const next = has ? (data.tools ?? []).filter((t) => t !== tool) : [...(data.tools ?? []), tool];
+    setValue("tools", next);
+  };
+
+  const onValid = (values: SubagentFormValues): void => {
+    onSave({
+      builtinKey: values.builtinKey,
+      teamKey: values.teamKey,
+      customKey: isBuiltin || isTeam ? undefined : values.customKey?.trim(),
+      name: values.name.trim(),
+      enabled: values.enabled,
+      temperature: values.temperature,
+      systemPrompt: values.systemPrompt,
+      tools: values.tools,
+      triggerDescription: triggerText.trim(),
+    });
+  };
+
+  const onInvalid = (errs: typeof errors): void => {
+    // RHF 校验失败时，取第一个错误信息显示
+    const firstErr = Object.values(errs)[0];
+    if (firstErr && typeof firstErr === "object" && "message" in firstErr) {
+      setErrMsg(String(firstErr.message));
+    } else {
+      setErrMsg("请检查表单输入");
+    }
   };
 
   const handleSave = (): void => {
-    if (keyError) {
-      setErrMsg(keyError);
-      return;
-    }
-    if (!data.name.trim()) {
-      setErrMsg("名称不能为空");
-      return;
-    }
-    onSave({
-      ...data,
-      customKey: isBuiltin || isTeam ? undefined : data.customKey?.trim(),
-      name: data.name.trim(),
-      triggerDescription: triggerText.trim(),
-    });
+    void handleSubmit(onValid, onInvalid)();
   };
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
+      role="presentation"
     >
       <div
+        ref={dialogRef}
         className="w-[560px] max-h-[85vh] overflow-y-auto rounded-lg border border-default bg-surface shadow-xl"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑子代理"
       >
         {/* 头部 */}
         <div className="flex items-center justify-between border-b border-default px-4 py-3">
@@ -147,6 +148,7 @@ export function SubagentEditModal({
             )}
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             className="rounded p-1 text-muted-c hover:bg-hover-soft hover:text-primary-c"
@@ -158,10 +160,10 @@ export function SubagentEditModal({
 
         {/* 内容 */}
         <div className="space-y-3 px-4 py-3">
-          {errMsg && (
+          {(errMsg || Object.keys(errors).length > 0) && (
             <div className="flex items-start gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>{errMsg}</span>
+              <span>{errMsg || errors.customKey?.message || errors.name?.message || "请检查表单输入"}</span>
             </div>
           )}
 
@@ -173,13 +175,10 @@ export function SubagentEditModal({
               </label>
               <input
                 type="text"
-                value={data.customKey ?? ""}
-                onChange={(e) => update({ customKey: e.target.value })}
+                {...register("customKey")}
                 disabled={!isNew}
                 placeholder="如：my_helper"
-                className={`input-field font-mono ${
-                  !isNew ? "cursor-not-allowed opacity-60" : ""
-                }`}
+                className={`input-field font-mono ${!isNew ? "cursor-not-allowed opacity-60" : ""}`}
                 style={{ fontSize: 'var(--fs-settings-form-input)' }}
               />
               <p className="mt-1 text-muted-c" style={{ fontSize: 'var(--fs-settings-form-hint)' }}>
@@ -195,12 +194,9 @@ export function SubagentEditModal({
             </label>
             <input
               type="text"
-              value={data.name}
-              onChange={(e) => update({ name: e.target.value })}
+              {...register("name")}
               disabled={isBuiltin || isTeam}
-              className={`input-field ${
-                isBuiltin || isTeam ? "cursor-not-allowed opacity-60" : ""
-              }`}
+              className={`input-field ${isBuiltin || isTeam ? "cursor-not-allowed opacity-60" : ""}`}
               style={{ fontSize: 'var(--fs-settings-form-input)' }}
             />
           </div>
@@ -213,7 +209,7 @@ export function SubagentEditModal({
               role="switch"
               aria-checked={data.enabled}
               data-checked={data.enabled}
-              onClick={() => update({ enabled: !data.enabled })}
+              onClick={() => setValue("enabled", !data.enabled)}
               className="switch-track"
             >
               <span className="switch-thumb" data-checked={data.enabled} />
@@ -235,8 +231,8 @@ export function SubagentEditModal({
               min={0}
               max={2}
               step={0.1}
-              value={data.temperature}
-              onChange={(e) => update({ temperature: Number(e.target.value) })}
+              {...register("temperature", { valueAsNumber: true })}
+              onChange={(e) => setValue("temperature", Number(e.target.value))}
               className="w-full accent-brand-500"
             />
           </div>
@@ -247,8 +243,7 @@ export function SubagentEditModal({
               系统提示词（留空使用后端默认）
             </label>
             <textarea
-              value={data.systemPrompt}
-              onChange={(e) => update({ systemPrompt: e.target.value })}
+              {...register("systemPrompt")}
               rows={3}
               placeholder="对该子代理的额外指令"
               className="input-field resize-y font-mono leading-relaxed"
@@ -256,7 +251,7 @@ export function SubagentEditModal({
             />
           </div>
 
-          {/* 触发条件 — 放在系统提示词下方，作为降级路由的辅助配置 */}
+          {/* 触发条件 */}
           <div>
             <label className="mb-1 block font-medium text-secondary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
               触发条件
@@ -281,7 +276,7 @@ export function SubagentEditModal({
             </label>
             <div className="grid grid-cols-2 gap-1.5">
               {ALL_TOOLS.map((tool) => {
-                const checked = data.tools.includes(tool);
+                const checked = data.tools?.includes(tool) ?? false;
                 return (
                   <label
                     key={tool}
@@ -307,12 +302,7 @@ export function SubagentEditModal({
           <button type="button" onClick={onClose} className="btn-secondary">
             取消
           </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="btn-primary"
-            disabled={!!keyError}
-          >
+          <button type="button" onClick={handleSave} className="btn-primary">
             <Save className="h-3.5 w-3.5" />
             保存
           </button>

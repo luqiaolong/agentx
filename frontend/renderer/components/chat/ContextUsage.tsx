@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useContextUsage } from "@/stores/contextUsage";
 import { useChatStore } from "@/stores/chat";
 import { chat } from "@/lib/api/chat";
+import { usePopover } from "@/components/ui/hooks/usePopover";
 
 /**
  * 上下文使用率组件：Cursor 风格的圆环进度条 + 百分比数字，点击弹出详情面板。
@@ -19,7 +20,7 @@ import { chat } from "@/lib/api/chat";
 export function ContextUsage() {
   const { tokens, modelMax, pct, activeLabel } = useContextUsage();
   const currentId = useChatStore((s) => s.currentId);
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, rootRef } = usePopover();
   const [compacting, setCompacting] = useState(false);
   const [compactResult, setCompactResult] = useState<{
     ok: boolean;
@@ -27,7 +28,6 @@ export function ContextUsage() {
     compressedCount?: number;
     error?: string;
   } | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
 
   // 圆环几何参数：14px 见方，stroke 2px → r = (14-2)/2 = 6，周长 = 2π·6 ≈ 37.699
   const RING_SIZE = 14;
@@ -39,27 +39,9 @@ export function ContextUsage() {
   const safePct = Math.max(0, Math.min(100, pct));
   const filledLength = RING_CIRC * (safePct / 100);
 
-  // 点击外部 / Escape 关闭面板
+  // 关闭面板时清空 compact 结果（usePopover 已处理 ESC / clickOutside 关闭）
   useEffect(() => {
-    if (!open) return;
-    const onMouse = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setCompactResult(null);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        setCompactResult(null);
-      }
-    };
-    document.addEventListener("mousedown", onMouse);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onMouse);
-      document.removeEventListener("keydown", onKey);
-    };
+    if (!open) setCompactResult(null);
   }, [open]);
 
   const handleCompact = async () => {
@@ -89,7 +71,7 @@ export function ContextUsage() {
     (activeLabel ? ` · ${activeLabel}` : "");
 
   return (
-    <div ref={ref} className="relative inline-flex">
+    <div ref={rootRef} className="relative inline-flex">
       {/* Cursor 风格圆环 + 百分比：可点击弹出详情面板 */}
       <button
         type="button"

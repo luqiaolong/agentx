@@ -19,6 +19,10 @@ from langgraph.prebuilt import create_react_agent
 from app.config import FORBIDDEN_SUBAGENT_TOOLS, get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
+from app.subagents.base import (
+    THINK_PROMPT_SUFFIX,
+    run_react_agent_stream,
+)
 
 # 工具内部名 → 所属子代理工具集的映射 key（与 _make_*_tools 函数返回的工具名一致）
 # read_file / list_dir / glob_files / grep_files → fs 工具集
@@ -134,13 +138,6 @@ def _make_custom_tools(thread_id: str, tool_names: list[str]) -> list:
     return [t for t in tools if enabled.get(name_map.get(t.name, t.name), True)]
 
 
-# 子代理思考过程提示：要求模型在思考时包裹 think 标签，供前端展示 reasoning block
-_THINK_PROMPT_SUFFIX = (
-    "\n\n在调用工具前，请先用 " + chr(60) + "think" + chr(62) + ".." + chr(60) + "/think" + chr(62) + " 标签包裹你的思考过程，"
-    "例如：" + chr(60) + "think" + chr(62) + "我需要调用工具来获取更多信息" + chr(60) + "/think" + chr(62) + "。"
-    "这样用户可以看到你的推理过程。"
-)
-
 def build_custom_agent(
     key: str,
     thread_id: str | None = None,
@@ -180,7 +177,7 @@ def build_custom_agent(
         _tools = _make_custom_tools(thread_id or "", tools or [])
         kwargs: dict[str, Any] = {"name": f"custom_{key}"}
         prompt = system_prompt or ""
-        prompt = prompt + _THINK_PROMPT_SUFFIX
+        prompt = prompt + THINK_PROMPT_SUFFIX
         kwargs["prompt"] = prompt
         return create_react_agent(model, _tools, **kwargs)
 
@@ -198,7 +195,7 @@ def build_custom_agent(
     _tools = _make_custom_tools(thread_id or "", cfg.tools)
     kwargs = {"name": f"custom_{key}"}
     prompt = cfg.system_prompt or ""
-    prompt = prompt + _THINK_PROMPT_SUFFIX
+    prompt = prompt + THINK_PROMPT_SUFFIX
     kwargs["prompt"] = prompt
     return create_react_agent(model, _tools, **kwargs)
 
@@ -229,49 +226,8 @@ async def run_custom_agent(
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     source = f"custom-{key}"
-    async for event in agent.astream_events(inputs, version="v2"):
-        kind = event["event"]
-        name = event.get("name", "")
-        data = event.get("data", {}) or {}
-        run_id = event.get("run_id", "")
-        if kind == "on_chat_model_stream":
-            content = _extract_text(data.get("chunk"))
-            if content:
-                yield {"type": "token", "content": content}
-        elif kind == "on_tool_start":
-            yield {
-                "type": "tool_call",
-                "id": run_id,
-                "name": name,
-                "args": data.get("input"),
-                "source": source,
-            }
-        elif kind == "on_tool_end":
-            yield {
-                "type": "tool_result",
-                "id": run_id,
-                "name": name,
-                "result": data.get("output"),
-                "source": source,
-            }
-
-
-def _extract_text(chunk: Any) -> str:
-    """从流式 chunk 中提取纯文本内容（兼容 str / list 内容块）。"""
-    if chunk is None:
-        return ""
-    content = getattr(chunk, "content", chunk)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-        return "".join(parts)
-    return ""
+    async for event in run_react_agent_stream(agent, inputs, source):
+        yield event
 
 
 __all__ = ["build_custom_agent", "run_custom_agent", "_make_custom_tools"]

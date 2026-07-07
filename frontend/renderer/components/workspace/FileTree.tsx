@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   RefreshCw,
   Folder,
@@ -11,18 +11,13 @@ import {
 import { useChatStore } from "@/stores/chat";
 import { workspace } from "@/lib/api/http";
 import { revealInFolder } from "@/lib/api/shell";
+import { formatSize } from "@/lib/format";
 
 interface Entry {
   name: string;
   type: "file" | "dir";
   size: number;
   mtime: number;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function joinPath(base: string, name: string): string {
@@ -41,7 +36,7 @@ interface TreeNodeProps {
   onRefreshRoot: () => void;
 }
 
-function TreeNode({
+const TreeNode = memo(function TreeNode({
   entry,
   depth,
   parentPath,
@@ -180,7 +175,7 @@ function TreeNode({
       )}
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  FileTree — 根组件                                                   */

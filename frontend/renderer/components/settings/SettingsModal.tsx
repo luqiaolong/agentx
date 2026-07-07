@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   X,
   Cpu,
@@ -13,15 +13,16 @@ import {
   Plug,
 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
-import { ModelProviderSettings } from "./ModelProviderSettings";
+import { useModalDialog } from "@/components/ui/hooks/useModalDialog";
+import { ModelProviderSettings } from "./model-provider";
 import { SystemPromptSettings } from "./SystemPromptSettings";
 import { ApprovalSettings } from "./ApprovalSettings";
 import { MilvusCredentialsForm } from "./MilvusCredentialsForm";
 import { SandboxSettings } from "./SandboxSettings";
-import { SubagentsSettings } from "./SubagentsSettings";
+import { SubagentsSettings } from "./subagents";
 import { ToolsSettings } from "./ToolsSettings";
 import { MemorySettings } from "./MemorySettings";
-import { McpSettings } from "./McpSettings";
+import { McpSettings } from "./mcp";
 import { SkillsManager } from "./memory/SkillsManager";
 
 type TabId =
@@ -64,14 +65,14 @@ export function SettingsModal() {
   const pendingSettingsTab = useSettingsStore((s) => s.pendingSettingsTab);
   const setPendingSettingsTab = useSettingsStore((s) => s.setPendingSettingsTab);
   const [active, setActive] = useState<TabId>("prompt");
-
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
-  // 打开时记录触发元素，关闭后恢复焦点
-  const triggerRef = useRef<HTMLElement | null>(null);
+  const { closeBtnRef, dialogRef } = useModalDialog({
+    open: isOpen,
+    onClose: () => setOpen(false),
+  });
 
   // 打开时：若有 pendingSettingsTab 则跳转到该 tab（如 ErrorBoundary 跳"日志"），
-  // 否则重置到首个（系统提示词）；记录触发元素、初始聚焦关闭按钮
+  // 否则重置到首个（系统提示词）。
+  // 焦点恢复 / 初始聚焦 / body 锁 / ESC / Tab 陷阱由 useModalDialog 统一处理。
   useEffect(() => {
     if (!isOpen) return;
     const initial = pendingSettingsTab as TabId | null;
@@ -80,83 +81,12 @@ export function SettingsModal() {
     );
     // 消费后清空，避免残留影响下次默认打开
     if (pendingSettingsTab) setPendingSettingsTab(null);
-    triggerRef.current = document.activeElement as HTMLElement | null;
-    // 下一帧聚焦，确保 dialog 已渲染
-    const t = window.setTimeout(() => {
-      closeBtnRef.current?.focus();
-    }, 0);
-    return () => window.clearTimeout(t);
   }, [isOpen, pendingSettingsTab, setPendingSettingsTab]);
-
-  // ESC 关闭
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, setOpen]);
-
-  // 关闭后恢复焦点到触发元素（仅当元素仍在文档中且未被遮挡时）
-  useEffect(() => {
-    if (isOpen) return;
-    const el = triggerRef.current;
-    triggerRef.current = null;
-    if (!el) return;
-    // 延迟一帧，避开其他组件（如 ChatComposer）的同步 focus() 竞争
-    const t = window.setTimeout(() => {
-      // 仅当元素仍在文档中、未被禁用、且没有 modal/overlay 遮挡时才恢复焦点
-      if (
-        document.contains(el) &&
-        !(el as HTMLButtonElement).disabled &&
-        !document.querySelector('[aria-modal="true"]')
-      ) {
-        el.focus?.();
-      }
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [isOpen]);
-
-  // 打开时锁 body 滚动
-  useEffect(() => {
-    if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
   // TABS 是非空静态数组，[0] 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
   const activeTab = TABS.find((t) => t.id === active) ?? TABS[0]!;
-
-  // Tab 焦点陷阱：在 dialog 内 Tab/Shift-Tab 循环
-  const onKeyDownTrap = (e: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key !== "Tab") return;
-    const root = dialogRef.current;
-    if (!root) return;
-    const focusables = root.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    if (focusables.length === 0) return;
-    // 上面已判 length > 0，first/last 一定存在；用 ! 抑制 noUncheckedIndexedAccess 报错。
-    const first = focusables[0]!;
-    const last = focusables[focusables.length - 1]!;
-    if (e.shiftKey) {
-      if (document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else {
-      if (document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  };
 
   return (
     <div
@@ -168,7 +98,6 @@ export function SettingsModal() {
         ref={dialogRef}
         className="glass-card flex h-[90vh] max-h-[90vh] w-[90vw] max-w-[90vw] overflow-hidden rounded-2xl border border-default shadow-pop"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDownTrap}
         role="dialog"
         aria-modal="true"
         aria-label="设置"

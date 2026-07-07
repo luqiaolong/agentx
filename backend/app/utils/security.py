@@ -8,10 +8,10 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
-from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR, get_settings
+from app.approval.decision import ApprovalDecision  # noqa: F401 — 向后兼容 re-export
+from app.config import UPLOADS_DIR, WORKSPACE_DIR, get_settings
 from app.memory.sandbox_store import SandboxStore, get_sandbox_store
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
@@ -19,20 +19,6 @@ from app.observability.logger import logger
 
 class PathNotAuthorized(Exception):
     """路径未授权。"""
-
-
-@dataclass
-class ApprovalDecision:
-    """审批决策（兼容旧 bool 语义 + 扩展授权场景）。
-
-    - dangerous_tool：approved=True/False，decision="approve"/"deny"
-    - directory_extension：decision="once"/"session"/"deny"，path/writable 描述目标
-    """
-
-    approved: bool
-    decision: str = "approve"  # "approve" | "once" | "session" | "deny"
-    path: str | None = None
-    writable: bool = False
 
 
 # 默认白名单：始终可读可写（已规范化）
@@ -151,15 +137,11 @@ class SessionSandbox:
     def _normalize(path: str | Path) -> Path:
         """规范化路径。相对路径基于 PROJECT_ROOT 解析（非 CWD）。
 
-        LLM 工具调用常生成相对路径如 ``data/workspace/foo.txt``，
-        若用 ``Path.resolve()`` 默认基于 CWD（可能是 ``backend/``）解析，
-        会导致 ``backend/data/workspace/foo.txt`` ≠ 白名单 ``PROJECT_ROOT/data/workspace``，
-        从而被误拒。强制相对路径基于 PROJECT_ROOT 解析可修复此问题。
+        委托给 ``app.utils.paths.normalize_path``，保持向后兼容。
         """
-        p = Path(path)
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        return p.resolve()
+        from app.utils.paths import normalize_path
+
+        return normalize_path(path)
 
     def _is_critical(self, resolved: Path) -> bool:
         """路径是否为系统关键目录、其祖先或其后代。

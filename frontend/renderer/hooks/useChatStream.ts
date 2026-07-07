@@ -63,7 +63,6 @@ export function useChatStream(args: UseChatStreamArgs) {
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
-  const currentId = useChatStore((s) => s.currentId);
   const addTask = useTasksStore((s) => s.addTask);
   const updateTask = useTasksStore((s) => s.updateTask);
 
@@ -116,8 +115,9 @@ export function useChatStream(args: UseChatStreamArgs) {
           markReasoningDone(pendingIdRef.current);
           setStreaming(false);
           // 流结束：标记当前会话执行完成
-          if (currentId) {
-            setSessionRunning(currentId, false);
+          const cid = useChatStore.getState().currentId;
+          if (cid) {
+            setSessionRunning(cid, false);
           }
           // 标记当前任务完成
           const tid = currentTaskIdRef.current;
@@ -130,8 +130,9 @@ export function useChatStream(args: UseChatStreamArgs) {
         case "error": {
           setStreaming(false);
           // 流出错：标记当前会话执行完成
-          if (currentId) {
-            setSessionRunning(currentId, false);
+          const cid = useChatStore.getState().currentId;
+          if (cid) {
+            setSessionRunning(cid, false);
           }
           const errData = e.data ?? e.error;
           setErrorMsg(typeof errData === "string" ? errData : "请求出错");

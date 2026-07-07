@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronDown,
@@ -8,6 +7,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAgentModeStore } from "@/stores/agentMode";
+import { usePopover } from "@/components/ui/hooks/usePopover";
 import type { AgentMode } from "../../../shared/api-types";
 
 /**
@@ -49,28 +49,11 @@ const OPTIONS: Option[] = [
 export function ModeToggle() {
   const mode = useAgentModeStore((s) => s.mode);
   const setMode = useAgentModeStore((s) => s.setMode);
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const { open, setOpen, rootRef } = usePopover();
 
   const current = OPTIONS.find((o) => o.value === mode) ?? OPTIONS[0]!;
   const Icon = current.Icon;
   const isTeam = mode === "agent_team";
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   const choose = (v: AgentMode) => {
     setMode(v);

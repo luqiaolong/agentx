@@ -307,7 +307,7 @@ pub fn settings_activate_model(app: AppHandle, id: String) -> Result<OkResult, S
 /// 用于「设置 → 模型」面板点击眼睛图标时回显真实 API Key。
 /// - `plain:` 前缀 → 去前缀返回明文
 /// - 裸字符串 → 原样返回
-/// - `enc:` 前缀 → safeStorage 加密无法跨进程解密，返回 None（前端提示重新输入）
+/// - `enc:` 前缀 → Chromium OSCrypt v10 解密（DPAPI + AES-256-GCM，仅 Windows）
 ///
 /// renderer 不应持久化返回值，仅在 UI 上短暂展示。
 #[tauri::command]

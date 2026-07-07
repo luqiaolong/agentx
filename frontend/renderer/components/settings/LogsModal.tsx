@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
 import { X, ScrollText } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { LogViewer } from "./LogViewer";
+import { useModalDialog } from "@/components/ui/hooks/useModalDialog";
 
 /**
  * 独立日志窗口。
@@ -13,69 +13,12 @@ import { LogViewer } from "./LogViewer";
 export function LogsModal() {
   const isOpen = useSettingsStore((s) => s.isLogsModalOpen);
   const setOpen = useSettingsStore((s) => s.setLogsModalOpen);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
-  const triggerRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    triggerRef.current = document.activeElement as HTMLElement | null;
-    const t = window.setTimeout(() => {
-      closeBtnRef.current?.focus();
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, setOpen]);
-
-  useEffect(() => {
-    if (isOpen) return;
-    if (triggerRef.current) {
-      triggerRef.current.focus?.();
-      triggerRef.current = null;
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isOpen]);
+  const { closeBtnRef, dialogRef } = useModalDialog({
+    open: isOpen,
+    onClose: () => setOpen(false),
+  });
 
   if (!isOpen) return null;
-
-  const onKeyDownTrap = (e: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key !== "Tab") return;
-    const root = dialogRef.current;
-    if (!root) return;
-    const focusables = root.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    if (focusables.length === 0) return;
-    const first = focusables[0]!;
-    const last = focusables[focusables.length - 1]!;
-    if (e.shiftKey) {
-      if (document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else {
-      if (document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  };
 
   return (
     <div
@@ -87,7 +30,6 @@ export function LogsModal() {
         ref={dialogRef}
         className="glass-card flex h-[640px] max-h-[88vh] w-[880px] max-w-[94vw] flex-col overflow-hidden rounded-2xl border border-default shadow-pop"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={onKeyDownTrap}
         role="dialog"
         aria-modal="true"
         aria-label="日志"

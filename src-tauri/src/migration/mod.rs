@@ -3,9 +3,10 @@
 //! 在 `setup()` 中、Python 后端启动前执行：
 //! 1. 检测 Electron 旧配置文件（`%APPDATA%/agentx/config.json`）
 //! 2. 逐 key 处理：
-//!    - `enc:` 前缀 → safeStorage 加密，无法跨进程解密 → 记录到 `requires_reinput`
+//!    - `enc:` 前缀 → Chromium OSCrypt v10 加密，**原样保留**（由 `credentials::decrypt_string`
+//!      在读取时通过 `Local State` 中的 AES key + DPAPI + AES-256-GCM 解密）
 //!    - `plain:` 前缀或裸字符串 → 去前缀后写入 tauri-plugin-store
-//!    - 非字符串值（number/bool/object/array）→ 原样写入
+//!    - 非字符串值（number/bool/object/array）→ 原样写入（内嵌的 `enc:` 字符串也会被保留）
 //! 3. 备份原文件为 `config.json.migrated`
 //! 4. emit `migration:complete` 事件，附带迁移报告
 //!
@@ -34,9 +35,9 @@ const LEGACY_DIR_NAME: &str = "agentx";
 pub struct MigrationReport {
     /// 成功迁移的字符串 key 列表（plain:/裸字符串）
     pub migrated: Vec<String>,
-    /// 需要用户重新输入的 key 列表（enc: 加密值无法自动解密）
+    /// 需要用户重新输入的 key 列表（保留字段，当前始终为空——enc: 值已能自动解密）
     pub requires_reinput: Vec<String>,
-    /// 原样保留的非字符串 key 列表（number/bool/object/array）
+    /// 原样保留的 key 列表（enc: 加密值 + number/bool/object/array）
     pub preserved: Vec<String>,
 }
 
@@ -47,10 +48,11 @@ pub struct MigrationReport {
 ///
 /// 规则：
 /// - 字符串值：
-///   - `enc:` 前缀 → 加入 `requires_reinput`，不迁移（safeStorage 无法跨进程解密）
+///   - `enc:` 前缀 → **原样保留**（由 `credentials::decrypt_string` 在读取时
+///     通过 `Local State` 中的 AES key + DPAPI + AES-256-GCM 自动解密）
 ///   - `plain:` 前缀 → 去除前缀，存储裸字符串
 ///   - 裸字符串 → 原样保留
-/// - 非字符串值（number/bool/object/array）→ 原样保留，加入 `preserved`
+/// - 非字符串值（number/bool/object/array）→ 原样保留（内嵌的 `enc:` 字符串也会被保留）
 pub fn migrate_data(data: &Map<String, Value>) -> (Map<String, Value>, MigrationReport) {
     let mut result = Map::new();
     let mut report = MigrationReport::default();
@@ -59,7 +61,9 @@ pub fn migrate_data(data: &Map<String, Value>) -> (Map<String, Value>, Migration
         match value {
             Value::String(s) => {
                 if s.starts_with("enc:") {
-                    report.requires_reinput.push(key.clone());
+                    // enc: 值原样保留，由 credentials::decrypt_string 在读取时自动解密
+                    result.insert(key.clone(), value.clone());
+                    report.preserved.push(key.clone());
                 } else if let Some(stripped) = s.strip_prefix("plain:") {
                     result.insert(key.clone(), Value::String(stripped.to_string()));
                     report.migrated.push(key.clone());
@@ -206,17 +210,23 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_data_enc_values_go_to_requires_reinput() {
+    fn test_migrate_data_enc_values_preserved() {
         let data = build_mixed_data();
         let (result, report) = migrate_data(&data);
 
-        // enc: 值不迁移
-        assert!(report.requires_reinput.contains(&"milvus.user".to_string()));
-        assert!(report
-            .requires_reinput
-            .contains(&"milvus.password".to_string()));
-        assert!(!result.contains_key("milvus.user"));
-        assert!(!result.contains_key("milvus.password"));
+        // enc: 值原样保留（由 credentials::decrypt_string 在读取时自动解密）
+        assert_eq!(
+            result.get("milvus.user").and_then(|v| v.as_str()),
+            Some("enc:QkFPqkbi1C0=")
+        );
+        assert_eq!(
+            result.get("milvus.password").and_then(|v| v.as_str()),
+            Some("enc:ZIxPr79lFwM=")
+        );
+        assert!(report.preserved.contains(&"milvus.user".to_string()));
+        assert!(report.preserved.contains(&"milvus.password".to_string()));
+        // requires_reinput 始终为空（enc: 已能自动解密）
+        assert!(report.requires_reinput.is_empty());
     }
 
     #[test]
@@ -307,10 +317,14 @@ mod tests {
         data.insert("apikey.openai".into(), json!("enc:base64data"));
         let (result, report) = migrate_data(&data);
 
-        assert!(result.is_empty());
-        assert_eq!(report.requires_reinput, vec!["apikey.openai"]);
+        // enc: 值原样保留
+        assert_eq!(
+            result.get("apikey.openai").and_then(|v| v.as_str()),
+            Some("enc:base64data")
+        );
+        assert_eq!(report.preserved, vec!["apikey.openai"]);
         assert!(report.migrated.is_empty());
-        assert!(report.preserved.is_empty());
+        assert!(report.requires_reinput.is_empty());
     }
 
     #[test]
@@ -318,15 +332,15 @@ mod tests {
         let data = build_mixed_data();
         let (_, report) = migrate_data(&data);
 
-        // 2 enc: values
-        assert_eq!(report.requires_reinput.len(), 2);
+        // requires_reinput 始终为空（enc: 已能自动解密）
+        assert_eq!(report.requires_reinput.len(), 0);
         // migrated strings: apikey.openai, apikey.deepseek, llm.defaultModel,
         //   llm.openaiBaseUrl, systemPrompt, knowledge.milvusHost, models.activeId = 7
         assert_eq!(report.migrated.len(), 7);
-        // preserved non-strings: approval.*(3) + knowledge.milvusPort(1) +
+        // preserved: 2 enc: values + approval.*(3) + knowledge.milvusPort(1) +
         //   knowledge.milvusAuthEnabled(1) + profile.autoExtract(1) +
-        //   subagents(1) + tools(1) + mcp.servers(1) + models.entries(1) = 10
-        assert_eq!(report.preserved.len(), 10);
+        //   subagents(1) + tools(1) + mcp.servers(1) + models.entries(1) = 12
+        assert_eq!(report.preserved.len(), 12);
     }
 
     #[test]
@@ -429,16 +443,18 @@ mod tests {
         // 3. 执行迁移
         let (migrated_data, report) = migrate_data(&data);
 
-        // 4. 验证 enc: 凭证 → requires_reinput（不泄露到 migrated_data）
-        // 注意：serde_json::Map 迭代顺序按 key 字母序，不依赖插入顺序
-        let mut req_reinput_sorted = report.requires_reinput.clone();
-        req_reinput_sorted.sort();
+        // 4. 验证 enc: 凭证 → 原样保留（加密形式，由 credentials::decrypt_string 解密）
         assert_eq!(
-            req_reinput_sorted,
-            vec!["milvus.password", "milvus.user"]
+            migrated_data.get("milvus.user").and_then(|v| v.as_str()),
+            Some("enc:QkFPqkbi1C0+b3pX0g==")
         );
-        assert!(!migrated_data.contains_key("milvus.user"));
-        assert!(!migrated_data.contains_key("milvus.password"));
+        assert_eq!(
+            migrated_data.get("milvus.password").and_then(|v| v.as_str()),
+            Some("enc:ZIxPr79lFwM+abc123==")
+        );
+        assert!(report.preserved.contains(&"milvus.user".to_string()));
+        assert!(report.preserved.contains(&"milvus.password".to_string()));
+        assert!(report.requires_reinput.is_empty());
 
         // 5. 验证 plain: 凭证 → 去前缀后迁移
         assert_eq!(
@@ -483,9 +499,9 @@ mod tests {
         assert_eq!(backup_content, json_content);
     }
 
-    /// E2E: enc: 凭证绝对不会泄露到迁移后的数据中
+    /// E2E: enc: 凭证原样保留（加密形式），由 credentials::decrypt_string 在读取时解密
     #[test]
-    fn e2e_enc_credentials_never_leak() {
+    fn e2e_enc_credentials_preserved_encrypted() {
         let dir = TempDir::new().unwrap();
         let config_path: PathBuf = dir.path().join(STORE_NAME);
 
@@ -500,19 +516,30 @@ mod tests {
         let read_data = read_legacy_config(&config_path).unwrap().unwrap();
         let (migrated_data, report) = migrate_data(&read_data);
 
-        // 所有 key 都应进入 requires_reinput
-        assert_eq!(report.requires_reinput.len(), 3);
+        // 所有 enc: 值原样保留到 migrated_data，加入 preserved 列表
+        assert_eq!(report.preserved.len(), 3);
         assert!(report.migrated.is_empty());
-        assert!(report.preserved.is_empty());
+        assert!(report.requires_reinput.is_empty());
 
-        // migrated_data 应为空（enc: 值不迁移）
-        assert!(migrated_data.is_empty());
+        // enc: 值以加密形式保留在 migrated_data 中
+        assert_eq!(
+            migrated_data.get("milvus.user").and_then(|v| v.as_str()),
+            Some("enc:SecretData1==")
+        );
+        assert_eq!(
+            migrated_data.get("milvus.password").and_then(|v| v.as_str()),
+            Some("enc:SecretData2==")
+        );
+        assert_eq!(
+            migrated_data.get("apikey.openai").and_then(|v| v.as_str()),
+            Some("enc:SecretKey3==")
+        );
 
-        // 验证 enc: 原始值不会出现在任何迁移后的字段中
+        // 密文以 enc: 前缀形式存在（不会以明文形式泄露）
         let migrated_json = serde_json::to_string(&migrated_data).unwrap();
-        assert!(!migrated_json.contains("SecretData1"));
-        assert!(!migrated_json.contains("SecretData2"));
-        assert!(!migrated_json.contains("SecretKey3"));
+        assert!(migrated_json.contains("enc:SecretData1"));
+        assert!(migrated_json.contains("enc:SecretData2"));
+        assert!(migrated_json.contains("enc:SecretKey3"));
     }
 
     /// E2E: plain: 凭证正确去前缀，裸字符串原样保留
@@ -634,12 +661,12 @@ mod tests {
         let (migrated_data, report) = migrate_data(&read_data);
 
         // 验证计数
-        assert_eq!(report.requires_reinput.len(), 50, "50 个 enc: key");
+        assert_eq!(report.requires_reinput.len(), 0, "enc: 已能自动解密，requires_reinput 始终为空");
         assert_eq!(report.migrated.len(), 100, "50 plain + 50 bare");
-        assert_eq!(report.preserved.len(), 50, "50 个数值");
+        assert_eq!(report.preserved.len(), 100, "50 enc: + 50 数值");
 
-        // 验证迁移后的数据条目数 = 100 migrated + 50 preserved = 150
-        assert_eq!(migrated_data.len(), 150);
+        // 验证迁移后的数据条目数 = 100 migrated + 100 preserved = 200
+        assert_eq!(migrated_data.len(), 200);
 
         // 验证备份
         let backup_path = backup_legacy_config(&config_path).unwrap();

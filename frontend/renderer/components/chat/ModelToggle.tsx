@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Cpu, Check } from "lucide-react";
 import { useModelStore } from "@/stores/model";
 import { modelDisplayName, providerLabel } from "@/lib/modelCatalog";
+import { usePopover } from "@/components/ui/hooks/usePopover";
 
 /**
  * 模型切换按钮 —— 与 ChatComposer 左侧 btn-icon 同款 minimal 风格。
@@ -53,30 +54,13 @@ export function ModelToggle() {
   const loaded = useModelStore((s) => s.loaded);
   const load = useModelStore((s) => s.load);
   const setActive = useModelStore((s) => s.setActive);
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, rootRef } = usePopover();
   const [error, setError] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
 
   // 首次挂载拉一次；切换会话不重新拉（会话级不重置，保持用户最近选择）
   useEffect(() => {
     if (!loaded) void load();
   }, [loaded, load]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   // 用户在设置中配的"激活条目"（含友好 label）
   const activeEntry = entries.find((e) => e.id === activeId) ?? null;

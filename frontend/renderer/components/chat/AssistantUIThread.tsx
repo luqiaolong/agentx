@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { Fragment, memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { Pencil, Send } from "lucide-react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { TextPartView } from "./parts/TextPartView";
@@ -130,7 +130,7 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
 }
 
 /** 单条消息的 parts 渲染。 */
-function MessageParts({
+const MessageParts = memo(function MessageParts({
   message,
   isStreamingLast,
   onEditSubmit,
@@ -351,7 +351,7 @@ function MessageParts({
       </div>
     </div>
   );
-}
+});
 
 /**
  * parts-based 消息列表（替换原 MessageList）。

@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { FolderLock, X } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
 import type { AuthorizedDir } from "@/lib/utils";
 import { sandbox } from "@/lib/api/http";
+import { sandboxSettingsSchema, type SandboxSettingsFormValues } from "@/lib/schemas/sandbox";
+import { humanizeError } from "@/lib/errors";
 
 export function SandboxSettings() {
   const threadId = useChatStore((s) => s.currentId);
@@ -11,6 +15,28 @@ export function SandboxSettings() {
   const setPersistAuthorizedDirs = useSettingsStore((s) => s.setPersistAuthorizedDirs);
   const [dirs, setDirs] = useState<AuthorizedDir[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const form = useForm<SandboxSettingsFormValues>({
+    resolver: zodResolver(sandboxSettingsSchema),
+    defaultValues: { persistAuthorizedDirs },
+  });
+  const { register, watch } = form;
+
+  // 同步 store → form（首次挂载或 store 外部变更时）
+  useEffect(() => {
+    form.reset({ persistAuthorizedDirs });
+  }, [persistAuthorizedDirs, form]);
+
+  // 同步 form → store（checkbox 变化时立即持久化，原行为无 save 按钮）
+  useEffect(() => {
+    const sub = watch((val) => {
+      const next = Boolean(val.persistAuthorizedDirs);
+      if (next !== persistAuthorizedDirs) {
+        setPersistAuthorizedDirs(next);
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [watch, persistAuthorizedDirs, setPersistAuthorizedDirs]);
 
   const refresh = useCallback(async () => {
     if (!threadId) {
@@ -44,7 +70,7 @@ export function SandboxSettings() {
       await sandbox.revoke(threadId, p);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(humanizeError(err));
     }
   };
 
@@ -53,8 +79,7 @@ export function SandboxSettings() {
       <label className="flex cursor-pointer items-center gap-2 text-secondary-c" style={{ fontSize: 'var(--fs-settings-desc)' }}>
         <input
           type="checkbox"
-          checked={persistAuthorizedDirs}
-          onChange={(e) => setPersistAuthorizedDirs(e.target.checked)}
+          {...register("persistAuthorizedDirs")}
           className="h-3.5 w-3.5 rounded border-strong accent-brand-500"
         />
         跨会话保留授权目录

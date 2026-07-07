@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect } from "react";
+import { memo, useMemo, useState, useRef, useEffect } from "react";
 import {
   Plus,
   Trash2,
@@ -213,6 +213,95 @@ export function SessionList() {
   );
 }
 
+interface SessionItemProps {
+  session: Session;
+  active: boolean;
+  isStreaming: boolean;
+  onSwitch: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string, title: string) => void;
+}
+
+const SessionItem = memo(function SessionItem({
+  session: s,
+  active,
+  isStreaming,
+  onSwitch,
+  onRename,
+  onDelete,
+}: SessionItemProps) {
+  return (
+    <li>
+      <div
+        role="button"
+        tabIndex={isStreaming ? -1 : 0}
+        onClick={() => onSwitch(s.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSwitch(s.id);
+          }
+        }}
+        className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-0 pr-1 transition-colors ${
+          isStreaming
+            ? "cursor-not-allowed opacity-60"
+            : "hover:bg-hover-soft"
+        } ${active ? "bg-subtle" : ""}`}
+      >
+        {/* 12px spacer (= Chevron 宽度) + 4px gap-1 = 16px，让小圆点和 icon 左边缘严格对齐 */}
+        <span className="h-3.5 w-3 shrink-0" aria-hidden />
+        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
+          {s.isRunning ? (
+            <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
+          ) : s.hasNewResult ? (
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: 'var(--color-brand-500)', opacity: 0.5 }}
+              aria-hidden
+            />
+          ) : (
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: active ? 'var(--color-brand-500)' : 'var(--text-muted)' }}
+              aria-hidden
+            />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div
+            className={`truncate font-semibold leading-snug ${active ? "text-primary-c" : "text-secondary-c"}`}
+            style={{ fontSize: 'var(--fs-sidebar-item)' }}
+          >
+            {s.title}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRename(s.id, s.title);
+          }}
+          className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-brand-500/10 hover:text-brand-500 group-hover:opacity-100"
+          aria-label={`重命名会话 ${s.title}`}
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(s.id, s.title);
+          }}
+          className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-500 group-hover:opacity-100"
+          aria-label={`删除会话 ${s.title}`}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+    </li>
+  );
+});
+
 interface SessionGroupProps {
   icon: React.ReactNode;
   label: string;
@@ -289,79 +378,17 @@ function SessionGroup({
       </div>
       {open && (
         <ul className="m-0 mt-1 space-y-1 p-0">
-          {items.map((s) => {
-            const active = s.id === currentId;
-            return (
-              <li key={s.id}>
-                <div
-                  role="button"
-                  tabIndex={isStreaming ? -1 : 0}
-                  onClick={() => onSwitch(s.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSwitch(s.id);
-                    }
-                  }}
-                  className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-0 pr-1 transition-colors ${
-                    isStreaming
-                      ? "cursor-not-allowed opacity-60"
-                      : "hover:bg-hover-soft"
-                  } ${active ? "bg-subtle" : ""}`}
-                >
-                  {/* 12px spacer (= Chevron 宽度) + 4px gap-1 = 16px，让小圆点和 icon 左边缘严格对齐 */}
-                  <span className="h-3.5 w-3 shrink-0" aria-hidden />
-                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
-                    {s.isRunning ? (
-                      <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
-                    ) : s.hasNewResult ? (
-                      <span
-                        className="h-1.5 w-1.5 rounded-full"
-                        style={{ backgroundColor: 'var(--color-brand-500)', opacity: 0.5 }}
-                        aria-hidden
-                      />
-                    ) : (
-                      <span
-                        className="h-1.5 w-1.5 rounded-full"
-                        style={{ backgroundColor: active ? 'var(--color-brand-500)' : 'var(--text-muted)' }}
-                        aria-hidden
-                      />
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className={`truncate font-semibold leading-snug ${active ? "text-primary-c" : "text-secondary-c"}`}
-                      style={{ fontSize: 'var(--fs-sidebar-item)' }}
-                    >
-                      {s.title}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRename(s.id, s.title);
-                    }}
-                    className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-brand-500/10 hover:text-brand-500 group-hover:opacity-100"
-                    aria-label={`重命名会话 ${s.title}`}
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(s.id, s.title);
-                    }}
-                    className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-500 group-hover:opacity-100"
-                    aria-label={`删除会话 ${s.title}`}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              </li>
-            );
-          })}
+          {items.map((s) => (
+            <SessionItem
+              key={s.id}
+              session={s}
+              active={s.id === currentId}
+              isStreaming={isStreaming}
+              onSwitch={onSwitch}
+              onRename={onRename}
+              onDelete={onDelete}
+            />
+          ))}
         </ul>
       )}
     </div>
