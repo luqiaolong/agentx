@@ -18,8 +18,14 @@ from app.subagents.base import (
 )
 
 
-def build_web_agent(thread_id: str) -> Any:
-    """构建 Web 子代理 ReAct 子图，返回 CompiledStateGraph。"""
+def build_web_agent(
+    thread_id: str,
+    checkpointer: Any = None,
+) -> Any:
+    """构建 Web 子代理 ReAct 子图，返回 CompiledStateGraph。
+
+    ``checkpointer`` 可选的 LangGraph checkpointer，用于状态持久化。
+    """
     settings = get_settings()
     cfg = settings.subagents["web"]
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
@@ -29,6 +35,8 @@ def build_web_agent(thread_id: str) -> Any:
     prompt = cfg.system_prompt or ""
     prompt = prompt + THINK_PROMPT_SUFFIX
     kwargs["prompt"] = prompt
+    if checkpointer is not None:
+        kwargs["checkpointer"] = checkpointer
     return create_react_agent(model, tools, name="web_agent", **kwargs)
 
 
@@ -36,6 +44,7 @@ async def run_web_agent(
     thread_id: str,
     message: str,
     history: list | None = None,
+    checkpointer: Any = None,
 ) -> AsyncIterator[dict]:
     """运行 Web 子代理，yield 标准化事件流。
 
@@ -51,8 +60,9 @@ async def run_web_agent(
         thread_id: 会话 ID。
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
+        checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
     """
-    agent = build_web_agent(thread_id)
+    agent = build_web_agent(thread_id, checkpointer=checkpointer)
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     async for event in run_react_agent_stream(agent, inputs, source="web"):

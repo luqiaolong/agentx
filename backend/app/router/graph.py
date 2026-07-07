@@ -309,17 +309,28 @@ async def run_router(
             "classification": classification,
         }
 
+        # 收集本次对话的 user + assistant 消息并写回 checkpointer
+        assistant_content_parts: list[str] = []
+
+        async def _collect_path_sse(path_generator: AsyncIterator[dict[str, str]]) -> AsyncIterator[dict[str, str]]:
+            async for sse in path_generator:
+                if sse.get("event") == "token":
+                    assistant_content_parts.append(str(sse.get("data", "")))
+                yield sse
+
         if agent_mode == "agent_team":
             # 路径 D：多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggregator）
-            async for sse in run_team_path(
-                cleaned_message,
-                thread_id,
-                state,
-                profile_prompt=profile_prompt,
-                history=history,
-                permission_mode=permission_mode,
-                scene_prompt=scene_prompt,
-                workspace_path=workspace_path,
+            async for sse in _collect_path_sse(
+                run_team_path(
+                    cleaned_message,
+                    thread_id,
+                    state,
+                    profile_prompt=profile_prompt,
+                    history=history,
+                    permission_mode=permission_mode,
+                    scene_prompt=scene_prompt,
+                    workspace_path=workspace_path,
+                )
             ):
                 yield sse
         elif classification == "CHAT":
@@ -329,27 +340,32 @@ async def run_router(
                 system_prompt_extra += profile_prompt
             if skill_content:
                 system_prompt_extra += skill_content
-            async for sse in run_chat_path(
-                cleaned_message,
-                thread_id,
-                system_prompt_extra=system_prompt_extra,
-                history=history,
-                scene_prompt=scene_prompt,
+            async for sse in _collect_path_sse(
+                run_chat_path(
+                    cleaned_message,
+                    thread_id,
+                    system_prompt_extra=system_prompt_extra,
+                    history=history,
+                    scene_prompt=scene_prompt,
+                )
             ):
                 yield sse
         elif classification == "SINGLE_TOOL":
-            async for sse in run_tool_path(
-                cleaned_message,
-                thread_id,
-                profile_prompt=profile_prompt,
-                history=history,
-                scene_prompt=scene_prompt,
-                workspace_path=workspace_path,
-                checkpointer=checkpointer,
+            async for sse in _collect_path_sse(
+                run_tool_path(
+                    cleaned_message,
+                    thread_id,
+                    profile_prompt=profile_prompt,
+                    history=history,
+                    scene_prompt=scene_prompt,
+                    workspace_path=workspace_path,
+                    checkpointer=checkpointer,
+                )
             ):
                 yield sse
         else:  # DEEP_TASK
             # 路径 C：画像传给 run_deep_path，由 deep_path 注入到 agent system prompt
+            # DeepAgent 自己通过 checkpointer 管理历史，run_router 不重复写入
             async for sse in run_deep_path(
                 state,
                 cleaned_message,
@@ -360,6 +376,16 @@ async def run_router(
                 workspace_path=workspace_path,
             ):
                 yield sse
+
+        assistant_content = "".join(assistant_content_parts).strip()
+        if assistant_content and checkpointer is not None:
+            from langchain_core.messages import AIMessage, HumanMessage
+
+            new_messages = [
+                HumanMessage(content=cleaned_message),
+                AIMessage(content=assistant_content),
+            ]
+            await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
 
         yield make_sse_event("done", "{}")
 
@@ -494,3 +520,31 @@ async def _load_history_from_checkpointer(
     channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
     messages = channel_values.get("messages", [])
     return list(messages) if messages else []
+
+
+async def _append_messages_to_checkpointer(
+    checkpointer: Any, thread_id: str, new_messages: list
+) -> None:
+    """将 ``new_messages`` 追加到 ``thread_id`` 的 checkpointer messages channel。
+
+    兼容同步与异步 checkpointer（优先异步接口）。若 thread_id 尚无 checkpoint，
+    则创建一个最小新 checkpoint。
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    if hasattr(checkpointer, "aget"):
+        checkpoint = await checkpointer.aget(config)
+    else:
+        checkpoint = checkpointer.get(config)
+
+    if checkpoint is None:
+        checkpoint = {"channel_values": {}}
+    channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
+    messages = list(channel_values.get("messages", []))
+    messages.extend(new_messages)
+    new_channel_values = {**channel_values, "messages": messages}
+    new_checkpoint = {**checkpoint, "channel_values": new_channel_values}
+
+    if hasattr(checkpointer, "aput"):
+        await checkpointer.aput(config, new_checkpoint, {"messages": "any"}, [])
+    elif hasattr(checkpointer, "put"):
+        checkpointer.put(config, new_checkpoint, {"messages": "any"}, [])
