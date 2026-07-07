@@ -600,7 +600,7 @@ def test_parse_workspace_tag_empty_returns_none() -> None:
 async def test_run_router_passes_workspace_path_to_deep_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DEEP_TASK 路径：run_router 解析 <workspace> 并透传 workspace_path 给 run_deep_path。"""
+    """DEEP_TASK 路径：run_router 从请求字段透传 workspace_path 给 run_deep_path，不再解析消息正文 <workspace> 标签。"""
 
     async def _fake_classify(message: str) -> str:
         return "DEEP_TASK"
@@ -625,7 +625,7 @@ async def test_run_router_passes_workspace_path_to_deep_path(
     monkeypatch.setattr("app.router.graph.run_deep_path", _fake_run_deep_path)
 
     events = await _collect_events(
-        run_router("<workspace>D:\\proj</workspace> 帮我分析", "t-ws")
+        run_router("帮我分析", "t-ws", workspace_path="D:\\proj")
     )
 
     assert captured.get("workspace_path") == "D:\\proj"
