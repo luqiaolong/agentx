@@ -32,6 +32,8 @@ from uuid import uuid4
 
 from langgraph.prebuilt import create_react_agent
 
+from app.approval import clear_pause, is_paused
+from app.approval.state import get_pause_event
 from app.config import get_settings
 from app.deep.approval import (
     _APPROVAL_POLL_INTERVAL,
@@ -335,6 +337,15 @@ async def run_deep_path(
 
     while iteration < max_iterations:
         iteration += 1
+
+        # 5b. 暂停/恢复检查：pause 时 yield paused 事件并阻塞，resume 后 yield resumed
+        # 注意：不清理 pending_approvals 或 abort_flags，只暂停 LLM 流。
+        if is_paused(thread_id):
+            yield make_sse_event("paused", {})
+            pause_event = get_pause_event(thread_id)
+            if is_paused(thread_id):
+                await pause_event.wait()
+            yield make_sse_event("resumed", {})
 
         if not await _is_interrupted(agent, config):
             # 图已完成，退出循环

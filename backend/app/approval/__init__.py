@@ -6,10 +6,14 @@
 from app.approval.decision import ApprovalDecision
 from app.approval.state import (
     clear_abort,
+    clear_pause,
     get_abort_event,
+    get_pause_event,
     is_aborted,
+    is_paused,
     pop_approval,
     set_abort,
+    set_pause,
     submit_approval,
 )
 
@@ -21,4 +25,8 @@ __all__ = [
     "is_aborted",
     "clear_abort",
     "get_abort_event",
+    "set_pause",
+    "clear_pause",
+    "is_paused",
+    "get_pause_event",
 ]

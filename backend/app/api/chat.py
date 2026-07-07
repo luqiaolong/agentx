@@ -16,8 +16,10 @@ from app.api.schemas import (
 from app.approval import (
     ApprovalDecision,
     clear_abort,
+    clear_pause,
     is_aborted,
     set_abort,
+    set_pause,
     submit_approval,
 )
 from app.config import get_settings
@@ -115,7 +117,7 @@ def register_chat_routes(app: FastAPI) -> None:
     """注册聊天相关路由。
 
     含 ``POST /api/chat`` + ``POST /api/chat/approve`` + ``POST /api/chat/abort``
-    + ``POST /api/chat/compact``。
+    + ``POST /api/chat/pause`` + ``POST /api/chat/resume`` + ``POST /api/chat/compact``。
     """
 
     @app.post("/api/chat/approve")
@@ -180,6 +182,20 @@ def register_chat_routes(app: FastAPI) -> None:
         """设置中止标志，SSE handler 在下一轮迭代退出。"""
         set_abort(req.thread_id)
         logger.info("abort flag set", thread_id=req.thread_id)
+        return {"ok": True}
+
+    @app.post("/api/chat/pause")
+    async def chat_pause(req: AbortRequest) -> dict[str, Any]:
+        """设置暂停标志，DeepAgent 在迭代起点进入等待。"""
+        set_pause(req.thread_id)
+        logger.info("pause flag set", thread_id=req.thread_id)
+        return {"ok": True}
+
+    @app.post("/api/chat/resume")
+    async def chat_resume(req: AbortRequest) -> dict[str, Any]:
+        """清除暂停标志并唤醒等待中的 DeepAgent。"""
+        clear_pause(req.thread_id)
+        logger.info("pause cleared", thread_id=req.thread_id)
         return {"ok": True}
 
     @app.post("/api/chat")
