@@ -35,7 +35,7 @@ DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec", CLI_TOOL_N
 _TOOL_NAME_MAP = {"glob_files": "glob", "grep_files": "grep"}
 
 
-def _make_deep_tools(thread_id: str) -> list:
+def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     """构建 DeepAgent 内置工具集：只读 fs + 危险 fs + rag + web（同步部分）。
 
     安全设计：
@@ -48,6 +48,10 @@ def _make_deep_tools(thread_id: str) -> list:
     工具名映射：``glob_files``→``glob``、``grep_files``→``grep``（与 subagents 一致）。
 
     MCP 工具由 ``_load_mcp_tools`` 异步加载并合并（见 ``run_deep_path``）。
+
+    Args:
+        thread_id: 会话 ID，用于沙箱授权校验。
+        workspace_path: 可选当前工作区绝对路径，作为 cli_execute 未传 cwd 时的默认值。
     """
     from langchain_core.tools import tool
 
@@ -75,8 +79,12 @@ def _make_deep_tools(thread_id: str) -> list:
         cwd: str | None = None,
         timeout: int | None = None,
     ) -> str:
-        """执行受限 CLI 命令（如 git/npm/python）。需要用户授权与设置开启。"""
-        return await cli_execute_impl(thread_id, command, arguments, cwd, timeout)
+        """执行受限 CLI 命令（如 git/npm/python）。需要用户授权与设置开启。
+
+        若未指定 cwd，默认使用当前会话绑定的 workspace 路径（如已选择工作区）。
+        """
+        effective_cwd = cwd if cwd else workspace_path
+        return await cli_execute_impl(thread_id, command, arguments, effective_cwd, timeout)
 
     all_tools = [*fs_tools, write_file, edit_file, cli_execute, *rag_tools, *web_tools]
 

@@ -120,18 +120,20 @@ export interface ChatState {
   approvalRequest: ApprovalRequest | null;
   // 会话管理
   /**
-   * 新建会话。
+   * 新建会话，并在 workspacePath 非空时向后端授权该目录（可写）。
+   * 授权改为 await，避免 fire-and-forget 导致后续工具调用出现竞态。
    * @param workspacePath 显式指定归属（一般是 Home 或用户选择的目录）。
    *                      不传时按需求"总是新建到 Home"。
    */
-  createSession: (workspacePath?: string | null) => string;
+  createSession: (workspacePath?: string | null) => Promise<string>;
   switchSession: (id: string) => void;
   deleteSession: (id: string) => void;
   renameSession: (id: string, title: string) => void;
   /**
-   * 把会话迁到指定 workspace。null 表示迁回 Home。
+   * 把会话迁到指定 workspace，并在 workspacePath 非空时向后端授权该目录（可写）。
+   * null 表示迁回 Home。
    */
-  moveSessionToWorkspace: (id: string, workspacePath: string | null) => void;
+  moveSessionToWorkspace: (id: string, workspacePath: string | null) => Promise<void>;
   /** 手动撤销授权并标记，阻止 chip 隐式授权覆盖。 */
   revokeAndMark: (sessionId: string, path: string) => Promise<void>;
   /** 手动授权并清除 revoked 标记（handleAttachWorkspace 复用）。 */
@@ -230,7 +232,7 @@ export const useChatStore = create<ChatState>()(
         isStreaming: false,
         approvalRequest: null,
 
-        createSession: (workspacePath = null) => {
+        createSession: async (workspacePath = null) => {
           const id = crypto.randomUUID();
           set((s) => {
             const sessions = {
@@ -240,12 +242,16 @@ export const useChatStore = create<ChatState>()(
             const currentId = id;
             return { sessions, currentId };
           });
-          // 隐式授权：workspacePath 非空时自动调 authorize（source=chip）
-          // optional chaining 防御测试环境 window.api 缺失；失败静默不阻塞 UI
+          // 隐式授权：workspacePath 非空时自动调 authorize（source=chip）。
+          // 改为 await，避免 fire-and-forget 导致后端还没收到授权就执行工具。
           if (workspacePath) {
             const sess = get().sessions[id];
             if (sess && !sess.manuallyRevokedPaths.includes(workspacePath)) {
-              sandbox.authorize(id, workspacePath, true, "chip").catch(() => {});
+              try {
+                await sandbox.authorize(id, workspacePath, true, "chip");
+              } catch {
+                // 失败静默：不阻塞会话创建；后端工具执行时会再校验并提示用户
+              }
             }
           }
           return id;
@@ -285,7 +291,7 @@ export const useChatStore = create<ChatState>()(
           });
         },
 
-        moveSessionToWorkspace: (id, workspacePath) => {
+        moveSessionToWorkspace: async (id, workspacePath) => {
           set((s) => {
             const sess = s.sessions[id];
             if (!sess) return s;
@@ -296,12 +302,16 @@ export const useChatStore = create<ChatState>()(
             };
             return { sessions };
           });
-          // 隐式授权：workspacePath 非空且未被 revoke 时自动调 authorize（source=chip）
-          // optional chaining 防御测试环境 window.api 缺失；失败静默不阻塞 UI
+          // 隐式授权：workspacePath 非空且未被 revoke 时自动调 authorize（source=chip）。
+          // 改为 await，避免 fire-and-forget 导致后端还没收到授权就执行工具。
           if (workspacePath) {
             const sess = get().sessions[id];
             if (sess && !sess.manuallyRevokedPaths.includes(workspacePath)) {
-              sandbox.authorize(id, workspacePath, true, "chip").catch(() => {});
+              try {
+                await sandbox.authorize(id, workspacePath, true, "chip");
+              } catch {
+                // 失败静默：不阻塞 workspace 迁移；后端工具执行时会再校验并提示用户
+              }
             }
           }
         },

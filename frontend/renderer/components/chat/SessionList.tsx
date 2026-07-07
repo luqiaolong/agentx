@@ -108,21 +108,21 @@ export function SessionList() {
   };
 
   // 默认：总是新建到 Home（按用户需求）
-  const handleCreateInHome = () => {
+  const handleCreateInHome = async () => {
     if (isStreaming) {
       window.alert("当前会话正在流式输出，请等待完成或中止后再新建会话");
       return;
     }
-    createSession(null);
+    await createSession(null);
   };
 
   // workspace 分组的 + 按钮：在该 workspace 下新建会话
-  const handleCreateInWorkspace = (workspacePath: string) => {
+  const handleCreateInWorkspace = async (workspacePath: string) => {
     if (isStreaming) {
       window.alert("当前会话正在流式输出，请等待完成或中止后再新建会话");
       return;
     }
-    createSession(workspacePath);
+    await createSession(workspacePath);
   };
 
   return (

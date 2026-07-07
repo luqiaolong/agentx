@@ -305,7 +305,7 @@ export function ChatView() {
     if (trimmed.startsWith("/")) {
       const cmd = findBuiltinCommand(trimmed);
       if (cmd) {
-        const tid = currentId ?? createSession();
+        const tid = currentId ?? (await createSession());
         addMessage({ id: crypto.randomUUID(), role: "user", content, ts: Date.now() });
         await runBuiltinCommand(cmd, trimmed);
         return;
@@ -313,8 +313,8 @@ export function ChatView() {
       // 不识别的 / 命令：继续走 LLM，让模型回答"该命令不存在"
     }
 
-    // 多会话：若当前无会话先创建
-    const tid = currentId ?? createSession();
+    // 多会话：若当前无会话先创建（createSession 内部会 await 隐式授权）
+    const tid = currentId ?? (await createSession());
 
     addMessage({ id: crypto.randomUUID(), role: "user", content, ts: Date.now() });
     const pendingId = `pending-${crypto.randomUUID()}`;

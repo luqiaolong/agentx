@@ -126,7 +126,7 @@ def build_router_graph(checkpointer: Any = None) -> Any:
 
 
 # ============================================================
-# @skill 标记解析
+# @skill / <workspace> 标记解析
 # ============================================================
 
 # 单 skill content 注入上限（超出截断）
@@ -134,6 +134,9 @@ _SKILL_CONTENT_MAX = 4000
 
 # @skill:<name> 标记正则
 _SKILL_TAG_RE = re.compile(r"@skill:(\S+)")
+
+# <workspace>path</workspace> 标记正则（前端 ChatComposer 附加当前工作区）
+_WORKSPACE_TAG_RE = re.compile(r"<workspace>(.*?)</workspace>\s?", re.S)
 
 
 def _parse_skill_tag(message: str) -> tuple[str, str | None]:
@@ -175,6 +178,30 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
     return (cleaned, skill_content)
 
 
+def _parse_workspace_tag(message: str) -> tuple[str, str | None]:
+    """解析前端附加的 ``<workspace>path</workspace>`` 工作区标记。
+
+    - 提取首个 ``<workspace>`` 标签内的绝对路径。
+    - 从用户消息中移除该标签，避免污染 LLM 看到的实际内容。
+    - 无标签或标签为空时返回 ``(message, None)``。
+
+    Examples:
+        >>> _parse_workspace_tag("<workspace>/tmp/foo</workspace> 帮我看看")
+        ("帮我看看", "/tmp/foo")
+        >>> _parse_workspace_tag("hello")
+        ("hello", None)
+    """
+    match = _WORKSPACE_TAG_RE.search(message)
+    if not match:
+        return (message, None)
+    workspace_path = match.group(1).strip()
+    cleaned = _WORKSPACE_TAG_RE.sub("", message, count=1).strip()
+    cleaned = " ".join(cleaned.split())
+    if not workspace_path:
+        return (cleaned, None)
+    return (cleaned, workspace_path)
+
+
 # ============================================================
 # Router 主入口
 # ============================================================
@@ -213,6 +240,27 @@ async def run_router(
     with trace_span("router.run", thread_id=thread_id, message_len=len(message)):
         # 解析 @skill 标记（在 classify 之前）
         cleaned_message, skill_content = _parse_skill_tag(message)
+
+        # 解析前端附加的 <workspace> 工作区标记：提取路径、移除标签、同步后端授权
+        cleaned_message, workspace_path = _parse_workspace_tag(cleaned_message)
+        if workspace_path:
+            from app.utils.security import get_sandbox
+
+            sandbox = get_sandbox()
+            try:
+                sandbox.authorize(thread_id, workspace_path, writable=True, source="chip")
+                logger.info(
+                    "router.workspace_authorized",
+                    thread_id=thread_id,
+                    workspace=workspace_path,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "router.workspace_authorize_failed",
+                    thread_id=thread_id,
+                    workspace=workspace_path,
+                    error=str(exc),
+                )
 
         # T9：读取用户画像，拼到 system prompt 前（路径 A 与路径 C 都注入）
         # build_profile_prompt 失败时返回空字符串，不影响主流程
@@ -297,7 +345,6 @@ async def run_router(
                 yield sse
         else:  # DEEP_TASK
             # 路径 C：画像传给 run_deep_path，由 deep_path 注入到 agent system prompt
-            # run_deep_path 签名: (state, message, profile_prompt, history, permission_mode, scene_prompt)
             async for sse in run_deep_path(
                 state,
                 cleaned_message,
@@ -305,6 +352,7 @@ async def run_router(
                 history=history,
                 permission_mode=permission_mode,
                 scene_prompt=scene_prompt,
+                workspace_path=workspace_path,
             ):
                 yield sse
 

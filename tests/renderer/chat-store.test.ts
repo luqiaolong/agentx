@@ -39,8 +39,8 @@ beforeEach(() => {
 });
 
 describe("chat store", () => {
-  it("createSession 新建会话并指向 currentId", () => {
-    const id = useChatStore.getState().createSession();
+  it("createSession 新建会话并指向 currentId", async () => {
+    const id = await useChatStore.getState().createSession();
     const state = useChatStore.getState();
     expect(state.sessions[id]).toBeDefined();
     expect(state.currentId).toBe(id);
@@ -48,24 +48,24 @@ describe("chat store", () => {
     expect(state.sessions[id].title).toBe("新会话");
   });
 
-  it("switchSession 切换 currentId", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("switchSession 切换 currentId", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     useChatStore.getState().switchSession(id1);
     expect(useChatStore.getState().currentId).toBe(id1);
     useChatStore.getState().switchSession(id2);
     expect(useChatStore.getState().currentId).toBe(id2);
   });
 
-  it("switchSession 忽略不存在的 id", () => {
-    const id1 = useChatStore.getState().createSession();
+  it("switchSession 忽略不存在的 id", async () => {
+    const id1 = await useChatStore.getState().createSession();
     useChatStore.getState().switchSession("not-exist");
     expect(useChatStore.getState().currentId).toBe(id1);
   });
 
-  it("deleteSession 删除当前会话后 currentId 切到剩余第一个", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("deleteSession 删除当前会话后 currentId 切到剩余第一个", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     expect(useChatStore.getState().currentId).toBe(id2);
     useChatStore.getState().deleteSession(id2);
     const state = useChatStore.getState();
@@ -73,25 +73,25 @@ describe("chat store", () => {
     expect(state.currentId).toBe(id1);
   });
 
-  it("deleteSession 删除非当前会话不影响 currentId", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("deleteSession 删除非当前会话不影响 currentId", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     useChatStore.getState().deleteSession(id1);
     const state = useChatStore.getState();
     expect(state.sessions[id1]).toBeUndefined();
     expect(state.currentId).toBe(id2);
   });
 
-  it("deleteSession 删除最后一个会话后 currentId 为 null", () => {
-    const id = useChatStore.getState().createSession();
+  it("deleteSession 删除最后一个会话后 currentId 为 null", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().deleteSession(id);
     const state = useChatStore.getState();
     expect(Object.keys(state.sessions)).toHaveLength(0);
     expect(state.currentId).toBeNull();
   });
 
-  it("addMessage 追加消息，首条 user 消息更新 title", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 追加消息，首条 user 消息更新 title", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "u1",
       role: "user",
@@ -105,8 +105,8 @@ describe("chat store", () => {
     expect(sess.title).toBe("a".repeat(20));
   });
 
-  it("addMessage 不覆盖已自定义的 title", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 不覆盖已自定义的 title", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().renameSession(id, "自定义标题");
     useChatStore.getState().addMessage({
       id: "u1",
@@ -117,7 +117,7 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[id].title).toBe("自定义标题");
   });
 
-  it("addMessage 无当前会话时为空操作", () => {
+  it("addMessage 无当前会话时为空操作", async () => {
     useChatStore.getState().addMessage({
       id: "u1",
       role: "user",
@@ -127,8 +127,8 @@ describe("chat store", () => {
     expect(Object.keys(useChatStore.getState().sessions)).toHaveLength(0);
   });
 
-  it("appendMessageContent 追加内容到指定 id 的消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendMessageContent 追加内容到指定 id 的消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -147,8 +147,8 @@ describe("chat store", () => {
     expect(msgs.find((m) => m.id === "a2")?.content).toBe("bar");
   });
 
-  it("appendMessageContent 对未知 id 不报错且不影响其它消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendMessageContent 对未知 id 不报错且不影响其它消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -159,16 +159,16 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[id].messages[0].content).toBe("foo");
   });
 
-  it("appendMessageContent 按 id 跨会话定位消息（不依赖 currentId）", () => {
+  it("appendMessageContent 按 id 跨会话定位消息（不依赖 currentId）", async () => {
     // 模拟流式 token 追加到非当前会话的消息（如 deleteSession 后 currentId 漂移）
-    const idA = useChatStore.getState().createSession();
+    const idA = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "stream-1",
       role: "assistant",
       content: "foo",
       ts: 1,
     });
-    const idB = useChatStore.getState().createSession();
+    const idB = await useChatStore.getState().createSession();
     // 现在 currentId = idB，但 stream-1 属于 idA
     useChatStore.getState().appendMessageContent("stream-1", "bar");
     expect(useChatStore.getState().sessions[idA].messages[0].content).toBe("foobar");
@@ -176,56 +176,56 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
   });
 
-  it("clearMessages 清空当前会话消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("clearMessages 清空当前会话消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "m1", role: "user", content: "x", ts: 1 });
     useChatStore.getState().addMessage({ id: "m2", role: "assistant", content: "y", ts: 2 });
     useChatStore.getState().clearMessages();
     expect(useChatStore.getState().sessions[id].messages).toEqual([]);
   });
 
-  it("renameSession 更新会话标题", () => {
-    const id = useChatStore.getState().createSession();
+  it("renameSession 更新会话标题", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().renameSession(id, "新标题");
     expect(useChatStore.getState().sessions[id].title).toBe("新标题");
   });
 
-  it("compat 字段已移除：state 不再包含顶层 messages / threadId / setThreadId", () => {
+  it("compat 字段已移除：state 不再包含顶层 messages / threadId / setThreadId", async () => {
     const state = useChatStore.getState() as unknown as Record<string, unknown>;
     expect(state.messages).toBeUndefined();
     expect(state.threadId).toBeUndefined();
     expect(state.setThreadId).toBeUndefined();
   });
 
-  it("createSession 不传参时归属 Home（workspacePath=null）", () => {
-    const id = useChatStore.getState().createSession();
+  it("createSession 不传参时归属 Home（workspacePath=null）", async () => {
+    const id = await useChatStore.getState().createSession();
     expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
   });
 
-  it("createSession 传 workspace 时归属该 workspace", () => {
-    const id = useChatStore.getState().createSession("/tmp/foo");
+  it("createSession 传 workspace 时归属该 workspace", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/foo");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/foo");
   });
 
-  it("moveSessionToWorkspace 迁移会话到新 workspace", () => {
-    const id = useChatStore.getState().createSession("/tmp/a");
-    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/b");
+  it("moveSessionToWorkspace 迁移会话到新 workspace", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/a");
+    await useChatStore.getState().moveSessionToWorkspace(id, "/tmp/b");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/b");
   });
 
-  it("moveSessionToWorkspace 传 null 迁回 Home", () => {
-    const id = useChatStore.getState().createSession("/tmp/a");
-    useChatStore.getState().moveSessionToWorkspace(id, null);
+  it("moveSessionToWorkspace 传 null 迁回 Home", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/a");
+    await useChatStore.getState().moveSessionToWorkspace(id, null);
     expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
   });
 
-  it("moveSessionToWorkspace 对不存在的 id 是空操作", () => {
+  it("moveSessionToWorkspace 对不存在的 id 是空操作", async () => {
     const before = useChatStore.getState().sessions;
-    useChatStore.getState().moveSessionToWorkspace("not-exist", "/tmp/x");
+    await useChatStore.getState().moveSessionToWorkspace("not-exist", "/tmp/x");
     expect(useChatStore.getState().sessions).toEqual(before);
   });
 
-  it("setHomeWorkspacePath 设置后 state 持有路径", () => {
+  it("setHomeWorkspacePath 设置后 state 持有路径", async () => {
     useChatStore.getState().setHomeWorkspacePath("/tmp/desktop");
     expect(useChatStore.getState().homeWorkspacePath).toBe("/tmp/desktop");
   });
@@ -236,8 +236,8 @@ describe("chat store", () => {
 // ============================================================
 
 describe("chat store parts 模型", () => {
-  it("addMessage 传 content 时自动转为 text part", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 传 content 时自动转为 text part", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "u1",
       role: "user",
@@ -255,8 +255,8 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("hello");
   });
 
-  it("addMessage 传 parts 时直接使用，content 派生", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 传 parts 时直接使用，content 派生", async () => {
+    const id = await useChatStore.getState().createSession();
     const parts: MessagePart[] = [
       { type: "text", id: "p1", text: "前" },
       { type: "text", id: "p2", text: "后" },
@@ -273,8 +273,8 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("前后");
   });
 
-  it("addMessage 不传 parts 也不传 content 时为空 parts", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 不传 parts 也不传 content 时为空 parts", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "pending-1",
       role: "assistant",
@@ -285,8 +285,8 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("");
   });
 
-  it("appendPartText(text) 找最后一个 text part append；无则新建", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendPartText(text) 找最后一个 text part append；无则新建", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -302,7 +302,7 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("foobar");
 
     // 空 parts 时新建
-    const id2 = useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "a2", role: "assistant", ts: 1 });
     useChatStore.getState().appendPartText("a2", "text", "new");
     const msg2 = useChatStore.getState().sessions[id2].messages[0];
@@ -311,8 +311,8 @@ describe("chat store parts 模型", () => {
     expect(msg2.content).toBe("new");
   });
 
-  it("appendPartText(reasoning) 找最后一个 done=false 的 reasoning part；无则新建", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendPartText(reasoning) 找最后一个 done=false 的 reasoning part；无则新建", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -343,8 +343,8 @@ describe("chat store parts 模型", () => {
     }
   });
 
-  it("appendPartText(reasoning) 跳过 done=true 的 reasoning part，新建", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendPartText(reasoning) 跳过 done=true 的 reasoning part，新建", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -360,15 +360,15 @@ describe("chat store parts 模型", () => {
     }
   });
 
-  it("appendPartText 跨会话按 messageId 定位（不依赖 currentId）", () => {
-    const idA = useChatStore.getState().createSession();
+  it("appendPartText 跨会话按 messageId 定位（不依赖 currentId）", async () => {
+    const idA = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "stream-1",
       role: "assistant",
       ts: 1,
       parts: [{ type: "text", id: "t1", text: "foo" }],
     });
-    const idB = useChatStore.getState().createSession();
+    const idB = await useChatStore.getState().createSession();
     // currentId = idB，但 stream-1 属于 idA
     useChatStore.getState().appendPartText("stream-1", "text", "bar");
     const msgA = useChatStore.getState().sessions[idA].messages[0];
@@ -380,8 +380,8 @@ describe("chat store parts 模型", () => {
     expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
   });
 
-  it("appendPartText 对未知 messageId 不报错", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendPartText 对未知 messageId 不报错", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -394,8 +394,8 @@ describe("chat store parts 模型", () => {
     expect(useChatStore.getState().sessions[id].messages[0].parts).toHaveLength(1);
   });
 
-  it("addPart 向指定 message 添加新 part", () => {
-    const id = useChatStore.getState().createSession();
+  it("addPart 向指定 message 添加新 part", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -417,8 +417,8 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("前");
   });
 
-  it("addPart 添加 text part 时同步更新 content", () => {
-    const id = useChatStore.getState().createSession();
+  it("addPart 添加 text part 时同步更新 content", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -431,8 +431,8 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("前后");
   });
 
-  it("updatePart 按 partId 合并 updates", () => {
-    const id = useChatStore.getState().createSession();
+  it("updatePart 按 partId 合并 updates", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -457,8 +457,8 @@ describe("chat store parts 模型", () => {
     }
   });
 
-  it("updatePart 更新 text part 的 text 时同步 content", () => {
-    const id = useChatStore.getState().createSession();
+  it("updatePart 更新 text part 的 text 时同步 content", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -473,8 +473,8 @@ describe("chat store parts 模型", () => {
     expect(msg.content).toBe("new");
   });
 
-  it("markReasoningDone 标记所有 reasoning part 的 done=true", () => {
-    const id = useChatStore.getState().createSession();
+  it("markReasoningDone 标记所有 reasoning part 的 done=true", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -495,8 +495,8 @@ describe("chat store parts 模型", () => {
     expect(reasoningParts.every((r) => r.done)).toBe(true);
   });
 
-  it("markReasoningDone 对无 reasoning part 的消息是空操作", () => {
-    const id = useChatStore.getState().createSession();
+  it("markReasoningDone 对无 reasoning part 的消息是空操作", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -508,15 +508,15 @@ describe("chat store parts 模型", () => {
     expect(msg.parts).toHaveLength(1);
   });
 
-  it("markReasoningDone 跨会话按 messageId 定位", () => {
-    const idA = useChatStore.getState().createSession();
+  it("markReasoningDone 跨会话按 messageId 定位", async () => {
+    const idA = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "stream-1",
       role: "assistant",
       ts: 1,
       parts: [{ type: "reasoning", id: "r1", text: "x", done: false }],
     });
-    const idB = useChatStore.getState().createSession();
+    const idB = await useChatStore.getState().createSession();
     useChatStore.getState().markReasoningDone("stream-1");
     const msgA = useChatStore.getState().sessions[idA].messages[0];
     if (msgA.parts[0]?.type === "reasoning") {
@@ -526,8 +526,8 @@ describe("chat store parts 模型", () => {
     expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
   });
 
-  it("assistant turn 多 part 顺序：reasoning → tool-call → tool-result → text", () => {
-    const id = useChatStore.getState().createSession();
+  it("assistant turn 多 part 顺序：reasoning → tool-call → tool-result → text", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
     useChatStore.getState().appendPartText("a1", "reasoning", "分析中");
     useChatStore.getState().addPart("a1", {
@@ -572,7 +572,7 @@ describe("chat store 持久化迁移 v2→v3", () => {
    * 替代方案：手动调用 store 内部 migrate 函数。但 migrate 是私有的，
    * 这里通过持久化机制间接测试。
    */
-  it("v2 旧 content 自动转为 parts: [{type:text, text:content}]", () => {
+  it("v2 旧 content 自动转为 parts: [{type:text, text:content}]", async () => {
     // 通过 localStorage 注入 v2 格式数据，触发 persist migrate
     const v2State = {
       state: {
@@ -630,7 +630,7 @@ describe("chat store 持久化迁移 v2→v3", () => {
     });
   });
 
-  it("v3 数据加载后 parts 结构保持不变", () => {
+  it("v3 数据加载后 parts 结构保持不变", async () => {
     const v3State = {
       state: {
         sessions: {
@@ -678,7 +678,7 @@ describe("chat store 持久化迁移 v2→v3", () => {
 // ============================================================
 
 describe("chat store 配额保护（parts 模型）", () => {
-  it("localStorage 超限时归档旧会话且不破坏 store", () => {
+  it("localStorage 超限时归档旧会话且不破坏 store", async () => {
     // 构造 12 个会话（超过 MAX_SESSIONS_ON_QUOTA=10），每个 1 条 parts 消息
     // 通过 mock localStorage 的 setItem：第一次抛 QuotaExceededError，第二次成功
     const stored = new Map<string, string>();
@@ -759,7 +759,7 @@ describe("chat store 配额保护（parts 模型）", () => {
 // ============================================================
 
 describe("chat store 持久化迁移 v3→v4", () => {
-  it("v3 旧 session 缺 manuallyRevokedPaths 时迁移后补 []", () => {
+  it("v3 旧 session 缺 manuallyRevokedPaths 时迁移后补 []", async () => {
     // 构造 v3 持久化数据：session 故意省略 manuallyRevokedPaths 字段
     // 模拟 Task 6 之前的老用户 localStorage（v3 schema 无该字段）
     const v3State = {
@@ -802,7 +802,7 @@ describe("chat store 持久化迁移 v3→v4", () => {
     });
   });
 
-  it("v3 已有 manuallyRevokedPaths 时迁移后保留原值", () => {
+  it("v3 已有 manuallyRevokedPaths 时迁移后保留原值", async () => {
     const v3State = {
       state: {
         sessions: {
@@ -829,7 +829,7 @@ describe("chat store 持久化迁移 v3→v4", () => {
     });
   });
 
-  it("迁移后 moveSessionToWorkspace 不再因 manuallyRevokedPaths 缺失而崩溃", () => {
+  it("迁移后 moveSessionToWorkspace 不再因 manuallyRevokedPaths 缺失而崩溃", async () => {
     // 回归测试：v3 老数据迁移后调用 moveSessionToWorkspace 不抛 TypeError
     const v3State = {
       state: {
@@ -854,7 +854,7 @@ describe("chat store 持久化迁移 v3→v4", () => {
     return import("@/stores/chat").then(({ useChatStore: freshStore }) => {
       // 迁移后调用 moveSessionToWorkspace（内部读 manuallyRevokedPaths.includes）
       expect(() =>
-        freshStore.getState().moveSessionToWorkspace("s1", "/tmp/new"),
+        await freshStore.getState().moveSessionToWorkspace("s1", "/tmp/new"),
       ).not.toThrow();
       const sess = freshStore.getState().sessions["s1"];
       expect(sess.workspacePath).toBe("/tmp/new");
@@ -885,40 +885,40 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
   });
 
   // ---- createSession ----
-  it("createSession 传 workspacePath 时隐式调 authorize(source=chip)", () => {
-    const id = useChatStore.getState().createSession("/tmp/proj");
+  it("createSession 传 workspacePath 时隐式调 authorize(source=chip)", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/proj");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/proj");
     expect(authorizeMock).toHaveBeenCalledTimes(1);
     // 签名：(sessionId, path, writable, source)
     expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/proj", true, "chip");
   });
 
-  it("createSession 不传 workspacePath 时不调 authorize", () => {
-    useChatStore.getState().createSession();
+  it("createSession 不传 workspacePath 时不调 authorize", async () => {
+    await useChatStore.getState().createSession();
     expect(authorizeMock).not.toHaveBeenCalled();
   });
 
-  it("createSession 新 session 的 manuallyRevokedPaths 总是空，因此总是调 authorize", () => {
+  it("createSession 新 session 的 manuallyRevokedPaths 总是空，因此总是调 authorize", async () => {
     // createSession 创建的新 session 的 manuallyRevokedPaths 默认 []
     // 所以 guard `!sess.manuallyRevokedPaths.includes(path)` 恒为 true
     // 这条测试验证 guard 的 true 分支；false 分支由 moveSessionToWorkspace 覆盖
-    const id = useChatStore.getState().createSession("/tmp/fresh");
+    const id = await useChatStore.getState().createSession("/tmp/fresh");
     expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([]);
     expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/fresh", true, "chip");
   });
 
   // ---- moveSessionToWorkspace ----
-  it("moveSessionToWorkspace 迁到新路径时调 authorize(source=chip)", () => {
-    const id = useChatStore.getState().createSession(); // Home，不触发 authorize
+  it("moveSessionToWorkspace 迁到新路径时调 authorize(source=chip)", async () => {
+    const id = await useChatStore.getState().createSession(); // Home，不触发 authorize
     authorizeMock.mockClear();
-    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/moved");
+    await useChatStore.getState().moveSessionToWorkspace(id, "/tmp/moved");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/moved");
     expect(authorizeMock).toHaveBeenCalledTimes(1);
     expect(authorizeMock).toHaveBeenCalledWith(id, "/tmp/moved", true, "chip");
   });
 
-  it("moveSessionToWorkspace 路径在 manuallyRevokedPaths 中时不调 authorize", () => {
-    const id = useChatStore.getState().createSession();
+  it("moveSessionToWorkspace 路径在 manuallyRevokedPaths 中时不调 authorize", async () => {
+    const id = await useChatStore.getState().createSession();
     // 注入 revoked 路径（模拟用户先 revokeAndMark 再迁回同一路径）
     useChatStore.setState((s) => ({
       sessions: {
@@ -930,23 +930,23 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
       },
     }));
     authorizeMock.mockClear();
-    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/rev");
+    await useChatStore.getState().moveSessionToWorkspace(id, "/tmp/rev");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/rev");
     // 关键断言：路径在 revoked 集合中，跳过隐式授权
     expect(authorizeMock).not.toHaveBeenCalled();
   });
 
-  it("moveSessionToWorkspace 迁到 null(Home) 时不调 authorize", () => {
-    const id = useChatStore.getState().createSession("/tmp/a");
+  it("moveSessionToWorkspace 迁到 null(Home) 时不调 authorize", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/a");
     authorizeMock.mockClear();
-    useChatStore.getState().moveSessionToWorkspace(id, null);
+    await useChatStore.getState().moveSessionToWorkspace(id, null);
     expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
     expect(authorizeMock).not.toHaveBeenCalled();
   });
 
   // ---- revokeAndMark ----
   it("revokeAndMark 调 sandbox.revoke 并写入 manuallyRevokedPaths（幂等）", async () => {
-    const id = useChatStore.getState().createSession();
+    const id = await useChatStore.getState().createSession();
     await useChatStore.getState().revokeAndMark(id, "/tmp/x");
     expect(revokeMock).toHaveBeenCalledTimes(1);
     expect(revokeMock).toHaveBeenCalledWith(id, "/tmp/x");
@@ -962,7 +962,7 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
   });
 
   it("revokeAndMark 可累加多个不同路径", async () => {
-    const id = useChatStore.getState().createSession();
+    const id = await useChatStore.getState().createSession();
     await useChatStore.getState().revokeAndMark(id, "/tmp/a");
     await useChatStore.getState().revokeAndMark(id, "/tmp/b");
     expect(useChatStore.getState().sessions[id].manuallyRevokedPaths).toEqual([
@@ -973,7 +973,7 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
 
   // ---- authorizeAndUnmark ----
   it("authorizeAndUnmark 调 sandbox.authorize(source=manual) 并从 manuallyRevokedPaths 移除", async () => {
-    const id = useChatStore.getState().createSession();
+    const id = await useChatStore.getState().createSession();
     // 先标记两个 revoked 路径
     useChatStore.setState((s) => ({
       sessions: {
@@ -993,7 +993,7 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
   });
 
   it("authorizeAndUnmark writable=false 时透传", async () => {
-    const id = useChatStore.getState().createSession();
+    const id = await useChatStore.getState().createSession();
     useChatStore.setState((s) => ({
       sessions: {
         ...s.sessions,
@@ -1009,7 +1009,7 @@ describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
   });
 
   it("authorizeAndUnmark 对不在集合中的路径仍调 authorize（无副作用）", async () => {
-    const id = useChatStore.getState().createSession();
+    const id = await useChatStore.getState().createSession();
     await useChatStore.getState().authorizeAndUnmark(id, "/tmp/never-revoked");
     expect(authorizeMock).toHaveBeenCalledWith(
       id,

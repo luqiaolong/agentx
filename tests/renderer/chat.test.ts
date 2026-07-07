@@ -38,8 +38,8 @@ beforeEach(() => {
 });
 
 describe("chat store", () => {
-  it("createSession 新建会话并指向 currentId", () => {
-    const id = useChatStore.getState().createSession();
+  it("createSession 新建会话并指向 currentId", async () => {
+    const id = await useChatStore.getState().createSession();
     const state = useChatStore.getState();
     expect(state.sessions[id]).toBeDefined();
     expect(state.currentId).toBe(id);
@@ -47,24 +47,24 @@ describe("chat store", () => {
     expect(state.sessions[id].title).toBe("新会话");
   });
 
-  it("switchSession 切换 currentId", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("switchSession 切换 currentId", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     useChatStore.getState().switchSession(id1);
     expect(useChatStore.getState().currentId).toBe(id1);
     useChatStore.getState().switchSession(id2);
     expect(useChatStore.getState().currentId).toBe(id2);
   });
 
-  it("switchSession 忽略不存在的 id", () => {
-    const id1 = useChatStore.getState().createSession();
+  it("switchSession 忽略不存在的 id", async () => {
+    const id1 = await useChatStore.getState().createSession();
     useChatStore.getState().switchSession("not-exist");
     expect(useChatStore.getState().currentId).toBe(id1);
   });
 
-  it("deleteSession 删除当前会话后 currentId 切到剩余第一个", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("deleteSession 删除当前会话后 currentId 切到剩余第一个", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     expect(useChatStore.getState().currentId).toBe(id2);
     useChatStore.getState().deleteSession(id2);
     const state = useChatStore.getState();
@@ -72,25 +72,25 @@ describe("chat store", () => {
     expect(state.currentId).toBe(id1);
   });
 
-  it("deleteSession 删除非当前会话不影响 currentId", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("deleteSession 删除非当前会话不影响 currentId", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
     useChatStore.getState().deleteSession(id1);
     const state = useChatStore.getState();
     expect(state.sessions[id1]).toBeUndefined();
     expect(state.currentId).toBe(id2);
   });
 
-  it("deleteSession 删除最后一个会话后 currentId 为 null", () => {
-    const id = useChatStore.getState().createSession();
+  it("deleteSession 删除最后一个会话后 currentId 为 null", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().deleteSession(id);
     const state = useChatStore.getState();
     expect(Object.keys(state.sessions)).toHaveLength(0);
     expect(state.currentId).toBeNull();
   });
 
-  it("addMessage 追加消息，首条 user 消息更新 title", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 追加消息，首条 user 消息更新 title", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "u1",
       role: "user",
@@ -104,8 +104,8 @@ describe("chat store", () => {
     expect(sess.title).toBe("a".repeat(20));
   });
 
-  it("addMessage 不覆盖已自定义的 title", () => {
-    const id = useChatStore.getState().createSession();
+  it("addMessage 不覆盖已自定义的 title", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().renameSession(id, "自定义标题");
     useChatStore.getState().addMessage({
       id: "u1",
@@ -116,7 +116,7 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[id].title).toBe("自定义标题");
   });
 
-  it("addMessage 无当前会话时为空操作", () => {
+  it("addMessage 无当前会话时为空操作", async () => {
     useChatStore.getState().addMessage({
       id: "u1",
       role: "user",
@@ -126,8 +126,8 @@ describe("chat store", () => {
     expect(Object.keys(useChatStore.getState().sessions)).toHaveLength(0);
   });
 
-  it("appendMessageContent 追加内容到指定 id 的消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendMessageContent 追加内容到指定 id 的消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -146,8 +146,8 @@ describe("chat store", () => {
     expect(msgs.find((m) => m.id === "a2")?.content).toBe("bar");
   });
 
-  it("appendMessageContent 对未知 id 不报错且不影响其它消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("appendMessageContent 对未知 id 不报错且不影响其它消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "a1",
       role: "assistant",
@@ -158,16 +158,16 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[id].messages[0].content).toBe("foo");
   });
 
-  it("appendMessageContent 按 id 跨会话定位消息（不依赖 currentId）", () => {
+  it("appendMessageContent 按 id 跨会话定位消息（不依赖 currentId）", async () => {
     // 模拟流式 token 追加到非当前会话的消息（如 deleteSession 后 currentId 漂移）
-    const idA = useChatStore.getState().createSession();
+    const idA = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "stream-1",
       role: "assistant",
       content: "foo",
       ts: 1,
     });
-    const idB = useChatStore.getState().createSession();
+    const idB = await useChatStore.getState().createSession();
     // 现在 currentId = idB，但 stream-1 属于 idA
     useChatStore.getState().appendMessageContent("stream-1", "bar");
     expect(useChatStore.getState().sessions[idA].messages[0].content).toBe("foobar");
@@ -175,56 +175,56 @@ describe("chat store", () => {
     expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
   });
 
-  it("clearMessages 清空当前会话消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("clearMessages 清空当前会话消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "m1", role: "user", content: "x", ts: 1 });
     useChatStore.getState().addMessage({ id: "m2", role: "assistant", content: "y", ts: 2 });
     useChatStore.getState().clearMessages();
     expect(useChatStore.getState().sessions[id].messages).toEqual([]);
   });
 
-  it("renameSession 更新会话标题", () => {
-    const id = useChatStore.getState().createSession();
+  it("renameSession 更新会话标题", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().renameSession(id, "新标题");
     expect(useChatStore.getState().sessions[id].title).toBe("新标题");
   });
 
-  it("compat 字段已移除：state 不再包含顶层 messages / threadId / setThreadId", () => {
+  it("compat 字段已移除：state 不再包含顶层 messages / threadId / setThreadId", async () => {
     const state = useChatStore.getState() as unknown as Record<string, unknown>;
     expect(state.messages).toBeUndefined();
     expect(state.threadId).toBeUndefined();
     expect(state.setThreadId).toBeUndefined();
   });
 
-  it("createSession 不传参时归属 Home（workspacePath=null）", () => {
-    const id = useChatStore.getState().createSession();
+  it("createSession 不传参时归属 Home（workspacePath=null）", async () => {
+    const id = await useChatStore.getState().createSession();
     expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
   });
 
-  it("createSession 传 workspace 时归属该 workspace", () => {
-    const id = useChatStore.getState().createSession("/tmp/foo");
+  it("createSession 传 workspace 时归属该 workspace", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/foo");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/foo");
   });
 
-  it("moveSessionToWorkspace 迁移会话到新 workspace", () => {
-    const id = useChatStore.getState().createSession("/tmp/a");
-    useChatStore.getState().moveSessionToWorkspace(id, "/tmp/b");
+  it("moveSessionToWorkspace 迁移会话到新 workspace", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/a");
+    await useChatStore.getState().moveSessionToWorkspace(id, "/tmp/b");
     expect(useChatStore.getState().sessions[id].workspacePath).toBe("/tmp/b");
   });
 
-  it("moveSessionToWorkspace 传 null 迁回 Home", () => {
-    const id = useChatStore.getState().createSession("/tmp/a");
-    useChatStore.getState().moveSessionToWorkspace(id, null);
+  it("moveSessionToWorkspace 传 null 迁回 Home", async () => {
+    const id = await useChatStore.getState().createSession("/tmp/a");
+    await useChatStore.getState().moveSessionToWorkspace(id, null);
     expect(useChatStore.getState().sessions[id].workspacePath).toBeNull();
   });
 
-  it("moveSessionToWorkspace 对不存在的 id 是空操作", () => {
+  it("moveSessionToWorkspace 对不存在的 id 是空操作", async () => {
     const before = useChatStore.getState().sessions;
-    useChatStore.getState().moveSessionToWorkspace("not-exist", "/tmp/x");
+    await useChatStore.getState().moveSessionToWorkspace("not-exist", "/tmp/x");
     expect(useChatStore.getState().sessions).toEqual(before);
   });
 
-  it("setHomeWorkspacePath 设置后 state 持有路径", () => {
+  it("setHomeWorkspacePath 设置后 state 持有路径", async () => {
     useChatStore.getState().setHomeWorkspacePath("/tmp/desktop");
     expect(useChatStore.getState().homeWorkspacePath).toBe("/tmp/desktop");
   });

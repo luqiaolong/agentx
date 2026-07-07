@@ -85,12 +85,25 @@ __all__ = [
 ]
 
 
+def _workspace_prompt_suffix(workspace_path: str | None) -> str:
+    """根据工作区路径生成 system prompt 后缀，提示 LLM 使用当前工作目录。"""
+    if not workspace_path:
+        return ""
+    return (
+        f"\n\n当前工作目录: {workspace_path}\n"
+        "执行 cli_execute 工具时，若用户未指定其他目录，"
+        "必须将 cwd 参数设为当前工作目录；执行文件读写工具时，"
+        "优先使用当前工作目录下的相对路径。"
+    )
+
+
 async def build_deep_agent(
     thread_id: str,
     tools: list | None = None,
     profile_prompt: str = "",
     checkpointer: Any = None,
     scene_prompt: str | None = None,
+    workspace_path: str | None = None,
 ) -> Any:
     """构造真实 DeepAgent 图。
 
@@ -106,6 +119,7 @@ async def build_deep_agent(
         checkpointer: 可选，共享的 LangGraph checkpointer。若未传则用
             ``await get_async_checkpointer()`` 获取全局 ``AsyncSqliteSaver`` 单例。
         scene_prompt: 可选场景 prompt，非空时覆盖 ``_DEEP_SYSTEM_PROMPT``。
+        workspace_path: 可选当前工作区绝对路径，注入到 system prompt 并作为 cli_execute 默认 cwd。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -118,11 +132,12 @@ async def build_deep_agent(
         # 导致 create_react_agent 报 "Invalid checkpointer ... Received coroutine"
         checkpointer = await get_async_checkpointer()
     # T9：画像前缀拼到最前；scene_prompt 覆盖 _DEEP_SYSTEM_PROMPT（场景切换器注入）
-    system_prompt = resolve_system_prompt(
+    base_prompt = resolve_system_prompt(
         default=_DEEP_SYSTEM_PROMPT,
         scene_prompt=scene_prompt,
         skill_extra=profile_prompt or None,
     )
+    system_prompt = base_prompt + _workspace_prompt_suffix(workspace_path)
     return create_react_agent(
         model,
         tools,
@@ -174,6 +189,7 @@ async def run_deep_path(
     history: list | None = None,
     permission_mode: str = "standard",
     scene_prompt: str | None = None,
+    workspace_path: str | None = None,
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器（真实实现）。
 
@@ -200,6 +216,7 @@ async def run_deep_path(
         history: 历史 messages 列表（已截断），拼到 inputs 前。
         permission_mode: 权限模式，"workspace"（默认，仅当前工作区）或 "full_trust"。
         scene_prompt: 可选场景 prompt，透传给 build_deep_agent。
+        workspace_path: 可选当前工作区绝对路径，注入 system prompt 并作为 cli_execute 默认 cwd。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -221,7 +238,7 @@ async def run_deep_path(
 
     # 1. 构建 agent（先构建工具集，便于计算运行时 dangerous 集合）
     try:
-        agent_tools = _make_deep_tools(thread_id)
+        agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
         # 异步加载 MCP 工具并合并到 DeepAgent 工具集
         # MCP 工具仅暴露给 DeepAgent（路径 C），subagent 不暴露（安全红线）
         mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
@@ -238,6 +255,7 @@ async def run_deep_path(
             tools=agent_tools,
             profile_prompt=profile_prompt,
             scene_prompt=scene_prompt,
+            workspace_path=workspace_path,
         )
     except ValueError as exc:
         yield make_sse_event("error", f"LLM 不可用: {exc}")
