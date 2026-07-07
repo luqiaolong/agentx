@@ -207,8 +207,13 @@ export function ChatComposer({
       const msgs = currentSession?.messages ?? [];
       const lastUser = [...msgs].reverse().find((m) => m.role === "user");
       if (lastUser) {
-        const match = lastUser.content.match(/<workspace>.*?<\/workspace>\s?(.*)/);
-        const text = match?.[1] ?? lastUser.content;
+        // 从 parts 中的 text parts 派生文本（content 兼容字段已移除）
+        const lastUserText = lastUser.parts
+          .filter((p) => p.type === "text")
+          .map((p) => (p.type === "text" ? p.text : ""))
+          .join("");
+        const match = lastUserText.match(/<workspace>.*?<\/workspace>\s?(.*)/);
+        const text = match?.[1] ?? lastUserText;
         setInput(text);
         // 删除上一条用户消息及之后的所有消息（因为即将重新发送）
         const idx = msgs.findIndex((m) => m.id === lastUser.id);

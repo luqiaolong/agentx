@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { AlertCircle, ArrowDown } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { ChatMessage } from "@/stores/chat";
@@ -58,12 +58,16 @@ export function ChatView() {
   const [dropError, setDropError] = useState<string | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  // T9：导航条进度 state，由 rAF throttle 的 scroll listener 驱动
+  const [scrollProgress, setScrollProgress] = useState({ top: 0, height: 1 });
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const activeThreadIdRef = useRef<string | null>(null);
   const pendingIdRef = useRef<string | null>(null);
   const currentTaskIdRef = useRef<string | null>(null);
   const lastUserQueryRef = useRef<string>("");
+  // T9：rAF handle，用于 throttle scroll→setScrollProgress
+  const rafHandleRef = useRef<number | null>(null);
 
   useChatStream({
     threadId: currentId ?? undefined,
@@ -87,21 +91,45 @@ export function ChatView() {
       activeThreadIdRef.current = null;
     }
   }, [isStreaming]);
-  const bottomRef = useAutoScroll(messages);
+  const bottomRef = useAutoScroll(messages, isStreaming);
 
-  // 监听滚动，控制"滚动到底部"按钮显隐
+  // T9：计算滚动进度的纯函数（top% 和 viewport height%）
+  const computeProgress = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return { top: 0, height: 1 };
+    const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+    const top = (el.scrollTop / maxScroll) * 100;
+    const height = (el.clientHeight / Math.max(1, el.scrollHeight)) * 100;
+    return { top, height };
+  }, []);
+
+  // 监听滚动：rAF throttle 更新 scrollProgress state + 控制滚动到底部按钮显隐
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const onScroll = () => {
-      const threshold = 100;
-      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      setShowScrollBtn(distance > threshold);
+      // 节流：已有挂起的 rAF 不重复调度
+      if (rafHandleRef.current != null) return;
+      rafHandleRef.current = requestAnimationFrame(() => {
+        rafHandleRef.current = null;
+        const threshold = 100;
+        const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+        setShowScrollBtn(distance > threshold);
+        setScrollProgress(computeProgress());
+      });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [messages.length]);
+    // 初始计算一次（messages 变化后视口可能错位）
+    setScrollProgress(computeProgress());
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      // 卸载时取消挂起的 rAF，避免泄漏
+      if (rafHandleRef.current != null) {
+        cancelAnimationFrame(rafHandleRef.current);
+        rafHandleRef.current = null;
+      }
+    };
+  }, [messages.length, computeProgress]);
 
   // 把 CommandResult 序列化为 markdown-ish 文本塞进 assistant 消息。
   const appendCommandResult = (result: CommandResult) => {
@@ -437,6 +465,7 @@ export function ChatView() {
               // 触发重新发送（复用 handleSend）
               void handleSend(newContent);
             }}
+            parentRef={scrollContainerRef}
           />
         )}
         <div ref={bottomRef} />
@@ -445,12 +474,12 @@ export function ChatView() {
         <div className="absolute right-2 top-4 bottom-4 w-1.5 flex flex-col items-center">
           {/* 导航条背景 */}
           <div className="flex-1 w-full rounded-full bg-subtle/80 overflow-hidden relative">
-            {/* 当前视口进度指示 */}
+            {/* 当前视口进度指示（T9：由 scrollProgress state 驱动，rAF throttle 更新） */}
             <div
               className="absolute left-0 w-full rounded-full bg-muted-c/40 transition-all duration-150"
               style={{
-                top: `${(scrollContainerRef.current ? scrollContainerRef.current.scrollTop / Math.max(1, scrollContainerRef.current.scrollHeight - scrollContainerRef.current.clientHeight) : 0) * 100}%`,
-                height: `${(scrollContainerRef.current ? scrollContainerRef.current.clientHeight / Math.max(1, scrollContainerRef.current.scrollHeight) : 1) * 100}%`,
+                top: `${scrollProgress.top}%`,
+                height: `${scrollProgress.height}%`,
               }}
             />
           </div>
