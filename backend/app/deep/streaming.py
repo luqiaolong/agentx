@@ -34,30 +34,12 @@ __all__ = ["_stream_agent_events"]
 def _extract_plan_or_update(text: str) -> tuple[str, Any] | None:
     """从 LLM 输出中提取结构化计划或计划更新。
 
-    支持纯 JSON 或 markdown 代码块包裹的 JSON。
-
-    Returns:
-        ("plan", data_dict) 或 ("plan_update", update_dict) 或 None。
+    委托给共享工具 ``app.utils.plan_extraction.extract_plan_or_update``，
+    行为详见该函数 docstring。
     """
-    import json
-    import re
+    from app.utils.plan_extraction import extract_plan_or_update as _shared
 
-    text = text.strip()
-    candidates = [text]
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if match:
-        candidates.append(match.group(1).strip())
-    for candidate in candidates:
-        try:
-            data = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            if isinstance(data.get("plan"), list):
-                return "plan", data
-            if isinstance(data.get("plan_update"), dict):
-                return "plan_update", data["plan_update"]
-    return None
+    return _shared(text)
 
 
 async def _stream_agent_events(
