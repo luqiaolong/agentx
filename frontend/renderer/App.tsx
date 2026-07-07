@@ -113,6 +113,14 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [pythonStatus]);
 
+  // 后端就绪后重新授权所有会话的 workspacePath。
+  // 会话从 localStorage 恢复后，后端 authorized_dirs 可能丢失（DB 清空 / 新机器），
+  // 导致工作区文件面板 list 接口 400。此处 best-effort 重新授权。
+  useEffect(() => {
+    if (pythonStatus !== "ready") return;
+    void useChatStore.getState().reauthorizeAllSessions();
+  }, [pythonStatus]);
+
   const showStartingMask = pythonStatus === "starting";
   const showGiveUpMask = pythonStatus === "giving_up";
 
