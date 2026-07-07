@@ -80,6 +80,13 @@ export function ChatView() {
   useEffect(() => {
     setIsPaused(false);
   }, [currentId]);
+
+  // 流式结束后清理线程归属缓存，避免暂停/恢复误操作旧线程
+  useEffect(() => {
+    if (!isStreaming) {
+      activeThreadIdRef.current = null;
+    }
+  }, [isStreaming]);
   const bottomRef = useAutoScroll(messages);
 
   // 监听滚动，控制"滚动到底部"按钮显隐
