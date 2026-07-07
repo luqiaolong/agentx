@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from app.approval.decision import ApprovalDecision
 
 __all__ = [
@@ -17,6 +19,11 @@ __all__ = [
     "set_abort",
     "is_aborted",
     "clear_abort",
+    "get_abort_event",
+    "set_pause",
+    "clear_pause",
+    "is_paused",
+    "get_pause_event",
 ]
 
 
@@ -25,6 +32,15 @@ _pending_approvals: dict[str, ApprovalDecision] = {}
 
 # thread_id → 中止标志。SSE handler 每轮迭代检查。
 _abort_flags: dict[str, bool] = {}
+
+# thread_id → asyncio.Event，供 LLM 流式内部即时响应中止（无需轮询）。
+_abort_events: dict[str, asyncio.Event] = {}
+
+# thread_id → 暂停标志。DeepAgent 在迭代起点检查并进入等待。
+_pause_flags: dict[str, bool] = {}
+
+# thread_id → asyncio.Event，供 DeepAgent 等待恢复。
+_pause_events: dict[str, asyncio.Event] = {}
 
 
 def submit_approval(thread_id: str, decision: ApprovalDecision) -> None:
@@ -38,8 +54,13 @@ def pop_approval(thread_id: str) -> ApprovalDecision | None:
 
 
 def set_abort(thread_id: str) -> None:
-    """设置中止标志，SSE handler 在下一轮迭代退出。"""
+    """设置中止标志并触发对应 asyncio.Event，供轮询和流式内部即时响应。"""
     _abort_flags[thread_id] = True
+    event = _abort_events.get(thread_id)
+    if event is None:
+        event = asyncio.Event()
+        _abort_events[thread_id] = event
+    event.set()
 
 
 def is_aborted(thread_id: str) -> bool:
@@ -50,3 +71,44 @@ def is_aborted(thread_id: str) -> bool:
 def clear_abort(thread_id: str) -> None:
     """清除中止标志（消费后清理）。"""
     _abort_flags.pop(thread_id, None)
+    event = _abort_events.pop(thread_id, None)
+    if event:
+        event.set()
+
+
+def get_abort_event(thread_id: str) -> asyncio.Event:
+    """获取或创建 thread_id 对应的中止事件。
+
+    流式生成器内部可通过 ``event.is_set()`` 即时检查中止，避免依赖轮询。
+    """
+    if thread_id not in _abort_events:
+        _abort_events[thread_id] = asyncio.Event()
+    return _abort_events[thread_id]
+
+
+def set_pause(thread_id: str) -> None:
+    """设置暂停标志。DeepAgent 在迭代起点检查并进入等待。"""
+    _pause_flags[thread_id] = True
+
+
+def clear_pause(thread_id: str) -> None:
+    """清除暂停标志并唤醒等待中的 DeepAgent。"""
+    _pause_flags.pop(thread_id, None)
+    event = _pause_events.pop(thread_id, None)
+    if event:
+        event.set()
+
+
+def is_paused(thread_id: str) -> bool:
+    """检查是否已设置暂停标志。"""
+    return _pause_flags.get(thread_id, False)
+
+
+def get_pause_event(thread_id: str) -> asyncio.Event:
+    """获取或创建 thread_id 对应的暂停事件。
+
+    DeepAgent 可通过 ``await event.wait()`` 阻塞直到 ``clear_pause`` 被调用。
+    """
+    if thread_id not in _pause_events:
+        _pause_events[thread_id] = asyncio.Event()
+    return _pause_events[thread_id]

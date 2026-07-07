@@ -59,17 +59,21 @@ class AbortRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="用户消息（/reset 触发会话重置）")
     thread_id: str = Field(..., description="会话 ID")
-    permission_mode: str = Field(
-        default="workspace",
-        description='权限模式：workspace（仅当前工作区，越界/危险操作审批）或 full_trust（会话内全量放行）',
+    permission_mode: Literal["standard", "full_trust"] = Field(
+        default="standard",
+        description='权限模式：standard（审批流）或 full_trust（会话内全量放行）',
     )
     system_prompt: str | None = Field(
         default=None,
         description="可选场景 prompt；非空时覆盖 default_system_prompt（场景切换器注入）",
     )
-    agent_mode: str = Field(
+    agent_mode: Literal["agent", "agent_team"] = Field(
         default="agent",
         description='代理模式：agent（单代理，默认）或 agent_team（多代理协作）',
+    )
+    workspace_path: str | None = Field(
+        default=None,
+        description="当前会话绑定的 workspace 绝对路径",
     )
 
 

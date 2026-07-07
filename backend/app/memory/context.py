@@ -16,8 +16,10 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     SystemMessage,
+    ToolMessage,
     get_buffer_string,
     trim_messages,
 )
@@ -85,7 +87,43 @@ def trim_messages_with_budget(
     if len(trimmed_non_system) > max_messages:
         trimmed_non_system = trimmed_non_system[-max_messages:]
 
-    return system_msgs + trimmed_non_system
+    result = system_msgs + trimmed_non_system
+
+    # T10：截断后检查 AIMessage(tool_calls) 与 ToolMessage 的配对关系。
+    # 若 tool_call 缺少对应 ToolMessage，注入占位 ToolMessage，避免后续
+    # LangGraph _validate_chat_history 校验失败。
+    return _ensure_tool_call_pairing(result)
+
+
+def _ensure_tool_call_pairing(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """为截断后缺失 ToolMessage 的 tool_call 注入占位消息。
+
+    截断可能丢弃旧的 ToolMessage 但保留其前面的 AIMessage(tool_calls)，导致
+    LangGraph 的 ``_validate_chat_history`` 抛出 INVALID_CHAT_HISTORY。
+    本函数扫描全部消息，为每个缺少对应 ToolMessage 的 tool_call_id 追加
+    占位 ToolMessage。
+    """
+    tool_call_ids: set[str] = set()
+    tool_msg_ids: set[str] = set()
+
+    for msg in messages:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for tc in msg.tool_calls:
+                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if tc_id:
+                    tool_call_ids.add(tc_id)
+        elif isinstance(msg, ToolMessage):
+            tool_msg_ids.add(getattr(msg, "tool_call_id", None) or "")
+
+    missing = tool_call_ids - tool_msg_ids
+    if not missing:
+        return messages
+
+    placeholders = [
+        ToolMessage(content="上下文被截断，原工具结果不可用", tool_call_id=tc_id)
+        for tc_id in missing
+    ]
+    return [*messages, *placeholders]
 
 
 def _normalize_messages(messages: list[Any]) -> list[BaseMessage]:

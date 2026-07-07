@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, AsyncIterator
 
+from app.approval import get_abort_event
 from app.config import get_settings
 from app.utils.sse_events import make_team_event
 from app.utils.text import extract_chunk_text
@@ -43,8 +44,9 @@ _SUBTASK_DONE_EVENT = "_subtask_done"
 # approval_request 必须直达前端，否则 DeepAgent 审批流会死锁
 # tool_result 必须透传，否则前端 tool_call 配对断裂
 # reasoning 透传供前端展示 deep 子任务的思考过程
+# token 透传让前端能看到 deep 子任务的流式输出
 _PASSTHROUGH_EVENTS: frozenset[str] = frozenset(
-    {"approval_request", "todo_update", "delegation", "tool_call", "tool_result", "reasoning"}
+    {"approval_request", "todo_update", "delegation", "tool_call", "tool_result", "reasoning", "token"}
 )
 
 
@@ -88,6 +90,8 @@ async def _run_subtask(
             {"agent": agent_name, "success": success, "payload": payload},
         )
 
+    abort_event = get_abort_event(thread_id)
+
     if agent_name == "deep":
         # deep 子任务使用独立 thread_id，避免并行 deep 子任务共享 checkpoint
         # 与 _pending_approvals 审批流冲突
@@ -106,6 +110,9 @@ async def _run_subtask(
                 scene_prompt=scene_prompt,
                 workspace_path=workspace_path,
             ):
+                if abort_event.is_set():
+                    yield _done(False, "用户中止")
+                    return
                 etype = event.get("event", "")
                 data = event.get("data", "")
                 if etype == "token":
@@ -160,6 +167,9 @@ async def _run_subtask(
             history_msgs = list(history) if history else []
             inputs = {"messages": [*history_msgs, {"role": "user", "content": input_text}]}
             async for event in agent.astream_events(inputs, version="v2"):
+                if abort_event.is_set():
+                    yield _done(False, "用户中止")
+                    return
                 kind = event["event"]
                 ename = event.get("name", "")
                 edata = event.get("data", {}) or {}
