@@ -29,11 +29,14 @@ def _make_fake_run_router(captured: dict):
         permission_mode: str = "standard",
         scene_prompt: str | None = None,
         agent_mode: str = "agent",
+        workspace_path: str | None = None,
     ) -> AsyncIterator[dict[str, str]]:
         captured["scene_prompt"] = scene_prompt
         captured["message"] = message
         captured["thread_id"] = thread_id
         captured["agent_mode"] = agent_mode
+        captured["workspace_path"] = workspace_path
+        captured["permission_mode"] = permission_mode
         yield {"event": "done", "data": "{}"}
 
     return fake_run_router
@@ -84,3 +87,38 @@ def test_chat_request_without_system_prompt_field(client: TestClient, monkeypatc
     )
 
     assert captured["scene_prompt"] is None
+
+
+def test_chat_request_passes_workspace_path(client: TestClient, monkeypatch) -> None:
+    """workspace_path 作为独立字段透传给 run_router，不再从消息正文解析。"""
+    captured: dict = {}
+    monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
+
+    resp = client.post(
+        "/api/chat",
+        json={
+            "message": "hi",
+            "thread_id": "t4",
+            "workspace_path": "d:/projects/foo",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert captured["workspace_path"] == "d:/projects/foo"
+
+
+def test_chat_request_no_workspace_tag_parsing(client: TestClient, monkeypatch) -> None:
+    """消息正文中的 <workspace> 标签不再被解析，原样透传。"""
+    captured: dict = {}
+    monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
+
+    client.post(
+        "/api/chat",
+        json={
+            "message": "<workspace>d:/projects/bar</workspace> hello",
+            "thread_id": "t5",
+        },
+    )
+
+    assert captured["workspace_path"] is None
+    assert captured["message"] == "<workspace>d:/projects/bar</workspace> hello"

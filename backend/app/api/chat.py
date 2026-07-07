@@ -97,6 +97,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             permission_mode=req.permission_mode,
             scene_prompt=req.system_prompt,
             agent_mode=effective_agent_mode,
+            workspace_path=req.workspace_path,
         ):
             # 检查中止标志
             if is_aborted(req.thread_id):
