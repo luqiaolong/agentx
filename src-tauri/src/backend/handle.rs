@@ -98,6 +98,7 @@ impl PythonHandle {
                     "python wait_for_ready timed out after {}ms",
                     HEALTH_TIMEOUT_MS
                 );
+                let _ = app.emit("python:status", PythonStatus::GivingUp);
                 return false;
             }
 
