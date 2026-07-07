@@ -30,8 +30,12 @@ export type ChatEvent =
     }
   // delegation 事件：Router 静态分类或 DeepAgent 动态委派
   | { type: "delegation"; target: string; source: string; message: string }
-  // todo_update 事件：DeepAgent 任务级 todo 列表（保留不变）
-  | { type: "todo_update"; todos: unknown }
+  // todo_update 事件：DeepAgent 任务级 todo 列表
+  // 后端可能携带 task_id，用于多任务场景下按任务分组展示
+  | { type: "todo_update"; todos: unknown; task_id?: string }
+  // plan / plan_update 事件：Agent 规划阶段输出的任务计划
+  | { type: "plan"; plan: PlanTask[] }
+  | { type: "plan_update"; plan: PlanTask[] }
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
   | { type: "approval_request"; [k: string]: unknown }
   // team_plan 事件：AgentTeam 的 Orchestrator 生成的子任务计划
@@ -51,6 +55,8 @@ export type ChatEvent =
   | { type: "team_result"; agent: string; summary: string }
   // team_done 事件：AgentTeam 整体执行结束
   | { type: "team_done"; status?: "error" | "done" }
+  // paused 事件：后端流被用户暂停
+  | { type: "paused"; data?: unknown }
   // done 事件：流式结束
   | { type: "done"; data?: unknown }
   // error 事件：流式出错（data 和 error 字段均可能携带信息）
@@ -319,6 +325,12 @@ export interface ModelTestResponse {
   message: string;
   /** 成功时取模型返回的首个 choice content（max_tokens=1 时可能为空字符串） */
   responseText?: string | null;
+}
+
+export interface PlanTask {
+  task_id: string;
+  text: string;
+  done?: boolean;
 }
 
 export interface TodoItem {
