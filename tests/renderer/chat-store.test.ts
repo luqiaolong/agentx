@@ -851,11 +851,11 @@ describe("chat store 持久化迁移 v3→v4", () => {
     localStorage.setItem("agentx-chat", JSON.stringify(v3State));
 
     vi.resetModules();
-    return import("@/stores/chat").then(({ useChatStore: freshStore }) => {
+    return import("@/stores/chat").then(async ({ useChatStore: freshStore }) => {
       // 迁移后调用 moveSessionToWorkspace（内部读 manuallyRevokedPaths.includes）
-      expect(() =>
-        await freshStore.getState().moveSessionToWorkspace("s1", "/tmp/new"),
-      ).not.toThrow();
+      await expect(
+        freshStore.getState().moveSessionToWorkspace("s1", "/tmp/new"),
+      ).resolves.not.toThrow();
       const sess = freshStore.getState().sessions["s1"];
       expect(sess.workspacePath).toBe("/tmp/new");
       expect(Array.isArray(sess.manuallyRevokedPaths)).toBe(true);

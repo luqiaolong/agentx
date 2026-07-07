@@ -72,9 +72,9 @@ beforeEach(() => {
 });
 
 describe("ChatComposer 切会话行为", () => {
-  it("切会话后清空输入框（避免残留上一个会话的草稿）", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("切会话后清空输入框（避免残留上一个会话的草稿）", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
 
     const { getByLabelText, rerender } = render(
       <ChatComposer
@@ -110,9 +110,9 @@ describe("ChatComposer 切会话行为", () => {
     expect((getByLabelText("消息输入框") as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("切会话后关闭命令面板（避免 picker 残留导致 Enter 行为错乱）", () => {
-    const id1 = useChatStore.getState().createSession();
-    const id2 = useChatStore.getState().createSession();
+  it("切会话后关闭命令面板（避免 picker 残留导致 Enter 行为错乱）", async () => {
+    const id1 = await useChatStore.getState().createSession();
+    const id2 = await useChatStore.getState().createSession();
 
     // 先在 store 上模拟 picker 打开状态（直接模拟"会话切换发生前 picker 残留"的场景）
     useCommandPickerStore.setState({
@@ -157,8 +157,8 @@ describe("ChatComposer 切会话行为", () => {
 });
 
 describe("ChatComposer 底部 Toolbar", () => {
-  it("非流式态包含「发送消息」按钮", () => {
-    useChatStore.getState().createSession();
+  it("非流式态包含「发送消息」按钮", async () => {
+    await useChatStore.getState().createSession();
     const { getByRole } = render(
       <ChatComposer
         isStreaming={false}
@@ -170,8 +170,8 @@ describe("ChatComposer 底部 Toolbar", () => {
     expect(getByRole("button", { name: "发送消息" })).toBeInTheDocument();
   });
 
-  it("流式态包含「中止生成」按钮", () => {
-    useChatStore.getState().createSession();
+  it("流式态包含「中止生成」按钮", async () => {
+    await useChatStore.getState().createSession();
     const { getByRole } = render(
       <ChatComposer
         isStreaming={true}
@@ -185,8 +185,8 @@ describe("ChatComposer 底部 Toolbar", () => {
 });
 
 describe("ChatComposer 含 ContextUsage", () => {
-  it("Toolbar 右组最左渲染 Cursor 风格圆环 widget（data-context-ring）", () => {
-    useChatStore.getState().createSession();
+  it("Toolbar 右组最左渲染 Cursor 风格圆环 widget（data-context-ring）", async () => {
+    await useChatStore.getState().createSession();
     const { container } = render(
       <ChatComposer
         isStreaming={false}
@@ -207,8 +207,8 @@ describe("ChatComposer 含 ContextUsage", () => {
     expect(ctx).toBeTruthy();
   });
 
-  it("左下不再含「调用命令或技能」按钮与「附加文件」按钮", () => {
-    useChatStore.getState().createSession();
+  it("左下不再含「调用命令或技能」按钮与「附加文件」按钮", async () => {
+    await useChatStore.getState().createSession();
     const { queryByRole } = render(
       <ChatComposer
         isStreaming={false}

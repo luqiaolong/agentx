@@ -33,8 +33,8 @@ beforeEach(() => {
 });
 
 describe("竞态场景：流式期间切/删会话", () => {
-  it("会话 A 流式期间，切到会话 B：会话 A 的 token 仍能正确追加", () => {
-    const tidA = useChatStore.getState().createSession();
+  it("会话 A 流式期间，切到会话 B：会话 A 的 token 仍能正确追加", async () => {
+    const tidA = await useChatStore.getState().createSession();
     useChatStore.setState({ currentId: tidA });
     useChatStore.getState().addMessage({
       id: "user-A1",
@@ -51,7 +51,7 @@ describe("竞态场景：流式期间切/删会话", () => {
     });
 
     // 切到 B
-    const tidB = useChatStore.getState().createSession();
+    const tidB = await useChatStore.getState().createSession();
     useChatStore.setState({ currentId: tidB });
     expect(useChatStore.getState().currentId).toBe(tidB);
 
@@ -69,8 +69,8 @@ describe("竞态场景：流式期间切/删会话", () => {
     expect(sessB.messages).toHaveLength(0);
   });
 
-  it("会话 A 流式期间，删除 A：后续 token 静默丢弃（target 找不到 → no-op）", () => {
-    const tidA = useChatStore.getState().createSession();
+  it("会话 A 流式期间，删除 A：后续 token 静默丢弃（target 找不到 → no-op）", async () => {
+    const tidA = await useChatStore.getState().createSession();
     useChatStore.setState({ currentId: tidA });
     useChatStore.getState().addMessage({
       id: "user-A1",
@@ -97,9 +97,9 @@ describe("竞态场景：流式期间切/删会话", () => {
     expect(useChatStore.getState().sessions[tidA]).toBeUndefined();
   });
 
-  it("message id 全局唯一：两个 session 不会撞 id", () => {
+  it("message id 全局唯一：两个 session 不会撞 id", async () => {
     // 模拟 ChatView 用 crypto.randomUUID() 生成 pending-XXX
-    const tidA = useChatStore.getState().createSession();  // currentId = tidA
+    const tidA = await useChatStore.getState().createSession();  // currentId = tidA
     useChatStore.getState().addMessage({
       id: "shared-user-id",
       role: "user",
@@ -113,7 +113,7 @@ describe("竞态场景：流式期间切/删会话", () => {
       ts: 2,
     });
 
-    const tidB = useChatStore.getState().createSession();  // currentId = tidB
+    const tidB = await useChatStore.getState().createSession();  // currentId = tidB
     useChatStore.getState().addMessage({
       id: "shared-user-id",  // 故意撞 id 模拟 bug（实际不会发生）
       role: "user",
@@ -140,9 +140,9 @@ describe("竞态场景：流式期间切/删会话", () => {
     expect(bPending?.content).toBe("");  // B 的 pending 没被改
   });
 
-  it("currentId 指向被删会话 → 自动 fallback 到剩下第一个", () => {
-    const tidA = useChatStore.getState().createSession();
-    const tidB = useChatStore.getState().createSession();
+  it("currentId 指向被删会话 → 自动 fallback 到剩下第一个", async () => {
+    const tidA = await useChatStore.getState().createSession();
+    const tidB = await useChatStore.getState().createSession();
     useChatStore.setState({ currentId: tidA });
 
     useChatStore.getState().deleteSession(tidA);
@@ -151,8 +151,8 @@ describe("竞态场景：流式期间切/删会话", () => {
     expect(useChatStore.getState().currentId).toBe(tidB);
   });
 
-  it("currentId 指向最后一个会话，删掉后 → currentId 变 null", () => {
-    const tidA = useChatStore.getState().createSession();
+  it("currentId 指向最后一个会话，删掉后 → currentId 变 null", async () => {
+    const tidA = await useChatStore.getState().createSession();
     useChatStore.setState({ currentId: tidA });
 
     useChatStore.getState().deleteSession(tidA);
@@ -160,8 +160,8 @@ describe("竞态场景：流式期间切/删会话", () => {
     expect(useChatStore.getState().currentId).toBeNull();
   });
 
-  it("renameSession：session 不存在时 no-op 返回原 state", () => {
-    const tid = useChatStore.getState().createSession();
+  it("renameSession：session 不存在时 no-op 返回原 state", async () => {
+    const tid = await useChatStore.getState().createSession();
     const before = useChatStore.getState().sessions;
     useChatStore.getState().renameSession("nonexistent-id", "改名");
     const after = useChatStore.getState().sessions;

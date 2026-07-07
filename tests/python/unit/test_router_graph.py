@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.router.graph import build_router_graph, run_router
+from app.router.graph import _parse_workspace_tag, build_router_graph, run_router
 from app.utils.prompts import resolve_system_prompt
 
 
@@ -421,7 +421,7 @@ async def test_router_deep_path(
     monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
 
     # mock run_deep_path yield SSE 事件（注意：done 由 run_router 统一 yield）
-    # 签名需与 run_deep_path 真实签名对齐（含 permission_mode / scene_prompt）
+    # 签名需与 run_deep_path 真实签名对齐（含 permission_mode / scene_prompt / workspace_path）
     async def _fake_run_deep_path(
         state: dict,
         message: str,
@@ -429,6 +429,7 @@ async def test_router_deep_path(
         history: list | None = None,
         permission_mode: str = "workspace",
         scene_prompt: str | None = None,
+        workspace_path: str | None = None,
     ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "deep response"}
         yield {"event": "todo_update", "data": '{"todos": [{"text": "step1", "done": true}]}'}
@@ -468,6 +469,7 @@ async def test_router_deep_path_error_passthrough(
         history: list | None = None,
         permission_mode: str = "workspace",
         scene_prompt: str | None = None,
+        workspace_path: str | None = None,
     ) -> AsyncIterator[dict]:
         yield {"event": "error", "data": "用户拒绝执行危险操作"}
 
@@ -571,7 +573,68 @@ async def test_router_reset_preserves_authorized_dirs(
 
 
 # ============================================================
-# 6. resolve_system_prompt 工具函数
+# 6. <workspace> 标记解析与透传
+# ============================================================
+
+
+def test_parse_workspace_tag_extracts_path_and_cleans() -> None:
+    """解析首个 <workspace> 标签，移除标签并清理多余空白。"""
+    raw = "<workspace>D:\\proj</workspace> 帮我看看代码"
+    cleaned, path = _parse_workspace_tag(raw)
+    assert cleaned == "帮我看看代码"
+    assert path == "D:\\proj"
+
+
+def test_parse_workspace_tag_no_tag_returns_original() -> None:
+    cleaned, path = _parse_workspace_tag("hello world")
+    assert cleaned == "hello world"
+    assert path is None
+
+
+def test_parse_workspace_tag_empty_returns_none() -> None:
+    cleaned, path = _parse_workspace_tag("<workspace>  </workspace>  task")
+    assert cleaned == "task"
+    assert path is None
+
+
+async def test_run_router_passes_workspace_path_to_deep_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEEP_TASK 路径：run_router 解析 <workspace> 并透传 workspace_path 给 run_deep_path。"""
+
+    async def _fake_classify(message: str) -> str:
+        return "DEEP_TASK"
+
+    monkeypatch.setattr("app.router.graph.classify_message", _fake_classify)
+
+    captured: dict = {}
+
+    async def _fake_run_deep_path(
+        state: dict,
+        message: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "workspace",
+        scene_prompt: str | None = None,
+        workspace_path: str | None = None,
+    ) -> AsyncIterator[dict]:
+        captured["workspace_path"] = workspace_path
+        captured["message"] = message
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_deep_path", _fake_run_deep_path)
+
+    events = await _collect_events(
+        run_router("<workspace>D:\\proj</workspace> 帮我分析", "t-ws")
+    )
+
+    assert captured.get("workspace_path") == "D:\\proj"
+    assert captured.get("message") == "帮我分析"
+    assert any(e["event"] == "token" for e in events)
+
+
+# ============================================================
+# 7. resolve_system_prompt 工具函数
 # ============================================================
 
 

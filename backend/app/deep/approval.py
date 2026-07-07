@@ -123,12 +123,16 @@ def _make_approval_event(
     return make_approval_event(data)
 
 
-def _extract_paths_from_tool_call(tool_call: dict) -> list[str]:
-    """从工具调用参数中提取路径字符串（用于 directory_extension 预检查）。
+def _extract_paths_from_tool_call(
+    tool_call: dict, workspace_path: str | None = None
+) -> list[str]:
+    """从工具调用参数中提取路径字符串（用于 directory_extension / 危险工具预检查）。
 
     支持的工具：
     - read_file / write_file / edit_file / list_dir / grep: args["path"]
     - glob / glob_files: args["pattern"] → 取 _glob_base
+    - cli_execute: args["cwd"]；未指定时若已选择 workspace，回退到 workspace_path
+      作为默认工作目录，避免已授权工作区仍被误标为危险操作。
     """
     from app.tools.filesystem import _glob_base
 
@@ -147,7 +151,11 @@ def _extract_paths_from_tool_call(tool_call: dict) -> list[str]:
         return [base] if base else []
     if name == "cli_execute":
         p = args.get("cwd")
-        return [str(p)] if p else []
+        if p:
+            return [str(p)]
+        if workspace_path:
+            return [workspace_path]
+        return []
     return []
 
 

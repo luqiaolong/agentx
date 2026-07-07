@@ -347,7 +347,8 @@ async def run_deep_path(
             if name not in runtime_dangerous:
                 continue
             # 提取路径并检查是否已授权写入
-            paths = _extract_paths_from_tool_call(tc)
+            # cli_execute 未指定 cwd 时，用 workspace_path 兜底，避免已选工作区仍弹审批
+            paths = _extract_paths_from_tool_call(tc, workspace_path)
             # 无路径参数的工具（如 shell_exec）或路径未授权 → 需审批
             if not paths:
                 dangerous_calls.append(tc)

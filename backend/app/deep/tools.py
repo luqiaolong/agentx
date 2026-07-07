@@ -84,7 +84,9 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
         若未指定 cwd，默认使用当前会话绑定的 workspace 路径（如已选择工作区）。
         """
         effective_cwd = cwd if cwd else workspace_path
-        return await cli_execute_impl(thread_id, command, arguments, effective_cwd, timeout)
+        return await cli_execute_impl(
+            thread_id, command, arguments, effective_cwd, timeout, workspace_path
+        )
 
     all_tools = [*fs_tools, write_file, edit_file, cli_execute, *rag_tools, *web_tools]
 

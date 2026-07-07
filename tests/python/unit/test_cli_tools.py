@@ -150,6 +150,33 @@ async def test_cli_execute_authorized_cwd(fresh_sandbox, tmp_path: Path) -> None
     assert "git version" in result
 
 
+async def test_cli_execute_relative_cwd_uses_workspace_path(
+    fresh_sandbox, tmp_path: Path
+) -> None:
+    """传入 workspace_path 时，相对路径 cwd 应基于 workspace_path 解析。"""
+    sandbox = get_sandbox()
+    sandbox.authorize("t1", str(tmp_path), writable=True)
+
+    # cwd="." 应解析为 tmp_path，而非 PROJECT_ROOT
+    result = await cli_execute(
+        "t1", "git", ["--version"], cwd=".", workspace_path=str(tmp_path)
+    )
+    assert "git version" in result
+
+
+async def test_cli_execute_empty_cwd_falls_back_to_workspace_path(
+    fresh_sandbox, tmp_path: Path
+) -> None:
+    """未传 cwd 时，应回退到 workspace_path。"""
+    sandbox = get_sandbox()
+    sandbox.authorize("t1", str(tmp_path), writable=True)
+
+    result = await cli_execute(
+        "t1", "git", ["--version"], workspace_path=str(tmp_path)
+    )
+    assert "git version" in result
+
+
 async def test_cli_execute_full_trust(fresh_sandbox, tmp_path: Path) -> None:
     """full_trust 模式下跳过授权检查。"""
     sandbox = get_sandbox()

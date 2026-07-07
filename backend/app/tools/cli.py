@@ -111,10 +111,14 @@ def _is_critical_dir(path: Path) -> bool:
     return any(p.search(s) for p in _CRITICAL_DIR_PATTERNS)
 
 
-def _resolve_cwd(cwd: str | None) -> Path:
-    """解析 cwd；为空时使用 PROJECT_ROOT。"""
+def _resolve_cwd(cwd: str | None, workspace_path: str | None = None) -> Path:
+    """解析 cwd；为空时回退到 workspace_path，再空则使用 PROJECT_ROOT。"""
     if not cwd:
+        if workspace_path:
+            return normalize_path(workspace_path)
         return PROJECT_ROOT
+    if workspace_path:
+        return normalize_path(cwd, base=workspace_path)
     return normalize_path(cwd)
 
 
@@ -160,6 +164,7 @@ async def cli_execute(
     arguments: list[str] | None = None,
     cwd: str | None = None,
     timeout: int | None = None,
+    workspace_path: str | None = None,
 ) -> str:
     """在受限环境下执行一个系统命令。
 
@@ -167,8 +172,9 @@ async def cli_execute(
         thread_id: 会话 ID，用于沙箱授权校验。
         command: 命令名（如 ``git``、``npm``、``python``）。
         arguments: 命令参数列表（每个参数独立，不经过 shell 解析）。
-        cwd: 工作目录；为空时使用项目根目录。
+        cwd: 工作目录；为空时回退到 workspace_path，再空则使用项目根目录。
         timeout: 超时秒数；为空时使用配置 ``cli_tool_timeout``。
+        workspace_path: 当前会话绑定的 workspace 绝对路径，作为相对路径解析基准。
 
     Returns:
         包含 exit code、stdout、stderr 的字符串；出错时返回错误说明。
@@ -189,7 +195,7 @@ async def cli_execute(
         if _has_forbidden_chars(arg):
             return f"参数 [{idx}] 包含非法字符: {arg!r}"
 
-    resolved_cwd = _resolve_cwd(cwd)
+    resolved_cwd = _resolve_cwd(cwd, workspace_path)
     if _is_critical_dir(resolved_cwd):
         return f"拒绝在系统关键目录执行: {resolved_cwd}"
 

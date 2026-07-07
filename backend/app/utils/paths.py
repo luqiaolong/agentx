@@ -18,16 +18,18 @@ from app.config import PROJECT_ROOT
 __all__ = ["normalize_path"]
 
 
-def normalize_path(path: str | Path) -> Path:
-    """规范化路径。相对路径基于 PROJECT_ROOT 解析（非 CWD）。
+def normalize_path(path: str | Path, base: str | Path | None = None) -> Path:
+    """规范化路径。相对路径基于 ``base`` 或 PROJECT_ROOT 解析（非 CWD）。
 
     Args:
         path: 输入路径（字符串或 Path 对象）。
+        base: 可选的基准目录；传入时相对路径基于该目录解析，否则基于 PROJECT_ROOT。
 
     Returns:
         规范化后的绝对 Path（经 ``resolve()`` 解析 ``..`` / 符号链接 / 大小写）。
     """
     p = Path(path)
     if not p.is_absolute():
-        p = PROJECT_ROOT / p
+        root = Path(base) if base else PROJECT_ROOT
+        p = root / p
     return p.resolve()
