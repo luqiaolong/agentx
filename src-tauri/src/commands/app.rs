@@ -159,38 +159,26 @@ pub async fn app_restart_backend(
     let env = backend::env::build_env(&app, PYTHON_PORT);
     let new_handle = backend::handle::PythonHandle::start(app.clone(), cwd, PYTHON_PORT, env);
 
-    // 4. 轮询健康端点（轻量 GET /，30s 超时）
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(30_000);
-    let url = format!("http://127.0.0.1:{}/", PYTHON_PORT);
-    while tokio::time::Instant::now() < deadline {
-        match reqwest::get(&url).await {
-            Ok(resp) if resp.status().is_success() => {
-                logger::append_log(&app, "[main] python backend restarted and ready");
-                // 存入 state
-                let mut guard = state
-                    .lock()
-                    .map_err(|e| format!("state lock poisoned: {}", e))?;
-                *guard = Some(new_handle);
-                return Ok(RestartResult {
-                    ok: true,
-                    message: None,
-                });
-            }
-            _ => {}
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    }
-
-    logger::append_log(&app, "[main] python backend restart timeout");
-    // 即使超时也存入 state，避免 handle 泄漏
+    // 4. 等候 supervisor ready（统一事件源），30s 超时 emit GivingUp。
+    let ready = new_handle.wait_for_ready(&app, PYTHON_PORT).await;
     let mut guard = state
         .lock()
         .map_err(|e| format!("state lock poisoned: {}", e))?;
-    *guard = Some(new_handle);
-    Ok(RestartResult {
-        ok: false,
-        message: Some("backend restart timeout".into()),
-    })
+    if ready {
+        logger::append_log(&app, "[main] python backend restarted and ready");
+        *guard = Some(new_handle);
+        Ok(RestartResult {
+            ok: true,
+            message: Some("backend ready".into()),
+        })
+    } else {
+        logger::append_log(&app, "[main] python backend restart timeout");
+        *guard = Some(new_handle);
+        Ok(RestartResult {
+            ok: false,
+            message: Some("backend restart timeout".into()),
+        })
+    }
 }
 
 // =============================================================================
