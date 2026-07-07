@@ -10,7 +10,6 @@ import {
   FileQuestion,
   FilePlus,
   Check,
-  X,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -20,7 +19,7 @@ import {
 } from "lucide-react";
 import { useGitStore } from "@/stores/git";
 import { useChatStore } from "@/stores/chat";
-import { checkout, commit, discardChanges, stage, unstage } from "@/lib/api/git";
+import { checkout, stage, unstage } from "@/lib/api/git";
 import type { GitStatusEntry, GitCommit as GitCommitType, GitBranch as GitBranchType } from "../../../shared/api-types";
 import { formatTime } from "@/lib/format";
 
@@ -59,7 +58,6 @@ interface StatusRowProps {
   onToggle: (path: string) => void;
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
-  onDiscard: (path: string) => void;
 }
 
 const StatusRow = memo(function StatusRow({
@@ -68,7 +66,6 @@ const StatusRow = memo(function StatusRow({
   onToggle,
   onStage,
   onUnstage,
-  onDiscard,
 }: StatusRowProps) {
   return (
     <div
@@ -128,15 +125,6 @@ const StatusRow = memo(function StatusRow({
             <Minus className="h-3 w-3" />
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => onDiscard(entry.path)}
-          className="rounded p-0.5 text-muted-c hover:text-rose-500"
-          title="丢弃"
-          aria-label="丢弃"
-        >
-          <X className="h-3 w-3" />
-        </button>
       </div>
     </div>
   );
@@ -161,19 +149,26 @@ function CommitRow({ commit }: { commit: GitCommitType }) {
         ) : (
           <ChevronRight className="h-3 w-3 shrink-0 text-muted-c" />
         )}
-        <GitCommit className="h-3 w-3 shrink-0 text-brand-500" />
-        <span
-          className="shrink-0 font-mono text-muted-c"
-          style={{ fontSize: "var(--fs-ws-file-size)" }}
-        >
-          {commit.shortHash}
-        </span>
         <span
           className="min-w-0 flex-1 truncate text-secondary-c"
           style={{ fontSize: "var(--fs-ws-file-name)" }}
           title={commit.message}
         >
           {commit.message}
+        </span>
+        <span
+          className="shrink-0 text-muted-c tabular-nums"
+          style={{ fontSize: "var(--fs-ws-file-size)" }}
+          title={`${commit.author} · ${commit.date}`}
+        >
+          {formatTime(commit.date, "relative")}
+        </span>
+        <span
+          className="shrink-0 max-w-[6rem] truncate text-muted-c"
+          style={{ fontSize: "var(--fs-ws-file-size)" }}
+          title={commit.author}
+        >
+          {commit.author}
         </span>
       </button>
       {expanded && (
@@ -185,6 +180,8 @@ function CommitRow({ commit }: { commit: GitCommitType }) {
           <div className="flex items-center gap-1">
             <Clock className="h-2.5 w-2.5" />
             <span>{formatTime(commit.date, "relative")}</span>
+            <span className="text-muted-c/60">·</span>
+            <span>{formatTime(commit.date, "absolute")}</span>
           </div>
           <div className="font-mono text-muted-c/70">{commit.hash}</div>
         </div>
@@ -214,11 +211,11 @@ function BranchSelector({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 rounded-md border border-default bg-surface px-2 py-0.5 text-secondary-c transition-colors hover:bg-hover-soft min-w-[8.5rem] shrink-0"
+        className="inline-flex items-center gap-1 rounded-md border border-default bg-surface px-2 py-0.5 text-secondary-c transition-colors hover:bg-hover-soft shrink-0"
         style={{ fontSize: "var(--fs-ws-file-name)" }}
       >
         <GitBranch className="h-3 w-3 text-brand-500" />
-        <span className="max-w-[260px] truncate flex-1">{currentBranch || "main"}</span>
+        <span className="max-w-[260px] truncate text-left">{currentBranch || "main"}</span>
         <ChevronDown className="h-3 w-3 text-muted-c" />
       </button>
       {open && (
@@ -250,57 +247,6 @@ function BranchSelector({
 }
 
 /* ------------------------------------------------------------------ */
-/*  提交输入框                                                          */
-/* ------------------------------------------------------------------ */
-
-function CommitInput({ repoPath, onCommitted }: { repoPath: string; onCommitted: () => void }) {
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const handleCommit = async () => {
-    if (!message.trim()) return;
-    setLoading(true);
-    try {
-      const result = await commit(repoPath, message.trim());
-      if (result.ok) {
-        setMessage("");
-        onCommitted();
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <input
-        type="text"
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            void handleCommit();
-          }
-        }}
-        placeholder="提交信息…"
-        className="flex-1 rounded-md border border-default bg-surface px-2 py-1 text-secondary-c outline-none transition-colors focus:border-brand-500"
-        style={{ fontSize: "var(--fs-ws-file-name)" }}
-      />
-      <button
-        type="button"
-        onClick={() => void handleCommit()}
-        disabled={!message.trim() || loading}
-        className="btn-primary h-7 px-2 disabled:opacity-50"
-        style={{ fontSize: "var(--fs-ws-file-name)" }}
-      >
-        {loading ? "提交中" : "提交"}
-      </button>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /*  树形节点视图 —— 递归渲染：目录行 + 叶子文件行                            */
 /* ------------------------------------------------------------------ */
 
@@ -311,7 +257,6 @@ interface TreeNodeViewProps {
   onToggleFile: (entry: GitStatusEntry) => Promise<void> | void;
   onStage: (path: string) => Promise<void> | void;
   onUnstage: (path: string) => Promise<void> | void;
-  onDiscard: (path: string) => void;
 }
 
 const TreeNodeView = memo(function TreeNodeView({
@@ -321,7 +266,6 @@ const TreeNodeView = memo(function TreeNodeView({
   onToggleFile,
   onStage,
   onUnstage,
-  onDiscard,
 }: TreeNodeViewProps) {
   // 目录节点默认展开
   const [open, setOpen] = useState(true);
@@ -339,7 +283,6 @@ const TreeNodeView = memo(function TreeNodeView({
           onToggle={() => void onToggleFile(node.entry!)}
           onStage={onStage}
           onUnstage={onUnstage}
-          onDiscard={onDiscard}
         />
       </div>
     );
@@ -387,7 +330,6 @@ const TreeNodeView = memo(function TreeNodeView({
               onToggleFile={onToggleFile}
               onStage={onStage}
               onUnstage={onUnstage}
-              onDiscard={onDiscard}
             />
           ))}
         </div>
@@ -573,11 +515,8 @@ export function GitPanel() {
   }, [resolvedWorkspacePath, repoPath, setGitRepoPath]);
 
   const [showCommits, setShowCommits] = useState(true);
-  const [confirmDiscard, setConfirmDiscard] = useState<string | null>(null);
-  // 折叠状态：IDEA 默认全部展开
+  // 折叠状态：默认展开
   const [changesCollapsed, setChangesCollapsed] = useState(false);
-  const [unversionedCollapsed, setUnversionedCollapsed] = useState(false);
-  const [stagedCollapsed, setStagedCollapsed] = useState(false);
 
   // IDEA Git 风格分组：
   //   Working Tree = 已 tracked 但有未暂存改动 + 未跟踪文件（合并为单一树）
@@ -616,15 +555,6 @@ export function GitPanel() {
   const handleUnstage = useCallback(
     async (filePath: string) => {
       await unstage(repoPath, [filePath]);
-      await refresh();
-    },
-    [repoPath, refresh],
-  );
-
-  const handleDiscard = useCallback(
-    async (filePath: string) => {
-      await discardChanges(repoPath, [filePath]);
-      setConfirmDiscard(null);
       await refresh();
     },
     [repoPath, refresh],
@@ -674,16 +604,6 @@ export function GitPanel() {
     },
     [repoPath, refresh],
   );
-
-  // 计算 Working Tree / Staged 全选状态
-  const allWorkingChecked =
-    workingTree.length > 0 && workingTree.every((e) => e.staged || isChecked(e.path));
-  const someWorkingChecked = workingTree.some((e) => e.staged || isChecked(e.path));
-  const workingIndeterminate = !allWorkingChecked && someWorkingChecked;
-
-  const allStagedChecked = staged.length > 0 && staged.every((e) => !e.staged || isChecked(e.path));
-  const someStagedChecked = staged.some((e) => !e.staged || isChecked(e.path));
-  const stagedIndeterminate = !allStagedChecked && someStagedChecked;
 
   // 工作区树（按目录层级）
   const workingTreeNodes = useMemo(() => buildTree(workingTree), [workingTree]);
@@ -743,155 +663,97 @@ export function GitPanel() {
         </div>
       )}
 
-      {/* 变更区域 —— 上下两段：上半（Working Tree 树形）= max 50% 高，溢出滚动；下半（Staged + 历史）= 剩余空间 */}
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-        {/* 上半段：Working Tree（Changes + Unversioned Files 合并为树形），最大高度 = 容器一半 */}
-        <div className="card flex min-h-0 max-h-[50%] flex-shrink-0 flex-col p-2">
-          <GroupHeader
-            label="Working Tree"
-            count={workingTree.length}
-            selected={allWorkingChecked}
-            indeterminate={workingIndeterminate}
-            onToggleAll={() => void handleGroupToggle(workingTree, !allWorkingChecked)}
-            collapsed={changesCollapsed}
-            onToggleCollapsed={() => setChangesCollapsed((v) => !v)}
-            icon={FileEdit}
-          />
-          {!changesCollapsed && workingTreeNodes.length > 0 && (
-            <div className="mt-0.5 min-h-0 flex-1 overflow-auto">
-              {workingTreeNodes.map((n) => (
-                <TreeNodeView
-                  key={n.path}
-                  node={n}
-                  depth={0}
-                  isChecked={isChecked}
-                  onToggleFile={handleToggleFile}
-                  onStage={handleStage}
-                  onUnstage={handleUnstage}
-                  onDiscard={(p) => setConfirmDiscard(p)}
-                />
-              ))}
-            </div>
-          )}
-          {!changesCollapsed && workingTreeNodes.length === 0 && (
-            <div className="mt-1 pl-3 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
-              无
-            </div>
-          )}
-        </div>
-
-        {/* 下半段：Staged（折叠） + 提交输入 + 历史 */}
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
-          {/* Staged 组：已暂存（折叠） */}
-          {staged.length > 0 && (
-            <div className="card space-y-0.5 p-2">
-              <GroupHeader
-                label="Staged"
-                count={staged.length}
-                selected={allStagedChecked}
-                indeterminate={stagedIndeterminate}
-                onToggleAll={() => void handleGroupToggle(staged, !allStagedChecked)}
-                collapsed={stagedCollapsed}
-                onToggleCollapsed={() => setStagedCollapsed((v) => !v)}
-                icon={Check}
-              />
-              {!stagedCollapsed && (
-                <div className="mt-0.5 space-y-0.5 pl-3">
-                  {staged.map((e) => (
-                    <StatusRow
-                      key={e.path}
-                      entry={e}
-                      selected={e.staged || isChecked(e.path)}
-                      onToggle={() => void handleToggleFile(e)}
-                      onStage={handleStage}
-                      onUnstage={handleUnstage}
-                      onDiscard={(p) => setConfirmDiscard(p)}
-                    />
-                  ))}
+      {/* 变更区域 —— 单一 Changes 面板（Working Tree + Staged 合并，仅查看，不做手工提交） */}
+      <div className="card flex min-h-[10rem] flex-[3] flex-col p-2">
+        <GroupHeader
+          label="Changes"
+          count={entries.length}
+          selected={entries.length > 0 && entries.every((e) => e.staged || isChecked(e.path))}
+          indeterminate={entries.some((e) => e.staged || isChecked(e.path)) && !entries.every((e) => e.staged || isChecked(e.path))}
+          onToggleAll={() => void handleGroupToggle(entries, !entries.every((e) => e.staged || isChecked(e.path)))}
+          collapsed={changesCollapsed}
+          onToggleCollapsed={() => setChangesCollapsed((v) => !v)}
+          icon={FileEdit}
+        />
+        {!changesCollapsed && entries.length > 0 && (
+          <div className="mt-0.5 min-h-0 flex-1 overflow-auto">
+            {/* Staged 段：已暂存文件 */}
+            {staged.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1 px-1 py-0.5 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+                  <Check className="h-2.5 w-2.5" />
+                  <span>Staged</span>
+                  <span>{staged.length}</span>
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* 无变更提示（仅当三组都为空时） */}
-          {entries.length === 0 && !loading && (
-            <div className="flex flex-col items-center gap-1.5 py-6 text-center">
-              <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-              <div className="text-secondary-c" style={{ fontSize: "var(--fs-empty-title)" }}>
-                工作区干净
+                {staged.map((e) => (
+                  <StatusRow
+                    key={e.path}
+                    entry={e}
+                    selected={e.staged || isChecked(e.path)}
+                    onToggle={() => void handleToggleFile(e)}
+                    onStage={handleStage}
+                    onUnstage={handleUnstage}
+                  />
+                ))}
               </div>
-              <div className="text-muted-c" style={{ fontSize: "var(--fs-empty-desc)" }}>
-                没有待提交的变更
-              </div>
-            </div>
-          )}
-
-          {/* 提交输入框（有暂存文件时显示） */}
-          {staged.length > 0 && (
-            <div className="p-2">
-              <CommitInput repoPath={repoPath} onCommitted={() => void refresh()} />
-            </div>
-          )}
-
-          {/* 提交历史 */}
-          <div className="border-t border-default pt-2">
-            <button
-              type="button"
-              onClick={() => setShowCommits((v) => !v)}
-              className="flex w-full items-center gap-1 py-1 text-left"
-            >
-              {showCommits ? (
-                <ChevronDown className="h-3 w-3 text-muted-c" />
-              ) : (
-                <ChevronRight className="h-3 w-3 text-muted-c" />
-              )}
-              <span className="font-medium text-secondary-c" style={{ fontSize: "var(--fs-ws-task-title)" }}>
-                提交历史
-              </span>
-              <span className="ml-1 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
-                ({commits.length})
-              </span>
-            </button>
-            {showCommits && (
-              <div className="mt-1 space-y-0.5">
-                {commits.map((c) => (
-                  <CommitRow key={c.hash} commit={c} />
+            )}
+            {/* Working Tree 段：未暂存文件（树形） */}
+            {workingTree.length > 0 && (
+              <div className={staged.length > 0 ? "mt-1" : ""}>
+                <div className="flex items-center gap-1 px-1 py-0.5 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+                  <FileEdit className="h-2.5 w-2.5" />
+                  <span>Working Tree</span>
+                  <span>{workingTree.length}</span>
+                </div>
+                {workingTreeNodes.map((n) => (
+                  <TreeNodeView
+                    key={n.path}
+                    node={n}
+                    depth={0}
+                    isChecked={isChecked}
+                    onToggleFile={handleToggleFile}
+                    onStage={handleStage}
+                    onUnstage={handleUnstage}
+                  />
                 ))}
               </div>
             )}
           </div>
-        </div>
+        )}
+        {!changesCollapsed && entries.length === 0 && (
+          <div className="mt-1 pl-3 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+            无
+          </div>
+        )}
       </div>
 
-      {/* 丢弃确认弹窗 */}
-      {confirmDiscard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="glass-card w-72 rounded-xl border border-default p-4 shadow-pop">
-            <div className="mb-2 font-semibold text-primary-c" style={{ fontSize: "var(--fs-brand)" }}>
-              确认丢弃变更？
-            </div>
-            <div className="mb-3 text-muted-c" style={{ fontSize: "var(--fs-settings-desc)" }}>
-              文件 <span className="font-mono text-secondary-c">{confirmDiscard}</span> 的变更将无法恢复。
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmDiscard(null)}
-                className="btn-ghost flex-1"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDiscard(confirmDiscard)}
-                className="btn-primary flex-1 bg-rose-600 hover:bg-rose-500"
-              >
-                丢弃
-              </button>
-            </div>
+      {/* 提交历史 —— 只读查看 */}
+      <div className="border-t border-default pt-2">
+        <button
+          type="button"
+          onClick={() => setShowCommits((v) => !v)}
+          className="flex w-full items-center gap-1 py-1 text-left"
+        >
+          {showCommits ? (
+            <ChevronDown className="h-3 w-3 text-muted-c" />
+          ) : (
+            <ChevronRight className="h-3 w-3 text-muted-c" />
+          )}
+          <span className="font-medium text-secondary-c" style={{ fontSize: "var(--fs-ws-task-title)" }}>
+            提交历史
+          </span>
+          <span className="ml-1 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+            ({commits.length})
+          </span>
+        </button>
+        {showCommits && (
+          <div className="mt-1 space-y-0.5">
+            {commits.map((c) => (
+              <CommitRow key={c.hash} commit={c} />
+            ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
