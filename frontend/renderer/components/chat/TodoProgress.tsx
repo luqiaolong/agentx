@@ -1,5 +1,34 @@
 import type { TodoItem } from "@/hooks/useChatStream";
 
+/**
+ * 把后端给的原始 task_id 美化成人类可读标签。
+ *
+ * 后端 task_id 格式示例：
+ *   - ``verify-fix-scenario-6-v4-team-deep-0``（DeepAgent 子任务）
+ *   - ``verify-fix-scenario-2-team-code-1``（code subagent）
+ *   - ``verify-scenario-2``（简单 chat/chat 工具调用）
+ *
+ * 提取逻辑：取 ``-team-<role>-<idx>`` 中的 role 段，作为子代理/任务角色标签。
+ * 若没有 role 段，则展示 task_id 后 8 字符作为短 id。
+ */
+function formatTaskLabel(taskId: string | undefined): string {
+  if (!taskId) return "任务";
+  const match = taskId.match(/-team-([a-z]+)-(\d+)$/);
+  if (match) {
+    const role = match[1]!;
+    const idx = match[2]!;
+    const roleLabel: Record<string, string> = {
+      deep: "DeepAgent",
+      code: "代码子任务",
+      rag: "知识库检索",
+      web: "网页搜索",
+    };
+    const label = roleLabel[role] ?? role;
+    return `${label} #${idx}`;
+  }
+  return `任务 ${taskId.slice(-8)}`;
+}
+
 function groupTodosByTaskId(todos: TodoItem[]): Map<string | undefined, TodoItem[]> {
   const groups = new Map<string | undefined, TodoItem[]>();
   for (const t of todos) {
@@ -67,11 +96,13 @@ export function TodoProgress({
         <div className="space-y-3">
           {grouped.map(([taskId, groupTodos], idx) => (
             <div key={taskId ?? `__ungrouped__${idx}`}>
-              {taskId && (
-                <div className="mb-1 font-medium text-secondary-c" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
-                  {taskId}
-                </div>
-              )}
+              <div
+                className="mb-1 font-medium text-secondary-c"
+                style={{ fontSize: 'var(--fs-ws-task-meta)' }}
+                title={taskId ?? ""}
+              >
+                {formatTaskLabel(taskId)}
+              </div>
               <TodoList todos={groupTodos} />
             </div>
           ))}
