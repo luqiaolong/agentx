@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, AsyncIterator
+from uuid import uuid4
 
 from langgraph.prebuilt import create_react_agent
 
@@ -180,6 +181,29 @@ async def _is_interrupted(agent: Any, config: dict) -> bool:
     if not state or not state.next:
         return False
     return "tools" in state.next
+
+
+async def _inject_tool_error_for_call(
+    agent: Any, config: dict, tool_call: dict, error_text: str
+) -> None:
+    """为单个 tool_call 注入 ToolMessage 错误。
+
+    用于危险工具审批被拒绝时，避免 checkpoint 中残留未配对的 tool_call
+    导致后续 ``INVALID_CHAT_HISTORY`` 校验失败。
+    """
+    from langchain_core.messages import ToolMessage
+
+    tc_id = tool_call.get("id") or str(uuid4())
+    tool_msg = ToolMessage(content=error_text, tool_call_id=tc_id)
+    try:
+        await agent.aupdate_state(config, {"messages": [tool_msg]})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "inject_tool_error_for_call failed",
+            thread_id=config.get("configurable", {}).get("thread_id", ""),
+            tool=tool_call.get("name"),
+            error=str(exc),
+        )
 
 
 async def run_deep_path(
@@ -362,9 +386,9 @@ async def run_deep_path(
                 dangerous_calls.append(tc)
 
         if dangerous_calls:
-            # 4a. 危险工具 → yield approval_request(dangerous_tool)，等待审批
-            tool_call = dangerous_calls[0]
-            yield _make_approval_event(tool_call, thread_id, kind="dangerous_tool")
+            # 4a. 危险工具 → 一次性 yield 所有危险工具的 approval_request，等待统一审批
+            for tc in dangerous_calls:
+                yield _make_approval_event(tc, thread_id, kind="dangerous_tool")
 
             decision = await _await_approval(
                 thread_id,
@@ -375,10 +399,13 @@ async def run_deep_path(
             )
 
             if decision is None or not decision.approved:
+                # 拒绝/超时/中止：为每个待审批的危险 tool_call 注入 ToolMessage 错误，
+                # 避免 checkpoint 中残留未配对的 tool_calls 导致后续 INVALID_CHAT_HISTORY。
+                for tc in dangerous_calls:
+                    await _inject_tool_error_for_call(
+                        agent, config, tc, "用户拒绝执行危险操作"
+                    )
                 yield make_sse_event("error", "用户拒绝执行危险操作")
-                await _inject_tool_error_messages(
-                    agent, config, "用户拒绝执行危险操作"
-                )
                 sandbox.set_full_trust(thread_id, False)
                 return
 
@@ -386,7 +413,8 @@ async def run_deep_path(
             logger.info(
                 "deep agent approval granted",
                 thread_id=thread_id,
-                tool=tool_call.get("name"),
+                tool_count=len(dangerous_calls),
+                tools=[tc.get("name") for tc in dangerous_calls],
             )
         else:
             # 4b. 非危险工具：检查只读 fs 工具是否越界（directory_extension）
