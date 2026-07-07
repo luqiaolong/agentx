@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 
 use super::PythonStatus;
 use crate::logger;
+use crate::store;
 
 const MAX_RETRIES: u32 = 3;
 const HEALTH_INTERVAL_MS: u64 = 200;
@@ -38,6 +39,9 @@ struct PythonInner {
     stopped: bool,
     /// 当前使用的命令（uv / python），uv 失败后切换到 python。
     current_command: CommandKind,
+    /// dev 模式下由 powershell.exe 启动，需要把 powershell PID 也记下来，
+    /// 关闭时同时杀掉 powershell 进程树（避免 8123 端口残留）。
+    dev_mode_powershell_pid: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -52,14 +56,22 @@ impl PythonHandle {
     /// 立即返回 handle，spawn + 重试 + 握手在后台 tokio task 中进行。
     /// 状态变化通过 `app.emit("python:status", ...)` 推送。
     pub fn start(app: AppHandle, cwd: PathBuf, _port: u16, env: HashMap<String, String>) -> Self {
+        let dev_mode = store::get_dev_mode(&app);
         let inner = Arc::new(Mutex::new(PythonInner {
             current_pid: None,
             stopped: false,
             current_command: CommandKind::Uv,
+            dev_mode_powershell_pid: None,
         }));
 
         let inner_clone = inner.clone();
-        let supervisor = tauri::async_runtime::spawn(supervise(inner_clone, app, cwd, env));
+        let supervisor = tauri::async_runtime::spawn(supervise(
+            inner_clone,
+            app,
+            cwd,
+            env,
+            dev_mode,
+        ));
 
         Self {
             inner,
@@ -110,12 +122,16 @@ impl PythonHandle {
             let mut guard = self.inner.lock().await;
             guard.stopped = true;
         }
-        let pid = {
+        let (pid, ps_pid) = {
             let guard = self.inner.lock().await;
-            guard.current_pid
+            (guard.current_pid, guard.dev_mode_powershell_pid)
         };
         if let Some(pid) = pid {
             kill_tree(pid);
+        }
+        // dev 模式：杀掉 powershell 宿主进程树，避免 8123 端口残留。
+        if let Some(ps_pid) = ps_pid {
+            kill_tree(ps_pid);
         }
     }
 }
@@ -135,6 +151,7 @@ async fn supervise(
     app: AppHandle,
     cwd: PathBuf,
     env: HashMap<String, String>,
+    dev_mode: bool,
 ) {
     let mut attempt = 0u32;
 
@@ -168,12 +185,13 @@ async fn supervise(
         // 先 kill 整棵进程树，避免 spawn 后 bind 失败。
         ensure_port_free_or_kill();
 
-        match spawn_child(&inner, &cwd, &env, &app).await {
-            Some(mut child) => {
+        match spawn_child(&inner, &cwd, &env, &app, dev_mode).await {
+            Some((mut child, ps_pid)) => {
                 // 记录 PID 供 stop() 使用
                 if let Some(pid) = child.id() {
                     let mut guard = inner.lock().await;
                     guard.current_pid = Some(pid);
+                    guard.dev_mode_powershell_pid = ps_pid;
                 }
 
                 // pipe stdout/stderr 到日志（同时落盘到 {app_data_dir}/logs/agentx-YYYYMMDD.log，
@@ -194,6 +212,7 @@ async fn supervise(
                 {
                     let mut guard = inner.lock().await;
                     guard.current_pid = None;
+                    guard.dev_mode_powershell_pid = None;
                     if guard.stopped {
                         return;
                     }
@@ -235,18 +254,65 @@ async fn supervise(
 
 /// spawn 子进程，uv 失败时回退到 python。
 ///
-/// 返回 `Some(child)` 表示 spawn 成功，`None` 表示 spawn 失败（uv 不存在且 python 也失败）。
+/// 返回 `Some((child, ps_pid))` 表示 spawn 成功，`None` 表示 spawn 失败（uv 不存在且 python 也失败）。
+/// `ps_pid` 仅 dev 模式（PowerShell 宿主）下非空，供 `stop()` 杀整棵树避免端口残留。
 /// uv spawn 失败时会自动切换到 python 命令并记录到 inner.current_command。
 async fn spawn_child(
     inner: &Arc<Mutex<PythonInner>>,
     cwd: &PathBuf,
     env: &HashMap<String, String>,
     app: &AppHandle,
-) -> Option<Child> {
+    dev_mode: bool,
+) -> Option<(Child, Option<u32>)> {
     let command_kind = {
         let guard = inner.lock().await;
         guard.current_command
     };
+
+    // dev 模式（仅 Windows）：用 powershell 拉起 uv，保持窗口不退出。
+    // 命令形态：`powershell -NoExit -Command "cd <cwd>; uv run python -m app.main"`
+    // 关键点：
+    // - `-NoExit` 让 powershell 进程不被 uv 退出连带销毁，开发关掉窗口才会结束；
+    // - 双引号转义：`"` 变成 `\"`，`$` 在 powershell 里有特殊含义用 `` ` `` 转义；
+    // - 我们这里只在命令行里传 cwd + uv 命令，没有用户注入，安全。
+    // 注意：dev 模式仅 Windows 可用，Unix 下退化为原 tokio 启动（直接 nix 进程组）。
+    #[cfg(windows)]
+    let mut use_powershell = dev_mode;
+    #[cfg(not(windows))]
+    let mut use_powershell = false;
+
+    if use_powershell {
+        let cwd_str = cwd.to_string_lossy().to_string();
+        // 把 cwd 路径里的双引号转义，避免 powershell 解析错位
+        let cwd_escaped = cwd_str.replace('"', "`\"");
+        let ps_script = format!(
+            "Set-Location -LiteralPath \"{}\"; uv run python -m app.main",
+            cwd_escaped
+        );
+        let mut cmd = Command::new("powershell.exe");
+        cmd.args(["-NoExit", "-Command", &ps_script])
+            .envs(env)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // 不设置 current_dir：powershell 会用 Set-Location 切到 backend 目录
+        match cmd.spawn() {
+            Ok(child) => {
+                let ps_pid = child.id();
+                return Some((child, ps_pid));
+            }
+            Err(e) => {
+                let msg = format!("dev-mode powershell spawn error: {}", e);
+                log::warn!("{}", msg);
+                logger::append_log(app, &msg);
+                // powershell 拉起失败，降级走原 tokio 启动
+                #[allow(unused_assignments)]
+                {
+                    use_powershell = false;
+                }
+            }
+        }
+    }
 
     let (program, args) = match command_kind {
         CommandKind::Uv => ("uv", vec!["run", "python", "-m", "app.main"]),
@@ -269,7 +335,7 @@ async fn spawn_child(
     }
 
     match cmd.spawn() {
-        Ok(child) => Some(child),
+        Ok(child) => Some((child, None)),
         Err(e) => {
             let msg = format!("python spawn error for {}: {}", program, e);
             log::warn!("{}", msg);
