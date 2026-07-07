@@ -1,13 +1,13 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
   FileText,
   Wrench,
   Sparkles,
   Brain,
 } from "lucide-react";
-import { useChatStore } from "@/stores/chat";
+import { useContextFiles } from "@/hooks/useContextFiles";
 import { formatTime } from "@/lib/format";
-import { extractCategorizedFiles, extractWorkspaceFiles, type CategorizedFile } from "./extractFiles";
+import type { CategorizedFile } from "./extractFiles";
 
 /* ------------------------------------------------------------------ */
 /*  上下文横向 Tab 配置                                                  */
@@ -32,26 +32,9 @@ export function ContextTabPanel({
   onFileClick?: (file: { id: string; path: string; name: string }) => void;
 }) {
   const [activeSub, setActiveSub] = useState<ContextSubTab>("tool_files");
-  const currentSession = useChatStore((s) =>
-    s.currentId ? s.sessions[s.currentId] ?? null : null,
-  );
-  const workspacePath = currentSession?.workspacePath ?? null;
-  const messages = currentSession?.messages ?? [];
+  const allFiles = useContextFiles();
 
-  const toolFiles = useMemo(() => extractCategorizedFiles(messages), [messages]);
-  const skillFiles = useMemo(() => extractWorkspaceFiles(workspacePath), [workspacePath]);
-
-  const allFiles = useMemo(() => {
-    const map: Record<ContextSubTab, CategorizedFile[]> = {
-      tool_files: toolFiles,
-      skill_files: skillFiles,
-      session_summary: [],
-      memory_files: [],
-    };
-    return map;
-  }, [toolFiles, skillFiles]);
-
-  const currentFiles = allFiles[activeSub];
+  const currentFiles: CategorizedFile[] = allFiles[activeSub];
 
   return (
     <div className="flex h-full flex-col">
@@ -101,7 +84,7 @@ export function ContextTabPanel({
                 type="button"
                 onClick={() => onFileClick?.(f)}
                 className="group flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left transition-colors hover:bg-hover-soft"
-                title={f.path}
+                title={f.path || f.name}
               >
                 <FileText className="h-3 w-3 shrink-0 text-muted-c" />
                 <span className="min-w-0 flex-1 truncate text-secondary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
@@ -112,9 +95,11 @@ export function ContextTabPanel({
                     {f.meta}
                   </span>
                 )}
-                <span className="shrink-0 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-size)' }}>
-                  {formatTime(f.ts)}
-                </span>
+                {f.ts > 0 && (
+                  <span className="shrink-0 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-size)' }}>
+                    {formatTime(f.ts)}
+                  </span>
+                )}
               </button>
             ))}
           </div>
