@@ -11,13 +11,16 @@ import {
 } from "@/lib/api/window";
 import { getHomeWorkspaceDir, restartBackend } from "@/lib/api/app";
 import { revealInFolder } from "@/lib/api/shell";
+import { workspace } from "@/lib/api/http";
 import { logger } from "@/lib/logger";
+import { humanizeError } from "@/lib/errors";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
 import { ChatView } from "./components/chat/ChatView";
 import { SessionList } from "./components/chat/SessionList";
 import { WorkspacePanel } from "./components/workspace/WorkspacePanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsModal } from "./components/settings/SettingsModal";
+import { CodeViewerModal } from "./components/code/CodeViewerModal";
 import { useSettingsStore } from "./stores/settings";
 import { useChatStore } from "./stores/chat";
 import { useSceneStore } from "./stores/scene";
@@ -30,6 +33,11 @@ export default function App() {
   const [pythonStatus, setPythonStatus] = useState<PythonStatus>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerFile, setViewerFile] = useState<{ id: string; path: string; name: string } | null>(null);
+  const [viewerContent, setViewerContent] = useState<string | null>(null);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const scene = useSceneStore((s) => s.scene);
@@ -123,6 +131,39 @@ export default function App() {
 
   const showStartingMask = pythonStatus === "starting";
   const showGiveUpMask = pythonStatus === "giving_up";
+  const currentId = useChatStore((s) => s.currentId);
+
+  const openFileViewer = async (file: { id: string; path: string; name: string }): Promise<void> => {
+    if (!file.path) return;
+    setViewerFile(file);
+    setViewerContent(null);
+    setViewerError(null);
+    setViewerLoading(true);
+    setViewerOpen(true);
+    try {
+      const result = await workspace.read(file.path, currentId ?? undefined);
+      if ("binary" in result) {
+        setViewerError(`该文件为二进制文件（${result.size} 字节），无法在此查看`);
+      } else {
+        setViewerContent(result.content);
+      }
+    } catch (e) {
+      setViewerError(humanizeError(e));
+      logger.warn("openFileViewer failed", e);
+    } finally {
+      setViewerLoading(false);
+    }
+  };
+
+  const closeFileViewer = (): void => {
+    setViewerOpen(false);
+    // 延迟清空内容，避免关闭动画期间闪现空状态
+    window.setTimeout(() => {
+      setViewerFile(null);
+      setViewerContent(null);
+      setViewerError(null);
+    }, 200);
+  };
 
   return (
     <div className="flex h-screen w-screen flex-col bg-app text-primary-c">
@@ -252,10 +293,7 @@ export default function App() {
           <aside className="w-72 shrink-0 border-l border-default bg-surface flex">
             <WorkspacePanel
               onFileClick={(file) => {
-                if (!file.path) return;
-                revealInFolder(file.path).catch((e) => {
-                  logger.warn("revealInFolder failed", e);
-                });
+                void openFileViewer(file);
               }}
             />
           </aside>
@@ -265,6 +303,17 @@ export default function App() {
       <ApprovalDialog />
       {/* 设置弹窗 —— 由侧边栏「设置」按钮触发，全局承载；内含「日志」tab */}
       <SettingsModal />
+
+      {/* 代码查看弹窗 —— 由 Workspace 上下文面板文件点击触发 */}
+      <CodeViewerModal
+        open={viewerOpen}
+        onClose={closeFileViewer}
+        title={viewerFile?.name ?? ""}
+        content={viewerContent}
+        error={viewerError}
+        loading={viewerLoading}
+        fileName={viewerFile?.name}
+      />
 
       {/* 启动中遮罩 */}
       {showStartingMask && (

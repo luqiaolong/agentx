@@ -79,6 +79,15 @@ export const skills = {
 
 // ---- Workspace ----
 
+/**
+ * 工作区内文件的读取结果：
+ * - 文本文件：返回 ``{ content, size, encoding }``
+ * - 二进制文件：返回 ``{ binary: true, size }``
+ */
+export type WorkspaceReadResult =
+  | { content: string; size: number; encoding: string }
+  | { binary: true; size: number };
+
 export const workspace = {
   list: async (path?: string, threadId?: string): Promise<{ entries: WorkspaceEntry[] }> => {
     const params = new URLSearchParams();
@@ -88,6 +97,24 @@ export const workspace = {
     }
     const r = await fetch(`${API_BASE}/api/workspace/list?${params.toString()}`);
     return (await r.json()) as { entries: WorkspaceEntry[] };
+  },
+  /**
+   * 读取沙箱内文本文件（供 CodeViewer 使用）。
+   * - 200：返回 WorkspaceReadResult
+   * - 400/404：抛 Error，由调用方 humanize 后展示
+   */
+  read: async (path: string, threadId?: string): Promise<WorkspaceReadResult> => {
+    const params = new URLSearchParams();
+    params.set("path", path);
+    if (threadId) {
+      params.set("thread_id", threadId);
+    }
+    const r = await fetch(`${API_BASE}/api/workspace/read?${params.toString()}`);
+    if (!r.ok) {
+      const detail = (await r.json().catch(() => ({}))) as { detail?: string };
+      throw new Error(detail.detail ?? `读取文件失败 (HTTP ${r.status})`);
+    }
+    return (await r.json()) as WorkspaceReadResult;
   },
 };
 
