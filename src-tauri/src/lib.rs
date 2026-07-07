@@ -107,6 +107,16 @@ pub fn run() {
             commands::app::app_get_home_workspace_dir,
             commands::app::app_get_dev_mode,
             commands::app::app_set_dev_mode,
+            // === Git 命令（9 个）===
+            commands::git::git_get_status,
+            commands::git::git_get_log,
+            commands::git::git_get_branches,
+            commands::git::git_checkout,
+            commands::git::git_stage,
+            commands::git::git_unstage,
+            commands::git::git_commit,
+            commands::git::git_discard_changes,
+            commands::git::git_get_diff,
         ])
         .setup(|app| {
             log::info!(
