@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { CommandPicker } from "./CommandPicker";
 import { ContextUsage } from "./ContextUsage";
-import { useAutoResizeTextarea } from "@/hooks/useAutoResizeTextarea";
+import { useFixedTextarea } from "@/hooks/useFixedTextarea";
 import {
   buildCommandList,
   useCommandPickerStore,
@@ -54,7 +54,7 @@ export function ChatComposer({
   // 这样切换会话能正确切换 workspace；store 会持久化到 localStorage
   const workspacePath = currentSession?.workspacePath ?? null;
   const showWorkspaceChip = Boolean(workspacePath);
-  const { textareaRef, textareaHeight } = useAutoResizeTextarea(input);
+  const { textareaRef, textareaHeight } = useFixedTextarea();
 
   // 切会话时重置本地输入与全局 picker 状态，并把焦点拉回 textarea。
   //
@@ -267,12 +267,14 @@ export function ChatComposer({
     let tid = store.currentId;
     if (!tid) {
       // 没有当前会话：创建并绑定到这个新 workspace（需求允许"workspace 侧新建"）
-      tid = store.createSession(dirPath);
+      // createSession 内部已 await 隐式授权
+      tid = await store.createSession(dirPath);
     } else {
-      // 把当前会话迁到新 workspace（持久化）
-      store.moveSessionToWorkspace(tid, dirPath);
+      // 把当前会话迁到新 workspace（持久化），内部已 await 隐式授权
+      await store.moveSessionToWorkspace(tid, dirPath);
     }
     try {
+      // 显式再授权一次用于错误提示（幂等）
       await useChatStore.getState().authorizeAndUnmark(tid, dirPath, true);
     } catch (err) {
       setDropError(
@@ -283,10 +285,10 @@ export function ChatComposer({
   };
 
   // 移除/切换 workspace chip：把当前会话迁回 Home（workspacePath=null）
-  const handleRemoveWorkspace = () => {
+  const handleRemoveWorkspace = async () => {
     const tid = useChatStore.getState().currentId;
     if (!tid) return;
-    useChatStore.getState().moveSessionToWorkspace(tid, null);
+    await useChatStore.getState().moveSessionToWorkspace(tid, null);
   };
 
   // 工作区 chip 的 tooltip：展示完整路径，Home 时附带桌面目录（来自 store）
@@ -380,7 +382,7 @@ export function ChatComposer({
               rows={2}
               placeholder="输入消息，或 / 调命令与技能，@ 附文件，文件夹选 workspace"
               aria-label="消息输入框"
-              className="input-borderless relative z-20 block w-full resize-none pb-2"
+              className="input-borderless relative z-20 block w-full resize-none overflow-y-auto pb-2"
               style={{ height: `${textareaHeight}px` }}
             />
 
@@ -480,7 +482,7 @@ export function ChatComposer({
           </div>
 
           {dragOver && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-brand-500/5 font-medium text-brand-500" style={{ fontSize: 'var(--fs-composer-placeholder)' }}>
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-brand-500/5 font-medium text-brand-500" style={{ fontSize: 'var(--fs-composer-input)' }}>
               <Paperclip className="mr-1.5 h-3.5 w-3.5" />
               释放以附加文件
             </div>

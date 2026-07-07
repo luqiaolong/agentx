@@ -77,9 +77,9 @@
   --fs-msg-code:     var(--text-xs);      /* 14px — inline code */
   --fs-msg-tool:     var(--text-2xs);     /* 12px — tool-call labels */
   /* Chat composer */
-  --fs-composer-placeholder: var(--text-base); /* 14px */
-  --fs-composer-toolbar:     var(--text-2xs);  /* 11px — model/permission/send */
-  --fs-composer-chip:        var(--text-3xs);  /* 10px — workspace chip */
+  --fs-composer-input:     0.8125rem;       /* 13px — 输入文字 + 拖拽覆盖提示 */
+  --fs-composer-toolbar:   var(--text-2xs);  /* 11px — model/permission/send */
+  --fs-composer-chip:      var(--text-3xs);  /* 10px — workspace chip */
   /* Workspace panel */
   --fs-ws-section:   var(--text-3xs);      /* 10px — "工作区" header */
   --fs-ws-tab:       var(--text-2xs);      /* 11px — 文件/任务 tab */
@@ -383,7 +383,7 @@
     border: none;
     background: transparent;
     color: var(--text-primary);
-    font-size: var(--fs-composer-placeholder);
+    font-size: var(--fs-composer-input);
     line-height: 1.65;
     padding: 0;
     resize: none;
