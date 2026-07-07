@@ -13,6 +13,30 @@ def test_short_message_downgrades() -> None:
     assert _should_downgrade_to_single("hi") == (True, "消息过短，无需 team 协作")
 
 
+def test_chinese_short_message_downgrades() -> None:
+    """中文 < 6 字符视为短（中文信息密度高）。"""
+    assert _should_downgrade_to_single("你好") == (True, "消息过短，无需 team 协作")
+    assert _should_downgrade_to_single("谢谢你") == (True, "消息过短，无需 team 协作")
+
+
+def test_chinese_6_chars_does_not_downgrade() -> None:
+    """中文 ≥ 6 字符不视为短（升级前阈值 10 字符对中文偏长）。"""
+    downgrade, _ = _should_downgrade_to_single("请帮我看下文件")
+    assert downgrade is False
+
+
+def test_ascii_6_chars_still_downgrades() -> None:
+    """英文 < 12 字符仍视为短，避免英文 'help me plz' 被误判为非短。"""
+    downgrade, _ = _should_downgrade_to_single("help me pls")
+    assert downgrade is True
+
+
+def test_ascii_12_chars_does_not_downgrade() -> None:
+    """英文 ≥ 12 字符不视为短。"""
+    downgrade, _ = _should_downgrade_to_single("please analyze this code")
+    assert downgrade is False
+
+
 def test_greeting_downgrades() -> None:
     """明确问候仍然降级（无论命中"消息过短"还是"关键词"分支）。"""
     downgrade, reason = _should_downgrade_to_single("你好")

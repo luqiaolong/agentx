@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import AsyncIterator
 
 from app.config import get_settings
@@ -136,16 +137,31 @@ _SIMPLE_TASK_KEYWORDS = frozenset({
     "你好", "hello", "hi", "谢谢", "翻译一下",
 })
 
+# 匹配模式：中文 keywords 用子串匹配；英文 keywords 用单词边界匹配
+# 避免 "hi" 子串命中 "this"/"think" 等英文词。
+import re as _re
+_KEYWORD_PATTERNS = tuple(
+    _re.compile(rf"\b{_re.escape(kw)}\b") if all(ord(c) < 128 for c in kw)
+    else _re.compile(_re.escape(kw))
+    for kw in _SIMPLE_TASK_KEYWORDS
+)
+
 
 def _should_downgrade_to_single(message: str) -> tuple[bool, str]:
     """评估是否应降级到单 agent 路径。
 
-    Returns:
-        (downgrade, reason) — downgrade=True 时应走单 agent
+    短消息阈值按字符类型自适应：
+    - 含 ASCII（英文/数字）：< 12 字符视为短（避免英文 10 字符被吞掉）
+    - 全中文/全角：< 6 字符视为短（中文 10 字符信息量已饱和）
+
+    关键词匹配：中文字符用子串；英文字符用 ``\\b\\w+\\b`` 单词边界，
+    避免 ``"hi" in "this"`` 等子串误命中。
     """
     lower = message.lower().strip()
-    if len(lower) < 10:
+    has_ascii = any(ord(c) < 128 and c.isalnum() for c in lower)
+    threshold = 12 if has_ascii else 6
+    if len(lower) < threshold:
         return True, "消息过短，无需 team 协作"
-    if any(kw in lower for kw in _SIMPLE_TASK_KEYWORDS):
+    if any(pat.search(lower) for pat in _KEYWORD_PATTERNS):
         return True, "命中简单任务关键词"
     return False, ""
