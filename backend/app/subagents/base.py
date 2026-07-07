@@ -46,13 +46,15 @@ _make_rag_tools = None
 _make_web_tools = None
 
 
-def make_fs_tools(thread_id: str) -> list:
+def make_fs_tools(thread_id: str, workspace_path: str | None = None) -> list:
     """构建绑定 ``thread_id`` 的文件系统工具列表（仅只读工具）。
 
     filesystem 工具的签名含 ``thread_id``（用于沙箱授权校验），该参数不应暴露给
     LLM。这里通过闭包绑定 ``thread_id``，对外只声明业务参数。
 
     安全约束：subagent 不返回 write_file / edit_file，避免绕过 DeepAgent 审批流。
+
+    ``workspace_path`` 用于沙箱授权时解析相对路径的基准，避免误解析到 PROJECT_ROOT。
 
     工具启用由 ``get_settings().tools_enabled`` 过滤；工具内部名与配置 key 的
     映射：``glob_files``→``glob``、``grep_files``→``grep``。
@@ -62,22 +64,22 @@ def make_fs_tools(thread_id: str) -> list:
     @tool
     async def read_file(path: str) -> str:
         """读取文本文件内容。"""
-        return await fs.read_file(thread_id, path)
+        return await fs.read_file(thread_id, path, base=workspace_path)
 
     @tool
     async def list_dir(path: str) -> list[str]:
         """列出目录下的条目名称（不含路径前缀）。"""
-        return await fs.list_dir(thread_id, path)
+        return await fs.list_dir(thread_id, path, base=workspace_path)
 
     @tool
     async def glob_files(pattern: str) -> list[str]:
         """glob 匹配文件路径，pattern 形如 ``d:/docs/**/*.md``。"""
-        return await fs.glob(thread_id, pattern)
+        return await fs.glob(thread_id, pattern, base=workspace_path)
 
     @tool
     async def grep_files(pattern: str, path: str) -> list[str]:
         """在 path 目录下递归搜索匹配 pattern（正则）的行。"""
-        return await fs.grep(thread_id, pattern, path)
+        return await fs.grep(thread_id, pattern, path, base=workspace_path)
 
     tools = [read_file, list_dir, glob_files, grep_files]
     # 工具内部函数名 → tools_enabled 配置 key 的映射
@@ -91,10 +93,13 @@ def make_fs_tools(thread_id: str) -> list:
     return [t for t in tools if enabled.get(tool_name_map.get(t.name, t.name), True)]
 
 
-def make_cli_tools(thread_id: str) -> list:
+def make_cli_tools(thread_id: str, workspace_path: str | None = None) -> list:
     """构建绑定 ``thread_id`` 的 CLI 工具列表。
 
     子代理可使用 cli_execute（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
+    ``workspace_path`` 作为 cli_execute 未指定 cwd 时的默认工作目录，
+    以及相对路径解析基准。
+
     工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``cli_execute``）。
     """
     from app.tools.cli import cli_execute as _cli_execute
@@ -107,7 +112,9 @@ def make_cli_tools(thread_id: str) -> list:
         timeout: int | None = None,
     ) -> str:
         """执行受限 CLI 命令（如 git/npm/python）。黑名单命令会被拒绝。"""
-        return await _cli_execute(thread_id, command, arguments, cwd, timeout)
+        return await _cli_execute(
+            thread_id, command, arguments, cwd, timeout, workspace_path
+        )
 
     tools = [cli_execute]
     enabled = get_settings().tools_enabled

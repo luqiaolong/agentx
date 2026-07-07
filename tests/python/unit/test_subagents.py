@@ -67,8 +67,8 @@ async def test_fs_tools_bind_thread_id(
     result = await read_tool.ainvoke({"path": "d:/docs/x.txt"})
 
     assert result == "file-content"
-    # 验证闭包正确绑定了 thread_id
-    fake_read.assert_awaited_once_with("t1", "d:/docs/x.txt")
+    # 验证闭包正确绑定了 thread_id（base 为 workspace 上下文，未传时为 None）
+    fake_read.assert_awaited_once_with("t1", "d:/docs/x.txt", base=None)
 
 
 # 5. 无 TAVILY_API_KEY 时 web_search 返回错误字符串

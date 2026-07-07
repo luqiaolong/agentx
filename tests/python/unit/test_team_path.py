@@ -315,10 +315,10 @@ async def test_run_team_path_emits_team_plan_progress_result(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "代码结果"}
 
-    async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "检索结果"}
 
     monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)
@@ -364,7 +364,7 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
         if False:
             yield {}
@@ -392,10 +392,10 @@ async def test_run_team_path_partial_failure_continues(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "代码成功"}
 
-    async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         # 空输出 → 失败
         if False:
             yield {}
@@ -478,7 +478,7 @@ async def test_run_team_path_token_data_is_plain_string(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_code_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "代码结果"}
 
     monkeypatch.setattr("app.team.orchestrator.run_code_agent", _fake_run_code_agent)

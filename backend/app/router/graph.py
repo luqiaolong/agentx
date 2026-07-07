@@ -317,6 +317,7 @@ async def run_router(
                 history=history,
                 permission_mode=permission_mode,
                 scene_prompt=scene_prompt,
+                workspace_path=workspace_path,
             ):
                 yield sse
         elif classification == "CHAT":
@@ -341,6 +342,7 @@ async def run_router(
                 profile_prompt=profile_prompt,
                 history=history,
                 scene_prompt=scene_prompt,
+                workspace_path=workspace_path,
             ):
                 yield sse
         else:  # DEEP_TASK

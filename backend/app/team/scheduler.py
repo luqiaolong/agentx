@@ -57,6 +57,7 @@ async def _run_subtask(
     state: RouterState,
     profile_prompt: str,
     task_index: int = 0,
+    workspace_path: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """执行单个子任务，流式产出透传事件，最后产出 _subtask_done 哨兵。
 
@@ -67,6 +68,8 @@ async def _run_subtask(
     Args:
         task_index: 子任务序号，用于为 deep 子任务生成独立 thread_id，
             避免并行 deep 子任务共享 checkpoint 与审批流冲突。
+        workspace_path: 当前会话绑定的 workspace 路径，透传到 fs 工具
+            用于解析相对路径。
     """
     # 通过 orchestrator 模块属性访问 run_xxx 函数，
     # 以便测试通过 monkeypatch app.team.orchestrator.run_xxx 替换。
@@ -101,6 +104,7 @@ async def _run_subtask(
                 history=history,
                 permission_mode=permission_mode,
                 scene_prompt=scene_prompt,
+                workspace_path=workspace_path,
             ):
                 etype = event.get("event", "")
                 data = event.get("data", "")
@@ -125,13 +129,19 @@ async def _run_subtask(
             yield _done(False, f"deep 子任务异常: {exc}")
             return
     elif agent_name == "code":
-        async for event in orchestrator.run_code_agent(thread_id, input_text, history=history):
+        async for event in orchestrator.run_code_agent(
+            thread_id, input_text, history=history, workspace_path=workspace_path
+        ):
             _collect_event(event, collected_text, tool_traces)
     elif agent_name == "rag":
-        async for event in orchestrator.run_rag_agent(thread_id, input_text, history=history):
+        async for event in orchestrator.run_rag_agent(
+            thread_id, input_text, history=history, workspace_path=workspace_path
+        ):
             _collect_event(event, collected_text, tool_traces)
     elif agent_name == "web":
-        async for event in orchestrator.run_web_agent(thread_id, input_text, history=history):
+        async for event in orchestrator.run_web_agent(
+            thread_id, input_text, history=history, workspace_path=workspace_path
+        ):
             _collect_event(event, collected_text, tool_traces)
     # 软件开发专家团角色：用 custom_agent 工厂构建专属 agent，复用 astream_events 事件流
     elif agent_name in ("frontend_dev", "backend_dev", "tester", "architect", "devops", "ui_designer", "product_manager"):
@@ -145,6 +155,7 @@ async def _run_subtask(
                 system_prompt=cfg.system_prompt,
                 tools=cfg.tools,
                 temperature=cfg.temperature,
+                workspace_path=workspace_path,
             )
             history_msgs = list(history) if history else []
             inputs = {"messages": [*history_msgs, {"role": "user", "content": input_text}]}
@@ -162,11 +173,15 @@ async def _run_subtask(
                     tool_traces.append(f"{ename}: {str(edata.get('output', ''))[:200]}")
         else:
             # 无专属配置时降级到 code_agent
-            async for event in orchestrator.run_code_agent(thread_id, input_text, history=history):
+            async for event in orchestrator.run_code_agent(
+                thread_id, input_text, history=history, workspace_path=workspace_path
+            ):
                 _collect_event(event, collected_text, tool_traces)
     elif agent_name.startswith("custom-"):
         key = agent_name[len("custom-"):]
-        async for event in orchestrator.run_custom_agent(key, thread_id, input_text, history=history):
+        async for event in orchestrator.run_custom_agent(
+            key, thread_id, input_text, history=history, workspace_path=workspace_path
+        ):
             _collect_event(event, collected_text, tool_traces)
     else:
         yield _done(False, f"未知 agent: {agent_name}")

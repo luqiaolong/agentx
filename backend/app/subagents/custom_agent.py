@@ -33,10 +33,14 @@ _RAG_TOOL_NAMES = {"rag_retrieve"}
 _WEB_TOOL_NAMES = {"web_search"}
 
 
-def _make_custom_tools(thread_id: str, tool_names: list[str]) -> list:
+def _make_custom_tools(
+    thread_id: str, tool_names: list[str], workspace_path: str | None = None
+) -> list:
     """按 tool_names 组装工具列表（复用现有工具实现）。
 
     安全：再次过滤危险工具（防御性），即便 config 层漏过也保底。
+
+    ``workspace_path`` 用于 fs 工具解析相对路径，避免被解到 PROJECT_ROOT。
     """
     # 防御性过滤：移除危险工具与未知工具
     safe_names = [
@@ -55,25 +59,25 @@ def _make_custom_tools(thread_id: str, tool_names: list[str]) -> list:
         @tool
         async def read_file(path: str) -> str:
             """读取文本文件内容。"""
-            return await fs.read_file(thread_id, path)
+            return await fs.read_file(thread_id, path, base=workspace_path)
         tools.append(read_file)
     if "list_dir" in safe_names:
         @tool
         async def list_dir(path: str) -> list[str]:
             """列出目录下的条目名称（不含路径前缀）。"""
-            return await fs.list_dir(thread_id, path)
+            return await fs.list_dir(thread_id, path, base=workspace_path)
         tools.append(list_dir)
     if "glob" in safe_names:
         @tool
         async def glob_files(pattern: str) -> list[str]:
             """glob 匹配文件路径，pattern 形如 ``d:/docs/**/*.md``。"""
-            return await fs.glob(thread_id, pattern)
+            return await fs.glob(thread_id, pattern, base=workspace_path)
         tools.append(glob_files)
     if "grep" in safe_names:
         @tool
         async def grep_files(pattern: str, path: str) -> list[str]:
             """在 path 目录下递归搜索匹配 pattern（正则）的行。"""
-            return await fs.grep(thread_id, pattern, path)
+            return await fs.grep(thread_id, pattern, path, base=workspace_path)
         tools.append(grep_files)
 
     # RAG 工具集
@@ -144,6 +148,7 @@ def build_custom_agent(
     system_prompt: str | None = None,
     tools: list[str] | None = None,
     temperature: float | None = None,
+    workspace_path: str | None = None,
 ) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
@@ -158,6 +163,7 @@ def build_custom_agent(
         system_prompt: 显式指定 system prompt（模式 2）。
         tools: 显式指定工具列表（模式 2）。
         temperature: 显式指定温度（模式 2）。
+        workspace_path: 当前会话绑定的 workspace 路径，fs 工具解析相对路径用。
 
     Raises:
         KeyError: 模式 1 中 key 不存在于 custom_subagents。
@@ -174,7 +180,7 @@ def build_custom_agent(
             )
         _temp = temperature if temperature is not None else 0.2
         model = get_chat_model(temperature=_temp, streaming=True)
-        _tools = _make_custom_tools(thread_id or "", tools or [])
+        _tools = _make_custom_tools(thread_id or "", tools or [], workspace_path)
         kwargs: dict[str, Any] = {"name": f"custom_{key}"}
         prompt = system_prompt or ""
         prompt = prompt + THINK_PROMPT_SUFFIX
@@ -192,7 +198,7 @@ def build_custom_agent(
             key=key,
         )
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
-    _tools = _make_custom_tools(thread_id or "", cfg.tools)
+    _tools = _make_custom_tools(thread_id or "", cfg.tools, workspace_path)
     kwargs = {"name": f"custom_{key}"}
     prompt = cfg.system_prompt or ""
     prompt = prompt + THINK_PROMPT_SUFFIX
@@ -205,6 +211,7 @@ async def run_custom_agent(
     thread_id: str,
     message: str,
     history: list | None = None,
+    workspace_path: str | None = None,
 ) -> AsyncIterator[dict]:
     """运行自定义子代理，yield 标准化事件流（与内置子代理契约一致）。
 
@@ -221,8 +228,9 @@ async def run_custom_agent(
         thread_id: 会话 ID。
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
+        workspace_path: 当前会话绑定的 workspace 路径，fs 工具解析相对路径用。
     """
-    agent = build_custom_agent(key, thread_id=thread_id)
+    agent = build_custom_agent(key, thread_id=thread_id, workspace_path=workspace_path)
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     source = f"custom-{key}"

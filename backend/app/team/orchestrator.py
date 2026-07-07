@@ -87,12 +87,17 @@ async def run_team_path(
     history: list | None = None,
     permission_mode: str = "workspace",
     scene_prompt: str | None = None,
+    workspace_path: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """AgentTeam 路径入口。
 
     1. Orchestrator 拆任务 → team_plan 事件
     2. 并行执行子任务 → team_progress / team_result 事件
     3. Aggregator 汇总 → token / reasoning 事件
+
+    Args:
+        workspace_path: 当前会话绑定的 workspace 路径，透传到子代理 fs 工具，
+            用于解析相对路径（避免被解到 PROJECT_ROOT）。
     """
     settings = get_settings()
 
@@ -184,7 +189,7 @@ async def run_team_path(
                 try:
                     async for ev in _run_subtask(
                         t, thread_id, history, permission_mode, scene_prompt, state, profile_prompt,
-                        task_index=idx,
+                        task_index=idx, workspace_path=workspace_path,
                     ):
                         await queue.put(ev)
                 except Exception as exc:  # noqa: BLE001

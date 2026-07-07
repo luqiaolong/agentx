@@ -25,12 +25,15 @@ from app.subagents.base import (
 )
 
 
-def build_code_agent(thread_id: str) -> Any:
-    """构建 Code 子代理 ReAct 子图，返回 CompiledStateGraph。"""
+def build_code_agent(thread_id: str, workspace_path: str | None = None) -> Any:
+    """构建 Code 子代理 ReAct 子图，返回 CompiledStateGraph。
+
+    ``workspace_path`` 用于沙箱授权时解析相对路径的基准。
+    """
     settings = get_settings()
     cfg = settings.subagents["code"]
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
-    tools = _make_fs_tools(thread_id)
+    tools = _make_fs_tools(thread_id, workspace_path=workspace_path)
     kwargs: dict[str, Any] = {}
     # 合并用户配置的角色定义与 think 标签指令
     prompt = cfg.system_prompt or ""
@@ -43,6 +46,7 @@ async def run_code_agent(
     thread_id: str,
     message: str,
     history: list | None = None,
+    workspace_path: str | None = None,
 ) -> AsyncIterator[dict]:
     """运行 Code 子代理，yield 标准化事件流。
 
@@ -58,8 +62,9 @@ async def run_code_agent(
         thread_id: 会话 ID。
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
+        workspace_path: 当前会话绑定的 workspace 绝对路径，相对路径解析基准。
     """
-    agent = build_code_agent(thread_id)
+    agent = build_code_agent(thread_id, workspace_path=workspace_path)
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     async for event in run_react_agent_stream(agent, inputs, source="code"):

@@ -57,7 +57,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
 
     from app.tools import filesystem as fs
 
-    fs_tools = _make_fs_tools(thread_id)  # 只读工具集
+    fs_tools = _make_fs_tools(thread_id, workspace_path=workspace_path)  # 只读工具集
     rag_tools = _make_rag_tools(thread_id)
     web_tools = _make_web_tools(thread_id)
 
@@ -65,12 +65,14 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     @tool
     async def write_file(path: str, content: str) -> str:
         """写入文本文件（覆盖）。"""
-        return await fs.write_file(thread_id, path, content)
+        return await fs.write_file(thread_id, path, content, base=workspace_path)
 
     @tool
     async def edit_file(path: str, old_text: str, new_text: str) -> str:
         """编辑文件：将 old_text 替换为 new_text（仅首次匹配）。"""
-        return await fs.edit_file(thread_id, path, old_text, new_text)
+        return await fs.edit_file(
+            thread_id, path, old_text, new_text, base=workspace_path
+        )
 
     @tool
     async def cli_execute(

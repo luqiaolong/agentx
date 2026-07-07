@@ -28,14 +28,15 @@ _UNAUTHORIZED_WRITE_READONLY = (
 _UNAUTHORIZED_WRITE = "路径 {path} 未授权，请通过 dialog 选择目录后重试"
 
 
-def _resolve(path: str | Path) -> Path:
-    """规范化路径，相对路径基于 PROJECT_ROOT 解析。
+def _resolve(path: str | Path, base: str | Path | None = None) -> Path:
+    """规范化路径，相对路径基于 ``base`` 或 PROJECT_ROOT 解析。
 
-    委托给 ``app.utils.paths.normalize_path``，保持向后兼容。
+    委托给 ``app.utils.paths.normalize_path``。``base`` 用于将相对路径基于
+    workspace 解析，避免 fs 工具用相对路径时被解到 PROJECT_ROOT。
     """
     from app.utils.paths import normalize_path
 
-    return normalize_path(path)
+    return normalize_path(path, base=base)
 
 
 def _deny_read(path: str | Path) -> str:
@@ -48,31 +49,37 @@ def _deny_write(path: str | Path, matched_readonly: bool) -> str:
     return _UNAUTHORIZED_WRITE.format(path=path)
 
 
-async def read_file(thread_id: str, path: str) -> str:
-    """读取文本文件内容。未授权时返回错误字符串（不抛异常）。"""
+async def read_file(thread_id: str, path: str, base: str | Path | None = None) -> str:
+    """读取文本文件内容。未授权时返回错误字符串（不抛异常）。
+
+    ``base`` 用于沙箱授权校验时解析相对路径的基准（通常为 workspace 路径）。
+    """
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path)
+        sandbox.check_read(thread_id, path, base=base)
     except PathNotAuthorized:
         logger.warning("fs.read_file denied", thread_id=thread_id, path=str(path))
         return _deny_read(path)
     try:
-        return _resolve(path).read_text(encoding="utf-8")
+        return _resolve(path, base=base).read_text(encoding="utf-8")
     except FileNotFoundError:
         return f"文件不存在: {path}"
     except OSError as exc:
         return f"读取文件失败: {path} ({exc})"
 
 
-async def list_dir(thread_id: str, path: str) -> list[str]:
-    """列出目录下的条目名称（不含路径前缀）。未授权时返回单元素错误列表。"""
+async def list_dir(thread_id: str, path: str, base: str | Path | None = None) -> list[str]:
+    """列出目录下的条目名称（不含路径前缀）。未授权时返回单元素错误列表。
+
+    ``base`` 用于沙箱授权校验时解析相对路径的基准。
+    """
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path)
+        sandbox.check_read(thread_id, path, base=base)
     except PathNotAuthorized:
         logger.warning("fs.list_dir denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
-    p = _resolve(path)
+    p = _resolve(path, base=base)
     if not p.is_dir():
         return [f"不是目录: {path}"]
     try:
@@ -81,46 +88,50 @@ async def list_dir(thread_id: str, path: str) -> list[str]:
         return [f"列目录失败: {path} ({exc})"]
 
 
-async def glob(thread_id: str, pattern: str) -> list[str]:
+async def glob(thread_id: str, pattern: str, base: str | Path | None = None) -> list[str]:
     """glob 匹配文件路径。校验 pattern 父目录的读权限。
 
     ``pattern`` 形如 ``d:/docs/**/*.md``，取其最顶层的非通配前缀 ``d:/docs`` 做权限校验，
     避免对含 ``*`` / ``?`` 的字符串直接 ``resolve()``。
+
+    ``base`` 用于沙箱授权校验时解析相对路径的基准。
     """
     sandbox = get_sandbox()
-    base = _glob_base(pattern)
+    base_dir = _glob_base(pattern)
     try:
-        sandbox.check_read(thread_id, base)
+        sandbox.check_read(thread_id, base_dir, base=base)
     except PathNotAuthorized:
         logger.warning(
-            "fs.glob denied", thread_id=thread_id, pattern=pattern, base=str(base)
+            "fs.glob denied", thread_id=thread_id, pattern=pattern, base=str(base_dir)
         )
-        return [_deny_read(base)]
+        return [_deny_read(base_dir)]
     try:
         # rglob 风格：将 pattern 视为相对 base 的 glob；绝对路径则剥离 base 前缀后基于 base glob
         p = Path(pattern)
         if p.is_absolute():
-            rel = pattern[len(str(base)):].lstrip("\\/")
-            matched = sorted(str(x) for x in _resolve(base).glob(rel))
+            rel = pattern[len(str(base_dir)):].lstrip("\\/")
+            matched = sorted(str(x) for x in _resolve(base_dir, base=base).glob(rel))
         else:
-            matched = sorted(str(x) for x in _resolve(base).glob(pattern))
+            matched = sorted(str(x) for x in _resolve(base_dir, base=base).glob(pattern))
         return matched
     except (OSError, ValueError) as exc:
         return [f"glob 失败: {pattern} ({exc})"]
 
 
-async def grep(thread_id: str, pattern: str, path: str) -> list[str]:
+async def grep(thread_id: str, pattern: str, path: str, base: str | Path | None = None) -> list[str]:
     """在 ``path`` 目录下递归搜索匹配 ``pattern``（正则）的行。
 
     返回 ``file:line: matched_text`` 列表；未授权或无匹配时返回相应提示列表。
+
+    ``base`` 用于沙箱授权校验时解析相对路径的基准。
     """
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path)
+        sandbox.check_read(thread_id, path, base=base)
     except PathNotAuthorized:
         logger.warning("fs.grep denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
-    p = _resolve(path)
+    p = _resolve(path, base=base)
     if not p.exists():
         return [f"路径不存在: {path}"]
     try:
@@ -162,18 +173,20 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
-async def write_file(thread_id: str, path: str, content: str) -> str:
+async def write_file(thread_id: str, path: str, content: str, base: str | Path | None = None) -> str:
     """写入文本文件（覆盖）。未授权时返回错误字符串。
 
     幂等性保护：
     - 若同一 thread_id 在 60 秒内写入相同路径 + 相同内容，直接返回上次结果，
       防止 LLM 因重试机制导致重复写入。
     - 若文件已存在且内容相同，跳过写入并提示。
+
+    ``base`` 用于沙箱授权校验时解析相对路径的基准。
     """
     from time import time
 
     sandbox = get_sandbox()
-    resolved = _resolve(path)
+    resolved = _resolve(path, base=base)
     content_len = len(content)
     content_h = _content_hash(content)
 
@@ -194,7 +207,7 @@ async def write_file(thread_id: str, path: str, content: str) -> str:
 
     # ---- 2. 权限校验 ----
     try:
-        sandbox.check_write(thread_id, path)
+        sandbox.check_write(thread_id, path, base=base)
     except PathNotAuthorized as exc:
         msg = str(exc)
         matched_readonly = "仅授权读取" in msg
@@ -250,18 +263,21 @@ async def write_file(thread_id: str, path: str, content: str) -> str:
         return f"写入文件失败: {path} ({exc})"
 
 
-async def edit_file(thread_id: str, path: str, old_text: str, new_text: str) -> str:
-    """编辑文件：将 ``old_text`` 替换为 ``new_text``（仅首次匹配）。未授权时返回错误字符串。"""
+async def edit_file(thread_id: str, path: str, old_text: str, new_text: str, base: str | Path | None = None) -> str:
+    """编辑文件：将 ``old_text`` 替换为 ``new_text``（仅首次匹配）。未授权时返回错误字符串。
+
+    ``base`` 用于沙箱授权校验时解析相对路径的基准。
+    """
     sandbox = get_sandbox()
     try:
-        sandbox.check_write(thread_id, path)
+        sandbox.check_write(thread_id, path, base=base)
     except PathNotAuthorized as exc:
         msg = str(exc)
         matched_readonly = "仅授权读取" in msg
         logger.warning("fs.edit_file denied", thread_id=thread_id, path=str(path))
         return _deny_write(path, matched_readonly)
     try:
-        p = _resolve(path)
+        p = _resolve(path, base=base)
         if not p.exists():
             return f"文件不存在: {path}"
         text = p.read_text(encoding="utf-8")
