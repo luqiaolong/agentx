@@ -120,15 +120,27 @@ function ToolCallCardImpl({
       : null;
 
   // 复制文本到剪贴板，并展示 2s ✓ 反馈
+  // LOW-6 修复：navigator.clipboard.writeText 返回 Promise，
+  // try-catch 捕获不到 Promise rejection；改为 .then/.catch 显式处理
   const handleCopy = (field: "args" | "result") => {
     const text = field === "args" ? formatJsonFull(args) : resultFullStr;
     try {
-      void navigator.clipboard.writeText(text);
+      const maybePromise = navigator.clipboard?.writeText(text);
+      if (maybePromise && typeof maybePromise.then === "function") {
+        maybePromise
+          .then(() => {
+            setCopiedField(field);
+            window.setTimeout(() => setCopiedField(null), COPY_FEEDBACK_MS);
+          })
+          .catch(() => {
+            // clipboard Promise rejected（权限拒绝 / 文档未激活）：静默忽略
+          });
+      } else {
+        // navigator.clipboard 不存在（非安全上下文）：静默忽略
+      }
     } catch {
-      // clipboard 不可用时静默忽略（不阻塞主流程）
+      // 同步异常（navigator.clipboard 访问抛错）：静默忽略
     }
-    setCopiedField(field);
-    window.setTimeout(() => setCopiedField(null), COPY_FEEDBACK_MS);
   };
 
   // source chip 样式：未知 source 用默认灰底

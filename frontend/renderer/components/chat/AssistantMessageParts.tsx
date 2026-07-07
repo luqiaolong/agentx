@@ -256,7 +256,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
               case "tool-call-group":
                 return (
                   <ToolCallGroup
-                    key={`g-${idx}-${item.toolName}`}
+                    key={`g-${item.items[0]?.id ?? idx}-${item.toolName}`}
                     toolName={item.toolName}
                     items={item.items}
                   />

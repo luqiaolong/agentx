@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { ChevronDown, Brain } from "lucide-react";
-import { useChatStore } from "@/stores/chat";
+import { lookupSessionId } from "@/stores/chat/messageIndex";
 
 /**
  * sessionStorage key 前缀：按 message id 隔离 reasoning part 的展开/折叠状态。
@@ -37,17 +37,13 @@ function clearStoredExpanded(messageId: string, partId: string) {
 }
 
 /**
- * 检查指定 messageId 是否仍存在于 store 的任意 session 中。
+ * 检查指定 messageId 是否仍存在于 store 中。
+ * MEDIUM-4 修复：改用 messageIndex 的 O(1) lookupSessionId，
+ * 替代原来 O(S×M) 的 sessions × messages 全量扫描。
  * 不订阅 store，避免组件重渲；仅在卸载时调用一次。
  */
 function isMessageStillInStore(messageId: string): boolean {
-  const sessions = useChatStore.getState().sessions;
-  for (const sid of Object.keys(sessions)) {
-    const sess = sessions[sid];
-    if (!sess) continue;
-    if (sess.messages.some((m) => m.id === messageId)) return true;
-  }
-  return false;
+  return lookupSessionId(messageId) !== null;
 }
 
 /**

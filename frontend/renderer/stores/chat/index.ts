@@ -17,7 +17,7 @@ import {
   unindexMessage,
   unindexSession,
 } from "./messageIndex";
-import { createQuotaGuardedStorage } from "./quotaStorage";
+import { createQuotaGuardedStorage, setStreamingActive } from "./quotaStorage";
 
 /**
  * parts-based 消息模型（chat-rendering-trace-v2 D3）。
@@ -580,7 +580,11 @@ export const useChatStore = create<ChatState>()(
                 let newPlan = existing.plan;
                 if (updaters.plan) newPlan = updaters.plan;
                 let newAgents = existing.agents;
-                if (updaters.agentUpdate) {
+                // MEDIUM-5 修复：re-planning 时 initialAgents 替换整个 agents 数组
+                // （team_plan 重新规划时传入 initialAgents 表示用新 plan 重置 agents）
+                if (updaters.initialAgents) {
+                  newAgents = updaters.initialAgents;
+                } else if (updaters.agentUpdate) {
                   const { agent, patch } = updaters.agentUpdate;
                   const idx = newAgents.findIndex((a) => a.agent === agent);
                   if (idx === -1) {
@@ -757,7 +761,12 @@ export const useChatStore = create<ChatState>()(
           });
         },
 
-        setStreaming: (v) => set({ isStreaming: v }),
+        setStreaming: (v) => {
+          // HIGH-2 修复：同步更新 quotaStorage 的 streaming 闸门，
+          // 流式期间跳过 localStorage 写入，避免覆盖完整 sessions
+          setStreamingActive(v);
+          set({ isStreaming: v });
+        },
 
         setApprovalRequest: (req) => set({ approvalRequest: req }),
 
@@ -844,21 +853,14 @@ export const useChatStore = create<ChatState>()(
             currentId,
           };
         },
-        // 流式期间不持久化 sessions 增量（避免高频 token 写入触发 localStorage I/O）；
-        // 流式结束（setStreaming(false)）时自动触发 partialize 重新计算并落盘。
-        partialize: (s) => {
-          if (s.isStreaming) {
-            return {
-              currentId: s.currentId,
-              homeWorkspacePath: s.homeWorkspacePath,
-            };
-          }
-          return {
-            sessions: s.sessions,
-            currentId: s.currentId,
-            homeWorkspacePath: s.homeWorkspacePath,
-          };
-        },
+        // HIGH-2 修复：流式写入拦截已下沉到 quotaStorage 的 streamingActive 闸门，
+        // partialize 始终返回完整 state；流式期间 setItem 会被跳过，
+        // 流式结束（setStreaming(false)）时自动触发 partialize 重新计算并落盘完整 state。
+        partialize: (s) => ({
+          sessions: s.sessions,
+          currentId: s.currentId,
+          homeWorkspacePath: s.homeWorkspacePath,
+        }),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       },
     ),

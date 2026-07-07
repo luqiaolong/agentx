@@ -81,6 +81,10 @@ function VirtualizedThread({
     getScrollElement: () => parentRef.current,
     estimateSize: () => 200,
     overscan: 5,
+    // HIGH-1 修复：动态高度内容（reasoning 展开 / tool-call 展开 / 长文本）必须测量实际高度，
+    // 否则 estimateSize=200 会导致虚拟项重叠或留白，虚拟化实际不可用。
+    // measureElement 会在每个虚拟项挂载/更新时回调，更新 virtualizer 内部的 size cache。
+    measureElement: (el) => el.getBoundingClientRect().height,
   });
   return (
     <div
@@ -92,6 +96,8 @@ function VirtualizedThread({
         return (
           <div
             key={m.id}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
             className="absolute left-0 right-0"
             style={{ transform: `translateY(${vi.start}px)` }}
           >

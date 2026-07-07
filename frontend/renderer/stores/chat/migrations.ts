@@ -153,11 +153,18 @@ export const migrateV3toV4 = rebuildSessionShells;
 export const migrateV4toV5 = rebuildSessionShells;
 
 /**
- * v5 -> v6：移除 ChatMessage.content 兼容字段。
+ * v5 -> v6：移除 ChatMessage.content 兼容字段 + 为旧 reasoning/tool-call part 补时间戳。
  *
  * 执行轨迹优化（2026-07-07 T12）：渲染层已迁移到 parts 消费，
  * content 字段不再需要 store 维护。遍历所有 sessions × messages，
  * 删除 content 字段（若存在）。
+ *
+ * MEDIUM-3 修复：v6 的 MessagePart 类型为 reasoning / tool-call / tool-result
+ * 增加了 startedAt / doneAt / arrivedAt 等时间戳字段（必填）。
+ * 旧版本（v5 及以前）的 reasoning part 没有 startedAt，
+ * 会导致 ReasoningBlock 渲染「已思考 NaN 秒」。
+ * 此迁移用 message.ts 兜底填充 startedAt（无法恢复真实开始时间，
+ * 但保证类型合法 + 耗时显示为 0 而非 NaN）。
  *
  * 注意：旧版本的 store actions 会从 parts 派生 content，此迁移将其彻底清除。
  */
@@ -170,12 +177,41 @@ export function migrateV5toV6(persisted: unknown): Partial<ChatState> {
     const oldMessages = Array.isArray(raw.messages)
       ? (raw.messages as Array<Record<string, unknown>>)
       : [];
-    // 遍历所有 message，删除 content 字段
+    // 遍历所有 message，删除 content 字段 + 为旧 part 补时间戳
     const newMessages = oldMessages.map((m) => {
       if (!m || typeof m !== "object") return m as unknown as ChatMessage;
       // 浅拷贝并删除 content（若存在）
       const { content: _content, ...rest } = m;
       void _content;
+      // MEDIUM-3：为旧 reasoning/tool-call/tool-result part 补时间戳
+      if (Array.isArray(rest.parts)) {
+        const msgTs = typeof m.ts === "number" ? m.ts : Date.now();
+        rest.parts = (rest.parts as Array<Record<string, unknown>>).map((part) => {
+          if (!part || typeof part !== "object") return part;
+          if (part.type === "reasoning") {
+            return {
+              ...part,
+              startedAt: typeof part.startedAt === "number" ? part.startedAt : msgTs,
+              ...(part.done === true && typeof part.doneAt !== "number"
+                ? { doneAt: msgTs }
+                : {}),
+            };
+          }
+          if (part.type === "tool-call") {
+            return {
+              ...part,
+              startedAt: typeof part.startedAt === "number" ? part.startedAt : msgTs,
+            };
+          }
+          if (part.type === "tool-result") {
+            return {
+              ...part,
+              arrivedAt: typeof part.arrivedAt === "number" ? part.arrivedAt : msgTs,
+            };
+          }
+          return part;
+        });
+      }
       return rest as unknown as ChatMessage;
     });
     sessions[id] = buildSessionShell(id, raw, newMessages);
