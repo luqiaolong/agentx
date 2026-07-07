@@ -208,9 +208,30 @@ AgentTeam 多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggreg
 ```
 agentx/
 ├── backend/app/                ← Python 后端
-│   ├── main.py                 ← FastAPI 入口（lifespan + 全部 REST + SSE）
-│   ├── config.py               ← pydantic-settings，AGENTX_* 前缀
+│   ├── main.py                 ← FastAPI 入口（lifespan + app + 中间件 + register_routes）
 │   ├── llm.py                  ← ChatModel 单例
+│   ├── api/                    ← REST + SSE 端点（按职责拆分，register_*_routes 注册）
+│   │   ├── schemas.py          ← 15 个 Pydantic 请求/响应模型
+│   │   ├── health.py           ← / + /api/health
+│   │   ├── sandbox.py          ← 沙箱授权 CRUD
+│   │   ├── chat.py             ← /api/chat + approve + abort + compact + _event_generator
+│   │   ├── memory.py           ← skills/profile/checkpointer CRUD
+│   │   ├── mcp.py              ← MCP servers/tools/test/refresh
+│   │   ├── skills.py           ← skills list/reload
+│   │   ├── workspace.py        ← workspace list
+│   │   ├── config_reload.py    ← 配置热重载
+│   │   ├── models_test.py      ← 模型连通性测试
+│   │   └── __init__.py         ← register_routes(app) 聚合
+│   ├── approval/               ← 审批状态解耦（消除 deep → main 反射）
+│   │   ├── decision.py         ← ApprovalDecision dataclass
+│   │   ├── state.py            ← submit/pop_approval + set/is/clear_abort
+│   │   └── __init__.py         ← 聚合导出
+│   ├── config/                 ← pydantic-settings 包（替代单文件 config.py）
+│   │   ├── settings.py         ← Settings + get_settings + 路径常量
+│   │   ├── subagents.py        ← SubagentSettings + _default_subagents + _parse_custom_subagents
+│   │   └── prompts/            ← 内置 system prompt + trigger 描述 + tools 常量
+│   │       ├── builtin.py      ← code/rag/web 子代理默认值
+│   │       └── team.py         ← 7 个团队专家默认值
 │   ├── router/                 ← 消息分类 + StateGraph（仅编排，不嵌路径实现）
 │   │   ├── classifier.py       ← 规则前置 + LLM 分类
 │   │   ├── graph.py            ← Router 图 + run_router（主入口）+ _parse_skill_tag
@@ -220,11 +241,20 @@ agentx/
 │   │   └── run.py              ← run_chat_path（ThinkFilter 流式 token）
 │   ├── deep/                   ← 路径 C：DeepAgent + interrupt_before 审批
 │   │   ├── __init__.py
-│   │   └── agent.py            ← run_deep_path / build_deep_agent / wait_for_approval
+│   │   ├── agent.py            ← run_deep_path / build_deep_agent（主入口，~200 行）
+│   │   ├── tools.py            ← _make_deep_tools + _load_mcp_tools + DANGEROUS_TOOLS
+│   │   ├── streaming.py        ← _stream_agent_events
+│   │   ├── approval.py         ← _await_approval + wait_for_approval + _make_approval_event
+│   │   └── recovery.py         ← _inject_tool_error_messages + _sanitize_message_history
 │   ├── team/                   ← 路径 D：AgentTeam 多代理协作
 │   │   ├── __init__.py
-│   │   └── orchestrator.py     ← run_team_path（Orchestrator + 并行子代理 + Blackboard + Aggregator）
+│   │   ├── orchestrator.py     ← run_team_path（主入口，~200 行）
+│   │   ├── planner.py          ← _build_orchestrator_prompt + _parse_plan + _validate_task
+│   │   ├── scheduler.py        ← _run_subtask + 队列驱动
+│   │   ├── blackboard.py       ← Blackboard + TeamPlanTask + TeamSubtaskResult
+│   │   └── aggregator.py       ← _run_aggregator + _quality_gate + _should_downgrade_to_single
 │   ├── subagents/              ← code / rag / web 子代理 + 路径 B 分发
+│   │   ├── base.py             ← make_fs_tools / make_rag_tools / make_web_tools + extract_text
 │   │   ├── code_agent.py       ← code 子代理（ReAct）
 │   │   ├── rag_agent.py        ← rag 子代理（ReAct）
 │   │   ├── web_agent.py        ← web 子代理（ReAct）
@@ -243,7 +273,7 @@ agentx/
 │   ├── embedding/              ← TEI 客户端
 │   ├── mcp/                    ← MCP 客户端 + 配置
 │   ├── observability/          ← LangSmith + logger
-│   └── utils/                  ← security(沙箱) + text(ThinkFilter) + chunks + sse_events + prompts
+│   └── utils/                  ← security(沙箱) + text(ThinkFilter) + chunks + sse_events + prompts + paths
 ├── frontend/
 │   ├── renderer/               ← React UI（chat/settings/workspace 组件）
 │   │   ├── lib/
