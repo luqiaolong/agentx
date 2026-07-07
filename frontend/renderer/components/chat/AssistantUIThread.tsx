@@ -88,7 +88,7 @@ function VirtualizedThread({
   });
   return (
     <div
-      className="mx-auto relative max-w-3xl px-4 py-4"
+      className="mx-auto relative max-w-3xl px-8 py-4 md:px-10"
       style={{ height: virtualizer.getTotalSize() }}
     >
       {virtualizer.getVirtualItems().map((vi) => {
@@ -98,7 +98,7 @@ function VirtualizedThread({
             key={m.id}
             data-index={vi.index}
             ref={virtualizer.measureElement}
-            className="absolute left-0 right-0"
+            className="absolute left-0 right-0 px-4 py-2 md:px-6"
             style={{ transform: `translateY(${vi.start}px)` }}
           >
             {renderMessageItem(m, vi.index, messages, isStreaming, onEditSubmit)}
@@ -134,7 +134,7 @@ export function AssistantUIThread({
   // 没有 parentRef 时降级为普通渲染（测试环境 / 无滚动容器场景兼容）
   if (!parentRef) {
     return (
-      <div className="mx-auto flex max-w-3xl flex-col gap-2 px-4 py-4">
+      <div className="mx-auto flex max-w-3xl flex-col gap-2 px-8 py-4 md:px-10">
         {messages.map((m, i) =>
           renderMessageItem(m, i, messages, isStreaming, onEditSubmit),
         )}
