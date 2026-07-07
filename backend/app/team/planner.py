@@ -259,5 +259,7 @@ def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:
             return False, f"自定义子代理 {key} 已禁用"
         if not cfg.tools:
             return False, f"自定义子代理 {key} 未绑定工具"
+        if not any(settings.tools_enabled.get(t, True) for t in cfg.tools):
+            return False, f"自定义子代理 {key} 绑定的工具全部被禁用"
         return True, ""
     return False, f"未知 agent 类型: {task.agent}"
