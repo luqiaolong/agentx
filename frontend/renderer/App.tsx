@@ -93,6 +93,24 @@ export default function App() {
     };
   }, []);
 
+  // 启动中 mask 30s 兜底：超时强制检查后端是否实际就绪，否则把 status 重置为 null 解开 mask。
+  useEffect(() => {
+    if (pythonStatus !== "starting") return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const resp = await fetch("http://127.0.0.1:8123/");
+        if (resp.ok) {
+          setPythonStatus("ready");
+        } else {
+          setPythonStatus(null);
+        }
+      } catch {
+        setPythonStatus(null);
+      }
+    }, 30_000);
+    return () => window.clearTimeout(timer);
+  }, [pythonStatus]);
+
   const showStartingMask = pythonStatus === "starting";
   const showGiveUpMask = pythonStatus === "giving_up";
 
