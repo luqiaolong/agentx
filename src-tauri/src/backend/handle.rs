@@ -194,15 +194,19 @@ async fn supervise(
                     guard.dev_mode_powershell_pid = ps_pid;
                 }
 
-                // pipe stdout/stderr 到日志（同时落盘到 {app_data_dir}/logs/agentx-YYYYMMDD.log，
-                // 供前端日志面板读取）
-                let stdout_app = app.clone();
-                if let Some(stdout) = child.stdout.take() {
-                    tauri::async_runtime::spawn(pipe_to_log(stdout, "python", stdout_app));
-                }
-                let stderr_app = app.clone();
-                if let Some(stderr) = child.stderr.take() {
-                    tauri::async_runtime::spawn(pipe_to_log(stderr, "python:err", stderr_app));
+                // dev 模式：PowerShell 窗口是给开发者直接看日志的，不要 pipe 走 stdout/stderr
+                // （否则 PowerShell 窗口会一片空白）。Rust 仍然等待子进程退出以驱动 supervisor。
+                if !dev_mode {
+                    // pipe stdout/stderr 到日志（同时落盘到 {app_data_dir}/logs/agentx-YYYYMMDD.log，
+                    // 供前端日志面板读取）
+                    let stdout_app = app.clone();
+                    if let Some(stdout) = child.stdout.take() {
+                        tauri::async_runtime::spawn(pipe_to_log(stdout, "python", stdout_app));
+                    }
+                    let stderr_app = app.clone();
+                    if let Some(stderr) = child.stderr.take() {
+                        tauri::async_runtime::spawn(pipe_to_log(stderr, "python:err", stderr_app));
+                    }
                 }
 
                 // 等待退出
@@ -291,10 +295,9 @@ async fn spawn_child(
         );
         let mut cmd = Command::new("powershell.exe");
         cmd.args(["-NoExit", "-Command", &ps_script])
-            .envs(env)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .envs(env);
+        // dev 模式：让 PowerShell 窗口直接显示 stdout/stderr（开发者要的就是看实时日志），
+        // Rust 这边不接管 pipe。supervisor 用 `child.wait()` 阻塞等子进程退出。
         // 不设置 current_dir：powershell 会用 Set-Location 切到 backend 目录
         match cmd.spawn() {
             Ok(child) => {
