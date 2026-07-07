@@ -79,9 +79,11 @@ describe("ChatComposer 切会话行为", () => {
     const { getByLabelText, rerender } = render(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
 
@@ -100,9 +102,11 @@ describe("ChatComposer 切会话行为", () => {
     rerender(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
 
@@ -126,9 +130,11 @@ describe("ChatComposer 切会话行为", () => {
     const { getByLabelText, rerender } = render(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
 
@@ -142,9 +148,11 @@ describe("ChatComposer 切会话行为", () => {
     rerender(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
 
@@ -156,31 +164,79 @@ describe("ChatComposer 切会话行为", () => {
   });
 });
 
+describe("ChatComposer workspace 标签", () => {
+  it("发送时不再向内容注入 <workspace> 标签", async () => {
+    const onSend = vi.fn();
+    await useChatStore.getState().createSession("D:\\projects\\agentx");
+
+    const { getByLabelText } = render(
+      <ChatComposer
+        isStreaming={false}
+        isPaused={false}
+        setDropError={() => {}}
+        onSend={onSend}
+        onPause={() => {}}
+        onResume={() => {}}
+      />,
+    );
+
+    const textarea = getByLabelText("消息输入框") as HTMLTextAreaElement;
+    act(() => {
+      fireEvent.change(textarea, { target: { value: "hello" } });
+    });
+    act(() => {
+      fireEvent.keyDown(textarea, { key: "Enter" });
+    });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("hello");
+  });
+});
+
 describe("ChatComposer 底部 Toolbar", () => {
   it("非流式态包含「发送消息」按钮", async () => {
     await useChatStore.getState().createSession();
     const { getByRole } = render(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
     expect(getByRole("button", { name: "发送消息" })).toBeInTheDocument();
   });
 
-  it("流式态包含「中止生成」按钮", async () => {
+  it("流式态包含「暂停生成」按钮", async () => {
     await useChatStore.getState().createSession();
     const { getByRole } = render(
       <ChatComposer
         isStreaming={true}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
-    expect(getByRole("button", { name: "中止生成" })).toBeInTheDocument();
+    expect(getByRole("button", { name: "暂停生成" })).toBeInTheDocument();
+  });
+
+  it("暂停态包含「继续生成」按钮", async () => {
+    await useChatStore.getState().createSession();
+    const { getByRole } = render(
+      <ChatComposer
+        isStreaming={true}
+        isPaused={true}
+        setDropError={() => {}}
+        onSend={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
+      />,
+    );
+    expect(getByRole("button", { name: "继续生成" })).toBeInTheDocument();
   });
 });
 
@@ -190,9 +246,11 @@ describe("ChatComposer 含 ContextUsage", () => {
     const { container } = render(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
     // Cursor 风格：ContextUsage 唯一拥有 data-context-ring 属性的是 SVG；必须有圆环 SVG + 百分比文字。
@@ -212,9 +270,11 @@ describe("ChatComposer 含 ContextUsage", () => {
     const { queryByRole } = render(
       <ChatComposer
         isStreaming={false}
+        isPaused={false}
         setDropError={() => {}}
         onSend={() => {}}
-        onAbort={() => {}}
+        onPause={() => {}}
+        onResume={() => {}}
       />,
     );
     expect(queryByRole("button", { name: "调用命令或技能" })).toBeNull();

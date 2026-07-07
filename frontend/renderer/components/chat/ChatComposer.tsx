@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Square,
+  Pause,
+  Play,
   Paperclip,
   Folder,
   FolderPlus,
@@ -17,7 +18,6 @@ import {
 } from "@/stores/commands";
 import { useSkillsStore } from "@/stores/skills";
 import { useChatStore } from "@/stores/chat";
-import { usePermissionStore } from "@/stores/permission";
 import { PermissionToggle } from "./PermissionToggle";
 import { ModelToggle } from "./ModelToggle";
 import { ModeToggle } from "./ModeToggle";
@@ -33,14 +33,18 @@ import { openFile, openFolder, saveDroppedFile } from "@/lib/api/dialog";
  */
 export function ChatComposer({
   isStreaming,
+  isPaused,
   setDropError,
   onSend,
-  onAbort,
+  onPause,
+  onResume,
 }: {
   isStreaming: boolean;
+  isPaused: boolean;
   setDropError: (msg: string | null) => void;
   onSend: (content: string) => void;
-  onAbort: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }) {
   const [input, setInput] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -50,9 +54,11 @@ export function ChatComposer({
   );
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
   const moveSessionToWorkspace = useChatStore((s) => s.moveSessionToWorkspace);
+  const setSessionPermissionMode = useChatStore((s) => s.setSessionPermissionMode);
   // workspace 路径跟随当前会话绑定，而非本地 state，
   // 这样切换会话能正确切换 workspace；store 会持久化到 localStorage
   const workspacePath = currentSession?.workspacePath ?? null;
+  const permissionMode = currentSession?.permissionMode ?? "standard";
   const showWorkspaceChip = Boolean(workspacePath);
   const { textareaRef, textareaHeight } = useFixedTextarea();
 
@@ -69,9 +75,6 @@ export function ChatComposer({
   useEffect(() => {
     setInput("");
     resetPicker();
-    // 切会话时复位权限模式：permission 是会话级状态，
-    // 跨会话残留 full_trust 会导致新会话直接放行危险工具。
-    usePermissionStore.getState().reset();
     // 延迟 focus，避免与 SessionList 的 confirm/blur 或 SettingsModal 的焦点恢复竞争
     const t = window.setTimeout(() => {
       if (!document.querySelector('[aria-modal="true"]')) {
@@ -81,6 +84,7 @@ export function ChatComposer({
     // 依赖 currentId：会话变化时上述全部副作用触发一次。
     // 故意不复位 isStreaming/dragOver：流式状态由父组件控制，
     // 拖拽状态由用户当前手势决定，不应被切会话擦掉。
+    // 权限模式已下沉为会话级字段（session.permissionMode），切会话自动跟随。
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => window.clearTimeout(t);
   }, [currentId]);
@@ -224,12 +228,7 @@ export function ChatComposer({
   const handleSubmit = () => {
     const content = input.trim();
     if (!content || isStreaming) return;
-    // 工作区标记：用户显式选了 workspace 就附上当前会话绑定的路径；
-    // Home（null）情况下不附带 <workspace> 标签，让 LLM 知道当前不在特定目录下。
-    const finalContent = workspacePath
-      ? `<workspace>${workspacePath}</workspace> ${content}`
-      : content;
-    onSend(finalContent);
+    onSend(content);
     setInput("");
     handleClosePicker();
   };
@@ -453,17 +452,32 @@ export function ChatComposer({
                   <PermissionToggle
                     workspacePath={workspacePath}
                     homeWorkspacePath={homeWorkspacePath}
+                    mode={permissionMode}
+                    onChange={(mode) => {
+                      const sid = useChatStore.getState().currentId;
+                      if (sid) setSessionPermissionMode(sid, mode);
+                    }}
                   />
                 </div>
-                {isStreaming ? (
+                {isStreaming && isPaused ? (
                   <button
                     type="button"
-                    onClick={onAbort}
-                    className="btn-send is-stop"
-                    aria-label="中止生成"
-                    title="中止"
+                    onClick={onResume}
+                    className="btn-send"
+                    aria-label="继续生成"
+                    title="继续"
                   >
-                    <Square className="h-3 w-3 fill-current" />
+                    <Play className="h-3.5 w-3.5 fill-current" />
+                  </button>
+                ) : isStreaming ? (
+                  <button
+                    type="button"
+                    onClick={onPause}
+                    className="btn-send is-stop"
+                    aria-label="暂停生成"
+                    title="暂停"
+                  >
+                    <Pause className="h-3 w-3 fill-current" />
                   </button>
                 ) : (
                   <button

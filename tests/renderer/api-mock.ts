@@ -176,6 +176,8 @@ const fetchRoutes: FetchRoute[] = [
   { pattern: /\/api\/health$/, method: "GET", handler: (_u, _b, api) => api.health.check() },
   // ---- Chat ----
   { pattern: /\/api\/chat\/abort$/, method: "POST", handler: (_u, b, api) => api.chat.abort((b as Record<string, unknown>).thread_id) },
+  { pattern: /\/api\/chat\/pause$/, method: "POST", handler: (_u, b, api) => api.chat.pause((b as Record<string, unknown>).thread_id) },
+  { pattern: /\/api\/chat\/resume$/, method: "POST", handler: (_u, b, api) => api.chat.resume((b as Record<string, unknown>).thread_id) },
   { pattern: /\/api\/chat\/compact$/, method: "POST", handler: (_u, b, api) => api.chat.compact((b as Record<string, unknown>).thread_id) },
   { pattern: /\/api\/chat$/, method: "POST", handler: (_u, b, api) => api.chat.send(b) },
   // ---- MCP（可选）----
@@ -486,6 +488,8 @@ export interface ChatMockState {
     onApprovalRequest: ReturnType<typeof vi.fn>;
     send: ReturnType<typeof vi.fn>;
     abort: ReturnType<typeof vi.fn>;
+    pause: ReturnType<typeof vi.fn>;
+    resume: ReturnType<typeof vi.fn>;
     compact: ReturnType<typeof vi.fn>;
   };
 }
@@ -519,8 +523,12 @@ export function resetChatMock(state: ChatMockState): void {
   state.chat.onApprovalRequest.mockClear();
   state.chat.send.mockClear();
   state.chat.abort.mockClear();
+  state.chat.pause.mockClear();
+  state.chat.resume.mockClear();
   state.chat.compact.mockClear();
   state.chat.send.mockResolvedValue(undefined);
   state.chat.abort.mockResolvedValue(undefined);
+  state.chat.pause.mockResolvedValue(undefined);
+  state.chat.resume.mockResolvedValue(undefined);
   state.chat.compact.mockResolvedValue(undefined);
 }

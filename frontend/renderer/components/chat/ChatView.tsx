@@ -4,7 +4,6 @@ import { useChatStore } from "@/stores/chat";
 import type { ChatMessage } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import { useSettingsStore } from "@/stores/settings";
-import { usePermissionStore } from "@/stores/permission";
 import { useAgentModeStore } from "@/stores/agentMode";
 import { SCENE_PROMPTS, useSceneStore } from "@/stores/scene";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
@@ -58,13 +57,36 @@ export function ChatView() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const pendingIdRef = useRef<string>("pending");
+  const activeThreadIdRef = useRef<string | null>(null);
+  const pendingIdRef = useRef<string | null>(null);
   const currentTaskIdRef = useRef<string | null>(null);
   const lastUserQueryRef = useRef<string>("");
 
-  useChatStream({ pendingIdRef, currentTaskIdRef, lastUserQueryRef, setTodos, setErrorMsg });
+  useChatStream({
+    threadId: currentId ?? undefined,
+    activeThreadIdRef,
+    pendingIdRef,
+    currentTaskIdRef,
+    lastUserQueryRef,
+    setTodos,
+    setErrorMsg,
+    setPaused: setIsPaused,
+  });
+
+  // 切会话或新发送时重置暂停状态
+  useEffect(() => {
+    setIsPaused(false);
+  }, [currentId]);
+
+  // 流式结束后清理线程归属缓存，避免暂停/恢复误操作旧线程
+  useEffect(() => {
+    if (!isStreaming) {
+      activeThreadIdRef.current = null;
+    }
+  }, [isStreaming]);
   const bottomRef = useAutoScroll(messages);
 
   // 监听滚动，控制"滚动到底部"按钮显隐
@@ -315,6 +337,8 @@ export function ChatView() {
 
     // 多会话：若当前无会话先创建（createSession 内部会 await 隐式授权）
     const tid = currentId ?? (await createSession());
+    // 固定本次流式输出归属的 thread id，避免用户切会话后事件被路由错会话
+    activeThreadIdRef.current = tid;
 
     addMessage({ id: crypto.randomUUID(), role: "user", content, ts: Date.now() });
     const pendingId = `pending-${crypto.randomUUID()}`;
@@ -331,15 +355,24 @@ export function ChatView() {
     setSessionRunning(tid, true);
 
     try {
-      // 从 permission store 读取会话级权限模式（不订阅，避免无谓重渲）
-      const permissionMode = usePermissionStore.getState().mode;
+      // 权限模式已下沉为会话级字段，从当前 session 读取
+      const session = useChatStore.getState().sessions[tid];
+      const permissionMode = session?.permissionMode ?? "standard";
       // 从 agent mode store 读取用户级代理模式偏好
       const agentMode = useAgentModeStore.getState().mode;
       // 从 scene store 读取当前场景 prompt（不订阅，避免无谓重渲）
       const scene = useSceneStore.getState().scene;
+      const workspacePath = session?.workspacePath ?? null;
       await chat.send(
         { role: "user", content },
-        { threadId: tid, permissionMode, agentMode, systemPrompt: SCENE_PROMPTS[scene] },
+        {
+          threadId: tid,
+          permissionMode,
+          agentMode,
+          systemPrompt: SCENE_PROMPTS[scene],
+          workspacePath,
+          onError: (err) => setErrorMsg(err.message),
+        },
       );
     } catch {
       setStreaming(false);
@@ -354,20 +387,27 @@ export function ChatView() {
     }
   };
 
-  const handleAbort = async () => {
-    if (!currentId) return;
+  const handlePause = async () => {
+    // 暂停/恢复必须针对正在流式输出的线程（用户可能已切到其他会话）
+    const tid = activeThreadIdRef.current ?? currentId;
+    if (!tid) return;
     try {
-      await chat.abort(currentId);
+      await chat.pause(tid);
     } catch {
       /* ignore */
     }
-    setStreaming(false);
-    // 用户中止：标记当前任务为 failed
-    const tid = currentTaskIdRef.current;
-    if (tid) {
-      updateTask(tid, { status: "failed" });
-      currentTaskIdRef.current = null;
+    setIsPaused(true);
+  };
+
+  const handleResume = async () => {
+    const tid = activeThreadIdRef.current ?? currentId;
+    if (!tid) return;
+    try {
+      await chat.resume(tid);
+    } catch {
+      /* ignore */
     }
+    setIsPaused(false);
   };
 
   const completedTodos = todos.filter((t) => t.done).length;
@@ -448,9 +488,11 @@ export function ChatView() {
       {/* 输入区 */}
       <ChatComposer
         isStreaming={isStreaming}
+        isPaused={isPaused}
         setDropError={setDropError}
         onSend={handleSend}
-        onAbort={handleAbort}
+        onPause={handlePause}
+        onResume={handleResume}
       />
     </div>
   );

@@ -7,7 +7,7 @@ import {
   Check,
   type LucideIcon,
 } from "lucide-react";
-import { usePermissionStore, type PermissionMode } from "@/stores/permission";
+import type { PermissionMode } from "@/stores/permission";
 import { usePopover } from "@/components/ui/hooks/usePopover";
 
 /**
@@ -28,7 +28,7 @@ type Option = {
 
 const OPTIONS: Option[] = [
   {
-    value: "workspace",
+    value: "standard",
     label: "当前工作区",
     short: "工作区",
     Icon: ShieldCheck,
@@ -48,12 +48,14 @@ const OPTIONS: Option[] = [
 export function PermissionToggle({
   workspacePath,
   homeWorkspacePath,
+  mode,
+  onChange,
 }: {
   workspacePath: string | null;
   homeWorkspacePath: string | null;
+  mode: PermissionMode;
+  onChange: (mode: PermissionMode) => void;
 }) {
-  const mode = usePermissionStore((s) => s.mode);
-  const setMode = usePermissionStore((s) => s.setMode);
   const { open, setOpen, rootRef } = usePopover();
 
   const current = OPTIONS.find((o) => o.value === mode) ?? OPTIONS[0]!;
@@ -62,7 +64,7 @@ export function PermissionToggle({
   const isFullTrust = mode === "full_trust";
 
   const choose = (v: PermissionMode) => {
-    setMode(v);
+    onChange(v);
     setOpen(false);
   };
 

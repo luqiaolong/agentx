@@ -25,94 +25,158 @@ interface SendMessageOpts {
   permissionMode?: PermissionMode;
   systemPrompt?: string;
   agentMode?: AgentMode;
+  workspacePath?: string | null;
+  onError?: (err: Error) => void;
 }
 
 /**
  * 发送对话消息并消费 SSE 流。
  *
- * 后端 ChatRequest：`{ message, thread_id, permission_mode, system_prompt, agent_mode }`。
+ * 后端 ChatRequest：`{ message, thread_id, permission_mode, system_prompt, agent_mode, workspace_path }`。
  * 流式事件以空行分隔（`\r\n\r\n` 或 `\n\n` 均兼容）。
  */
 async function send(msg: { role: string; content: string }, opts?: SendMessageOpts): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: msg.content,
-      thread_id: opts?.threadId ?? "",
-      permission_mode: opts?.permissionMode ?? "workspace",
-      system_prompt: opts?.systemPrompt ?? null,
-      agent_mode: opts?.agentMode ?? "agent",
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: msg.content,
+        thread_id: opts?.threadId ?? "",
+        permission_mode: opts?.permissionMode ?? "standard",
+        system_prompt: opts?.systemPrompt ?? null,
+        agent_mode: opts?.agentMode ?? "agent",
+        workspace_path: opts?.workspacePath ?? null,
+      }),
+    });
+  } catch (err) {
+    // 网络层错误：fetch 本身失败（离线 / CORS / DNS 等）
+    const message = err instanceof Error ? err.message : String(err);
+    opts?.onError?.(new Error(`网络请求失败：${message}`));
+    return;
+  }
+
+  if (!res.ok) {
+    // HTTP 错误：后端已响应但状态码非 2xx，尝试读取错误文本
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      /* ignore */
+    }
+    opts?.onError?.(
+      new Error(`后端错误 ${res.status}${detail ? `：${detail.slice(0, 200)}` : ""}`),
+    );
+    return;
+  }
+
   const body = res.body;
-  if (!body) return;
+  if (!body) {
+    opts?.onError?.(new Error("响应体为空，无法读取 SSE 流"));
+    return;
+  }
+
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // SSE 事件以空行分隔（HTTP 标准 \r\n\r\n，部分实现用 \n\n，均需兼容）
-    const events = buffer.split(/\r?\n\r?\n/);
-    buffer = events.pop() ?? "";
-    for (const rawEvent of events) {
-      const lines = rawEvent.split(/\r?\n/);
-      let eventType = "message";
-      const dataParts: string[] = [];
-      for (const line of lines) {
-        if (line.startsWith("event:")) {
-          eventType = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          dataParts.push(line.slice(5).replace(/^ /, ""));
+  let receivedDone = false;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE 事件以空行分隔（HTTP 标准 \r\n\r\n，部分实现用 \n\n，均需兼容）
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? "";
+      for (const rawEvent of events) {
+        const lines = rawEvent.split(/\r?\n/);
+        let eventType = "message";
+        const dataParts: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataParts.push(line.slice(5).replace(/^ /, ""));
+          }
         }
-      }
-      const dataStr = dataParts.join("\n");
-      if (!dataStr && eventType === "message") continue;
-      // data 可能是 JSON 或纯字符串（token 事件常用纯字符串）
-      let payload: unknown = dataStr;
-      const trimmed = dataStr.trim();
-      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-        try {
-          payload = JSON.parse(trimmed);
-        } catch {
-          payload = dataStr; // 解析失败保留原始字符串
+        const dataStr = dataParts.join("\n");
+        if (!dataStr && eventType === "message") continue;
+        // data 可能是 JSON 或纯字符串（token 事件常用纯字符串）
+        let payload: unknown = dataStr;
+        const trimmed = dataStr.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          try {
+            payload = JSON.parse(trimmed);
+          } catch {
+            payload = dataStr; // 解析失败保留原始字符串
+          }
         }
-      }
-      // ChatEvent 是 discriminated union（type 字段为字面量），
-      // 但 eventType 是动态 string，对象字面量无法直接赋值给 union，
-      // 用 `as unknown as ChatEvent` 断言。
-      const evt = {
-        type: eventType,
-        ...(typeof payload === "object" && payload !== null
-          ? (payload as Record<string, unknown>)
-          : { data: payload }),
-      } as unknown as ChatEvent;
-      eventHandlers.forEach((h) => h(evt));
-      if (eventType === "approval_request") {
-        const obj =
-          typeof payload === "object" && payload !== null
+        // ChatEvent 是 discriminated union（type 字段为字面量），
+        // 但 eventType 是动态 string，对象字面量无法直接赋值给 union，
+        // 用 `as unknown as ChatEvent` 断言。
+        const evt = {
+          type: eventType,
+          ...(typeof payload === "object" && payload !== null
             ? (payload as Record<string, unknown>)
-            : {};
-        const req: ApprovalRequest = {
-          threadId: String(obj.thread_id ?? ""),
-          toolName: String(obj.tool_name ?? ""),
-          args: obj.args,
-          preview: String(obj.preview ?? ""),
-          kind: obj.kind === "directory_extension" ? "directory_extension" : "dangerous_tool",
-          requestedPath: typeof obj.requestedPath === "string" ? obj.requestedPath : undefined,
-          writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
-        };
-        approvalHandlers.forEach((h) => h(req));
+            : { data: payload }),
+        } as unknown as ChatEvent;
+        eventHandlers.forEach((h) => h(evt));
+        if (eventType === "done") {
+          receivedDone = true;
+        }
+        if (eventType === "approval_request") {
+          const obj =
+            typeof payload === "object" && payload !== null
+              ? (payload as Record<string, unknown>)
+              : {};
+          const req: ApprovalRequest = {
+            threadId: String(obj.thread_id ?? ""),
+            toolName: String(obj.tool_name ?? ""),
+            args: obj.args,
+            preview: String(obj.preview ?? ""),
+            kind: obj.kind === "directory_extension" ? "directory_extension" : "dangerous_tool",
+            requestedPath: typeof obj.requestedPath === "string" ? obj.requestedPath : undefined,
+            writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
+          };
+          approvalHandlers.forEach((h) => h(req));
+        }
       }
     }
+  } catch (err) {
+    // SSE 读取过程中连接异常（TCP 断开、浏览器冻结等）
+    const message = err instanceof Error ? err.message : String(err);
+    opts?.onError?.(new Error(`SSE 连接中断：${message}`));
+    return;
+  }
+
+  if (!receivedDone) {
+    opts?.onError?.(new Error("连接中断，未收到完成事件"));
   }
 }
 
 /** 中断指定 thread 的对话。 */
 async function abort(threadId: string): Promise<void> {
   await fetch(`${API_BASE}/api/chat/abort`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+}
+
+/** 暂停指定 thread 的对话。 */
+async function pause(threadId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/chat/pause`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+}
+
+/** 恢复指定 thread 的对话。 */
+async function resume(threadId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/chat/resume`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ thread_id: threadId }),
@@ -141,4 +205,4 @@ function onApprovalRequest(handler: (req: ApprovalRequest) => void): () => void 
   return () => approvalHandlers.delete(handler);
 }
 
-export const chat = { send, abort, compact, onEvent, onApprovalRequest };
+export const chat = { send, abort, pause, resume, compact, onEvent, onApprovalRequest };

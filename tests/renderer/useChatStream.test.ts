@@ -44,6 +44,8 @@ const chatMock = vi.hoisted(() => {
       }),
       send: vi.fn().mockResolvedValue(undefined),
       abort: vi.fn().mockResolvedValue(undefined),
+      pause: vi.fn().mockResolvedValue(undefined),
+      resume: vi.fn().mockResolvedValue(undefined),
       compact: vi.fn().mockResolvedValue(undefined),
     },
   };
@@ -621,7 +623,10 @@ describe("useChatStream part 分发", () => {
         todos: [{ text: "step1", done: false }],
       });
     });
-    expect(setTodos).toHaveBeenCalledWith([{ text: "step1", done: false }]);
+    expect(setTodos).toHaveBeenCalledTimes(1);
+    const firstCall = setTodos.mock.calls[0]![0];
+    const actualTodos = typeof firstCall === "function" ? firstCall([]) : firstCall;
+    expect(actualTodos).toEqual([{ text: "step1", done: false }]);
     expect(useTasksStore.getState().tasks).toHaveLength(1);
 
     // approval_request 写入 store
