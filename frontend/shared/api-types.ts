@@ -68,7 +68,7 @@ export interface ApprovalRequest {
   writable?: boolean;           // directory_extension 时必填
 }
 
-export type PermissionMode = "workspace" | "full_trust";
+export type PermissionMode = "standard" | "full_trust";
 
 export type AgentMode = "agent" | "agent_team";
 

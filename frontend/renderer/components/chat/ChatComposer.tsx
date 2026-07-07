@@ -224,12 +224,7 @@ export function ChatComposer({
   const handleSubmit = () => {
     const content = input.trim();
     if (!content || isStreaming) return;
-    // 工作区标记：用户显式选了 workspace 就附上当前会话绑定的路径；
-    // Home（null）情况下不附带 <workspace> 标签，让 LLM 知道当前不在特定目录下。
-    const finalContent = workspacePath
-      ? `<workspace>${workspacePath}</workspace> ${content}`
-      : content;
-    onSend(finalContent);
+    onSend(content);
     setInput("");
     handleClosePicker();
   };

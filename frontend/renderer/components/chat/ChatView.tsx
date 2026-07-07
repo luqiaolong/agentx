@@ -337,9 +337,17 @@ export function ChatView() {
       const agentMode = useAgentModeStore.getState().mode;
       // 从 scene store 读取当前场景 prompt（不订阅，避免无谓重渲）
       const scene = useSceneStore.getState().scene;
+      const workspacePath = useChatStore.getState().sessions[tid]?.workspacePath ?? null;
       await chat.send(
         { role: "user", content },
-        { threadId: tid, permissionMode, agentMode, systemPrompt: SCENE_PROMPTS[scene] },
+        {
+          threadId: tid,
+          permissionMode,
+          agentMode,
+          systemPrompt: SCENE_PROMPTS[scene],
+          workspacePath,
+          onError: (err) => setErrorMsg(err.message),
+        },
       );
     } catch {
       setStreaming(false);

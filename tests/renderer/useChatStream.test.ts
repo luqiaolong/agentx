@@ -44,6 +44,8 @@ const chatMock = vi.hoisted(() => {
       }),
       send: vi.fn().mockResolvedValue(undefined),
       abort: vi.fn().mockResolvedValue(undefined),
+      pause: vi.fn().mockResolvedValue(undefined),
+      resume: vi.fn().mockResolvedValue(undefined),
       compact: vi.fn().mockResolvedValue(undefined),
     },
   };

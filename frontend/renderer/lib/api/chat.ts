@@ -25,12 +25,14 @@ interface SendMessageOpts {
   permissionMode?: PermissionMode;
   systemPrompt?: string;
   agentMode?: AgentMode;
+  workspacePath?: string | null;
+  onError?: (err: Error) => void;
 }
 
 /**
  * 发送对话消息并消费 SSE 流。
  *
- * 后端 ChatRequest：`{ message, thread_id, permission_mode, system_prompt, agent_mode }`。
+ * 后端 ChatRequest：`{ message, thread_id, permission_mode, system_prompt, agent_mode, workspace_path }`。
  * 流式事件以空行分隔（`\r\n\r\n` 或 `\n\n` 均兼容）。
  */
 async function send(msg: { role: string; content: string }, opts?: SendMessageOpts): Promise<void> {
@@ -40,9 +42,10 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
     body: JSON.stringify({
       message: msg.content,
       thread_id: opts?.threadId ?? "",
-      permission_mode: opts?.permissionMode ?? "workspace",
+      permission_mode: opts?.permissionMode ?? "standard",
       system_prompt: opts?.systemPrompt ?? null,
       agent_mode: opts?.agentMode ?? "agent",
+      workspace_path: opts?.workspacePath ?? null,
     }),
   });
   const body = res.body;
@@ -50,6 +53,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let receivedDone = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -90,6 +94,9 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
           : { data: payload }),
       } as unknown as ChatEvent;
       eventHandlers.forEach((h) => h(evt));
+      if (eventType === "done") {
+        receivedDone = true;
+      }
       if (eventType === "approval_request") {
         const obj =
           typeof payload === "object" && payload !== null
@@ -108,11 +115,32 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
       }
     }
   }
+  if (!receivedDone) {
+    opts?.onError?.(new Error("连接中断，未收到完成事件"));
+  }
 }
 
 /** 中断指定 thread 的对话。 */
 async function abort(threadId: string): Promise<void> {
   await fetch(`${API_BASE}/api/chat/abort`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+}
+
+/** 暂停指定 thread 的对话。 */
+async function pause(threadId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/chat/pause`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+}
+
+/** 恢复指定 thread 的对话。 */
+async function resume(threadId: string): Promise<void> {
+  await fetch(`${API_BASE}/api/chat/resume`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ thread_id: threadId }),
@@ -141,4 +169,4 @@ function onApprovalRequest(handler: (req: ApprovalRequest) => void): () => void 
   return () => approvalHandlers.delete(handler);
 }
 
-export const chat = { send, abort, compact, onEvent, onApprovalRequest };
+export const chat = { send, abort, pause, resume, compact, onEvent, onApprovalRequest };

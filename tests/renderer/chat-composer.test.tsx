@@ -156,6 +156,33 @@ describe("ChatComposer 切会话行为", () => {
   });
 });
 
+describe("ChatComposer workspace 标签", () => {
+  it("发送时不再向内容注入 <workspace> 标签", async () => {
+    const onSend = vi.fn();
+    await useChatStore.getState().createSession("D:\\projects\\agentx");
+
+    const { getByLabelText } = render(
+      <ChatComposer
+        isStreaming={false}
+        setDropError={() => {}}
+        onSend={onSend}
+        onAbort={() => {}}
+      />,
+    );
+
+    const textarea = getByLabelText("消息输入框") as HTMLTextAreaElement;
+    act(() => {
+      fireEvent.change(textarea, { target: { value: "hello" } });
+    });
+    act(() => {
+      fireEvent.keyDown(textarea, { key: "Enter" });
+    });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith("hello");
+  });
+});
+
 describe("ChatComposer 底部 Toolbar", () => {
   it("非流式态包含「发送消息」按钮", async () => {
     await useChatStore.getState().createSession();
