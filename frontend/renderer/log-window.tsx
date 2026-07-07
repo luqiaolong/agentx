@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   Trash2,
@@ -14,8 +14,8 @@ import {
   Info,
   AlertTriangle,
   AlertCircle,
-  ChevronDown,
 } from "lucide-react";
+import "./styles/globals.css";
 
 interface LogLine {
   id: number;
@@ -28,6 +28,38 @@ type LogLevel = "error" | "warn" | "info" | "debug" | "none";
 
 let globalId = 0;
 const MAX_LINES = 5000;
+
+/* ================================================================
+ *  Design System — 与主窗口 (App.tsx) 保持一致
+ *  颜色:   CSS 变量来自 globals.css (.dark)
+ *  字体:   Inter (UI) + JetBrains Mono (日志内容)
+ *  标题栏: glass-card 毛玻璃效果
+ * ================================================================ */
+
+const DS = {
+  // Backgrounds
+  bgApp: "#111111",
+  bgSurface: "#1a1a1a",
+  bgSubtle: "#242424",
+  bgHover: "#2e2e2e",
+  // Borders
+  borderDefault: "#333333",
+  borderStrong: "#444444",
+  // Text
+  textPrimary: "#ececec",
+  textSecondary: "#c8c8c8",
+  textMuted: "#909090",
+  // Accents (level colors — keep distinct for readability)
+  levelError: "#f87171",
+  levelWarn: "#fbbf24",
+  levelInfo: "#60a5fa",
+  levelDebug: "#a78bfa",
+  // Misc
+  brandIndigo: "#4f46e5",
+  success: "#22c55e",
+  fontSans: '"Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  fontMono: '"JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace',
+} as const;
 
 function detectLevel(text: string): LogLevel {
   const t = text.toUpperCase();
@@ -49,28 +81,28 @@ function detectLevel(text: string): LogLevel {
 function getLevelColor(level: LogLevel): string {
   switch (level) {
     case "error":
-      return "#f87171";
+      return DS.levelError;
     case "warn":
-      return "#fbbf24";
+      return DS.levelWarn;
     case "info":
-      return "#60a5fa";
+      return DS.levelInfo;
     case "debug":
-      return "#a78bfa";
+      return DS.levelDebug;
     default:
-      return "#e2e8f0";
+      return DS.textSecondary;
   }
 }
 
 function getLevelBg(level: LogLevel): string {
   switch (level) {
     case "error":
-      return "rgba(248, 113, 113, 0.12)";
+      return "rgba(248, 113, 113, 0.10)";
     case "warn":
-      return "rgba(251, 191, 36, 0.08)";
+      return "rgba(251, 191, 36, 0.06)";
     case "info":
-      return "rgba(96, 165, 250, 0.08)";
+      return "rgba(96, 165, 250, 0.06)";
     case "debug":
-      return "rgba(167, 139, 250, 0.06)";
+      return "rgba(167, 139, 250, 0.05)";
     default:
       return "transparent";
   }
@@ -94,13 +126,13 @@ function getLevelIcon(level: LogLevel) {
 function getLevelLabel(level: LogLevel): string {
   switch (level) {
     case "error":
-      return "ERROR";
+      return "ERR";
     case "warn":
       return "WARN";
     case "info":
       return "INFO";
     case "debug":
-      return "DEBUG";
+      return "DBG";
     default:
       return "";
   }
@@ -118,25 +150,33 @@ function LogWindow() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
 
-  // 监听日志事件
+  // 监听日志事件（使用 getCurrentWebviewWindow().listen 确保事件能正确接收）
   useEffect(() => {
     let unlistenFn: UnlistenFn | null = null;
 
     const setup = async () => {
-      unlistenFn = await listen<string>("log:append", (event) => {
-        const text = event.payload;
-        const now = new Date();
-        const timestamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}.${now.getMilliseconds().toString().padStart(3, "0")}`;
-        const level = detectLevel(text);
+      try {
+        const win = getCurrentWebviewWindow();
+        console.log("[LogWindow] registering listener on window:", win.label);
+        unlistenFn = await win.listen<string>("log:append", (event) => {
+          console.log("[LogWindow] received log:append event:", event.payload);
+          const text = event.payload;
+          const now = new Date();
+          const timestamp = `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}.${now.getMilliseconds().toString().padStart(3, "0")}`;
+          const level = detectLevel(text);
 
-        setLines((prev) => {
-          const next = [...prev, { id: globalId++, text, timestamp, level }];
-          if (next.length > MAX_LINES) {
-            return next.slice(next.length - MAX_LINES);
-          }
-          return next;
+          setLines((prev) => {
+            const next = [...prev, { id: globalId++, text, timestamp, level }];
+            if (next.length > MAX_LINES) {
+              return next.slice(next.length - MAX_LINES);
+            }
+            return next;
+          });
         });
-      });
+        console.log("[LogWindow] listener registered successfully");
+      } catch (e) {
+        console.error("[LogWindow] failed to register listener:", e);
+      }
     };
 
     setup();
@@ -237,8 +277,8 @@ function LogWindow() {
         <mark
           key={`${idx}-${lastIndex}`}
           style={{
-            background: "rgba(251, 191, 36, 0.35)",
-            color: "#fbbf24",
+            background: "rgba(251, 191, 36, 0.30)",
+            color: DS.levelWarn,
             borderRadius: 2,
             padding: "0 1px",
           }}
@@ -256,11 +296,11 @@ function LogWindow() {
   };
 
   const filterOptions: { level: LogLevel | "all"; label: string; color: string; count?: number }[] = [
-    { level: "all", label: "全部", color: "#94a3b8", count: lines.length },
-    { level: "error", label: "错误", color: "#f87171", count: levelCounts.error },
-    { level: "warn", label: "警告", color: "#fbbf24", count: levelCounts.warn },
-    { level: "info", label: "信息", color: "#60a5fa", count: levelCounts.info },
-    { level: "debug", label: "调试", color: "#a78bfa", count: levelCounts.debug },
+    { level: "all", label: "全部", color: DS.textMuted, count: lines.length },
+    { level: "error", label: "错误", color: DS.levelError, count: levelCounts.error },
+    { level: "warn", label: "警告", color: DS.levelWarn, count: levelCounts.warn },
+    { level: "info", label: "信息", color: DS.levelInfo, count: levelCounts.info },
+    { level: "debug", label: "调试", color: DS.levelDebug, count: levelCounts.debug },
   ];
 
   return (
@@ -270,9 +310,9 @@ function LogWindow() {
         flexDirection: "column",
         height: "100vh",
         width: "100vw",
-        background: "#0b0f19",
-        color: "#e2e8f0",
-        fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+        background: DS.bgApp,
+        color: DS.textPrimary,
+        fontFamily: DS.fontSans,
         fontSize: 12,
         lineHeight: "1.6",
         overflow: "hidden",
@@ -283,16 +323,18 @@ function LogWindow() {
         boxSizing: "border-box",
       }}
     >
-      {/* ===== 标题栏 ===== */}
+      {/* ===== 标题栏 —— glass-card 风格，与主窗口一致 ===== */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 0 0 14px",
+          padding: "0 0 0 12px",
           height: 40,
-          borderBottom: "1px solid rgba(30, 41, 59, 0.6)",
-          background: "linear-gradient(180deg, #111827 0%, #0f172a 100%)",
+          borderBottom: `1px solid ${DS.borderDefault}`,
+          backgroundColor: "color-mix(in srgb, #1a1a1a 85%, transparent)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
           flexShrink: 0,
           userSelect: "none",
           // @ts-ignore
@@ -300,7 +342,16 @@ function LogWindow() {
         }}
       >
         {/* 左侧：Logo + 标题 + 统计 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 600, fontSize: 13 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontWeight: 600,
+            fontSize: 13,
+            fontFamily: DS.fontSans,
+          }}
+        >
           <div
             style={{
               display: "flex",
@@ -309,24 +360,21 @@ function LogWindow() {
               width: 22,
               height: 22,
               borderRadius: 5,
-              background: "rgba(96, 165, 250, 0.15)",
-              color: "#60a5fa",
+              background: DS.brandIndigo,
+              color: DS.textSecondary,
+              boxShadow: "0 1px 3px 0 rgb(0 0 0 / 0.1)",
             }}
           >
             <ScrollText size={13} />
           </div>
-          <span style={{ color: "#e2e8f0", letterSpacing: 0.3 }}>AgentX</span>
-          <span style={{ color: "#475569", fontWeight: 400 }}>Logs</span>
+          <span style={{ color: DS.textPrimary, letterSpacing: 0.3 }}>AgentX</span>
+          <span style={{ color: DS.textMuted, fontWeight: 400 }}>Logs</span>
 
           {/* 统计徽章 */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}>
-            {levelCounts.error > 0 && (
-              <LevelBadge color="#f87171" count={levelCounts.error} />
-            )}
-            {levelCounts.warn > 0 && (
-              <LevelBadge color="#fbbf24" count={levelCounts.warn} />
-            )}
-            <LevelBadge color="#475569" count={lines.length} label="总" />
+            {levelCounts.error > 0 && <LevelBadge color={DS.levelError} count={levelCounts.error} />}
+            {levelCounts.warn > 0 && <LevelBadge color={DS.levelWarn} count={levelCounts.warn} />}
+            <LevelBadge color={DS.textMuted} count={lines.length} label="总" />
           </div>
         </div>
 
@@ -363,13 +411,13 @@ function LogWindow() {
                   position: "absolute",
                   top: 36,
                   right: 0,
-                  background: "#1e293b",
-                  border: "1px solid rgba(51, 65, 85, 0.8)",
+                  background: DS.bgSurface,
+                  border: `1px solid ${DS.borderDefault}`,
                   borderRadius: 8,
                   padding: "4px",
                   minWidth: 120,
                   zIndex: 100,
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                  boxShadow: "0 12px 32px -4px rgb(0 0 0 / 0.16), 0 4px 12px -2px rgb(0 0 0 / 0.08)",
                 }}
               >
                 {filterOptions.map((opt) => (
@@ -387,15 +435,15 @@ function LogWindow() {
                       padding: "6px 10px",
                       borderRadius: 5,
                       border: "none",
-                      background: filterLevel === opt.level ? "rgba(96, 165, 250, 0.15)" : "transparent",
-                      color: filterLevel === opt.level ? "#60a5fa" : "#94a3b8",
+                      background: filterLevel === opt.level ? "rgba(79, 70, 229, 0.15)" : "transparent",
+                      color: filterLevel === opt.level ? "#a5b4fc" : DS.textSecondary,
                       cursor: "pointer",
                       fontSize: 12,
-                      fontFamily: "inherit",
+                      fontFamily: DS.fontSans,
                       transition: "background 0.15s",
                     }}
                     onMouseEnter={(e) => {
-                      if (filterLevel !== opt.level) e.currentTarget.style.background = "rgba(51, 65, 85, 0.5)";
+                      if (filterLevel !== opt.level) e.currentTarget.style.background = DS.bgHover;
                     }}
                     onMouseLeave={(e) => {
                       if (filterLevel !== opt.level) e.currentTarget.style.background = "transparent";
@@ -413,14 +461,14 @@ function LogWindow() {
                       />
                       {opt.label}
                     </span>
-                    <span style={{ color: "#475569", fontSize: 11 }}>{opt.count}</span>
+                    <span style={{ color: DS.textMuted, fontSize: 11 }}>{opt.count}</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          <div style={{ width: 1, height: 18, background: "rgba(51, 65, 85, 0.5)", margin: "0 4px" }} />
+          <div style={{ width: 1, height: 18, background: DS.borderDefault, margin: "0 4px" }} />
 
           {/* 自动滚动开关 */}
           <button
@@ -433,16 +481,16 @@ function LogWindow() {
               padding: "4px 10px",
               borderRadius: 5,
               border: "none",
-              background: autoScroll ? "rgba(34, 197, 94, 0.15)" : "transparent",
-              color: autoScroll ? "#22c55e" : "#64748b",
+              background: autoScroll ? "rgba(34, 197, 94, 0.12)" : "transparent",
+              color: autoScroll ? DS.success : DS.textMuted,
               cursor: "pointer",
               fontSize: 11,
-              fontFamily: "inherit",
+              fontFamily: DS.fontSans,
               fontWeight: 500,
               transition: "all 0.15s",
             }}
             onMouseEnter={(e) => {
-              if (!autoScroll) e.currentTarget.style.background = "rgba(51, 65, 85, 0.4)";
+              if (!autoScroll) e.currentTarget.style.background = DS.bgHover;
             }}
             onMouseLeave={(e) => {
               if (!autoScroll) e.currentTarget.style.background = "transparent";
@@ -453,7 +501,7 @@ function LogWindow() {
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: autoScroll ? "#22c55e" : "#475569",
+                background: autoScroll ? DS.success : DS.textMuted,
                 transition: "background 0.2s",
               }}
             />
@@ -465,10 +513,10 @@ function LogWindow() {
             onClick={clearLogs}
             title="清空日志"
             icon={<Trash2 size={13} />}
-            hoverColor="#ef4444"
+            hoverColor={DS.levelError}
           />
 
-          <div style={{ width: 1, height: 18, background: "rgba(51, 65, 85, 0.5)", margin: "0 4px" }} />
+          <div style={{ width: 1, height: 18, background: DS.borderDefault, margin: "0 4px" }} />
 
           {/* 窗口控制 */}
           <WindowControlButton onClick={handleMinimize} title="最小化">
@@ -487,13 +535,13 @@ function LogWindow() {
             display: "flex",
             alignItems: "center",
             gap: 8,
-            padding: "6px 14px",
-            borderBottom: "1px solid rgba(30, 41, 59, 0.6)",
-            background: "#0f172a",
+            padding: "6px 12px",
+            borderBottom: `1px solid ${DS.borderDefault}`,
+            background: DS.bgApp,
             flexShrink: 0,
           }}
         >
-          <Search size={14} color="#475569" />
+          <Search size={14} color={DS.textMuted} />
           <input
             ref={searchInputRef}
             type="text"
@@ -505,14 +553,14 @@ function LogWindow() {
               background: "transparent",
               border: "none",
               outline: "none",
-              color: "#e2e8f0",
-              fontFamily: "inherit",
+              color: DS.textPrimary,
+              fontFamily: DS.fontSans,
               fontSize: 12,
               padding: "2px 0",
             }}
           />
           {searchQuery && (
-            <span style={{ color: "#475569", fontSize: 11, whiteSpace: "nowrap" }}>
+            <span style={{ color: DS.textMuted, fontSize: 11, whiteSpace: "nowrap" }}>
               {filteredLines.length} 条匹配
             </span>
           )}
@@ -521,7 +569,7 @@ function LogWindow() {
             style={{
               background: "transparent",
               border: "none",
-              color: "#475569",
+              color: DS.textMuted,
               cursor: "pointer",
               padding: 2,
               display: "flex",
@@ -540,9 +588,10 @@ function LogWindow() {
         style={{
           flex: 1,
           overflow: "auto",
-          padding: "6px 0",
+          padding: "4px 0",
           wordBreak: "break-all",
           whiteSpace: "pre-wrap",
+          fontFamily: DS.fontMono,
         }}
       >
         {filteredLines.length === 0 ? (
@@ -553,8 +602,9 @@ function LogWindow() {
               alignItems: "center",
               justifyContent: "center",
               height: "100%",
-              color: "#334155",
+              color: DS.textMuted,
               gap: 8,
+              fontFamily: DS.fontSans,
             }}
           >
             <ScrollText size={32} opacity={0.3} />
@@ -576,13 +626,13 @@ function LogWindow() {
                   display: "flex",
                   alignItems: "flex-start",
                   gap: 0,
-                  padding: "2px 14px",
-                  borderBottom: "1px solid rgba(15, 23, 42, 0.5)",
+                  padding: "2px 12px",
+                  borderBottom: `1px solid rgba(51, 51, 51, 0.4)`,
                   background: levelBg,
                   transition: "background 0.1s",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(30, 41, 59, 0.4)";
+                  e.currentTarget.style.background = DS.bgHover;
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = levelBg;
@@ -591,13 +641,14 @@ function LogWindow() {
                 {/* 时间戳 */}
                 <span
                   style={{
-                    color: "#334155",
+                    color: DS.textMuted,
                     marginRight: 10,
                     userSelect: "none",
                     fontSize: 11,
                     minWidth: 70,
                     flexShrink: 0,
                     paddingTop: 1,
+                    fontFamily: DS.fontMono,
                   }}
                 >
                   {line.timestamp}
@@ -613,11 +664,12 @@ function LogWindow() {
                       color: levelColor,
                       fontSize: 10,
                       fontWeight: 600,
-                      minWidth: 42,
+                      minWidth: 34,
                       flexShrink: 0,
                       marginRight: 8,
                       paddingTop: 2,
-                      opacity: 0.8,
+                      opacity: 0.85,
+                      fontFamily: DS.fontMono,
                     }}
                   >
                     {icon}
@@ -626,7 +678,7 @@ function LogWindow() {
                 )}
 
                 {/* 日志内容 */}
-                <span style={{ color: levelColor, flex: 1, paddingTop: 1 }}>
+                <span style={{ color: levelColor, flex: 1, paddingTop: 1, fontFamily: DS.fontMono }}>
                   {highlightText(line.text, searchQuery)}
                 </span>
               </div>
@@ -642,36 +694,46 @@ function LogWindow() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "4px 14px",
-          borderTop: "1px solid rgba(30, 41, 59, 0.6)",
-          background: "#0f172a",
+          padding: "4px 12px",
+          borderTop: `1px solid ${DS.borderDefault}`,
+          background: DS.bgApp,
           flexShrink: 0,
           fontSize: 11,
-          color: "#94a3b8",
+          color: DS.textSecondary,
           userSelect: "none",
+          fontFamily: DS.fontSans,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ color: "#64748b" }}>总计 {lines.length} 条</span>
+          <span style={{ color: DS.textMuted }}>总计 {lines.length} 条</span>
           {filterLevel !== "all" && (
-            <span style={{ color: "#60a5fa" }}>
+            <span style={{ color: DS.levelInfo }}>
               过滤: {filterOptions.find((o) => o.level === filterLevel)?.label} ({filteredLines.length})
             </span>
           )}
           {searchQuery && (
-            <span style={{ color: "#fbbf24" }}>
+            <span style={{ color: DS.levelWarn }}>
               搜索: "{searchQuery}" ({filteredLines.length})
             </span>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#22c55e", fontWeight: 500 }}>
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              color: DS.success,
+              fontWeight: 500,
+              fontFamily: DS.fontSans,
+            }}
+          >
             <span
               style={{
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: "#22c55e",
+                background: DS.success,
                 boxShadow: "0 0 6px rgba(34, 197, 94, 0.5)",
               }}
             />
@@ -696,9 +758,10 @@ function LevelBadge({ color, count, label }: { color: string; count: number; lab
         fontWeight: 600,
         padding: "1px 6px",
         borderRadius: 10,
-        background: `${color}20`,
+        background: `${color}18`,
         color,
-        border: `1px solid ${color}30`,
+        border: `1px solid ${color}25`,
+        fontFamily: DS.fontSans,
       }}
     >
       {label && <span style={{ opacity: 0.6, fontWeight: 400 }}>{label}</span>}
@@ -735,8 +798,8 @@ function IconButton({
         justifyContent: "center",
         borderRadius: 5,
         border: "none",
-        background: active ? "rgba(96, 165, 250, 0.15)" : "transparent",
-        color: hovered ? hoverColor || "#e2e8f0" : active ? "#60a5fa" : "#64748b",
+        background: active ? "rgba(79, 70, 229, 0.12)" : "transparent",
+        color: hovered ? hoverColor || DS.textPrimary : active ? "#a5b4fc" : DS.textMuted,
         cursor: "pointer",
         fontSize: 13,
         padding: 0,
@@ -776,7 +839,7 @@ function WindowControlButton({
         justifyContent: "center",
         border: "none",
         background: hovered && hoverBg ? hoverBg : "transparent",
-        color: hovered && hoverColor ? hoverColor : "#64748b",
+        color: hovered && hoverColor ? hoverColor : DS.textMuted,
         cursor: "pointer",
         fontSize: 13,
         padding: 0,

@@ -13,7 +13,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
@@ -517,7 +517,10 @@ async fn pipe_to_log<R: tokio::io::AsyncRead + Unpin>(
                     log::info!("{}", entry);
                     logger::append_log(&app, &entry);
                     // 同时 emit 到日志窗口（开发模式下日志窗口会监听此事件）
-                    let _ = app.emit("log:append", trimmed);
+                    // 使用 EventTarget::webview_window 精确发送到日志窗口，避免 AnyLabel 匹配问题
+                    if let Err(e) = app.emit_str_to(EventTarget::webview_window("log"), "log:append", trimmed.to_string()) {
+                        log::warn!("failed to emit log:append to log window: {}", e);
+                    }
                 }
             }
             Err(e) => {
