@@ -21,6 +21,7 @@ from app.config import get_settings
 
 __all__ = [
     "make_fs_tools",
+    "make_cli_tools",
     "make_rag_tools",
     "make_web_tools",
     "extract_text",
@@ -90,6 +91,29 @@ def make_fs_tools(thread_id: str) -> list:
     return [t for t in tools if enabled.get(tool_name_map.get(t.name, t.name), True)]
 
 
+def make_cli_tools(thread_id: str) -> list:
+    """构建绑定 ``thread_id`` 的 CLI 工具列表。
+
+    子代理可使用 cli_execute（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
+    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``cli_execute``）。
+    """
+    from app.tools.cli import cli_execute as _cli_execute
+
+    @tool
+    async def cli_execute(
+        command: str,
+        arguments: list[str] | None = None,
+        cwd: str | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """执行受限 CLI 命令（如 git/npm/python）。黑名单命令会被拒绝。"""
+        return await _cli_execute(thread_id, command, arguments, cwd, timeout)
+
+    tools = [cli_execute]
+    enabled = get_settings().tools_enabled
+    return [t for t in tools if enabled.get(t.name, True)]
+
+
 def make_rag_tools(thread_id: str) -> list:
     """构建绑定 ``thread_id`` 的 RAG 检索工具列表。
 
@@ -153,9 +177,7 @@ def make_web_tools(thread_id: str) -> list:
 
             client = TavilyClient(api_key=key)
             # TavilyClient.search 是同步阻塞调用，放线程池避免阻塞事件循环
-            result = await asyncio.to_thread(
-                client.search, query, max_results=max_results
-            )
+            result = await asyncio.to_thread(client.search, query, max_results=max_results)
         except Exception as exc:  # noqa: BLE001 — 工具层兜底，错误以字符串回流
             return f"web_search 失败: {exc}"
         return _format_tavily(result)
@@ -232,5 +254,6 @@ async def run_react_agent_stream(
 
 # 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_fs_tools）
 _make_fs_tools = make_fs_tools
+_make_cli_tools = make_cli_tools
 _make_rag_tools = make_rag_tools
 _make_web_tools = make_web_tools

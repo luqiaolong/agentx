@@ -1,4 +1,5 @@
 import type {
+  SubagentConfig,
   SubagentsConfig,
   TeamSubagentsConfig,
 } from "@/lib/utils";
@@ -134,6 +135,54 @@ export const EMPTY_CONFIG: SubagentsConfig = {
     triggerDescription: "",
   },
 };
+
+function normalizeSubagentConfig(
+  raw: Partial<SubagentConfig> | unknown,
+): SubagentConfig {
+  if (!raw || typeof raw !== "object") {
+    return { ...EMPTY_CONFIG.code };
+  }
+  const r = raw as Partial<SubagentConfig>;
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : true,
+    temperature:
+      typeof r.temperature === "number" && !Number.isNaN(r.temperature)
+        ? r.temperature
+        : 0.2,
+    systemPrompt: typeof r.systemPrompt === "string" ? r.systemPrompt : "",
+    tools: Array.isArray(r.tools) ? r.tools.filter((t): t is string => typeof t === "string") : [],
+    triggerDescription:
+      typeof r.triggerDescription === "string" ? r.triggerDescription : "",
+  };
+}
+
+/** 将后端/旧版可能不完整的 subagents 配置合并为完整 SubagentsConfig。 */
+export function normalizeSubagentsConfig(
+  raw: Partial<SubagentsConfig> | unknown,
+): SubagentsConfig {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<SubagentsConfig>;
+  return {
+    code: normalizeSubagentConfig(r.code),
+    rag: normalizeSubagentConfig(r.rag),
+    web: normalizeSubagentConfig(r.web),
+  };
+}
+
+/** 将后端/旧版可能不完整的 teamSubagents 配置合并为完整 TeamSubagentsConfig。 */
+export function normalizeTeamSubagentsConfig(
+  raw: Partial<TeamSubagentsConfig> | unknown,
+): TeamSubagentsConfig {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<TeamSubagentsConfig>;
+  return {
+    frontend_dev: normalizeSubagentConfig(r.frontend_dev),
+    backend_dev: normalizeSubagentConfig(r.backend_dev),
+    tester: normalizeSubagentConfig(r.tester),
+    architect: normalizeSubagentConfig(r.architect),
+    devops: normalizeSubagentConfig(r.devops),
+    ui_designer: normalizeSubagentConfig(r.ui_designer),
+    product_manager: normalizeSubagentConfig(r.product_manager),
+  };
+}
 
 export const EMPTY_TEAM_CONFIG: TeamSubagentsConfig = {
   frontend_dev: {

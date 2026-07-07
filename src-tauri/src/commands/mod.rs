@@ -6,7 +6,6 @@
 pub mod app;
 pub mod clipboard;
 pub mod dialog;
-pub mod git;
 pub mod logs;
 pub mod notify;
 pub mod settings;

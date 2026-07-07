@@ -43,7 +43,19 @@ export type SubagentCardProps =
 function SubagentCardImpl(props: SubagentCardProps) {
   const isCustom = props.variant === "custom";
   // 通过条件表达式让 TS 在同一作用域内对 props 做联合类型收窄
-  const cfg: SubagentConfig = isCustom ? props.entry : props.cfg;
+  const rawCfg = isCustom ? props.entry : props.cfg;
+  const cfg: SubagentConfig = {
+    enabled: typeof rawCfg?.enabled === "boolean" ? rawCfg.enabled : true,
+    temperature:
+      typeof rawCfg?.temperature === "number" && !Number.isNaN(rawCfg.temperature)
+        ? rawCfg.temperature
+        : 0.2,
+    systemPrompt: rawCfg?.systemPrompt ?? "",
+    tools: Array.isArray(rawCfg?.tools)
+      ? rawCfg.tools.filter((t): t is string => typeof t === "string")
+      : [],
+    triggerDescription: rawCfg?.triggerDescription ?? "",
+  };
   const name = isCustom ? props.entry.name : props.meta.label;
   const HeaderIcon = isCustom ? User : props.meta.Icon;
   const headerIconColor = isCustom ? "text-purple-500" : "text-brand-500";

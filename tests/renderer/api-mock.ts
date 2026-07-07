@@ -118,17 +118,6 @@ const commandRoutes: Record<string, (args: Record<string, unknown>, api: AnyMock
 
   // ---- Logs（1 command）----
   logs_read: (a, api) => api.logs.read(a.date, a.maxLines),
-
-  // ---- Git（9 commands，可选）----
-  git_get_status: (a, api) => api.git?.getStatus(a.repoPath),
-  git_get_log: (a, api) => api.git?.getLog(a.repoPath, a.limit),
-  git_get_branches: (a, api) => api.git?.getBranches(a.repoPath),
-  git_checkout: (a, api) => api.git?.checkout(a.repoPath, a.branch),
-  git_stage: (a, api) => api.git?.stage(a.repoPath, a.files),
-  git_unstage: (a, api) => api.git?.unstage(a.repoPath, a.files),
-  git_commit: (a, api) => api.git?.commit(a.repoPath, a.message),
-  git_discard_changes: (a, api) => api.git?.discardChanges(a.repoPath, a.files),
-  git_get_diff: (a, api) => api.git?.getDiff(a.repoPath, a.file),
 };
 
 // ============================================================

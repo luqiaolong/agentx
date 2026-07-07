@@ -48,6 +48,30 @@ export function SubagentEditModal({
   const isBuiltin = initial?.builtinKey !== undefined;
   const isTeam = initial?.teamKey !== undefined;
 
+  // 防御旧数据/迁移数据字段缺失，确保表单默认值完整
+  const safeInitial = useMemo<SubagentEditModalData | null>(
+    () =>
+      initial
+        ? {
+            builtinKey: initial.builtinKey,
+            teamKey: initial.teamKey,
+            customKey: initial.customKey,
+            name: initial.name ?? "",
+            enabled: typeof initial.enabled === "boolean" ? initial.enabled : true,
+            temperature:
+              typeof initial.temperature === "number" && !Number.isNaN(initial.temperature)
+                ? initial.temperature
+                : 0.2,
+            systemPrompt: initial.systemPrompt ?? "",
+            tools: Array.isArray(initial.tools)
+              ? initial.tools.filter((t): t is string => typeof t === "string")
+              : [],
+            triggerDescription: initial.triggerDescription ?? "",
+          }
+        : null,
+    [initial],
+  );
+
   // Schema 需根据当前模式动态构建（含 existingCustomKeys 唯一性校验）
   const schema = useMemo(
     () => buildSubagentSchema({ isNew, isBuiltin, isTeam, existingCustomKeys }),
@@ -56,24 +80,24 @@ export function SubagentEditModal({
 
   const form = useForm<SubagentFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: initial ?? undefined,
+    defaultValues: safeInitial ?? undefined,
   });
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = form;
 
   // 当弹窗打开/切换时同步本地状态
   useEffect(() => {
-    if (open && initial) {
-      reset(initial);
-      setTriggerText(initial.triggerDescription);
+    if (open && safeInitial) {
+      reset(safeInitial);
+      setTriggerText(safeInitial.triggerDescription);
       setErrMsg(null);
     } else if (!open) {
       reset();
       setTriggerText("");
       setErrMsg(null);
     }
-  }, [open, initial, reset]);
+  }, [open, safeInitial, reset]);
 
-  if (!open || !initial) return null;
+  if (!open || !safeInitial) return null;
 
   const data = watch();
   if (!data) return null;
@@ -223,7 +247,7 @@ export function SubagentEditModal({
                 Temperature
               </label>
               <span className="rounded-full bg-subtle px-2 py-0.5 font-medium text-primary-c" style={{ fontSize: 'var(--fs-settings-form-label)' }}>
-                {data.temperature.toFixed(1)}
+                {(data.temperature ?? 0.2).toFixed(1)}
               </span>
             </div>
             <input

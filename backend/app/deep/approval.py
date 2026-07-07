@@ -104,6 +104,8 @@ def _make_approval_event(
         preview = f"将编辑文件: {path}"
     elif name == "shell_exec":
         preview = "将执行系统命令"
+    elif name == "cli_execute":
+        preview = f"将执行 CLI 命令: {args.get('command')} {' '.join(args.get('arguments') or [])}"
     else:
         preview = f"将执行工具: {name}"
 
@@ -143,6 +145,9 @@ def _extract_paths_from_tool_call(tool_call: dict) -> list[str]:
             return []
         base = _glob_base(str(pattern))
         return [base] if base else []
+    if name == "cli_execute":
+        p = args.get("cwd")
+        return [str(p)] if p else []
     return []
 
 
@@ -239,8 +244,11 @@ async def _handle_directory_extension(
             # 越界 → 弹扩展授权
             events.append(
                 _make_approval_event(
-                    tc, thread_id, kind="directory_extension",
-                    requested_path=path, writable=False,
+                    tc,
+                    thread_id,
+                    kind="directory_extension",
+                    requested_path=path,
+                    writable=False,
                 )
             )
             decision = await _await_approval(

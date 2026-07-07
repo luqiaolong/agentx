@@ -1,11 +1,10 @@
 //! AgentX Tauri 主进程入口
 //!
 //! 注册 10 个官方插件 + 日志，在 `setup()` 中启动 Python 后端，
-//! 注册全部 54 个 Tauri 命令（settings/system/app/git）。
+//! 注册全部 45 个 Tauri 命令（settings/system/app）。
 
 pub mod backend;
 pub mod commands;
-pub mod git;
 pub mod logger;
 pub mod migration;
 pub mod store;
@@ -105,16 +104,6 @@ pub fn run() {
             commands::app::app_reload_backend_config,
             commands::app::app_init_agents_md,
             commands::app::app_get_home_workspace_dir,
-            // === Git 命令（9 个）===
-            commands::git::git_get_status,
-            commands::git::git_get_log,
-            commands::git::git_get_branches,
-            commands::git::git_checkout,
-            commands::git::git_stage,
-            commands::git::git_unstage,
-            commands::git::git_commit,
-            commands::git::git_discard_changes,
-            commands::git::git_get_diff,
         ])
         .setup(|app| {
             log::info!(

@@ -10,6 +10,7 @@ import {
   FileEdit,
   Globe,
   Database,
+  Terminal,
   AlertTriangle,
   KeyRound,
   Eye,
@@ -65,6 +66,17 @@ const TOOL_GROUPS: ToolGroup[] = [
       { key: "rag_retrieve", label: "rag_retrieve", desc: "Milvus 向量检索（BGE-M3 嵌入）", Icon: Database },
     ],
   },
+  {
+    title: "CLI",
+    tools: [
+      {
+        key: "cli_execute",
+        label: "cli_execute",
+        desc: "执行受限 CLI 命令（默认关闭，危险操作，需审批）",
+        Icon: Terminal,
+      },
+    ],
+  },
 ];
 
 const DEFAULT_TOOLS: ToolsFormValues = {
@@ -76,6 +88,8 @@ const DEFAULT_TOOLS: ToolsFormValues = {
   edit_file: true,
   web_search: true,
   rag_retrieve: true,
+  // CLI 工具默认开启
+  cli_execute: true,
 };
 
 export function ToolsSettings() {

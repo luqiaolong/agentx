@@ -17,6 +17,7 @@ from __future__ import annotations
 from app.config import get_settings
 from app.observability.logger import logger
 from app.subagents.base import _make_fs_tools, _make_rag_tools, _make_web_tools
+from app.tools.cli import CLI_TOOL_NAME, cli_execute as cli_execute_impl
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -25,9 +26,9 @@ __all__ = [
     "_load_mcp_tools",
 ]
 
-# 触发人工审批中断的工具集合：写操作与 shell 执行
+# 触发人工审批中断的工具集合：写操作、CLI
 # 模块级常量保持不变；运行时危险集合 = DANGEROUS_TOOLS ∩ 已启用工具名
-DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec"}
+DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec", CLI_TOOL_NAME}
 
 # 工具名映射：将内部 tool 函数名映射到 settings.tools_enabled 的 key
 # （_make_fs_tools 中 glob_files/grep_files 与 config key glob/grep 不一致）
@@ -67,14 +68,21 @@ def _make_deep_tools(thread_id: str) -> list:
         """编辑文件：将 old_text 替换为 new_text（仅首次匹配）。"""
         return await fs.edit_file(thread_id, path, old_text, new_text)
 
-    all_tools = [*fs_tools, write_file, edit_file, *rag_tools, *web_tools]
+    @tool
+    async def cli_execute(
+        command: str,
+        arguments: list[str] | None = None,
+        cwd: str | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """执行受限 CLI 命令（如 git/npm/python）。需要用户授权与设置开启。"""
+        return await cli_execute_impl(thread_id, command, arguments, cwd, timeout)
+
+    all_tools = [*fs_tools, write_file, edit_file, cli_execute, *rag_tools, *web_tools]
 
     # 根据 settings.tools_enabled 过滤；未配置的工具默认启用
     enabled = get_settings().tools_enabled
-    return [
-        t for t in all_tools
-        if enabled.get(_TOOL_NAME_MAP.get(t.name, t.name), True)
-    ]
+    return [t for t in all_tools if enabled.get(_TOOL_NAME_MAP.get(t.name, t.name), True)]
 
 
 async def _load_mcp_tools() -> tuple[list, set[str]]:

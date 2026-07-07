@@ -180,6 +180,8 @@ export interface ToolsConfig {
   edit_file: boolean;
   web_search: boolean;
   rag_retrieve: boolean;
+  // CLI 工具
+  cli_execute: boolean;
 }
 
 export interface SkillFileInfo {
@@ -291,48 +293,6 @@ export interface CompactResult {
   summary?: string;
   compressed_count?: number;
   error?: string;
-}
-
-// ---- Git ----
-
-export type GitFileStatus =
-  | "added"
-  | "modified"
-  | "deleted"
-  | "renamed"
-  | "untracked"
-  | "conflict";
-
-export interface GitStatusEntry {
-  path: string;
-  status: GitFileStatus;
-  staged: boolean;
-  originalPath?: string;
-}
-
-export interface GitCommit {
-  hash: string;
-  shortHash: string;
-  message: string;
-  author: string;
-  email: string;
-  date: string;
-  parents: string[];
-}
-
-export interface GitBranch {
-  name: string;
-  current: boolean;
-  remote: boolean;
-  upstream?: string;
-}
-
-export interface GitRepoStatus {
-  currentBranch: string;
-  ahead: number;
-  behind: number;
-  clean: boolean;
-  isGitRepo: boolean;
 }
 
 // ---- 模型连接测试（设置 → 模型面板「测试」按钮）----

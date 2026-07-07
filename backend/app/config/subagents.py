@@ -60,6 +60,8 @@ _ALL_TOOLS = [
     "read_file", "list_dir", "glob", "grep",
     "write_file", "edit_file",
     "web_search", "rag_retrieve",
+    # CLI 工具：受限系统命令
+    "cli_execute",
 ]
 
 
@@ -84,14 +86,27 @@ class SubagentSettings(BaseModel):
 BUILTIN_SUBAGENT_KEYS: frozenset[str] = frozenset({"code", "rag", "web"})
 
 # 内置软件开发专家团角色键名集合（仅用于 AgentTeam 多代理协作）
-BUILTIN_TEAM_KEYS: frozenset[str] = frozenset({
-    "frontend_dev", "backend_dev", "tester", "architect", "devops", "ui_designer", "product_manager"
-})
+BUILTIN_TEAM_KEYS: frozenset[str] = frozenset(
+    {
+        "frontend_dev",
+        "backend_dev",
+        "tester",
+        "architect",
+        "devops",
+        "ui_designer",
+        "product_manager",
+    }
+)
 
 # 自定义子代理禁止绑定的危险工具（与 claude.md §10 安全红线一致）
-# subagent 无 interrupt_before 审批流，暴露写/编辑/shell 会绕过 DeepAgent 审批
+# subagent 无 interrupt_before 审批流，暴露写/编辑会绕过 DeepAgent 审批
+# cli_execute 允许子代理使用（黑名单 + 沙箱授权 + 元字符过滤已足够安全）
 FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
-    {"write_file", "edit_file", "shell_exec"}
+    {
+        "write_file",
+        "edit_file",
+        "shell_exec",
+    }
 )
 
 
@@ -118,32 +133,53 @@ def _default_team_subagents() -> dict[str, SubagentSettings]:
     """默认软件开发团队角色配置。"""
     return {
         "frontend_dev": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_FRONTEND_DEV_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_FRONTEND_DEV_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_FRONTEND_DEV_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_FRONTEND_DEV_TRIGGER_DESCRIPTION,
         ),
         "backend_dev": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_BACKEND_DEV_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_BACKEND_DEV_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_BACKEND_DEV_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_BACKEND_DEV_TRIGGER_DESCRIPTION,
         ),
         "tester": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_TESTER_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_TESTER_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_TESTER_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_TESTER_TRIGGER_DESCRIPTION,
         ),
         "architect": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_ARCHITECT_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_ARCHITECT_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_ARCHITECT_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_ARCHITECT_TRIGGER_DESCRIPTION,
         ),
         "devops": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_DEVOPS_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_DEVOPS_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_DEVOPS_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_DEVOPS_TRIGGER_DESCRIPTION,
         ),
         "ui_designer": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_UI_DESIGNER_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_UI_DESIGNER_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_UI_DESIGNER_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_UI_DESIGNER_TRIGGER_DESCRIPTION,
         ),
         "product_manager": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_PRODUCT_MANAGER_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_TEAM_TOOLS), trigger_description=_DEFAULT_PRODUCT_MANAGER_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_PRODUCT_MANAGER_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_TEAM_TOOLS),
+            trigger_description=_DEFAULT_PRODUCT_MANAGER_TRIGGER_DESCRIPTION,
         ),
     }
 
@@ -152,16 +188,25 @@ def _default_subagents() -> dict[str, SubagentSettings]:
     """默认子代理配置（与原硬编码一致）。"""
     return {
         "code": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_CODE_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_CODE_TOOLS), trigger_description=_DEFAULT_CODE_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_CODE_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_CODE_TOOLS),
+            trigger_description=_DEFAULT_CODE_TRIGGER_DESCRIPTION,
         ),
         "rag": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_RAG_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_RAG_TOOLS), trigger_description=_DEFAULT_RAG_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_RAG_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_RAG_TOOLS),
+            trigger_description=_DEFAULT_RAG_TRIGGER_DESCRIPTION,
         ),
         "web": SubagentSettings(
-            enabled=True, temperature=0.2, system_prompt=_DEFAULT_WEB_SYSTEM_PROMPT,
-            tools=list(_DEFAULT_WEB_TOOLS), trigger_description=_DEFAULT_WEB_TRIGGER_DESCRIPTION,
+            enabled=True,
+            temperature=0.2,
+            system_prompt=_DEFAULT_WEB_SYSTEM_PROMPT,
+            tools=list(_DEFAULT_WEB_TOOLS),
+            trigger_description=_DEFAULT_WEB_TRIGGER_DESCRIPTION,
         ),
     }
 
@@ -201,7 +246,8 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
         if key in BUILTIN_SUBAGENT_KEYS:
             # 不允许自定义 key 与内置冲突
             logger.warning(
-                "custom subagent key 与内置冲突，已跳过", key=key,
+                "custom subagent key 与内置冲突，已跳过",
+                key=key,
                 builtin=list(BUILTIN_SUBAGENT_KEYS),
             )
             continue
@@ -225,7 +271,9 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
                 enabled=bool(val.get("enabled", True)),
                 temperature=float(val.get("temperature", 0.2)),
                 tools=_sanitize_custom_tools(list(val.get("tools", []))),
-                trigger_description=str(val.get("trigger_description") or val.get("triggerDescription") or ""),
+                trigger_description=str(
+                    val.get("trigger_description") or val.get("triggerDescription") or ""
+                ),
             )
         except (TypeError, ValueError, ValidationError) as exc:
             logger.warning(

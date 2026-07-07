@@ -42,6 +42,8 @@ import {
   TEAM_SUBAGENTS,
   EMPTY_CONFIG,
   EMPTY_TEAM_CONFIG,
+  normalizeSubagentsConfig,
+  normalizeTeamSubagentsConfig,
   type BuiltinMeta,
   type TeamMeta,
   type BuiltinSubagentKey,
@@ -114,8 +116,8 @@ export function SubagentsSettings() {
           getTeamSubagentsConfig(),
           getCustomSubagents(),
         ]);
-        setConfig(cfg ?? EMPTY_CONFIG);
-        setTeamConfig(team ?? EMPTY_TEAM_CONFIG);
+        setConfig(normalizeSubagentsConfig(cfg));
+        setTeamConfig(normalizeTeamSubagentsConfig(team));
         setCustomMap(custom ?? {});
       } catch (e) {
         logger.warn("SubagentsSettings.load failed", e);

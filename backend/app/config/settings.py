@@ -158,6 +158,15 @@ class Settings(BaseSettings):
         default=300, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
     )
 
+    # ---- CLI 工具配置 ----
+    # 总开关；默认开启，用户可在设置面板关闭
+    cli_tool_enabled: bool = True
+    # 命令黑名单；AGENTX_CLI_TOOL_BLOCKLIST 为 JSON 数组字符串，如 ["rm","format"]
+    # 默认黑名单见 app.tools.cli._DEFAULT_BLOCKLIST
+    cli_tool_blocklist: list[str] = Field(default_factory=list)
+    cli_tool_timeout: int = Field(default=300, ge=1, le=3600)
+    cli_tool_max_output_chars: int = Field(default=50000, ge=500, le=500000)
+
     @field_validator(
         "subagents_config",
         "custom_subagents_config",
@@ -175,10 +184,10 @@ class Settings(BaseSettings):
                 return {}
         return v or {}
 
-    @field_validator("mcp_servers_config", mode="before")
+    @field_validator("mcp_servers_config", "cli_tool_blocklist", mode="before")
     @classmethod
     def _parse_json_list_env(cls, v: Any) -> Any:
-        """``mcp_servers_config`` 是 list 字段，env 注入时为 JSON 字符串，需解析。"""
+        """list 字段从 env 读取时为 JSON 字符串，需解析。"""
         if isinstance(v, str):
             try:
                 parsed = json.loads(v)

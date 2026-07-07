@@ -32,7 +32,7 @@ _SINGLE_TOOL_KEYWORDS: tuple[str, ...] = (
 # 让用户审批，也不要放行到 SINGLE_TOOL 跳过审批。
 # 含英文工具名：避免用户通过 "write_file"/"edit_file" 等英文工具名绕过审批。
 _DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
-    "创建",     # 创建文件 / 创建一个文件 / 创建目录
+    "创建",  # 创建文件 / 创建一个文件 / 创建目录
     "写文件",
     "写入",
     "编辑文件",
@@ -44,6 +44,8 @@ _DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
     "shell",
     "删除目录",
     "覆盖",
+    # CLI 工具（受限系统命令，需在设置开启并审批）
+    "cli_execute",
     # 英文工具名（防止绕过审批）
     "write_file",
     "edit_file",

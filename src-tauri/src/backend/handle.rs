@@ -18,6 +18,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 use super::PythonStatus;
+use crate::logger;
 
 const MAX_RETRIES: u32 = 3;
 const HEALTH_INTERVAL_MS: u64 = 200;
@@ -137,6 +138,16 @@ async fn supervise(
 ) {
     let mut attempt = 0u32;
 
+    // 辅助：终端 + 落盘双写，确保前端日志面板能读到 supervisor 关键事件。
+    let log_info = |msg: String| {
+        log::info!("{}", msg);
+        logger::append_log(&app, &msg);
+    };
+    let log_warn = |msg: String| {
+        log::warn!("{}", msg);
+        logger::append_log(&app, &msg);
+    };
+
     loop {
         // 检查 stopped
         {
@@ -147,13 +158,13 @@ async fn supervise(
         }
 
         let _ = app.emit("python:status", PythonStatus::Starting);
-        log::info!(
+        log_info(format!(
             "python launching (attempt {}/{})",
             attempt + 1,
             MAX_RETRIES + 1
-        );
+        ));
 
-        match spawn_child(&inner, &cwd, &env).await {
+        match spawn_child(&inner, &cwd, &env, &app).await {
             Some(mut child) => {
                 // 记录 PID 供 stop() 使用
                 if let Some(pid) = child.id() {
@@ -161,12 +172,15 @@ async fn supervise(
                     guard.current_pid = Some(pid);
                 }
 
-                // pipe stdout/stderr 到日志
+                // pipe stdout/stderr 到日志（同时落盘到 {app_data_dir}/logs/agentx-YYYYMMDD.log，
+                // 供前端日志面板读取）
+                let stdout_app = app.clone();
                 if let Some(stdout) = child.stdout.take() {
-                    tauri::async_runtime::spawn(pipe_to_log(stdout, "python"));
+                    tauri::async_runtime::spawn(pipe_to_log(stdout, "python", stdout_app));
                 }
+                let stderr_app = app.clone();
                 if let Some(stderr) = child.stderr.take() {
-                    tauri::async_runtime::spawn(pipe_to_log(stderr, "python:err"));
+                    tauri::async_runtime::spawn(pipe_to_log(stderr, "python:err", stderr_app));
                 }
 
                 // 等待退出
@@ -183,34 +197,34 @@ async fn supervise(
 
                 match exit_result {
                     Ok(status) if status.success() || status.code() == Some(0) => {
-                        log::info!("python process exited cleanly (code=0)");
+                        log_info("python process exited cleanly (code=0)".into());
                         return;
                     }
                     Ok(status) => {
-                        log::warn!("python process exited with code={:?}", status.code());
+                        log_warn(format!("python process exited with code={:?}", status.code()));
                     }
                     Err(e) => {
-                        log::warn!("python wait error: {}", e);
+                        log_warn(format!("python wait error: {}", e));
                     }
                 }
             }
             None => {
                 // spawn 失败（uv 不存在），已切换到 python
-                log::warn!("python spawn failed, uv may be missing");
+                log_warn("python spawn failed, uv may be missing".into());
             }
         }
 
         // 退避重试
         attempt += 1;
         if attempt > MAX_RETRIES {
-            log::warn!("python giving up after {} retries", MAX_RETRIES);
+            log_warn(format!("python giving up after {} retries", MAX_RETRIES));
             let _ = app.emit("python:status", PythonStatus::GivingUp);
             return;
         }
 
         let _ = app.emit("python:status", PythonStatus::Crashed);
         let delay = Duration::from_secs(1 << (attempt - 1)); // 1s, 2s, 4s
-        log::info!("python retrying in {:?} (attempt {})", delay, attempt + 1);
+        log_info(format!("python retrying in {:?} (attempt {})", delay, attempt + 1));
         tokio::time::sleep(delay).await;
     }
 }
@@ -223,6 +237,7 @@ async fn spawn_child(
     inner: &Arc<Mutex<PythonInner>>,
     cwd: &PathBuf,
     env: &HashMap<String, String>,
+    app: &AppHandle,
 ) -> Option<Child> {
     let command_kind = {
         let guard = inner.lock().await;
@@ -252,10 +267,14 @@ async fn spawn_child(
     match cmd.spawn() {
         Ok(child) => Some(child),
         Err(e) => {
-            log::warn!("python spawn error for {}: {}", program, e);
+            let msg = format!("python spawn error for {}: {}", program, e);
+            log::warn!("{}", msg);
+            logger::append_log(app, &msg);
             // uv 失败 → 切换到 python，后续重试沿用 python
             if matches!(command_kind, CommandKind::Uv) {
-                log::info!("python switching to python -m app.main due to uv spawn failure");
+                let switch_msg = "python switching to python -m app.main due to uv spawn failure";
+                log::info!("{}", switch_msg);
+                logger::append_log(app, switch_msg);
                 let mut guard = inner.lock().await;
                 guard.current_command = CommandKind::Python;
             }
@@ -299,7 +318,14 @@ fn kill_tree(pid: u32) {
 }
 
 /// 将子进程 stdout/stderr 管道内容写入 log。
-async fn pipe_to_log<R: tokio::io::AsyncRead + Unpin>(reader: R, prefix: &'static str) {
+///
+/// 同时写入 `logger::append_log` 落盘的日志文件（`{app_data_dir}/logs/agentx-YYYYMMDD.log`），
+/// 确保前端日志面板能读到 Python 后端输出。
+async fn pipe_to_log<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
+    prefix: &'static str,
+    app: AppHandle,
+) {
     use tokio::io::{AsyncBufReadExt, BufReader};
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -310,11 +336,15 @@ async fn pipe_to_log<R: tokio::io::AsyncRead + Unpin>(reader: R, prefix: &'stati
             Ok(_) => {
                 let trimmed = line.trim_end();
                 if !trimmed.is_empty() {
-                    log::info!("[{}] {}", prefix, trimmed);
+                    let entry = format!("[{}] {}", prefix, trimmed);
+                    log::info!("{}", entry);
+                    logger::append_log(&app, &entry);
                 }
             }
             Err(e) => {
-                log::warn!("[{}] read error: {}", prefix, e);
+                let entry = format!("[{}] read error: {}", prefix, e);
+                log::warn!("{}", entry);
+                logger::append_log(&app, &entry);
                 break;
             }
         }
