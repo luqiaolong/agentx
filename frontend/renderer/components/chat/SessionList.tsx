@@ -63,7 +63,12 @@ export function SessionList() {
     setDevModeBusy(true);
     setDevModeLocal(next); // 乐观更新，失败时回滚
     try {
-      await setDevMode(next);
+      const result = await setDevMode(next);
+      // 后端不再 restart：不再依赖 PythonStatus 事件。仍弹一个轻量 toast 提示
+      // 「已写入，需重启后端生效」。
+      if (result?.message) {
+        window.alert(result.message);
+      }
     } catch (e) {
       // 回滚
       setDevModeLocal(!next);
@@ -244,15 +249,15 @@ export function SessionList() {
           aria-pressed={devMode}
           title={
             devMode
-              ? "开发模式：PowerShell 启动后端，关闭窗口重启可恢复"
-              : "开发模式：PowerShell 启动后端并保留窗口，方便看日志"
+              ? "开发模式已写入 store；下次启动应用或 [设置→重启后端] 时按此值启用 console 启动"
+              : "开发模式：用终端（Win: PowerShell / Mac: Terminal / Linux: xterm）启动后端并保留窗口"
           }
         >
           <Code2
             className={`h-3.5 w-3.5 ${devMode ? "text-brand-500" : "text-muted-c"}`}
           />
           <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>
-            {devModeBusy ? "切换中…" : devMode ? "开发模式·开" : "开发模式"}
+            {devModeBusy ? "切换中…" : devMode ? "开发模式·待重启" : "开发模式"}
           </span>
         </button>
       </div>
