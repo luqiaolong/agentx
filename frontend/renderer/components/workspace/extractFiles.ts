@@ -32,6 +32,18 @@ function normalizeForCompare(p: string): string {
 }
 
 /**
+ * 把相对路径结合 base 解析为可展示/可过滤的绝对路径。
+ * 仅做字符串级拼接，保持跨平台分隔符一致（输出统一为正斜杠）。
+ */
+function resolveWithBase(path: string, base?: string | null): string {
+  if (!base) return path.replace(/\\/g, "/");
+  const isAbs = /^(\/|[A-Za-z]:)/.test(path);
+  if (isAbs) return path.replace(/\\/g, "/");
+  const sep = /[\/\\]$/.test(base) ? "" : "/";
+  return `${base.replace(/\\/g, "/")}${sep}${path.replace(/\\/g, "/")}`;
+}
+
+/**
  * 判断 path 是否位于 workspacePath 内（不区分大小写、跨平台分隔符）。
  * workspacePath 为 null 时一律放行（无工作区约束）。
  */
@@ -76,9 +88,11 @@ export function extractCategorizedFiles(
       const toolName = part.toolName;
       const args = (part.args ?? {}) as Record<string, unknown>;
 
-      // read_file / read：从 file_path 或 path 提取
+      // read_file / read：从 file_path 或 path 提取，结合 base 解析相对路径
       if (toolName === "read_file" || toolName === "read") {
-        const path = String(args?.file_path ?? args?.path ?? "");
+        const rawPath = String(args?.file_path ?? args?.path ?? "");
+        const base = String(args?.base ?? "");
+        const path = resolveWithBase(rawPath, base || null);
         if (!path || seenPaths.has(path)) continue;
         if (!isInsideWorkspace(path, workspacePath)) continue;
         seenPaths.add(path);
@@ -94,9 +108,11 @@ export function extractCategorizedFiles(
         continue;
       }
 
-      // grep / glob / search_codebase：从 path/directory 提取
-      if (toolName === "grep" || toolName === "glob" || toolName === "search_codebase") {
-        const path = String(args?.path ?? args?.directory ?? "");
+      // grep / search_codebase：从 path/directory 提取，结合 base 解析相对路径
+      if (toolName === "grep" || toolName === "search_codebase") {
+        const rawPath = String(args?.path ?? args?.directory ?? "");
+        const base = String(args?.base ?? "");
+        const path = resolveWithBase(rawPath, base || null);
         if (!path || seenPaths.has(path)) continue;
         if (!isInsideWorkspace(path, workspacePath)) continue;
         seenPaths.add(path);
@@ -108,6 +124,25 @@ export function extractCategorizedFiles(
           category: "tool_files",
           ts: msg.ts,
           meta: toolName,
+        });
+        continue;
+      }
+
+      // glob：从 pattern 提取，结合 base 解析相对路径
+      if (toolName === "glob") {
+        const rawPattern = String(args?.pattern ?? args?.path ?? "");
+        const base = String(args?.base ?? "");
+        const path = resolveWithBase(rawPattern, base || null);
+        if (!path || seenPaths.has(path)) continue;
+        if (!isInsideWorkspace(path, workspacePath)) continue;
+        seenPaths.add(path);
+        files.push({
+          id: `glob-${path}`,
+          name: rawPattern.split(/[\\/]/).pop() || rawPattern,
+          path,
+          category: "tool_files",
+          ts: msg.ts,
+          meta: "glob",
         });
       }
     }

@@ -85,57 +85,60 @@ export function WorkspacePanel({
         </div>
       </div>
 
-      {/* 任务状态条（仅任务 tab） */}
-      {active === "tasks" && tasks.length > 0 && (
-        <div className="flex items-center justify-between border-b border-default bg-subtle/50 px-2.5 py-1">
-          <div className="flex items-center gap-2" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
-            {runningCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-brand-500 dark:text-brand-400">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500 dark:bg-brand-400" />
-                {runningCount} 进行中
-              </span>
-            )}
-            {doneCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
-                {doneCount} 已完成
-              </span>
-            )}
-          </div>
-          {doneCount > 0 && (
-            <button
-              type="button"
-              onClick={clearDone}
-              className="inline-flex items-center gap-1 rounded-md px-1 py-px text-muted-c transition-colors hover:bg-hover-soft hover:text-rose-500"
-              style={{ fontSize: 'var(--fs-ws-task-meta)' }}
-              title="清除已完成任务"
-            >
-              <X className="h-2.5 w-2.5" />
-              清理
-            </button>
-          )}
-        </div>
-      )}
-
       {/* 内容 */}
-      <div className="flex-1 overflow-auto p-2">
+      <div className="flex flex-1 flex-col overflow-auto p-2">
         {active === "tasks" && (
-          <div className="flex h-full flex-col">
-            {/* 上方：精简任务列表（占一半高度） */}
-            <div className="h-1/2 flex flex-col min-h-0">
-              <div className="flex-1 overflow-auto">
+          <div className="flex flex-1 min-h-0 flex-col">
+            {/* 任务状态条 */}
+            {tasks.length > 0 && (
+              <div className="flex items-center justify-between border-b border-default bg-subtle/50 px-2.5 py-1">
+                <div className="flex items-center gap-2" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
+                  {runningCount > 0 && (
+                    <span className="inline-flex items-center gap-1 text-brand-500 dark:text-brand-400">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500 dark:bg-brand-400" />
+                      {runningCount} 进行中
+                    </span>
+                  )}
+                  {doneCount > 0 && (
+                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+                      {doneCount} 已完成
+                    </span>
+                  )}
+                </div>
+                {doneCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearDone}
+                    className="inline-flex items-center gap-1 rounded-md px-1 py-px text-muted-c transition-colors hover:bg-hover-soft hover:text-rose-500"
+                    style={{ fontSize: 'var(--fs-ws-task-meta)' }}
+                    title="清除已完成任务"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                    清理
+                  </button>
+                )}
+              </div>
+            )}
+            {/* 上方：精简任务列表 */}
+            <div className="flex flex-1 min-h-0 flex-col">
+              <div className="flex-1 min-h-0 overflow-auto">
                 <CompactTaskList />
               </div>
             </div>
-            {/* 下方：上下文横向 Tab（占一半高度） */}
-            <div className="h-1/2 flex flex-col min-h-0 border-t border-default">
+            {/* 下方：上下文横向 Tab */}
+            <div className="flex flex-1 min-h-0 flex-col border-t border-default">
               <ContextTabPanel onFileClick={onFileClick} />
             </div>
           </div>
         )}
-        {active === "files" && <FileTree />}
+        {active === "files" && (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <FileTree />
+          </div>
+        )}
         {active === "git" && (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             <GitPanel />
           </div>
         )}

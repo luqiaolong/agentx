@@ -90,16 +90,24 @@ export function ContextTabPanel({
                 <span className="min-w-0 flex-1 truncate text-secondary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
                   {f.name}
                 </span>
-                {f.meta && (
-                  <span className="shrink-0 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-size)' }}>
-                    {f.meta}
-                  </span>
-                )}
-                {f.ts > 0 && (
-                  <span className="shrink-0 text-muted-c" style={{ fontSize: 'var(--fs-ws-file-size)' }}>
-                    {formatTime(f.ts)}
-                  </span>
-                )}
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {f.meta && (
+                    <span
+                      className="rounded bg-subtle px-1 py-px text-muted-c"
+                      style={{ fontSize: 'var(--fs-ws-file-size)' }}
+                    >
+                      {f.meta}
+                    </span>
+                  )}
+                  {f.ts > 0 && (
+                    <span
+                      className="shrink-0 text-muted-c tabular-nums"
+                      style={{ fontSize: 'var(--fs-ws-file-size)' }}
+                    >
+                      {formatTime(f.ts)}
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
           </div>
