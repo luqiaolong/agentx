@@ -31,6 +31,35 @@ from app.utils.sse_events import (
 __all__ = ["_stream_agent_events"]
 
 
+def _extract_plan_or_update(text: str) -> tuple[str, Any] | None:
+    """从 LLM 输出中提取结构化计划或计划更新。
+
+    支持纯 JSON 或 markdown 代码块包裹的 JSON。
+
+    Returns:
+        ("plan", data_dict) 或 ("plan_update", update_dict) 或 None。
+    """
+    import json
+    import re
+
+    text = text.strip()
+    candidates = [text]
+    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if match:
+        candidates.append(match.group(1).strip())
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            if isinstance(data.get("plan"), list):
+                return "plan", data
+            if isinstance(data.get("plan_update"), dict):
+                return "plan_update", data["plan_update"]
+    return None
+
+
 async def _stream_agent_events(
     agent: Any, inputs: Any, config: dict
 ) -> AsyncIterator[dict[str, str]]:
@@ -43,6 +72,7 @@ async def _stream_agent_events(
     - AIMessage with tool_calls → ``tool_call`` SSE（含 id/name/args/source="deep"）
       + ``todo_update``（任务级进度，与 tool_call 事件并存，语义不同）
     - AIMessage without tool_calls → ``token``（最终回复，strip_think 后一次性 yield）
+      或 ``plan`` / ``plan_update``（结构化任务计划/更新）
     - ToolMessage → ``tool_result`` SSE（含 id/name/result/source="deep"）
       + ``todo_update``（标记完成）
 
@@ -77,7 +107,7 @@ async def _stream_agent_events(
                     for block in content
                 )
             yield make_tool_result_event(tool_call_id, tool_name, content, source="deep")
-            yield make_todo_event(f"工具 {tool_name} 完成", done=True)
+            yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
 
         elif isinstance(last_msg, AIMessage):
             if getattr(last_msg, "tool_calls", None):
@@ -117,7 +147,7 @@ async def _stream_agent_events(
                         tc_args = getattr(tc, "args", {}) or {}
                         tc_id = getattr(tc, "id", None) or str(uuid4())
                     yield make_tool_call_event(tc_id, tc_name, tc_args, source="deep")
-                    yield make_todo_event(f"调用工具: {tc_name}", done=False)
+                    yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
             elif getattr(last_msg, "content", ""):
                 # AIMessage without tool_calls → 最终回复
                 content = last_msg.content
@@ -134,4 +164,10 @@ async def _stream_agent_events(
                 from app.utils.text import strip_tool_call_xml
                 text = strip_tool_call_xml(text)
                 if text:
-                    yield make_sse_event("token", text)
+                    # 检测结构化任务计划/更新
+                    plan_info = _extract_plan_or_update(text)
+                    if plan_info is not None:
+                        kind, plan_data = plan_info
+                        yield make_sse_event(kind, plan_data)
+                    else:
+                        yield make_sse_event("token", text)

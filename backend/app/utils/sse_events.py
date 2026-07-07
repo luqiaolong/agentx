@@ -30,6 +30,8 @@ def make_sse_event(event: str, data: Any) -> dict[str, str]:
         "team_progress",
         "team_result",
         "team_done",
+        "plan",
+        "plan_update",
         "error",
         "_subtask_done",
     ):
@@ -41,11 +43,14 @@ def make_sse_event(event: str, data: Any) -> dict[str, str]:
     return {"event": event, "data": str(data)}
 
 
-def make_todo_event(text: str, done: bool = False) -> dict[str, str]:
+def make_todo_event(text: str, done: bool = False, task_id: str | None = None) -> dict[str, str]:
     """构造 todo_update SSE 事件。"""
+    todo: dict[str, Any] = {"text": text, "done": done}
+    if task_id is not None:
+        todo["task_id"] = task_id
     return make_sse_event(
         "todo_update",
-        {"todos": [{"text": text, "done": done}]},
+        {"todos": [todo]},
     )
 
 
