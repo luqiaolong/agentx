@@ -623,9 +623,9 @@ export function GitPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-2">
-      {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      {/* 顶部工具栏（不可滚动） */}
+      <div className="flex shrink-0 items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0 overflow-visible">
           <BranchSelector
             branches={branches}
@@ -658,13 +658,13 @@ export function GitPanel() {
 
       {/* 错误提示 */}
       {error && (
-        <div className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: "var(--fs-settings-form-hint)" }}>
+        <div className="shrink-0 rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300" style={{ fontSize: "var(--fs-settings-form-hint)" }}>
           {error}
         </div>
       )}
 
-      {/* 变更区域 —— 单一 Changes 面板（Working Tree + Staged 合并，仅查看，不做手工提交） */}
-      <div className="card flex min-h-[10rem] flex-[3] flex-col p-2">
+      {/* 变更区域 —— 独立滚动卡片（Working Tree + Staged 合并，仅查看，不做手工提交） */}
+      <div className="card flex min-h-0 flex-1 flex-col overflow-hidden p-2">
         <GroupHeader
           label="Changes"
           count={entries.length}
@@ -676,7 +676,7 @@ export function GitPanel() {
           icon={FileEdit}
         />
         {!changesCollapsed && entries.length > 0 && (
-          <div className="mt-0.5 min-h-0 flex-1 overflow-auto">
+          <div className="mt-0.5 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             {/* Staged 段：已暂存文件 */}
             {staged.length > 0 && (
               <div>
@@ -727,12 +727,12 @@ export function GitPanel() {
         )}
       </div>
 
-      {/* 提交历史 —— 只读查看 */}
-      <div className="border-t border-default pt-2">
+      {/* 提交历史 —— 独立滚动卡片（只读查看） */}
+      <div className="card flex min-h-0 flex-1 flex-col overflow-hidden p-2">
         <button
           type="button"
           onClick={() => setShowCommits((v) => !v)}
-          className="flex w-full items-center gap-1 py-1 text-left"
+          className="flex w-full shrink-0 items-center gap-1 py-1 text-left"
         >
           {showCommits ? (
             <ChevronDown className="h-3 w-3 text-muted-c" />
@@ -747,7 +747,7 @@ export function GitPanel() {
           </span>
         </button>
         {showCommits && (
-          <div className="mt-1 space-y-0.5">
+          <div className="mt-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden">
             {commits.map((c) => (
               <CommitRow key={c.hash} commit={c} />
             ))}

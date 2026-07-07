@@ -134,7 +134,11 @@ export function WorkspacePanel({
           </div>
         )}
         {active === "files" && <FileTree />}
-        {active === "git" && <GitPanel />}
+        {active === "git" && (
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <GitPanel />
+          </div>
+        )}
       </div>
     </div>
   );
