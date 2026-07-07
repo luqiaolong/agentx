@@ -38,6 +38,8 @@ THINK_PROMPT_SUFFIX = (
     "\n\n在调用工具前，请先用 " + _THINK_OPEN + ".." + _THINK_CLOSE + " 标签包裹你的思考过程，"
     "例如：" + _THINK_OPEN + "我需要查看相关信息来回答这个问题" + _THINK_CLOSE + "。"
     "这样用户可以看到你的推理过程。"
+    "\n\n重要：思考标签外不要输出任何可见文本。所有可见内容必须在工具调用完成后，"
+    "根据工具返回结果再输出。"
 )
 
 # 保留旧名作为向后兼容别名（deep/tools.py 等模块历史 import _make_*_tools）

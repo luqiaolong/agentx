@@ -265,13 +265,6 @@ async def run_tool_path(
     else:
         source = f"custom-{agent_type}"
 
-    # 路径 B 入口：yield delegation 事件标识委派目标（spec D6）
-    yield make_sse_event("delegation", {
-        "target": source,
-        "source": "router",
-        "message": f"委派给 {source} 子代理",
-    })
-
     logger.info("router.tool_path", agent=agent_type, source=source, thread_id=thread_id)
     if agent_type == "web":
         runner = run_web_agent
@@ -285,6 +278,7 @@ async def run_tool_path(
             max_hold=get_settings().think_filter_max_hold,
             retain_think=True,
         )
+        _delegation_sent = False
         try:
             async for event in run_custom_agent(
                 agent_type,
@@ -295,6 +289,13 @@ async def run_tool_path(
                 checkpointer=checkpointer,
             ):
                 for sse in convert_subagent_event(event, think_filter, source=source):
+                    if not _delegation_sent:
+                        _delegation_sent = True
+                        yield make_sse_event("delegation", {
+                            "target": source,
+                            "source": "router",
+                            "message": f"委派给 {source} 子代理",
+                        })
                     yield sse
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.warning("custom subagent failed", key=agent_type, error=str(exc))
@@ -309,6 +310,7 @@ async def run_tool_path(
         max_hold=get_settings().think_filter_max_hold,
         retain_think=True,
     )
+    _delegation_sent = False
     try:
         async for event in runner(
             thread_id,
@@ -318,6 +320,13 @@ async def run_tool_path(
             checkpointer=checkpointer,
         ):
             for sse in convert_subagent_event(event, think_filter, source=source):
+                if not _delegation_sent:
+                    _delegation_sent = True
+                    yield make_sse_event("delegation", {
+                        "target": source,
+                        "source": "router",
+                        "message": f"委派给 {source} 子代理",
+                    })
                 yield sse
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.warning("tool path subagent failed", error=str(exc))
