@@ -19,6 +19,47 @@ interface TasksState {
   clearDone: () => void;
 }
 
+/**
+ * zustand persist 的 migrate 函数。
+ *
+ * 提为顶层函数的目的：可被测试直接调用（zustand 不会把 options.migrate
+ * 暴露到 store.persist 上）。中间件初始化时也会复用同一个引用。
+ *
+ * 版本演进：
+ * - v0 -> v1: 补 createdAt，把残留 running 任务标为 failed（旧版 bug 遗留）
+ * - v1 -> v2: 任务 title 剥掉 `<workspace>...</workspace>` / `<file>...</file>`
+ *   LLM 协议标签 —— 旧逻辑会把 ChatComposer 拼上的工作区路径当任务名。
+ */
+export function migrateTasksState(
+  persisted: unknown,
+  version: number,
+): Partial<TasksState> {
+  const p = (persisted ?? {}) as { tasks?: Task[] };
+  if (!Array.isArray(p.tasks)) return p as Partial<TasksState>;
+  let tasks = p.tasks;
+  const now = Date.now();
+  if (version < 1) {
+    tasks = tasks.map((t) => ({
+      ...t,
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : now,
+      status:
+        t.status === "running" || t.status === "pending" ? "failed" : t.status,
+    }));
+  }
+  if (version < 2) {
+    tasks = tasks.map((t) => {
+      if (typeof t.title !== "string") return t;
+      const cleaned = t.title
+        .replace(/<workspace>.*?<\/workspace>\s?/g, "")
+        .replace(/<file>.*?<\/file>\s?/g, "")
+        .trim();
+      return cleaned === t.title ? t : { ...t, title: cleaned };
+    });
+  }
+  p.tasks = tasks;
+  return p as Partial<TasksState>;
+}
+
 export const useTasksStore = create<TasksState>()(
   devtools(
     persist(
@@ -39,21 +80,8 @@ export const useTasksStore = create<TasksState>()(
       {
         name: "agentx-tasks",
         storage: createJSONStorage(() => localStorage),
-        version: 1,
-        migrate: (persisted, version) => {
-          const p = (persisted ?? {}) as { tasks?: Task[] };
-          if (version < 1 && Array.isArray(p.tasks)) {
-            // v0 -> v1: 补 createdAt，并把残留 running 任务标为 failed（旧版 bug 遗留）
-            const now = Date.now();
-            p.tasks = p.tasks.map((t) => ({
-              ...t,
-              createdAt: typeof t.createdAt === "number" ? t.createdAt : now,
-              status:
-                t.status === "running" || t.status === "pending" ? "failed" : t.status,
-            }));
-          }
-          return p as Partial<TasksState>;
-        },
+        version: 2,
+        migrate: migrateTasksState,
       },
     ),
     { name: "tasks-store" },

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useTasksStore, type Task } from "@/stores/tasks";
+import { useTasksStore, migrateTasksState, type Task } from "@/stores/tasks";
 
 // vitest jsdom 的 localStorage 在该环境下 setItem 不可用（--localstorage-file 路径无效），
 // 而 zustand persist 会在 store 模块导入时即捕获 storage，故在导入 store 之前替换为内存版。
@@ -86,5 +86,49 @@ describe("tasks store", () => {
     useTasksStore.getState().addTask(mkTask("a", "running"));
     useTasksStore.getState().clearDone();
     expect(useTasksStore.getState().tasks).toHaveLength(1);
+  });
+
+  it("v1 -> v2 migrate 剥掉旧 title 中的 <workspace>/<file> 标签", () => {
+    // 模拟 v1 持久化数据：title 被 ChatComposer 拼上的 <workspace> 路径污染
+    const v1State = {
+      tasks: [
+        {
+          id: "old-1",
+          title:
+            "<workspace>D:\\java\\agentprojects\\agentx</workspace> 翻译<file>a.txt</file>",
+          status: "done",
+          createdAt: Date.now(),
+        },
+        {
+          id: "old-2",
+          title: "清理任务",
+          status: "done",
+          createdAt: Date.now(),
+        },
+      ],
+    };
+    const migrated = migrateTasksState(v1State, 1) as { tasks: { title: string }[] };
+    expect(migrated.tasks[0].title).toBe("翻译");
+    expect(migrated.tasks[1].title).toBe("清理任务"); // 不受影响的保持原样
+  });
+
+  it("v0 -> v2 migrate 同时补 createdAt + 剥 title 标签", () => {
+    const v0State = {
+      tasks: [
+        {
+          id: "very-old",
+          title: "<workspace>D:\\tmp</workspace> 历史任务",
+          // 故意缺 createdAt 触发 v0->v1 补齐分支
+          status: "running",
+        },
+      ],
+    };
+    const migrated = migrateTasksState(v0State, 0) as {
+      tasks: { title: string; status: string; createdAt: number }[];
+    };
+    expect(migrated.tasks[0].title).toBe("历史任务");
+    // v0->v1: running 没有 createdAt 的会标为 failed
+    expect(migrated.tasks[0].status).toBe("failed");
+    expect(typeof migrated.tasks[0].createdAt).toBe("number");
   });
 });

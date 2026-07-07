@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 describe("useChatStream hook", () => {
-  it("订阅 onEvent + onApprovalRequest 并提供 unsub", () => {
+  it("订阅 onEvent + onApprovalRequest 并提供 unsub", async () => {
     const { unmount } = renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "p" },
@@ -92,8 +92,8 @@ describe("useChatStream hook", () => {
     expect(chatMock.approvalHandlers.size).toBe(0);
   });
 
-  it("token 事件追加到 pendingId 对应的 assistant 消息", () => {
-    const id = useChatStore.getState().createSession();
+  it("token 事件追加到 pendingId 对应的 assistant 消息", async () => {
+    const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: "pending-1",
       role: "assistant",
@@ -121,7 +121,7 @@ describe("useChatStream hook", () => {
     expect(msg?.content).toBe("你好世界");
   });
 
-  it("done 事件设置 isStreaming=false", () => {
+  it("done 事件设置 isStreaming=false", async () => {
     useChatStore.getState().setStreaming(true);
 
     renderHook(() =>
@@ -140,7 +140,7 @@ describe("useChatStream hook", () => {
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
 
-  it("error 事件写入 errorMsg + 标记任务失败", () => {
+  it("error 事件写入 errorMsg + 标记任务失败", async () => {
     useChatStore.getState().setStreaming(true);
     const setErrorMsg = vi.fn();
     const currentTaskIdRef = { current: null as string | null };
@@ -174,7 +174,7 @@ describe("useChatStream hook", () => {
     expect(currentTaskIdRef.current).toBeNull();
   });
 
-  it("error 事件无 data 字段时回退到 error 字段", () => {
+  it("error 事件无 data 字段时回退到 error 字段", async () => {
     const setErrorMsg = vi.fn();
     renderHook(() =>
       useChatStream({
@@ -192,7 +192,7 @@ describe("useChatStream hook", () => {
     expect(setErrorMsg).toHaveBeenCalledWith("字符串在 error 字段");
   });
 
-  it("todo_update 首次创建任务；之后更新现有任务", () => {
+  it("todo_update 首次创建任务；之后更新现有任务", async () => {
     const setTodos = vi.fn();
     renderHook(() =>
       useChatStream({
@@ -235,7 +235,38 @@ describe("useChatStream hook", () => {
     expect(tasks2[0].todos?.every((t) => t.done)).toBe(true);
   });
 
-  it("approval_request 写入 store.approvalRequest", () => {
+  it("todo_update 任务标题剥掉 <workspace>/<file> LLM 协议标签", async () => {
+    renderHook(() =>
+      useChatStream({
+        pendingIdRef: { current: "p" },
+        currentTaskIdRef: { current: null },
+        // 模拟 ChatComposer 在 onSend 时拼的 finalContent：
+        // "<workspace>D:\java\agentprojects\agentx</workspace> 翻译<file>a.txt</file>"
+        lastUserQueryRef: {
+          current:
+            "<workspace>D:\\java\\agentprojects\\agentx</workspace> 翻译<file>a.txt</file>",
+        },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    act(() => {
+      emitEvent({
+        type: "todo_update",
+        todos: [{ text: "step", done: false }],
+      });
+    });
+
+    const task = useTasksStore.getState().tasks[0];
+    expect(task).toBeTruthy();
+    // 工作区路径 + 文件标记都要从标题里剥掉，只留纯用户文本
+    expect(task.title).toBe("翻译");
+    expect(task.title).not.toMatch(/<workspace>/);
+    expect(task.title).not.toMatch(/<file>/);
+  });
+
+  it("approval_request 写入 store.approvalRequest", async () => {
     const req = {
       threadId: "t-1",
       toolName: "shell_exec",
@@ -268,8 +299,8 @@ describe("useChatStream hook", () => {
 
 describe("useChatStream part 分发", () => {
   /** 创建会话 + pending assistant 消息（空 parts），返回 sessionId */
-  function setupPendingMessage(pendingId: string): string {
-    const sid = useChatStore.getState().createSession();
+  async function setupPendingMessage(pendingId: string): Promise<string> {
+    const sid = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
       id: pendingId,
       role: "assistant",
@@ -287,8 +318,8 @@ describe("useChatStream part 分发", () => {
     return undefined;
   }
 
-  it("token 事件 append 到 text part；无则新建", () => {
-    setupPendingMessage("pending-1");
+  it("token 事件 append 到 text part；无则新建", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -312,8 +343,8 @@ describe("useChatStream part 分发", () => {
     }
   });
 
-  it("reasoning 事件 append 到 reasoning part（done=false）；无则新建", () => {
-    setupPendingMessage("pending-1");
+  it("reasoning 事件 append 到 reasoning part（done=false）；无则新建", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -338,8 +369,8 @@ describe("useChatStream part 分发", () => {
     }
   });
 
-  it("done 事件标记所有 reasoning part 的 done=true", () => {
-    setupPendingMessage("pending-1");
+  it("done 事件标记所有 reasoning part 的 done=true", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -365,8 +396,8 @@ describe("useChatStream part 分发", () => {
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
 
-  it("tool_call 事件新建 tool-call part（status=running）", () => {
-    setupPendingMessage("pending-1");
+  it("tool_call 事件新建 tool-call part（status=running）", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -399,8 +430,8 @@ describe("useChatStream part 分发", () => {
     }
   });
 
-  it("tool_result 事件新建 tool-result part（与 tool-call 同 id）", () => {
-    setupPendingMessage("pending-1");
+  it("tool_result 事件新建 tool-result part（与 tool-call 同 id）", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -441,8 +472,8 @@ describe("useChatStream part 分发", () => {
     }
   });
 
-  it("tool_result 事件带 error 字段时写入 part.error", () => {
-    setupPendingMessage("pending-1");
+  it("tool_result 事件带 error 字段时写入 part.error", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -477,8 +508,8 @@ describe("useChatStream part 分发", () => {
     }
   });
 
-  it("delegation 事件新建 delegation part", () => {
-    setupPendingMessage("pending-1");
+  it("delegation 事件新建 delegation part", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -509,8 +540,8 @@ describe("useChatStream part 分发", () => {
     }
   });
 
-  it("完整 turn：delegation → reasoning → tool_call → tool_result → token → done", () => {
-    setupPendingMessage("pending-1");
+  it("完整 turn：delegation → reasoning → tool_call → tool_result → token → done", async () => {
+    await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
         pendingIdRef: { current: "pending-1" },
@@ -569,8 +600,8 @@ describe("useChatStream part 分发", () => {
     expect(useChatStore.getState().isStreaming).toBe(false);
   });
 
-  it("todo_update / approval_request / error 逻辑在 parts 模型下保持不变", () => {
-    setupPendingMessage("pending-1");
+  it("todo_update / approval_request / error 逻辑在 parts 模型下保持不变", async () => {
+    await setupPendingMessage("pending-1");
     const setTodos = vi.fn();
     const setErrorMsg = vi.fn();
     renderHook(() =>

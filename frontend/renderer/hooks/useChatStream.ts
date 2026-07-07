@@ -153,8 +153,14 @@ export function useChatStream(args: UseChatStreamArgs) {
           } else {
             const newId = `task-${crypto.randomUUID()}`;
             currentTaskIdRef.current = newId;
-            const title =
-              lastUserQueryRef.current.trim().slice(0, 40) || "深度任务";
+            // 任务标题只展示纯用户文本：剥掉 LLM 协议标签（<workspace>、<file> 等），
+            // 避免工作区路径污染任务名。ChatComposer 在 onSend 时把
+            // `<workspace>path</workspace>` 拼到了 lastUserQueryRef 前面。
+            const rawQuery = lastUserQueryRef.current
+              .replace(/<workspace>.*?<\/workspace>\s?/g, "")
+              .replace(/<file>.*?<\/file>\s?/g, "")
+              .trim();
+            const title = rawQuery.slice(0, 40) || "深度任务";
             addTask({
               id: newId,
               title,
