@@ -75,8 +75,8 @@ def extract_plan_or_update(text: str) -> tuple[str, Any] | None:
     """从 LLM 输出文本提取结构化 plan/plan_update。
 
     支持：
-    - 纯 JSON：``{"plan": [...]}`` / ``{"plan_update": {...}}``
-    - markdown 代码块包裹：`````json\n{"plan":[...]}\n``````
+    - 纯 JSON：``{"plan": [...]}`` / ``{"plan": {"steps": [...]}}`` / ``{"plan_update": {...}}``
+    - markdown 代码块包裹：`````json\n{...}\n``````
 
     Args:
         text: LLM 输出文本。
@@ -101,8 +101,15 @@ def extract_plan_or_update(text: str) -> tuple[str, Any] | None:
             continue
         if not isinstance(data, dict):
             continue
-        if isinstance(data.get("plan"), list):
-            return "plan", {"plan": _normalize_plan_items(data["plan"])}
+
+        plan = data.get("plan")
+        # 顶层 plan 是 list（项目原始 schema）
+        if isinstance(plan, list):
+            return "plan", {"plan": _normalize_plan_items(plan)}
+        # 顶层 plan 是 dict 且含 steps（LLM 嵌套 schema）
+        if isinstance(plan, dict) and isinstance(plan.get("steps"), list):
+            return "plan", {"plan": _normalize_plan_items(plan["steps"])}
+
         if isinstance(data.get("plan_update"), dict):
             update = data["plan_update"]
             if "status" not in update and "done" in update:
