@@ -7,13 +7,14 @@ import {
   Folder,
   ChevronDown,
   ChevronRight,
-  ScrollText,
+  Code2,
   Pencil,
   MessageSquare,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { Session } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
+import { getDevMode, setDevMode } from "@/lib/api/app";
 
 /**
  * 左侧栏会话列表。
@@ -35,10 +36,43 @@ export function SessionList() {
   const deleteSession = useChatStore((s) => s.deleteSession);
   const renameSession = useChatStore((s) => s.renameSession);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
-  const setLogsModalOpen = useSettingsStore((s) => s.setLogsModalOpen);
 
-  const openLogsModal = () => {
-    setLogsModalOpen(true);
+  // 开发模式开关：持久化在 tauri-plugin-store（store key = `devMode`），
+  // 开启时 Rust 用 PowerShell 启动 Python 后端（Windows），保留控制台窗口。
+  const [devMode, setDevModeLocal] = useState(false);
+  const [devModeBusy, setDevModeBusy] = useState(false);
+
+  // 挂载即拉一次实际值（store 可能由其他途径修改）
+  useEffect(() => {
+    let mounted = true;
+    void getDevMode()
+      .then((v) => {
+        if (mounted) setDevModeLocal(v);
+      })
+      .catch(() => {
+        /* 拉取失败保持 false，不致命 */
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleToggleDevMode = async () => {
+    if (devModeBusy) return;
+    const next = !devMode;
+    setDevModeBusy(true);
+    setDevModeLocal(next); // 乐观更新，失败时回滚
+    try {
+      await setDevMode(next);
+    } catch (e) {
+      // 回滚
+      setDevModeLocal(!next);
+      window.alert(
+        "切换开发模式失败：" + (e instanceof Error ? e.message : String(e)),
+      );
+    } finally {
+      setDevModeBusy(false);
+    }
   };
 
   // 分组：Home + 所有出现过的 workspace
@@ -184,7 +218,8 @@ export function SessionList() {
         )}
       </div>
 
-      {/* 底部入口：设置常驻，日志按钮默认隐藏，鼠标划过整条时显示 */}
+      {/* 底部入口：设置常驻；右侧是「开发模式」开关，开启后 Rust 用 PowerShell
+          启动 Python 后端（Windows）保留控制台窗口，方便看日志。 */}
       <div className="group mt-1 flex shrink-0 items-center gap-1 border-t border-default pt-1.5">
         <button
           type="button"
@@ -198,14 +233,26 @@ export function SessionList() {
         </button>
         <button
           type="button"
-          onClick={openLogsModal}
-          className="flex max-w-0 overflow-hidden opacity-0 transition-all duration-200 ease-out group-hover:max-w-[6rem] group-hover:opacity-100 group-focus-within:max-w-[6rem] group-focus-within:opacity-100 hover:bg-hover-soft rounded-lg text-secondary-c hover:text-primary-c"
-          aria-label="查看日志"
-          title="查看日志"
+          onClick={() => void handleToggleDevMode()}
+          disabled={devModeBusy}
+          className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors ${
+            devMode
+              ? "bg-brand-600/15 text-brand-500"
+              : "text-secondary-c hover:bg-hover-soft hover:text-primary-c"
+          } disabled:cursor-not-allowed disabled:opacity-60`}
+          aria-label={devMode ? "关闭开发模式" : "开启开发模式"}
+          aria-pressed={devMode}
+          title={
+            devMode
+              ? "开发模式：PowerShell 启动后端，关闭窗口重启可恢复"
+              : "开发模式：PowerShell 启动后端并保留窗口，方便看日志"
+          }
         >
-          <span className="flex shrink-0 items-center gap-1.5 px-2 py-1.5">
-            <ScrollText className="h-3.5 w-3.5 text-muted-c" />
-            <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>日志</span>
+          <Code2
+            className={`h-3.5 w-3.5 ${devMode ? "text-brand-500" : "text-muted-c"}`}
+          />
+          <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>
+            {devModeBusy ? "切换中…" : devMode ? "开发模式·开" : "开发模式"}
           </span>
         </button>
       </div>

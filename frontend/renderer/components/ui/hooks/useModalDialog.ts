@@ -8,7 +8,7 @@ interface UseModalDialogOptions {
 /**
  * 统一 modal 行为：ESC 关闭 + body overflow lock + focus trap + focus restore。
  *
- * 消除 SettingsModal/LogsModal 重复的 ~100 行 useEffect，
+ * 消除 SettingsModal 重复的 ~100 行 useEffect，
  * 并为 SubagentEditModal 补齐缺失的 a11y。
  *
  * 行为对齐 SettingsModal 的严格版本：

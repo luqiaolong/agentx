@@ -16,7 +16,6 @@ import { SessionList } from "./components/chat/SessionList";
 import { WorkspacePanel } from "./components/workspace/WorkspacePanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsModal } from "./components/settings/SettingsModal";
-import { LogsModal } from "./components/settings/LogsModal";
 import { useSettingsStore } from "./stores/settings";
 import { useChatStore } from "./stores/chat";
 import { useSceneStore } from "./stores/scene";
@@ -229,10 +228,8 @@ export default function App() {
       </div>
 
       <ApprovalDialog />
-      {/* 设置弹窗 —— 由左下角按钮触发，全局承载 */}
+      {/* 设置弹窗 —— 由侧边栏「设置」按钮触发，全局承载；内含「日志」tab */}
       <SettingsModal />
-      {/* 独立日志窗口 —— 由侧边栏「日志」按钮或 ErrorBoundary 跳转触发 */}
-      <LogsModal />
 
       {/* 启动中遮罩 */}
       {showStartingMask && (

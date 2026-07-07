@@ -97,7 +97,7 @@ pub fn run() {
             commands::notify::notify_show,
             // === Logs 命令（1 个）===
             commands::logs::logs_read,
-            // === App 命令（7 个）===
+            // === App 命令（9 个）===
             commands::app::app_get_version,
             commands::app::app_quit,
             commands::app::app_restart,
@@ -105,6 +105,8 @@ pub fn run() {
             commands::app::app_reload_backend_config,
             commands::app::app_init_agents_md,
             commands::app::app_get_home_workspace_dir,
+            commands::app::app_get_dev_mode,
+            commands::app::app_set_dev_mode,
         ])
         .setup(|app| {
             log::info!(

@@ -54,3 +54,18 @@ export function initAgentsMd(): Promise<InitAgentsMdResult> {
 export function getHomeWorkspaceDir(): Promise<string> {
   return invoke<string>("app_get_home_workspace_dir");
 }
+
+/** 读取开发模式开关（持久化在 tauri-plugin-store 的 `devMode` 键）。 */
+export function getDevMode(): Promise<boolean> {
+  return invoke<boolean>("app_get_dev_mode");
+}
+
+/**
+ * 写入开发模式开关并重启 Python 后端。
+ * - `enabled=true`：Rust 用 PowerShell 启动后端（Windows），保留控制台窗口方便看日志。
+ * - `enabled=false`：恢复原 tokio 静默启动。
+ * 仅重启 Python 进程，不重启 Tauri 窗口。
+ */
+export function setDevMode(enabled: boolean): Promise<RestartResult> {
+  return invoke<RestartResult>("app_set_dev_mode", { enabled });
+}

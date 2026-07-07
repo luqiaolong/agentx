@@ -7,7 +7,7 @@ const POLL_INTERVAL_MS = 2000;
 interface LogViewerProps {
   /**
    * 为 true 时让 <pre> 用 flex-1 撑满父容器，父容器需为 flex 列布局 + min-h-0，
-   * 此时整个区域共用一个滚动条（LogsModal 用）。默认 false 时用 max-h 兜底，
+   * 此时整个区域共用一个滚动条（设置面板日志 tab 用）。默认 false 时用 max-h 兜底，
    * 滚动由父容器提供（SettingsModal 的 tabpanel 用）。
    */
   fillParent?: boolean;

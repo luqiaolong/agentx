@@ -66,6 +66,45 @@ pub fn app_restart(app: AppHandle) {
     app.restart();
 }
 
+// =============================================================================
+// 开发模式（dev mode）
+// =============================================================================
+
+/// `app:getDevMode` → 读取开发模式开关。
+///
+/// 开启时 Rust 主进程用 PowerShell 启动 Python 后端（仅 Windows），
+/// 保留控制台窗口方便开发者实时看日志。Unix 平台读到的值仍会持久化，
+/// 但启动时按原 tokio 方式拉起（不支持 powershell 拉起）。
+#[tauri::command]
+pub fn app_get_dev_mode(app: AppHandle) -> bool {
+    store::get_dev_mode(&app)
+}
+
+/// `app:setDevMode` → 写入开发模式开关并重启后端（仅重启进程，不重启 Tauri 窗口）。
+///
+/// 切换语义与前端「切换即重启」一致：true → 关闭旧 PythonHandle → 按新 dev_mode
+/// 重新 spawn；false 同理。返回的 `RestartResult` 与 `app:restartBackend` 一致。
+#[tauri::command]
+pub async fn app_set_dev_mode(
+    app: AppHandle,
+    state: State<'_, Mutex<Option<backend::handle::PythonHandle>>>,
+    enabled: bool,
+) -> Result<RestartResult, String> {
+    let prev = store::get_dev_mode(&app);
+    if prev == enabled {
+        return Ok(RestartResult {
+            ok: true,
+            message: Some("devMode unchanged".into()),
+        });
+    }
+    store::set_dev_mode(&app, enabled);
+    logger::append_log(
+        &app,
+        &format!("[main] devMode -> {} (restarting backend)", enabled),
+    );
+    app_restart_backend(app, state).await
+}
+
 /// `app:getHomeWorkspaceDir` → 返回用户桌面目录路径。
 ///
 /// 与 Electron `getHomeWorkspaceDir` 一致：
