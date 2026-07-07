@@ -121,6 +121,173 @@ def make_cli_tools(thread_id: str, workspace_path: str | None = None) -> list:
     return [t for t in tools if enabled.get(t.name, True)]
 
 
+def make_git_tools(thread_id: str) -> list:
+    """构建绑定 ``thread_id`` 的 Git 工具列表（只读 + 写操作）。
+
+    安全约束：
+    - 子代理可暴露只读 Git 工具（status/diff/log/branches）。
+    - 写操作 Git 工具（clone/pull/checkout/stage/commit）在 DeepAgent 中配合
+      ``interrupt_before`` 审批流暴露；子代理通过 ``_sanitize_custom_tools``
+      过滤掉危险工具，因此本函数即使返回写工具也不会被子代理实际绑定。
+
+    工具启用由 ``get_settings().tools_enabled`` 过滤；函数名与配置 key 一致。
+    """
+    import subprocess
+
+    @tool
+    async def git_status(repo_path: str) -> str:
+        """获取 git 仓库工作区状态。"""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain=v1", "-b",
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git status 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace")
+
+    @tool
+    async def git_diff(repo_path: str, file: str | None = None) -> str:
+        """获取工作区与暂存区差异；file 为空时返回整个仓库 diff。"""
+        args = ["git", "diff"]
+        if file:
+            args.extend(["--", file])
+        proc = await asyncio.create_subprocess_exec(
+            *args, cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git diff 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace") or "(无差异)"
+
+    @tool
+    async def git_log(repo_path: str, limit: int = 20) -> str:
+        """获取最近 N 条提交日志（默认 20）。"""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "log", f"-n{limit}", "--pretty=format:%H%x09%h%x09%an%x09%ae%x09%ad%x09%s%x09%P", "--date=iso-strict",
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git log 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace")
+
+    @tool
+    async def git_branches(repo_path: str) -> str:
+        """获取本地与远程分支列表。"""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "branch", "-a", "--format=%(HEAD)%x09%(refname:short)%x09%(upstream:short)%x09%(upstream:track)",
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git branches 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace")
+
+    @tool
+    async def git_clone(repo_url: str, target_path: str) -> str:
+        """克隆远程仓库到 target_path。"""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "clone", repo_url, target_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git clone 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace") or "克隆成功"
+
+    @tool
+    async def git_pull(repo_path: str) -> str:
+        """拉取当前分支最新变更。"""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "pull",
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git pull 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace") or "已是最新"
+
+    @tool
+    async def git_checkout(repo_path: str, branch: str) -> str:
+        """切换到指定分支。"""
+        proc = await asyncio.create_subprocess_exec(
+            "git", "checkout", branch,
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git checkout 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace") or f"已切换到 {branch}"
+
+    @tool
+    async def git_stage(repo_path: str, files: list[str]) -> str:
+        """将指定文件加入暂存区。"""
+        if not files:
+            return "未提供文件"
+        proc = await asyncio.create_subprocess_exec(
+            "git", "add", "--", *files,
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git stage 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace") or f"已暂存 {len(files)} 个文件"
+
+    @tool
+    async def git_commit(repo_path: str, message: str, files: list[str] | None = None) -> str:
+        """提交改动；提供 files 时会先 stage 再 commit。"""
+        if files:
+            stage_proc = await asyncio.create_subprocess_exec(
+                "git", "add", "--", *files,
+                cwd=repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stage_err = await stage_proc.communicate()
+            if stage_proc.returncode != 0:
+                return f"git stage 失败：{stage_err.decode('utf-8', errors='replace').strip()}"
+        proc = await asyncio.create_subprocess_exec(
+            "git", "commit", "-m", message,
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return f"git commit 失败：{stderr.decode('utf-8', errors='replace').strip()}"
+        return stdout.decode("utf-8", errors="replace") or "提交成功"
+
+    tools = [
+        git_status,
+        git_diff,
+        git_log,
+        git_branches,
+        git_clone,
+        git_pull,
+        git_checkout,
+        git_stage,
+        git_commit,
+    ]
+    enabled = get_settings().tools_enabled
+    return [t for t in tools if enabled.get(t.name, True)]
+
+
 def make_rag_tools(thread_id: str) -> list:
     """构建绑定 ``thread_id`` 的 RAG 检索工具列表。
 
@@ -262,5 +429,6 @@ async def run_react_agent_stream(
 # 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_fs_tools）
 _make_fs_tools = make_fs_tools
 _make_cli_tools = make_cli_tools
+_make_git_tools = make_git_tools
 _make_rag_tools = make_rag_tools
 _make_web_tools = make_web_tools

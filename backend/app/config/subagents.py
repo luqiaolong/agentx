@@ -60,6 +60,9 @@ _ALL_TOOLS = [
     "read_file", "list_dir", "glob", "grep",
     "write_file", "edit_file",
     "web_search", "rag_retrieve",
+    # Git 工具：只读 + 写操作
+    "git_status", "git_diff", "git_log", "git_branches",
+    "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
     # CLI 工具：受限系统命令
     "cli_execute",
 ]
@@ -99,13 +102,18 @@ BUILTIN_TEAM_KEYS: frozenset[str] = frozenset(
 )
 
 # 自定义子代理禁止绑定的危险工具（与 claude.md §10 安全红线一致）
-# subagent 无 interrupt_before 审批流，暴露写/编辑会绕过 DeepAgent 审批
+# subagent 无 interrupt_before 审批流，暴露写/编辑/git 写操作会绕过 DeepAgent 审批
 # cli_execute 允许子代理使用（黑名单 + 沙箱授权 + 元字符过滤已足够安全）
 FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
     {
         "write_file",
         "edit_file",
         "shell_exec",
+        "git_clone",
+        "git_pull",
+        "git_checkout",
+        "git_stage",
+        "git_commit",
     }
 )
 

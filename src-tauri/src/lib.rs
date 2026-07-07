@@ -5,6 +5,7 @@
 
 pub mod backend;
 pub mod commands;
+pub mod git;
 pub mod logger;
 pub mod migration;
 pub mod store;

@@ -46,6 +46,12 @@ _DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
     "覆盖",
     # CLI 工具（受限系统命令，需在设置开启并审批）
     "cli_execute",
+    # Git 写操作（clone/pull/checkout/stage/commit 会修改仓库状态）
+    "git_clone",
+    "git_pull",
+    "git_checkout",
+    "git_stage",
+    "git_commit",
     # 英文工具名（防止绕过审批）
     "write_file",
     "edit_file",

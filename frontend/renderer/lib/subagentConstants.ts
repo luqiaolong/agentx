@@ -3,7 +3,8 @@ import type { ToolsConfig } from "@/lib/utils";
 /**
  * 内置子代理可选工具清单（与 backend _ALL_TOOLS 一致，但不含危险工具）。
  *
- * 危险工具（write_file / edit_file / shell_exec 等）对内置 subagent 禁用绑定。
+ * 危险工具（write_file / edit_file / shell_exec / git_clone / git_pull /
+ * git_checkout / git_stage / git_commit 等）对内置 subagent 禁用绑定。
  * cli_execute 允许子代理使用（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
  */
 export const ALL_TOOLS: string[] = [
@@ -13,6 +14,11 @@ export const ALL_TOOLS: string[] = [
   "grep",
   "web_search",
   "rag_retrieve",
+  // Git 只读工具
+  "git_status",
+  "git_diff",
+  "git_log",
+  "git_branches",
   // CLI 工具
   "cli_execute",
 ];

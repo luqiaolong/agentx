@@ -88,6 +88,15 @@ const DEFAULT_TOOLS: ToolsFormValues = {
   edit_file: true,
   web_search: true,
   rag_retrieve: true,
+  git_status: true,
+  git_diff: true,
+  git_log: true,
+  git_branches: true,
+  git_clone: true,
+  git_pull: true,
+  git_checkout: true,
+  git_stage: true,
+  git_commit: true,
   // CLI 工具默认开启
   cli_execute: true,
 };

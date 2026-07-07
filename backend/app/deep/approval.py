@@ -106,6 +106,8 @@ def _make_approval_event(
         preview = "将执行系统命令"
     elif name == "cli_execute":
         preview = f"将执行 CLI 命令: {args.get('command')} {' '.join(args.get('arguments') or [])}"
+    elif name in ("git_clone", "git_pull", "git_checkout", "git_stage", "git_commit"):
+        preview = f"将执行 Git 写操作: {name}"
     else:
         preview = f"将执行工具: {name}"
 
@@ -156,6 +158,22 @@ def _extract_paths_from_tool_call(
         if workspace_path:
             return [workspace_path]
         return []
+    # Git 工具：repo_path/target_path 参与授权判断
+    if name in (
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_branches",
+        "git_pull",
+        "git_checkout",
+        "git_stage",
+        "git_commit",
+    ):
+        p = args.get("repo_path")
+        return [str(p)] if p else []
+    if name == "git_clone":
+        p = args.get("target_path")
+        return [str(p)] if p else []
     return []
 
 

@@ -228,6 +228,16 @@ export interface ToolsConfig {
   edit_file: boolean;
   web_search: boolean;
   rag_retrieve: boolean;
+  // Git 工具
+  git_status: boolean;
+  git_diff: boolean;
+  git_log: boolean;
+  git_branches: boolean;
+  git_clone: boolean;
+  git_pull: boolean;
+  git_checkout: boolean;
+  git_stage: boolean;
+  git_commit: boolean;
   // CLI 工具
   cli_execute: boolean;
 }

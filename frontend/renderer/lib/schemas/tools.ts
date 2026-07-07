@@ -1,7 +1,7 @@
 /**
  * 工具开关 schema，对应 ToolsConfig。
  *
- * 9 个工具开关均为 boolean，与 backend/app/config.py _ALL_TOOLS 保持一致。
+ * 18 个工具开关均为 boolean，与 backend/app/config.py _ALL_TOOLS 保持一致。
  */
 import { z } from "zod";
 
@@ -14,6 +14,16 @@ export const toolsSchema = z.object({
   edit_file: z.boolean(),
   web_search: z.boolean(),
   rag_retrieve: z.boolean(),
+  // Git 工具
+  git_status: z.boolean(),
+  git_diff: z.boolean(),
+  git_log: z.boolean(),
+  git_branches: z.boolean(),
+  git_clone: z.boolean(),
+  git_pull: z.boolean(),
+  git_checkout: z.boolean(),
+  git_stage: z.boolean(),
+  git_commit: z.boolean(),
   // CLI 工具
   cli_execute: z.boolean(),
 });
