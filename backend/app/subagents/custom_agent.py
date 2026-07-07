@@ -149,6 +149,7 @@ def build_custom_agent(
     tools: list[str] | None = None,
     temperature: float | None = None,
     workspace_path: str | None = None,
+    checkpointer: Any = None,
 ) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
@@ -164,6 +165,7 @@ def build_custom_agent(
         tools: 显式指定工具列表（模式 2）。
         temperature: 显式指定温度（模式 2）。
         workspace_path: 当前会话绑定的 workspace 路径，fs 工具解析相对路径用。
+        checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
 
     Raises:
         KeyError: 模式 1 中 key 不存在于 custom_subagents。
@@ -185,6 +187,8 @@ def build_custom_agent(
         prompt = system_prompt or ""
         prompt = prompt + THINK_PROMPT_SUFFIX
         kwargs["prompt"] = prompt
+        if checkpointer is not None:
+            kwargs["checkpointer"] = checkpointer
         return create_react_agent(model, _tools, **kwargs)
 
     # 模式 1：从配置加载
@@ -203,6 +207,8 @@ def build_custom_agent(
     prompt = cfg.system_prompt or ""
     prompt = prompt + THINK_PROMPT_SUFFIX
     kwargs["prompt"] = prompt
+    if checkpointer is not None:
+        kwargs["checkpointer"] = checkpointer
     return create_react_agent(model, _tools, **kwargs)
 
 
@@ -212,6 +218,7 @@ async def run_custom_agent(
     message: str,
     history: list | None = None,
     workspace_path: str | None = None,
+    checkpointer: Any = None,
 ) -> AsyncIterator[dict]:
     """运行自定义子代理，yield 标准化事件流（与内置子代理契约一致）。
 
@@ -229,8 +236,11 @@ async def run_custom_agent(
         message: 当前用户消息。
         history: 历史 messages 列表（已截断），拼到 inputs 前。
         workspace_path: 当前会话绑定的 workspace 路径，fs 工具解析相对路径用。
+        checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
     """
-    agent = build_custom_agent(key, thread_id=thread_id, workspace_path=workspace_path)
+    agent = build_custom_agent(
+        key, thread_id=thread_id, workspace_path=workspace_path, checkpointer=checkpointer
+    )
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
     source = f"custom-{key}"
