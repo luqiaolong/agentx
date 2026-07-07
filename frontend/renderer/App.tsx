@@ -10,6 +10,8 @@ import {
   onMaximizedChange,
 } from "@/lib/api/window";
 import { getHomeWorkspaceDir, restartBackend } from "@/lib/api/app";
+import { revealInFolder } from "@/lib/api/shell";
+import { logger } from "@/lib/logger";
 import { ApprovalDialog } from "./components/chat/ApprovalDialog";
 import { ChatView } from "./components/chat/ChatView";
 import { SessionList } from "./components/chat/SessionList";
@@ -240,7 +242,14 @@ export default function App() {
         {/* 右侧栏 —— 工作区面板 */}
         {workspaceOpen && (
           <aside className="w-72 shrink-0 border-l border-default bg-surface flex">
-            <WorkspacePanel />
+            <WorkspacePanel
+              onFileClick={(file) => {
+                if (!file.path) return;
+                revealInFolder(file.path).catch((e) => {
+                  logger.warn("revealInFolder failed", e);
+                });
+              }}
+            />
           </aside>
         )}
       </div>
