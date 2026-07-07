@@ -10,8 +10,10 @@ import type { TodoItem } from "@/hooks/useChatStream";
  *
  * 提取逻辑：取 ``-team-<role>-<idx>`` 中的 role 段，作为子代理/任务角色标签。
  * 若没有 role 段，则展示 task_id 后 8 字符作为短 id。
+ *
+ * 导出供测试（TodoProgress.test.tsx）使用。
  */
-function formatTaskLabel(taskId: string | undefined): string {
+export function formatTaskLabel(taskId: string | undefined): string {
   if (!taskId) return "任务";
   const match = taskId.match(/-team-([a-z]+)-(\d+)$/);
   if (match) {

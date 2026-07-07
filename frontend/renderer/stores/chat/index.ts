@@ -399,9 +399,9 @@ export const useChatStore = create<ChatState>()(
             if (!pathToAuthorize) continue;
             if (sess.manuallyRevokedPaths.includes(pathToAuthorize)) continue;
             tasks.push(
-              sandbox
-                .authorize(id, pathToAuthorize, true, "chip")
-                .then(() => undefined)
+              (async (): Promise<void> => {
+                await sandbox.authorize(id, pathToAuthorize, true, "chip");
+              })()
                 .catch(() => {
                   /* best-effort：失败不阻塞，工具执行时后端会再校验 */
                 }),

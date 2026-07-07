@@ -1,0 +1,83 @@
+# agentx CI：单元 + 集成 + 端到端测试 + 前端类型检查
+#
+# 触发：
+#   - push 到 master
+#   - pull_request 到 master
+#   - 手动 workflow_dispatch
+#
+# 分级：
+#   - unit-and-typecheck job：每次必跑（< 1 分钟）
+#   - integration job：跑真实 SQLite + 真实 LangGraph 图（< 2 分钟）
+#   - e2e job：需启动后端 + 真实 LLM key（默认跳过，加 label e2e 触发）
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  unit-and-typecheck:
+    name: Unit + Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install uv
+        run: pip install uv
+      - name: Install Python deps
+        run: uv sync --extra dev
+      - name: Run Python unit tests
+        run: uv run pytest tests/python/unit tests/python/integration -q --tb=short -p no:cacheprovider -m "not e2e"
+      - name: Install Node deps
+        run: npm ci
+      - name: Frontend typecheck (node)
+        run: npm run typecheck:node
+      - name: Frontend typecheck (web)
+        run: npm run typecheck:web
+
+  e2e:
+    name: End-to-end (real LLM)
+    runs-on: ubuntu-latest
+    # 默认跳过：需 ops 手动加 label 'e2e' 或在 workflow_dispatch 启用
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pip install uv
+      - name: Install Python deps
+        run: uv sync --extra dev
+      - name: Start backend
+        env:
+          AGENTX_OPENAI_API_KEY: ${{ secrets.AGENTX_OPENAI_API_KEY }}
+          AGENTX_OPENAI_BASE_URL: ${{ secrets.AGENTX_OPENAI_BASE_URL }}
+          AGENTX_DEFAULT_MODEL: ${{ secrets.AGENTX_DEFAULT_MODEL }}
+        run: |
+          nohup uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
+              echo "Backend ready"
+              break
+            fi
+            sleep 1
+          done
+      - name: Run E2E tests
+        env:
+          AGENTX_E2E_BASE_URL: http://127.0.0.1:8000
+        run: |
+          uv run pytest tests/python/e2e -v --tb=short -p no:cacheprovider -m e2e
+      - name: Backend logs on failure
+        if: failure()
+        run: cat backend.log
