@@ -301,8 +301,175 @@ function CommitInput({ repoPath, onCommitted }: { repoPath: string; onCommitted:
 }
 
 /* ------------------------------------------------------------------ */
+/*  树形节点视图 —— 递归渲染：目录行 + 叶子文件行                            */
+/* ------------------------------------------------------------------ */
+
+interface TreeNodeViewProps {
+  node: TreeNode;
+  depth: number;
+  isChecked: (path: string) => boolean;
+  onToggleFile: (entry: GitStatusEntry) => Promise<void> | void;
+  onStage: (path: string) => Promise<void> | void;
+  onUnstage: (path: string) => Promise<void> | void;
+  onDiscard: (path: string) => void;
+}
+
+const TreeNodeView = memo(function TreeNodeView({
+  node,
+  depth,
+  isChecked,
+  onToggleFile,
+  onStage,
+  onUnstage,
+  onDiscard,
+}: TreeNodeViewProps) {
+  // 目录节点默认展开
+  const [open, setOpen] = useState(true);
+
+  const indentStyle = { paddingLeft: `${depth * 12}px` };
+
+  if (!node.isDir) {
+    // 叶子：渲染 StatusRow
+    if (!node.entry) return null;
+    return (
+      <div style={indentStyle}>
+        <StatusRow
+          entry={node.entry}
+          selected={node.entry.staged || isChecked(node.entry.path)}
+          onToggle={() => void onToggleFile(node.entry!)}
+          onStage={onStage}
+          onUnstage={onUnstage}
+          onDiscard={onDiscard}
+        />
+      </div>
+    );
+  }
+
+  // 目录节点：渲染"箭头 + 文件夹图标 + 目录名 + 子节点计数"
+  const leafCount = collectLeafPaths(node.children).length;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left transition-colors hover:bg-hover-soft"
+        style={indentStyle}
+        aria-expanded={open}
+        title={node.path}
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-c" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-muted-c" />
+        )}
+        <FilePlus className="h-3 w-3 shrink-0 text-muted-c" />
+        <span
+          className="min-w-0 flex-1 truncate text-secondary-c"
+          style={{ fontSize: "var(--fs-ws-file-name)" }}
+        >
+          {node.name}
+        </span>
+        <span
+          className="shrink-0 text-muted-c"
+          style={{ fontSize: "var(--fs-ws-file-size)" }}
+        >
+          {leafCount}
+        </span>
+      </button>
+      {open && node.children.length > 0 && (
+        <div>
+          {node.children.map((child) => (
+            <TreeNodeView
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              isChecked={isChecked}
+              onToggleFile={onToggleFile}
+              onStage={onStage}
+              onUnstage={onUnstage}
+              onDiscard={onDiscard}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/* ------------------------------------------------------------------ */
 /*  GitPanel 主组件                                                     */
 /* ------------------------------------------------------------------ */
+
+/** 树形节点：文件为叶子，目录为中间节点（带 children） */
+interface TreeNode {
+  /** 节点名（最后一段） */
+  name: string;
+  /** 累积路径（仅叶子有完整路径） */
+  path: string;
+  /** 子节点（仅目录有） */
+  children: TreeNode[];
+  /** 叶子文件对应的 GitStatusEntry（仅叶子有） */
+  entry?: GitStatusEntry;
+  /** 是否为目录节点（用于 UI 渲染） */
+  isDir: boolean;
+}
+
+/**
+ * 将平铺的 GitStatusEntry 列表构建为按目录分组的树。
+ * - 同一目录下的多文件共享一个目录节点
+ * - 目录按路径字母序升序，目录排在文件前
+ */
+function buildTree(entries: GitStatusEntry[]): TreeNode[] {
+  const root: TreeNode = { name: "", path: "", children: [], isDir: true };
+  for (const e of entries) {
+    // path 使用正斜杠，跨平台兼容
+    const parts = e.path.split(/[\\/]/).filter(Boolean);
+    let cur = root;
+    let acc = "";
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i] as string;
+      acc = acc ? `${acc}/${part}` : part;
+      const isLeaf = i === parts.length - 1;
+      const found: TreeNode | undefined = cur.children.find(
+        (c) => c.name === part && c.isDir === !isLeaf,
+      );
+      if (found) {
+        cur = found;
+      } else {
+        const created: TreeNode = {
+          name: part,
+          path: acc,
+          children: [],
+          isDir: !isLeaf,
+          entry: isLeaf ? e : undefined,
+        };
+        cur.children.push(created);
+        cur = created;
+      }
+    }
+  }
+  // 排序：目录在前，文件在后；同类按 name 字母序
+  const sortTree = (node: TreeNode) => {
+    node.children.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    node.children.forEach(sortTree);
+  };
+  sortTree(root);
+  return root.children;
+}
+
+/** 收集树中所有叶子路径 */
+function collectLeafPaths(nodes: TreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (n: TreeNode) => {
+    if (n.entry) out.push(n.path);
+    n.children.forEach(walk);
+  };
+  nodes.forEach(walk);
+  return out;
+}
 
 /** 文件选择模式：用于复选框 + 批量操作 */
 type SelectionMode = "include" | "exclude";
@@ -413,12 +580,10 @@ export function GitPanel() {
   const [stagedCollapsed, setStagedCollapsed] = useState(false);
 
   // IDEA Git 风格分组：
-  //   Changes        = 已 tracked 但有未暂存改动（modified/deleted/conflict）
-  //   Unversioned    = 未跟踪文件
+  //   Working Tree = 已 tracked 但有未暂存改动 + 未跟踪文件（合并为单一树）
   //   Staged（折叠隐藏）= 已暂存
   const staged = entries.filter((e) => e.staged);
-  const changes = entries.filter((e) => !e.staged && e.status !== "untracked");
-  const unversioned = entries.filter((e) => e.status === "untracked" && !e.staged);
+  const workingTree = entries.filter((e) => !e.staged);
 
   // 批量选择状态：mode = include/exclude + 显式 set
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("include");
@@ -510,23 +675,18 @@ export function GitPanel() {
     [repoPath, refresh],
   );
 
-  // 计算 Changes / Unversioned / Staged 全选状态
-  const allChangesChecked = changes.length > 0 && changes.every((e) => e.staged || isChecked(e.path));
-  const someChangesChecked = changes.some((e) => e.staged || isChecked(e.path));
-  const changesIndeterminate = !allChangesChecked && someChangesChecked;
-
-  const allUnversionedChecked = unversioned.length > 0 && unversioned.every((e) => e.staged || isChecked(e.path));
-  const someUnversionedChecked = unversioned.some((e) => e.staged || isChecked(e.path));
-  const unversionedIndeterminate = !allUnversionedChecked && someUnversionedChecked;
+  // 计算 Working Tree / Staged 全选状态
+  const allWorkingChecked =
+    workingTree.length > 0 && workingTree.every((e) => e.staged || isChecked(e.path));
+  const someWorkingChecked = workingTree.some((e) => e.staged || isChecked(e.path));
+  const workingIndeterminate = !allWorkingChecked && someWorkingChecked;
 
   const allStagedChecked = staged.length > 0 && staged.every((e) => !e.staged || isChecked(e.path));
   const someStagedChecked = staged.some((e) => !e.staged || isChecked(e.path));
   const stagedIndeterminate = !allStagedChecked && someStagedChecked;
 
-  const sortByPath = (list: GitStatusEntry[]) =>
-    [...list].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  const changesList = useMemo(() => sortByPath(changes), [changes]);
-  const unversionedList = useMemo(() => sortByPath(unversioned), [unversioned]);
+  // 工作区树（按目录层级）
+  const workingTreeNodes = useMemo(() => buildTree(workingTree), [workingTree]);
 
   if (!repoStatus.isGitRepo && !loading) {
     return (
@@ -583,77 +743,41 @@ export function GitPanel() {
         </div>
       )}
 
-      {/* 变更区域 —— 上下两段：上半（Changes/Unversioned）= max 50% 高，溢出滚动；下半（Staged + 历史）= 剩余空间 */}
+      {/* 变更区域 —— 上下两段：上半（Working Tree 树形）= max 50% 高，溢出滚动；下半（Staged + 历史）= 剩余空间 */}
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-        {/* 上半段：左右两栏，最大高度 = 容器一半 */}
-        <div className="grid min-h-0 max-h-[50%] flex-shrink-0 grid-cols-2 gap-2">
-          {/* 左栏：Changes */}
-          <div className="card flex min-h-0 flex-col p-2">
-            <GroupHeader
-              label="Changes"
-              count={changesList.length}
-              selected={allChangesChecked}
-              indeterminate={changesIndeterminate}
-              onToggleAll={() => void handleGroupToggle(changesList, !allChangesChecked)}
-              collapsed={changesCollapsed}
-              onToggleCollapsed={() => setChangesCollapsed((v) => !v)}
-              icon={FileEdit}
-            />
-            {!changesCollapsed && changesList.length > 0 && (
-              <div className="mt-0.5 min-h-0 flex-1 space-y-0.5 overflow-auto pl-3">
-                {changesList.map((e) => (
-                  <StatusRow
-                    key={e.path}
-                    entry={e}
-                    selected={e.staged || isChecked(e.path)}
-                    onToggle={() => void handleToggleFile(e)}
-                    onStage={handleStage}
-                    onUnstage={handleUnstage}
-                    onDiscard={(p) => setConfirmDiscard(p)}
-                  />
-                ))}
-              </div>
-            )}
-            {!changesCollapsed && changesList.length === 0 && (
-              <div className="mt-1 pl-3 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
-                无
-              </div>
-            )}
-          </div>
-
-          {/* 右栏：Unversioned Files */}
-          <div className="card flex min-h-0 flex-col p-2">
-            <GroupHeader
-              label="Unversioned Files"
-              count={unversionedList.length}
-              selected={allUnversionedChecked}
-              indeterminate={unversionedIndeterminate}
-              onToggleAll={() => void handleGroupToggle(unversionedList, !allUnversionedChecked)}
-              collapsed={unversionedCollapsed}
-              onToggleCollapsed={() => setUnversionedCollapsed((v) => !v)}
-              icon={FilePlus}
-            />
-            {!unversionedCollapsed && unversionedList.length > 0 && (
-              <div className="mt-0.5 min-h-0 flex-1 space-y-0.5 overflow-auto pl-3">
-                {unversionedList.map((e) => (
-                  <StatusRow
-                    key={e.path}
-                    entry={e}
-                    selected={e.staged || isChecked(e.path)}
-                    onToggle={() => void handleToggleFile(e)}
-                    onStage={handleStage}
-                    onUnstage={handleUnstage}
-                    onDiscard={(p) => setConfirmDiscard(p)}
-                  />
-                ))}
-              </div>
-            )}
-            {!unversionedCollapsed && unversionedList.length === 0 && (
-              <div className="mt-1 pl-3 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
-                无
-              </div>
-            )}
-          </div>
+        {/* 上半段：Working Tree（Changes + Unversioned Files 合并为树形），最大高度 = 容器一半 */}
+        <div className="card flex min-h-0 max-h-[50%] flex-shrink-0 flex-col p-2">
+          <GroupHeader
+            label="Working Tree"
+            count={workingTree.length}
+            selected={allWorkingChecked}
+            indeterminate={workingIndeterminate}
+            onToggleAll={() => void handleGroupToggle(workingTree, !allWorkingChecked)}
+            collapsed={changesCollapsed}
+            onToggleCollapsed={() => setChangesCollapsed((v) => !v)}
+            icon={FileEdit}
+          />
+          {!changesCollapsed && workingTreeNodes.length > 0 && (
+            <div className="mt-0.5 min-h-0 flex-1 overflow-auto">
+              {workingTreeNodes.map((n) => (
+                <TreeNodeView
+                  key={n.path}
+                  node={n}
+                  depth={0}
+                  isChecked={isChecked}
+                  onToggleFile={handleToggleFile}
+                  onStage={handleStage}
+                  onUnstage={handleUnstage}
+                  onDiscard={(p) => setConfirmDiscard(p)}
+                />
+              ))}
+            </div>
+          )}
+          {!changesCollapsed && workingTreeNodes.length === 0 && (
+            <div className="mt-1 pl-3 text-muted-c" style={{ fontSize: "var(--fs-ws-file-size)" }}>
+              无
+            </div>
+          )}
         </div>
 
         {/* 下半段：Staged（折叠） + 提交输入 + 历史 */}
