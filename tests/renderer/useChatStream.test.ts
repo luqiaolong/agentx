@@ -54,9 +54,18 @@ const chatMock = vi.hoisted(() => {
 vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
 
 import { useChatStream } from "@/hooks/useChatStream";
-import { useChatStore } from "@/stores/chat";
+import { useChatStore, type MessagePart } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import { resetChatMock } from "./api-mock";
+
+// 从 parts 中的 text parts 派生文本（替代已移除的 ChatMessage.content 兼容字段）
+function deriveContent(parts: MessagePart[] | undefined): string {
+  if (!parts) return "";
+  return parts
+    .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
 
 // 事件触发辅助函数（替代原 makeMockApi 返回的 _emitEvent / _emitApproval）
 const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
@@ -120,7 +129,7 @@ describe("useChatStream hook", () => {
 
     const sess = useChatStore.getState().sessions[id];
     const msg = sess.messages.find((m) => m.id === "pending-1");
-    expect(msg?.content).toBe("你好世界");
+    expect(deriveContent(msg?.parts)).toBe("你好世界");
   });
 
   it("done 事件设置 isStreaming=false", async () => {

@@ -25,7 +25,16 @@ vi.hoisted(() => {
   });
 });
 
-import { useChatStore } from "@/stores/chat";
+import { useChatStore, type MessagePart } from "@/stores/chat";
+
+// 从 parts 中的 text parts 派生文本（替代已移除的 ChatMessage.content 兼容字段）
+function deriveContent(parts: MessagePart[] | undefined): string {
+  if (!parts) return "";
+  return parts
+    .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
 
 // useChatStore 是模块级单例（带 persist），每个用例前重置内存状态
 beforeEach(() => {
@@ -99,7 +108,7 @@ describe("chat store", () => {
     });
     const sess = useChatStore.getState().sessions[id];
     expect(sess.messages).toHaveLength(1);
-    expect(sess.messages[0].content).toBe("a".repeat(25));
+    expect(deriveContent(sess.messages[0].parts)).toBe("a".repeat(25));
     // slice(0, 20) -> 20 个 a，trim 后仍为 20 个 a
     expect(sess.title).toBe("a".repeat(20));
   });
@@ -142,8 +151,8 @@ describe("chat store", () => {
     });
     useChatStore.getState().appendMessageContent("a1", "baz");
     const msgs = useChatStore.getState().sessions[id].messages;
-    expect(msgs.find((m) => m.id === "a1")?.content).toBe("foobaz");
-    expect(msgs.find((m) => m.id === "a2")?.content).toBe("bar");
+    expect(deriveContent(msgs.find((m) => m.id === "a1")?.parts)).toBe("foobaz");
+    expect(deriveContent(msgs.find((m) => m.id === "a2")?.parts)).toBe("bar");
   });
 
   it("appendMessageContent 对未知 id 不报错且不影响其它消息", async () => {
@@ -155,7 +164,7 @@ describe("chat store", () => {
       ts: 1,
     });
     useChatStore.getState().appendMessageContent("unknown", "x");
-    expect(useChatStore.getState().sessions[id].messages[0].content).toBe("foo");
+    expect(deriveContent(useChatStore.getState().sessions[id].messages[0].parts)).toBe("foo");
   });
 
   it("appendMessageContent 按 id 跨会话定位消息（不依赖 currentId）", async () => {
@@ -170,7 +179,7 @@ describe("chat store", () => {
     const idB = await useChatStore.getState().createSession();
     // 现在 currentId = idB，但 stream-1 属于 idA
     useChatStore.getState().appendMessageContent("stream-1", "bar");
-    expect(useChatStore.getState().sessions[idA].messages[0].content).toBe("foobar");
+    expect(deriveContent(useChatStore.getState().sessions[idA].messages[0].parts)).toBe("foobar");
     // idB 不应受影响
     expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
   });

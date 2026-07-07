@@ -38,8 +38,14 @@ export function useContextUsage(): ContextUsageInfo {
   const activeLabel = activeEntry?.label ?? "";
 
   const sess = currentId ? sessions[currentId] : null;
+  // 从 parts 中的 text parts 派生文本（移除 content 兼容字段后改用 parts）
   const allText = (sess?.messages ?? [])
-    .map((m) => m.content ?? "")
+    .map((m) =>
+      m.parts
+        .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(""),
+    )
     .join("\n");
   const tokens = estimateTokens(allText);
   const pct = Math.min(100, Math.round((tokens / modelMax) * 100));

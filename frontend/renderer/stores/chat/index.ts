@@ -9,9 +9,15 @@ import {
   migrateV2toV3,
   migrateV3toV4,
   migrateV4toV5,
+  migrateV5toV6,
 } from "./migrations";
-import { deriveContent, findSessionIdByMessageId } from "./messageOps";
-import { createQuotaGuardedStorage } from "./quotaStorage";
+import {
+  lookupSessionId,
+  indexMessage,
+  unindexMessage,
+  unindexSession,
+} from "./messageIndex";
+import { createQuotaGuardedStorage, setStreamingActive } from "./quotaStorage";
 
 /**
  * parts-based 消息模型（chat-rendering-trace-v2 D3）。
@@ -19,9 +25,9 @@ import { createQuotaGuardedStorage } from "./quotaStorage";
  * 一条 ChatMessage 按 parts 数组顺序表达时间轴：
  * reasoning → tool-call → tool-result → ... → text（最终回答）。
  *
- * 兼容字段 `content`：渲染组件（MessageBubble/MessageList）尚未迁移到 parts
- * 渲染时使用，由 store actions 从 parts 中的 text part 派生维护。
- * 新代码应使用 parts。T9-T11 渲染层迁移完成后可移除 content。
+ * 执行轨迹优化（2026-07-07）移除了兼容字段 `content`，渲染组件必须直接消费 parts。
+ * reasoning / tool-call / tool-result 增加 startedAt / doneAt / arrivedAt 等时间戳，
+ * 由 store action 在写入时填充，用于前端耗时展示。
  */
 export interface TeamAgentState {
   agent: string;
@@ -35,7 +41,16 @@ export interface TeamAgentState {
 
 export type MessagePart =
   | { type: "text"; id: string; text: string }
-  | { type: "reasoning"; id: string; text: string; done: boolean }
+  | {
+      type: "reasoning";
+      id: string;
+      text: string;
+      done: boolean;
+      /** reasoning part 首次写入时间（流式开始）。 */
+      startedAt: number;
+      /** reasoning 标记 done 的时间（流式结束）。 */
+      doneAt?: number;
+    }
   | {
       type: "tool-call";
       id: string;
@@ -43,6 +58,8 @@ export type MessagePart =
       args: unknown;
       source: string;
       status: "running" | "complete" | "error";
+      /** tool-call part 写入时间（工具开始执行）。 */
+      startedAt: number;
     }
   | {
       type: "tool-result";
@@ -51,6 +68,8 @@ export type MessagePart =
       result: unknown;
       source: string;
       error?: string;
+      /** tool-result part 写入时间（工具结果到达），用于配对计算耗时。 */
+      arrivedAt: number;
     }
   | { type: "delegation"; id: string; target: string; source: string; message: string }
   | {
@@ -68,11 +87,6 @@ export interface ChatMessage {
   role: "user" | "assistant" | "tool";
   parts: MessagePart[];
   ts: number;
-  /**
-   * 兼容字段：从 parts 中的 text part 派生（取所有 text part 文本拼接）。
-   * 渲染组件未迁移到 parts 渲染时使用；新代码用 parts。
-   */
-  content: string;
 }
 
 // 复用 shared/api-types.ts 的 ApprovalRequest（含 kind/requestedPath/writable），
@@ -157,10 +171,8 @@ export interface ChatState {
   reauthorizeAllSessions: () => Promise<void>;
   // 当前会话消息操作（作用于 sessions[currentId]）
   /**
-   * 添加消息。兼容旧 content 字段：
-   * - 传 `parts`：直接使用，content 从 text part 派生
-   * - 传 `content`：转为 `[{type:"text", id, text: content}]`
-   * - 都不传：空 parts 数组 + 空 content
+   * 添加消息。parts 优先；否则 content 转 parts；否则空 parts。
+   * 添加后同步维护 messageIndex 反向索引。
    */
   addMessage: (
     msg: {
@@ -173,8 +185,8 @@ export interface ChatState {
   ) => void;
   /**
    * 追加文本到指定 message 的最后一个指定 type 的 part（text/reasoning 通用）。
-   * 若无对应 part 则新建 text part（type==="text"）或 reasoning part（type==="reasoning"）。
-   * 同步更新兼容字段 content（仅 text part）。
+   * 若无对应 part 则新建 text part 或 reasoning part。
+   * 新建 reasoning part 时自动写入 startedAt。
    */
   appendPartText: (
     messageId: string,
@@ -183,7 +195,6 @@ export interface ChatState {
   ) => void;
   /**
    * 向指定 message 添加新 part。
-   * 若 part 是 text 类型，同步追加到 content。
    */
   addPart: (messageId: string, part: MessagePart) => void;
   upsertTeamNode: (
@@ -193,11 +204,15 @@ export interface ChatState {
       reasoning?: string;
       agentUpdate?: { agent: string; patch: Partial<TeamAgentState> };
       status?: "running" | "done" | "error";
+      /**
+       * 首次创建 team part 时一次性写入的 agent 列表（team_plan 单次 upsert）。
+       * 仅在 team part 不存在时生效；已存在时按 agentUpdate 增量更新。
+       */
+      initialAgents?: TeamAgentState[];
     },
   ) => void;
   /**
    * 更新指定 part（按 partId 定位）。合并 updates 到原 part。
-   * 若更新涉及 text 字段，同步刷新 content。
    */
   updatePart: (
     messageId: string,
@@ -214,7 +229,7 @@ export interface ChatState {
   clearMessages: () => void;
   /**
    * 删除指定消息及其之后的所有消息（用于重新编辑后重发）。
-   * 返回被删除的消息中最后一条 user 消息的 content（用于回填输入框）。
+   * 返回被删除的消息中最后一条 user 消息的 text parts 拼接（用于回填输入框）。
    */
   deleteMessagesAfter: (messageId: string) => string | null;
   /**
@@ -292,6 +307,8 @@ export const useChatStore = create<ChatState>()(
           // 事件，被 ChatView 的全局 onEvent 消费，可能污染其他会话消息或中断当前流式。
           // 后端 checkpoint 残留可接受：thread_id 为 UUID 不复用，残留状态不会被再次加载；
           // 沙箱授权目录在 thread_id 不复用下也无害。如需清理由后端定期 GC 或用户手动 /reset。
+          // 同步清理 messageIndex 反向索引（删除 session 下所有 message 索引）
+          unindexSession(id);
           set((s) => {
             const sessions = { ...s.sessions };
             delete sessions[id];
@@ -429,13 +446,19 @@ export const useChatStore = create<ChatState>()(
               role: msg.role,
               parts,
               ts: msg.ts,
-              content: deriveContent(parts),
             };
+            // 同步维护 messageIndex 反向索引
+            indexMessage(msg.id, cid);
             const messages = [...sess.messages, newMsg];
             let title = sess.title;
             if (title === DEFAULT_TITLE && msg.role === "user") {
+              // 从 parts 中的 text parts 派生 title（移除 content 兼容字段后改用 parts）
+              const textContent = parts
+                .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+                .map((p) => p.text)
+                .join("");
               // 去掉 <workspace>path</workspace> 标签前缀，取纯用户文本
-              let raw = newMsg.content;
+              let raw = textContent;
               const wsMatch = raw.match(/<workspace>.*?<\/workspace>\s?/);
               if (wsMatch) {
                 raw = raw.slice(wsMatch[0].length);
@@ -452,7 +475,7 @@ export const useChatStore = create<ChatState>()(
 
         appendPartText: (messageId, partType, text) => {
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            const targetCid = lookupSessionId(messageId);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
             if (!sess) return s;
@@ -486,15 +509,17 @@ export const useChatStore = create<ChatState>()(
                 if (partType === "text") {
                   parts.push({ type: "text", id: crypto.randomUUID(), text });
                 } else {
+                  // 新建 reasoning part 时自动写入 startedAt（流式开始时间）
                   parts.push({
                     type: "reasoning",
                     id: crypto.randomUUID(),
                     text,
                     done: false,
+                    startedAt: Date.now(),
                   });
                 }
               }
-              return { ...m, parts, content: deriveContent(parts) };
+              return { ...m, parts };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
@@ -503,14 +528,14 @@ export const useChatStore = create<ChatState>()(
 
         addPart: (messageId, part) => {
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            const targetCid = lookupSessionId(messageId);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
             if (!sess) return s;
             const messages = sess.messages.map((m) => {
               if (m.id !== messageId) return m;
               const parts = [...m.parts, part];
-              return { ...m, parts, content: deriveContent(parts) };
+              return { ...m, parts };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
@@ -519,7 +544,7 @@ export const useChatStore = create<ChatState>()(
 
         upsertTeamNode: (messageId, updaters) => {
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            const targetCid = lookupSessionId(messageId);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
             if (!sess) return s;
@@ -528,19 +553,25 @@ export const useChatStore = create<ChatState>()(
               const parts = [...m.parts];
               const teamIdx = parts.findIndex((p) => p.type === "team");
               if (teamIdx === -1) {
-                const newPart = {
-                  type: "team" as const,
-                  id: crypto.randomUUID(),
-                  plan: updaters.plan ?? [],
-                  reasoning: updaters.reasoning ?? "",
-                  agents: updaters.agentUpdate
+                // team part 不存在：首次创建
+                // 若提供 initialAgents，一次性写入 plan + agents（team_plan 单次 upsert）
+                // 否则按原逻辑用 agentUpdate 创建单条 agent
+                const agents: TeamAgentState[] = updaters.initialAgents
+                  ? updaters.initialAgents
+                  : updaters.agentUpdate
                     ? [{
                         agent: updaters.agentUpdate.agent,
                         purpose: "",
                         status: "pending" as const,
                         ...updaters.agentUpdate.patch,
                       }]
-                    : [],
+                    : [];
+                const newPart = {
+                  type: "team" as const,
+                  id: crypto.randomUUID(),
+                  plan: updaters.plan ?? [],
+                  reasoning: updaters.reasoning ?? "",
+                  agents,
                   status: updaters.status ?? ("running" as const),
                 };
                 parts.push(newPart);
@@ -549,7 +580,11 @@ export const useChatStore = create<ChatState>()(
                 let newPlan = existing.plan;
                 if (updaters.plan) newPlan = updaters.plan;
                 let newAgents = existing.agents;
-                if (updaters.agentUpdate) {
+                // MEDIUM-5 修复：re-planning 时 initialAgents 替换整个 agents 数组
+                // （team_plan 重新规划时传入 initialAgents 表示用新 plan 重置 agents）
+                if (updaters.initialAgents) {
+                  newAgents = updaters.initialAgents;
+                } else if (updaters.agentUpdate) {
                   const { agent, patch } = updaters.agentUpdate;
                   const idx = newAgents.findIndex((a) => a.agent === agent);
                   if (idx === -1) {
@@ -569,7 +604,7 @@ export const useChatStore = create<ChatState>()(
                   ...(updaters.reasoning !== undefined ? { reasoning: updaters.reasoning } : {}),
                 };
               }
-              return { ...m, parts, content: deriveContent(parts) };
+              return { ...m, parts };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
@@ -578,7 +613,7 @@ export const useChatStore = create<ChatState>()(
 
         updatePart: (messageId, partId, updates) => {
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            const targetCid = lookupSessionId(messageId);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
             if (!sess) return s;
@@ -587,7 +622,7 @@ export const useChatStore = create<ChatState>()(
               const parts = m.parts.map((p) =>
                 p.id === partId ? ({ ...p, ...updates } as MessagePart) : p,
               );
-              return { ...m, parts, content: deriveContent(parts) };
+              return { ...m, parts };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
@@ -596,14 +631,17 @@ export const useChatStore = create<ChatState>()(
 
         markReasoningDone: (messageId) => {
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
+            const targetCid = lookupSessionId(messageId);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
             if (!sess) return s;
             const messages = sess.messages.map((m) => {
               if (m.id !== messageId) return m;
+              // 标记 done=true 时同时写入 doneAt（流式结束时间）
               const parts = m.parts.map((p) =>
-                p.type === "reasoning" && !p.done ? { ...p, done: true } : p,
+                p.type === "reasoning" && !p.done
+                  ? { ...p, done: true, doneAt: Date.now() }
+                  : p,
               );
               return { ...m, parts };
             });
@@ -615,7 +653,7 @@ export const useChatStore = create<ChatState>()(
         appendMessageContent: (id, content) => {
           // 兼容旧 API：等价于 appendPartText(id, "text", content)
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, id);
+            const targetCid = lookupSessionId(id);
             if (targetCid === null) return s;
             const sess = s.sessions[targetCid];
             if (!sess) return s;
@@ -638,8 +676,7 @@ export const useChatStore = create<ChatState>()(
               } else {
                 parts.push({ type: "text", id: crypto.randomUUID(), text: content });
               }
-              const newContent = deriveContent(parts);
-              return { ...m, parts, content: newContent };
+              return { ...m, parts };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
             return { sessions };
@@ -651,6 +688,8 @@ export const useChatStore = create<ChatState>()(
             const cid = s.currentId;
             if (!cid || !s.sessions[cid]) return s;
             const sess = s.sessions[cid];
+            // 同步清理 messageIndex 反向索引（清空 session 下所有 message 索引）
+            unindexSession(cid);
             const sessions = { ...s.sessions, [cid]: { ...sess, messages: [] } };
             return { sessions };
           });
@@ -665,11 +704,19 @@ export const useChatStore = create<ChatState>()(
             const idx = sess.messages.findIndex((m) => m.id === messageId);
             if (idx === -1) return s;
             const kept = sess.messages.slice(0, idx);
-            // 记录被删除段中最后一条 user 消息的 content（用于回填输入框）
+            // 记录被删除段中最后一条 user 消息的 text parts 拼接（用于回填输入框）
             const removed = sess.messages.slice(idx);
             const lastUser = removed.reverse().find((m) => m.role === "user");
             if (lastUser) {
-              lastUserContent = lastUser.content;
+              // 从 parts 中的 text parts 派生（移除 content 兼容字段后改用 parts）
+              lastUserContent = lastUser.parts
+                .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+                .map((p) => p.text)
+                .join("");
+            }
+            // 同步清理 messageIndex 反向索引（被删除的 message 都 unindex）
+            for (const m of removed) {
+              unindexMessage(m.id);
             }
             const sessions = { ...s.sessions, [cid]: { ...sess, messages: kept } };
             return { sessions };
@@ -689,18 +736,37 @@ export const useChatStore = create<ChatState>()(
         },
 
         deleteMessage: (messageId) => {
+          // 先通过反向索引定位 session，再 unindex，最后从 store 删除
+          const targetCid = lookupSessionId(messageId);
+          if (targetCid !== null) {
+            unindexMessage(messageId);
+          }
           set((s) => {
-            const targetCid = findSessionIdByMessageId(s.sessions, messageId);
-            if (targetCid === null) return s;
-            const sess = s.sessions[targetCid];
+            // 反向索引未命中时（如老数据未索引），兜底遍历 sessions 定位
+            let cid = targetCid;
+            if (cid === null) {
+              for (const sid of Object.keys(s.sessions)) {
+                if (s.sessions[sid]?.messages.some((m) => m.id === messageId)) {
+                  cid = sid;
+                  break;
+                }
+              }
+            }
+            if (cid === null) return s;
+            const sess = s.sessions[cid];
             if (!sess) return s;
             const messages = sess.messages.filter((m) => m.id !== messageId);
-            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            const sessions = { ...s.sessions, [cid]: { ...sess, messages } };
             return { sessions };
           });
         },
 
-        setStreaming: (v) => set({ isStreaming: v }),
+        setStreaming: (v) => {
+          // HIGH-2 修复：同步更新 quotaStorage 的 streaming 闸门，
+          // 流式期间跳过 localStorage 写入，避免覆盖完整 sessions
+          setStreamingActive(v);
+          set({ isStreaming: v });
+        },
 
         setApprovalRequest: (req) => set({ approvalRequest: req }),
 
@@ -743,7 +809,7 @@ export const useChatStore = create<ChatState>()(
       {
         name: "agentx-chat",
         storage: createJSONStorage(() => createQuotaGuardedStorage()),
-        version: 5,
+        version: 6,
         migrate: (persisted, version) => {
           let state: Partial<ChatState> = persisted as Partial<ChatState>;
           if (version < 1) {
@@ -761,6 +827,9 @@ export const useChatStore = create<ChatState>()(
           if (version < 5) {
             state = migrateV4toV5(state);
           }
+          if (version < 6) {
+            state = migrateV5toV6(state);
+          }
           return state;
         },
         merge: (persistedState, currentState) => {
@@ -768,6 +837,15 @@ export const useChatStore = create<ChatState>()(
           const sessions = p.sessions ?? currentState.sessions;
           const currentId =
             p.currentId !== undefined ? p.currentId : currentState.currentId;
+          // 从持久化数据重建 messageIndex 反向索引
+          //（module-level Map 在 store 模块加载时为空，需在 merge 时同步填充）
+          for (const sid of Object.keys(sessions)) {
+            const sess = sessions[sid];
+            if (!sess) continue;
+            for (const msg of sess.messages) {
+              indexMessage(msg.id, sid);
+            }
+          }
           return {
             ...currentState,
             ...p,
@@ -775,6 +853,9 @@ export const useChatStore = create<ChatState>()(
             currentId,
           };
         },
+        // HIGH-2 修复：流式写入拦截已下沉到 quotaStorage 的 streamingActive 闸门，
+        // partialize 始终返回完整 state；流式期间 setItem 会被跳过，
+        // 流式结束（setStreaming(false)）时自动触发 partialize 重新计算并落盘完整 state。
         partialize: (s) => ({
           sessions: s.sessions,
           currentId: s.currentId,

@@ -4,8 +4,29 @@ import type { Session } from "./index";
 export const MAX_SESSIONS_ON_QUOTA = 10;
 
 /**
+ * 流式期间写入闸门（HIGH-2 修复）。
+ *
+ * 流式期间（setStreaming(true) → setStreaming(false)）高频 token 会触发
+ * partialize 重新计算，若直接写入 localStorage 会覆盖上一次持久化的
+ * 完整 sessions（因为 partialize 返回的 state 可能不含 sessions 或
+ * sessions 处于中间态）。流式期间 setItem 直接 return，不写入；
+ * 流式结束（setStreaming(false)）时 store 自动触发 partialize 重新计算
+ * 并落盘完整 state。
+ */
+let streamingActive = false;
+
+/**
+ * 由 store 的 setStreaming action 调用，标记流式状态。
+ * 流式期间 createQuotaGuardedStorage 的 setItem 会跳过 localStorage 写入。
+ */
+export function setStreamingActive(v: boolean): void {
+  streamingActive = v;
+}
+
+/**
  * 自定义 StateStorage：包裹 localStorage，捕获 QuotaExceededError。
  *
+ * 流式期间（streamingActive=true）跳过 setItem，避免高频写入覆盖完整 sessions。
  * 超限时自动归档旧会话（按 createdAt 降序保留最近 MAX_SESSIONS_ON_QUOTA 个），
  * 重试写入；仍超限则放弃写入并记日志（不抛错避免破坏 store）。
  *
@@ -20,6 +41,8 @@ export function createQuotaGuardedStorage(): {
   return {
     getItem: (name) => localStorage.getItem(name),
     setItem: (name, value) => {
+      // HIGH-2 修复：流式期间不写入 localStorage，避免覆盖完整 sessions
+      if (streamingActive) return;
       try {
         localStorage.setItem(name, value);
       } catch (e) {

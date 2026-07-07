@@ -143,6 +143,7 @@ export function useChatStream(args: UseChatStreamArgs) {
               args: e.args,
               source: e.source,
               status: "running",
+              startedAt: Date.now(),
             });
           }
           break;
@@ -155,6 +156,7 @@ export function useChatStream(args: UseChatStreamArgs) {
               toolName: e.name,
               result: e.result,
               source: e.source,
+              arrivedAt: Date.now(),
               ...(e.error !== undefined ? { error: e.error } : {}),
             });
           }
@@ -260,6 +262,8 @@ export function useChatStream(args: UseChatStreamArgs) {
         case "team_plan": {
           if (!pendingIdRef.current) break;
           const plan = Array.isArray(e.plan) ? e.plan : [];
+          // 单次 upsert：首次创建 team part 时一次性写入 plan + agents
+          // （不再循环 N+1 次调用 set，避免长任务列表的性能开销）
           upsertTeamNode(pendingIdRef.current, {
             plan: plan.map((t) => ({
               agent: String(t?.agent ?? ""),
@@ -267,16 +271,12 @@ export function useChatStream(args: UseChatStreamArgs) {
               purpose: String(t?.purpose ?? ""),
             })),
             reasoning: String(e.reasoning ?? ""),
+            initialAgents: plan.map((t) => ({
+              agent: String(t?.agent ?? ""),
+              purpose: String(t?.purpose ?? ""),
+              status: "pending" as const,
+            })),
           });
-          // 初始化所有 agent 为 pending
-          for (const t of plan) {
-            upsertTeamNode(pendingIdRef.current, {
-              agentUpdate: {
-                agent: String(t?.agent ?? ""),
-                patch: { purpose: String(t?.purpose ?? ""), status: "pending" },
-              },
-            });
-          }
           break;
         }
         case "team_progress": {

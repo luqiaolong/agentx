@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Bot, Code, BookOpen, Globe, Wrench } from "lucide-react";
 
 /** 子代理类型 → 图标 + 中文名 映射。 */
@@ -17,6 +18,11 @@ function getSubagentMeta(target: string): { icon: typeof Bot; label: string } {
   return { icon: Bot, label: target };
 }
 
+export interface DelegationCardProps {
+  target: string;
+  message: string;
+}
+
 /**
  * DelegationCard：子代理委派标记（chat-rendering-trace-v2 D6）。
  *
@@ -26,13 +32,7 @@ function getSubagentMeta(target: string): { icon: typeof Bot; label: string } {
  *
  * 未来 DeepAgent 动态委派子代理时，可扩展 children: MessagePart[] 字段实现真正嵌套。
  */
-export function DelegationCard({
-  target,
-  message,
-}: {
-  target: string;
-  message: string;
-}) {
+function DelegationCardImpl({ target, message }: DelegationCardProps) {
   const meta = getSubagentMeta(target);
   const Icon = meta.icon;
 
@@ -44,3 +44,12 @@ export function DelegationCard({
     </div>
   );
 }
+
+/**
+ * 自定义 areEqual：target / message 是字符串，直接比较。
+ */
+function areEqual(prev: DelegationCardProps, next: DelegationCardProps): boolean {
+  return prev.target === next.target && prev.message === next.message;
+}
+
+export const DelegationCard = memo(DelegationCardImpl, areEqual);

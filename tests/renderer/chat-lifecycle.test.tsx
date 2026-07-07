@@ -59,9 +59,18 @@ vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
 
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
-import { useChatStore } from "@/stores/chat";
+import { useChatStore, type MessagePart } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import { installApiMock, resetChatMock } from "./api-mock";
+
+// 从 parts 中的 text parts 派生文本（替代已移除的 ChatMessage.content 兼容字段）
+function deriveContent(parts: MessagePart[] | undefined): string {
+  if (!parts) return "";
+  return parts
+    .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
 
 // 事件触发辅助函数
 const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
@@ -170,8 +179,8 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
 
     // 此时应该产生 user + pending assistant 两条消息，isStreaming=true
     const sess1 = useChatStore.getState().sessions[useChatStore.getState().currentId!];
-    expect(sess1.messages.some((m) => m.role === "user" && m.content === "你好")).toBe(true);
-    expect(sess1.messages.some((m) => m.role === "assistant" && m.content === "")).toBe(true);
+    expect(sess1.messages.some((m) => m.role === "user" && deriveContent(m.parts) === "你好")).toBe(true);
+    expect(sess1.messages.some((m) => m.role === "assistant" && deriveContent(m.parts) === "")).toBe(true);
     expect(useChatStore.getState().isStreaming).toBe(true);
     expect(chatMock.chat.send).toHaveBeenCalledTimes(1);
 
@@ -183,7 +192,7 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
 
     const sess2 = useChatStore.getState().sessions[useChatStore.getState().currentId!];
     const pending = sess2.messages.find((m) => m.role === "assistant");
-    expect(pending?.content).toBe("Hi 你好");
+    expect(deriveContent(pending?.parts)).toBe("Hi 你好");
     expect(useChatStore.getState().isStreaming).toBe(true); // 还没 done
 
     // done 事件

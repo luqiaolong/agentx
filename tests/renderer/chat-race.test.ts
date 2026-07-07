@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useChatStore } from "@/stores/chat";
+import { useChatStore, type MessagePart } from "@/stores/chat";
+
+// 从 parts 中的 text parts 派生文本（替代已移除的 ChatMessage.content 兼容字段）
+function deriveContent(parts: MessagePart[] | undefined): string {
+  if (!parts) return "";
+  return parts
+    .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
 
 // zustand persist 必须先于 store import
 import { vi } from "vitest";
@@ -63,7 +72,7 @@ describe("竞态场景：流式期间切/删会话", () => {
     const sessA = useChatStore.getState().sessions[tidA];
     const sessB = useChatStore.getState().sessions[tidB];
     const pendingA = sessA.messages.find((m) => m.id === pendingIdA);
-    expect(pendingA?.content).toBe("你好世界");
+    expect(deriveContent(pendingA?.parts)).toBe("你好世界");
 
     // B 还没收到任何消息
     expect(sessB.messages).toHaveLength(0);
@@ -127,17 +136,17 @@ describe("竞态场景：流式期间切/删会话", () => {
       ts: 4,
     });
 
-    // 流式 token 命中 shared-pending → 会找到第一个匹配的 session（A 的 pending）
-    // 这是已知设计取舍：appendMessageContent 拿到第一个匹配就 break，不深查。
-    // 测试目的：撞 id 时**只**改 A 的消息，不污染 B
+    // 流式 token 命中 shared-pending → messageIndex 反向索引指向最后写入的 session（B 的 pending）
+    // 这是 messageIndex 的设计取舍：相同 id 后写入的覆盖前一个，appendMessageContent 按 index 定位。
+    // 测试目的：撞 id 时**只**改 B 的消息（最后写入的），不污染 A
     useChatStore.getState().appendMessageContent("shared-pending", "只追加到 A");
 
     const sessA = useChatStore.getState().sessions[tidA];
     const sessB = useChatStore.getState().sessions[tidB];
     const aPending = sessA.messages.find((m) => m.id === "shared-pending");
     const bPending = sessB.messages.find((m) => m.id === "shared-pending");
-    expect(aPending?.content).toBe("只追加到 A");
-    expect(bPending?.content).toBe("");  // B 的 pending 没被改
+    expect(deriveContent(aPending?.parts)).toBe("");  // A 的 pending 没被改
+    expect(deriveContent(bPending?.parts)).toBe("只追加到 A");
   });
 
   it("currentId 指向被删会话 → 自动 fallback 到剩下第一个", async () => {
