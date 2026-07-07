@@ -21,14 +21,22 @@ use crate::store;
 // =============================================================================
 
 /// `dialog:openFile` 返回结果（对应 Electron `OpenDialogReturnValue`）。
+///
+/// `rename_all = "camelCase"`：前端 `OpenDialogResult` 接口使用 `filePaths`（camelCase），
+/// 不加此属性 serde 会按 Rust 命名输出 `file_paths`，前端拿到 `undefined`，
+/// 导致 `handleAttachWorkspace` 早 return，workspace 选择完全失效。
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenDialogResult {
     pub canceled: bool,
     pub file_paths: Vec<String>,
 }
 
 /// `dialog:saveFile` 返回结果（对应 Electron `SaveDialogReturnValue`）。
+///
+/// 同 `OpenDialogResult`，需 `camelCase` 与前端 `filePath` 对齐。
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveDialogResult {
     pub canceled: bool,
     pub file_path: Option<String>,
