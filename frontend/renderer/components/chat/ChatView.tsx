@@ -381,9 +381,11 @@ export function ChatView() {
   };
 
   const handlePause = async () => {
-    if (!currentId) return;
+    // 暂停/恢复必须针对正在流式输出的线程（用户可能已切到其他会话）
+    const tid = activeThreadIdRef.current ?? currentId;
+    if (!tid) return;
     try {
-      await chat.pause(currentId);
+      await chat.pause(tid);
     } catch {
       /* ignore */
     }
@@ -391,9 +393,10 @@ export function ChatView() {
   };
 
   const handleResume = async () => {
-    if (!currentId) return;
+    const tid = activeThreadIdRef.current ?? currentId;
+    if (!tid) return;
     try {
-      await chat.resume(currentId);
+      await chat.resume(tid);
     } catch {
       /* ignore */
     }

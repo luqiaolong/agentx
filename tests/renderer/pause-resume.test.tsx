@@ -168,6 +168,77 @@ describe("pause/resume UI", () => {
   });
 });
 
+describe("pause/resume 目标线程", () => {
+  it("点击暂停/继续时，请求发往当前流式线程（activeThreadIdRef），而非当前切换到的会话", async () => {
+    const idA = await useChatStore.getState().createSession();
+    const idB = await useChatStore.getState().createSession();
+    // 模拟用户已切到 idB，但流式事件仍属于 idA
+    useChatStore.setState({ currentId: idB, isStreaming: true });
+
+    function ActiveThreadHarness() {
+      const activeThreadIdRef = useRef<string | null>(idA);
+      const pendingIdRef = useRef<string | null>(null);
+      const currentTaskIdRef = useRef<string | null>(null);
+      const lastUserQueryRef = useRef<string>("");
+      const [, setTodos] = useState<TodoItem[]>([]);
+      const [isPaused, setIsPaused] = useState(false);
+
+      useChatStream({
+        threadId: idB,
+        activeThreadIdRef,
+        pendingIdRef,
+        currentTaskIdRef,
+        lastUserQueryRef,
+        setTodos,
+        setErrorMsg: () => {},
+        setPaused: setIsPaused,
+      });
+
+      return (
+        <ChatComposer
+          isStreaming={true}
+          isPaused={isPaused}
+          setDropError={() => {}}
+          onSend={() => {}}
+          onPause={() => {
+            const tid = activeThreadIdRef.current ?? idB;
+            if (tid) void chatMock.chat.pause(tid);
+            setIsPaused(true);
+          }}
+          onResume={() => {
+            const tid = activeThreadIdRef.current ?? idB;
+            if (tid) void chatMock.chat.resume(tid);
+            setIsPaused(false);
+          }}
+        />
+      );
+    }
+
+    const { getByRole } = render(<ActiveThreadHarness />);
+
+    const pauseBtn = getByRole("button", { name: "暂停生成" });
+    await act(async () => {
+      pauseBtn.click();
+      await Promise.resolve();
+    });
+    expect(chatMock.chat.pause).toHaveBeenCalledTimes(1);
+    expect(chatMock.chat.pause).toHaveBeenCalledWith(idA);
+
+    // 触发 paused 事件切到继续按钮
+    await act(async () => {
+      emitEvent({ type: "paused", data: {} });
+    });
+
+    const resumeBtn = getByRole("button", { name: "继续生成" });
+    await act(async () => {
+      resumeBtn.click();
+      await Promise.resolve();
+    });
+    expect(chatMock.chat.resume).toHaveBeenCalledTimes(1);
+    expect(chatMock.chat.resume).toHaveBeenCalledWith(idA);
+  });
+});
+
 describe("useChatStream paused 事件", () => {
   it("收到 paused 事件后 setPaused(true)，收到 token 后恢复 false", async () => {
     const pausedLog: boolean[] = [];
