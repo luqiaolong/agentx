@@ -112,7 +112,37 @@ def close_checkpointer() -> None:
         _async_saver = None
 
 
+async def aclose_checkpointer() -> None:
+    """异步关闭 checkpointer 连接并重置单例。
+
+    在异步上下文（如 CLI ``asyncio.run`` 内部）中调用，正确 ``await``
+    异步连接关闭，避免 ``RuntimeWarning: coroutine never awaited``。
+    """
+    global _sync_saver, _sync_conn, _async_saver, _async_conn
+
+    # 关闭同步 saver
+    if _sync_conn is not None:
+        try:
+            _sync_conn.close()
+            logger.info("SQLite 同步 checkpointer 已关闭")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("关闭同步 checkpointer 失败", error=str(exc))
+        _sync_conn = None
+        _sync_saver = None
+
+    # 关闭异步 saver
+    if _async_conn is not None:
+        try:
+            await _async_conn.close()
+            logger.info("SQLite 异步 checkpointer 已关闭")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("关闭异步 checkpointer 失败", error=str(exc))
+        _async_conn = None
+        _async_saver = None
+
+
 __all__ = [
+    "aclose_checkpointer",
     "close_checkpointer",
     "get_async_checkpointer",
     "get_checkpointer",

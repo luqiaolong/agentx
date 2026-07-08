@@ -92,10 +92,34 @@ async def _run_subtask(
 
     abort_event = await get_abort_event(thread_id)
 
+    def _inherit_workspace(child_thread_id: str) -> None:
+        """将主 thread_id 的 workspace 授权继承到子任务 thread_id。
+
+        子任务使用独立 thread_id（如 ``{thread_id}-team-code-{idx}``），
+        若不继承授权，fs 工具的沙箱检查会失败，触发 directory_extension
+        审批死锁（_handle_directory_extension 在返回前等待审批，但审批事件
+        在返回后才 yield 到前端）。
+        """
+        if not workspace_path:
+            return
+        from app.utils.security import get_sandbox
+
+        sandbox = get_sandbox()
+        try:
+            sandbox.authorize(child_thread_id, workspace_path, writable=True, source="team_inherit")
+        except ValueError as exc:  # noqa: BLE001
+            logger.warning(
+                "team subtask workspace inherit failed",
+                child_thread_id=child_thread_id,
+                workspace=workspace_path,
+                error=str(exc),
+            )
+
     if agent_name == "deep":
         # deep 子任务使用独立 thread_id，避免并行 deep 子任务共享 checkpoint
         # 与 _pending_approvals 审批流冲突
         deep_thread_id = f"{thread_id}-team-deep-{task_index}"
+        _inherit_workspace(deep_thread_id)
         deep_state: RouterState = {
             "thread_id": deep_thread_id,
             "messages": [{"role": "user", "content": input_text}],
@@ -139,6 +163,7 @@ async def _run_subtask(
         # code 子任务映射到 coding Expert（场景化架构）
         # coding Expert 使用独立 thread_id，避免并行子任务共享 checkpoint
         code_thread_id = f"{thread_id}-team-code-{task_index}"
+        _inherit_workspace(code_thread_id)
         try:
             async for event in orchestrator.run_coding_expert(
                 input_text,
@@ -216,6 +241,7 @@ async def _run_subtask(
         else:
             # 无专属配置时降级到 coding Expert
             fallback_thread_id = f"{thread_id}-team-fallback-{task_index}"
+            _inherit_workspace(fallback_thread_id)
             try:
                 async for event in orchestrator.run_coding_expert(
                     input_text,

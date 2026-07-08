@@ -97,6 +97,7 @@ def _workspace_prompt_suffix(workspace_path: str | None) -> str:
         return ""
     return (
         f"\n\n当前工作目录: {workspace_path}\n"
+        "该目录已授权，你可以直接使用 list_dir、read_file、glob、grep 等工具访问。"
         "执行 cli_execute 工具时，若用户未指定其他目录，"
         "必须将 cwd 参数设为当前工作目录；执行文件读写工具时，"
         "优先使用当前工作目录下的相对路径。"

@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator
 
 from langgraph.prebuilt import create_react_agent
@@ -63,6 +64,7 @@ def _workspace_prompt_suffix(workspace_path: str | None) -> str:
         return ""
     return (
         f"\n\n当前工作目录: {workspace_path}\n"
+        "该目录已授权，你可以直接使用 list_dir、read_file、glob、grep 等工具访问。"
         "执行 cli_execute 工具时，若用户未指定其他目录，"
         "必须将 cwd 参数设为当前工作目录；执行文件读写工具时，"
         "优先使用当前工作目录下的相对路径。"
@@ -321,8 +323,19 @@ async def run_work_supervisor(
             sandbox.set_full_trust(thread_id, False)
         return
 
+    # 只读工具集合（用于循环保护检测）
+    _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
+
     max_iterations = 50
     iteration = 0
+    # 连续只读工具调用计数（用于防过度探索保护）
+    readonly_streak = 0
+    # 只读工具调用阈值：超过此值认为 LLM 在过度探索，强制其基于已有信息回答
+    readonly_streak_threshold = 10
+    # 强制回答模式：注入错误消息迫使 LLM 停止工具调用、直接产出最终回复
+    force_answer = False
+    # 上一轮 tool_call 签名集合（用于检测完全相同的重复调用 = 真循环）
+    prev_signatures: set[tuple[str, str]] = set()
 
     while iteration < max_iterations:
         iteration += 1
@@ -342,6 +355,83 @@ async def run_work_supervisor(
         if not pending_calls:
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
+
+        # ---- 强制回答模式：注入错误并恢复，让 LLM 直接产出最终回复 ----
+        # 触发条件：readonly_streak 超限 或 检测到完全相同的重复 tool_call。
+        # 注入 ToolMessage 错误后恢复执行，LLM 看到错误后会基于已收集的信息回答。
+        # 若 LLM 仍尝试调用工具，下一轮 force_answer=True 分支会继续注入错误。
+        if force_answer:
+            for tc in pending_calls:
+                await _inject_tool_error_for_call(
+                    agent, config, tc,
+                    "已进入强制回答模式，请基于已收集的信息直接回答用户，不要再调用任何工具。"
+                )
+            try:
+                async for sse in _stream_agent_events(agent, None, config, source="work"):
+                    yield sse
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("supervisor force-answer resume failed", thread_id=thread_id)
+                await _inject_tool_error_messages(agent, config, f"Supervisor 恢复失败: {exc}")
+                yield make_sse_event("error", f"Supervisor 恢复失败: {exc}")
+                sandbox.set_full_trust(thread_id, False)
+                return
+            continue
+
+        # ---- 循环保护：检测连续只读工具过度探索 ----
+        pending_names = {tc.get("name", "") for tc in pending_calls}
+        has_dangerous = bool(pending_names & runtime_dangerous)
+        all_readonly = pending_names.issubset(_READONLY_TOOLS)
+        if all_readonly and not has_dangerous:
+            readonly_streak += 1
+        else:
+            readonly_streak = 0
+
+        # ---- 真循环检测：连续两轮完全相同的 tool_call 签名 → 立即强制回答 ----
+        current_signatures = {
+            (tc.get("name", ""), json.dumps(tc.get("args", {}), sort_keys=True, ensure_ascii=False))
+            for tc in pending_calls
+        }
+        repeated = current_signatures & prev_signatures
+        prev_signatures = current_signatures
+
+        trigger_force_answer = False
+        if repeated:
+            logger.warning(
+                "supervisor duplicate tool calls detected, forcing answer",
+                thread_id=thread_id,
+                repeated=sorted(repeated),
+            )
+            trigger_force_answer = True
+        elif readonly_streak >= readonly_streak_threshold:
+            logger.warning(
+                "supervisor readonly streak exceeded, forcing answer",
+                thread_id=thread_id,
+                readonly_streak=readonly_streak,
+                pending_tools=sorted(pending_names),
+            )
+            trigger_force_answer = True
+
+        if trigger_force_answer:
+            for tc in pending_calls:
+                await _inject_tool_error_for_call(
+                    agent, config, tc,
+                    "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。"
+                )
+            yield make_sse_event(
+                "reasoning",
+                {"content": "已收集足够上下文，正在基于已有信息生成回复...", "source": "work"},
+            )
+            force_answer = True
+            try:
+                async for sse in _stream_agent_events(agent, None, config, source="work"):
+                    yield sse
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("supervisor force-answer resume failed", thread_id=thread_id)
+                await _inject_tool_error_messages(agent, config, f"Supervisor 恢复失败: {exc}")
+                yield make_sse_event("error", f"Supervisor 恢复失败: {exc}")
+                sandbox.set_full_trust(thread_id, False)
+                return
+            continue
 
         # full_trust 模式：所有工具直接放行
         if is_full_trust:

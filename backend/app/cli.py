@@ -176,7 +176,7 @@ async def run_repl(
 ) -> None:
     """REPL 交互模式。"""
     from app.config import get_settings, reload_settings
-    from app.memory.checkpointer import get_async_checkpointer
+    from app.memory.checkpointer import aclose_checkpointer, get_async_checkpointer
     from app.router.graph import run_router
 
     # 加载配置
@@ -200,17 +200,16 @@ async def run_repl(
     current_mode = agent_mode
     paused = False  # Ctrl+C 暂停状态标记
 
-    while True:
+    try:
+      while True:
         try:
             user_input = await asyncio.get_event_loop().run_in_executor(
                 None, input, "> "
             )
         except KeyboardInterrupt:
             if paused:
-                # 已暂停状态下再次 Ctrl+C → 退出
                 print("\n再见!")
                 break
-            # 非暂停状态下在 input 阶段按 Ctrl+C → 直接退出
             print("\n再见!")
             break
         except EOFError:
@@ -241,9 +240,8 @@ async def run_repl(
                 workspace_path=workspace_path,
             )
             await _consume_events(event_gen, renderer, thread_id, is_repl=True)
-            paused = False  # 正常完成，重置暂停状态
+            paused = False
         except KeyboardInterrupt:
-            # 生成过程中按 Ctrl+C → 暂停
             from app.approval.state import set_pause
             await set_pause(thread_id)
             paused = True
@@ -257,6 +255,8 @@ async def run_repl(
 
         if json_mode:
             renderer.flush_json()
+    finally:
+        await aclose_checkpointer()
 
 
 def _print_banner(agent_mode: str, thread_id: str, model: str) -> None:
@@ -580,7 +580,7 @@ async def run_one_shot(
         退出码：0 成功，1 错误。
     """
     from app.config import get_settings, reload_settings
-    from app.memory.checkpointer import get_async_checkpointer
+    from app.memory.checkpointer import aclose_checkpointer, get_async_checkpointer
     from app.router.graph import run_router
 
     # 加载配置
@@ -613,6 +613,8 @@ async def run_one_shot(
         else:
             print(f"[错误] {exc}", file=sys.stderr)
         return 1
+    finally:
+        await aclose_checkpointer()
 
     if json_mode:
         renderer.flush_json()
@@ -642,6 +644,10 @@ def main() -> None:
 
     # 读取管道输入
     stdin_content = _read_stdin_if_piped()
+
+    # coding_team 模式下增加子任务超时到 600s（CLI 交互场景需要更长）
+    if agent_mode == "coding_team":
+        os.environ.setdefault("AGENTX_AGENT_TEAM_SUBTASK_TIMEOUT", "600")
 
     # 判断模式
     if args.message is not None:

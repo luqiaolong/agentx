@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
@@ -364,8 +365,12 @@ async def run_coding_expert(
     iteration = 0
     # 连续只读工具调用计数（用于防过度探索保护）
     readonly_streak = 0
-    # 只读工具调用阈值：超过此值认为 LLM 在过度探索，强制终止
+    # 只读工具调用阈值：超过此值认为 LLM 在过度探索，强制其基于已有信息回答
     readonly_streak_threshold = 10
+    # 强制回答模式：注入错误消息迫使 LLM 停止工具调用、直接产出最终回复
+    force_answer = False
+    # 上一轮 tool_call 签名集合（用于检测完全相同的重复调用 = 真循环）
+    prev_signatures: set[tuple[str, str]] = set()
 
     while iteration < max_iterations:
         iteration += 1
@@ -385,6 +390,27 @@ async def run_coding_expert(
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
 
+        # ---- 强制回答模式：注入错误并恢复，让 LLM 直接产出最终回复 ----
+        # 触发条件：readonly_streak 超限 或 检测到完全相同的重复 tool_call。
+        # 注入 ToolMessage 错误后恢复执行，LLM 看到错误后会基于已收集的信息回答。
+        # 若 LLM 仍尝试调用工具，下一轮 force_answer=True 分支会继续注入错误。
+        if force_answer:
+            for tc in pending_calls:
+                await _inject_tool_error_for_call(
+                    agent, config, tc,
+                    "已进入强制回答模式，请基于已收集的信息直接回答用户，不要再调用任何工具。"
+                )
+            try:
+                async for sse in _stream_agent_events(agent, None, config, source="coding"):
+                    yield sse
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("coding_expert force-answer resume failed", thread_id=thread_id)
+                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
+                yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
+                sandbox.set_full_trust(thread_id, False)
+                return
+            continue
+
         # ---- 循环保护：检测连续只读工具过度探索 ----
         pending_names = {tc.get("name", "") for tc in pending_calls}
         has_dangerous = bool(pending_names & runtime_dangerous)
@@ -394,25 +420,53 @@ async def run_coding_expert(
         else:
             readonly_streak = 0
 
-        if readonly_streak >= readonly_streak_threshold:
+        # ---- 真循环检测：连续两轮完全相同的 tool_call 签名 → 立即强制回答 ----
+        current_signatures = {
+            (tc.get("name", ""), json.dumps(tc.get("args", {}), sort_keys=True, ensure_ascii=False))
+            for tc in pending_calls
+        }
+        repeated = current_signatures & prev_signatures
+        prev_signatures = current_signatures
+
+        trigger_force_answer = False
+        if repeated:
             logger.warning(
-                "coding_expert readonly streak exceeded, forcing stop",
+                "coding_expert duplicate tool calls detected, forcing answer",
+                thread_id=thread_id,
+                repeated=sorted(repeated),
+            )
+            trigger_force_answer = True
+        elif readonly_streak >= readonly_streak_threshold:
+            logger.warning(
+                "coding_expert readonly streak exceeded, forcing answer",
                 thread_id=thread_id,
                 readonly_streak=readonly_streak,
-                pending_tools=list(pending_names),
+                pending_tools=sorted(pending_names),
             )
-            # 强制注入错误消息，让 LLM 停止探索并直接回答
+            trigger_force_answer = True
+
+        if trigger_force_answer:
+            # 注入错误消息告诉 LLM 停止探索，然后恢复执行让其产出最终回复
             for tc in pending_calls:
                 await _inject_tool_error_for_call(
                     agent, config, tc,
                     "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。"
                 )
             yield make_sse_event(
-                "error",
-                "工具调用次数过多，已强制停止。请简化您的请求或明确指定目标路径。"
+                "reasoning",
+                {"content": "已收集足够上下文，正在基于已有信息生成回复...", "source": "coding"},
             )
-            sandbox.set_full_trust(thread_id, False)
-            return
+            force_answer = True
+            try:
+                async for sse in _stream_agent_events(agent, None, config, source="coding"):
+                    yield sse
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("coding_expert force-answer resume failed", thread_id=thread_id)
+                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
+                yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
+                sandbox.set_full_trust(thread_id, False)
+                return
+            continue
 
         if is_full_trust:
             sandbox.clear_temp(thread_id)

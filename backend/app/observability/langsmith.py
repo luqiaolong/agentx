@@ -70,7 +70,12 @@ def trace_span(name: str, **metadata: Any) -> Iterator[dict[str, Any]]:
             logger.debug(
                 "trace.span.end", name=name, latency_ms=latency_ms, metadata=span["metadata"]
             )
-        _current_span.reset(token)
+        try:
+            _current_span.reset(token)
+        except ValueError:
+            # ContextVar 跨上下文（如子任务在独立事件循环中创建 span，
+            # 主上下文关闭生成器时 reset 会报 ValueError），安全忽略
+            pass
 
 
 def mark_redacted() -> str:

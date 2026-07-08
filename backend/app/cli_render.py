@@ -184,12 +184,21 @@ class EventRenderer:
         """team_plan 事件：显示团队计划。"""
         try:
             parsed = json.loads(data)
-            tasks = parsed.get("tasks", parsed.get("subtasks", []))
+            tasks = parsed.get("plan", parsed.get("tasks", parsed.get("subtasks", [])))
             count = len(tasks) if isinstance(tasks, list) else "?"
         except (json.JSONDecodeError, TypeError):
+            tasks = []
             count = "?"
 
         print(f"\n{Fore.MAGENTA}[团队计划: {count} 个子任务]{Style.RESET_ALL}", flush=True)
+        if isinstance(tasks, list):
+            for i, task in enumerate(tasks, 1):
+                if isinstance(task, dict):
+                    agent = task.get("agent", "?")
+                    purpose = task.get("purpose", task.get("input", ""))
+                    if len(purpose) > 80:
+                        purpose = purpose[:80] + "..."
+                    print(f"  {i}. [{agent}] {purpose}", flush=True)
         if self.verbose:
             print(f"{Fore.LIGHTBLACK_EX}{data}{Style.RESET_ALL}", flush=True)
 
@@ -199,18 +208,21 @@ class EventRenderer:
             parsed = json.loads(data)
             agent = parsed.get("agent", parsed.get("name", ""))
             status = parsed.get("status", "")
+            message = parsed.get("message", "")
         except (json.JSONDecodeError, TypeError):
             agent = ""
             status = data
+            message = ""
 
-        print(f"{Fore.MAGENTA}[{agent}] {status}{Style.RESET_ALL}", flush=True)
+        msg_part = f" — {message}" if message else ""
+        print(f"{Fore.MAGENTA}[{agent}] {status}{msg_part}{Style.RESET_ALL}", flush=True)
 
     def _render_team_result(self, data: str) -> None:
         """team_result 事件：显示团队结果。"""
         try:
             parsed = json.loads(data)
             agent = parsed.get("agent", parsed.get("name", ""))
-            result = parsed.get("result", "")
+            result = parsed.get("summary", parsed.get("result", ""))
         except (json.JSONDecodeError, TypeError):
             agent = ""
             result = data
