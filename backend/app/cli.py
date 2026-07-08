@@ -96,6 +96,10 @@ async def _consume_events(
 
     Returns:
         True 表示正常完成，False 表示出错。
+
+    Note:
+        REPL 模式下不捕获 KeyboardInterrupt，交由外层 ``run_repl`` 处理
+        （第一次 Ctrl+C 暂停，第二次退出）。
     """
     try:
         async for event in event_generator:
@@ -113,6 +117,8 @@ async def _consume_events(
                 return False
 
     except KeyboardInterrupt:
+        if is_repl:
+            raise  # 交由 run_repl 统一处理
         print("\n[中断]")
         return False
     except Exception as exc:
@@ -192,13 +198,22 @@ async def run_repl(
     renderer = EventRenderer(verbose=verbose, json_mode=json_mode)
 
     current_mode = agent_mode
+    paused = False  # Ctrl+C 暂停状态标记
 
     while True:
         try:
             user_input = await asyncio.get_event_loop().run_in_executor(
                 None, input, "> "
             )
-        except (EOFError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            if paused:
+                # 已暂停状态下再次 Ctrl+C → 退出
+                print("\n再见!")
+                break
+            # 非暂停状态下在 input 阶段按 Ctrl+C → 直接退出
+            print("\n再见!")
+            break
+        except EOFError:
             print("\n再见!")
             break
 
@@ -226,7 +241,15 @@ async def run_repl(
                 workspace_path=workspace_path,
             )
             await _consume_events(event_gen, renderer, thread_id, is_repl=True)
+            paused = False  # 正常完成，重置暂停状态
+        except KeyboardInterrupt:
+            # 生成过程中按 Ctrl+C → 暂停
+            from app.approval.state import set_pause
+            await set_pause(thread_id)
+            paused = True
+            print("\n[已暂停，再次 Ctrl+C 退出]")
         except Exception as exc:
+            paused = False
             if json_mode:
                 renderer._json_events.append({"event": "error", "data": str(exc)})
             else:
