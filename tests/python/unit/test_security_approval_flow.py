@@ -54,7 +54,7 @@ async def _empty_stream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, st
 async def _no_stream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
     """完全空流：不 yield 任何事件。"""
     return
-    yield  # noqa: unreachable — make this an async generator
+    yield  # pragma: no cover
 
 
 # ============================================================
@@ -530,7 +530,7 @@ class TestParentThreadIdInheritance:
         agent = MagicMock()
         config = {"configurable": {"thread_id": "child-thread"}}
 
-        events = [
+        [
             e
             async for e in run_approval_loop(
                 agent,

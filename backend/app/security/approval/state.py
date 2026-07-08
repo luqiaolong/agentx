@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
 
 from app.security.approval.decision import ApprovalResult
 
@@ -29,8 +28,11 @@ __all__ = [
     "is_aborted",
     "clear_abort",
     "wait_for_abort",
+    "get_abort_event",
     "set_pause",
     "clear_pause",
+    "is_paused",
+    "get_pause_event",
     "wait_for_resume",
     "start_reaper",
 ]
@@ -172,7 +174,6 @@ async def is_aborted(thread_id: str) -> bool:
 async def clear_abort(thread_id: str) -> None:
     """清除中止标志（消费后清理）。同时 set event 唤醒所有等待者。"""
     async with _state_lock:
-        ts = _now()
         _abort_flags.pop(thread_id, None)
         entry = _abort_events.pop(thread_id, None)
         if entry is not None:
@@ -211,6 +212,24 @@ async def wait_for_abort(thread_id: str, timeout: float) -> bool:
         return False
 
 
+async def get_abort_event(thread_id: str) -> asyncio.Event:
+    """获取或创建 thread_id 对应的中止事件。
+
+    流式生成器内部可通过 ``event.is_set()`` 即时检查中止，避免依赖轮询。
+    获取即更新活动时间（event 通常用于后续 ``await``，应被 reaper 视为活跃）。
+    """
+    async with _state_lock:
+        ts = _now()
+        entry = _abort_events.get(thread_id)
+        if entry is None:
+            event = asyncio.Event()
+            _abort_events[thread_id] = (event, ts)
+            return event
+        event = entry[0]
+        _abort_events[thread_id] = (event, ts)
+        return event
+
+
 # ---- pause ----
 
 
@@ -223,13 +242,19 @@ async def set_pause(thread_id: str) -> None:
 async def clear_pause(thread_id: str) -> None:
     """清除暂停标志并唤醒等待中的协程。"""
     async with _state_lock:
-        ts = _now()
         _pause_flags.pop(thread_id, None)
         entry = _pause_events.pop(thread_id, None)
         if entry is not None:
             entry[0].set()
         # 记录活动：若 thread_id 仍存在于其他 dict，则已更新；
         # 否则该 thread_id 已无任何状态，无需保留
+
+
+async def is_paused(thread_id: str) -> bool:
+    """检查是否已设置暂停标志。"""
+    async with _state_lock:
+        entry = _pause_flags.get(thread_id)
+        return entry[0] if entry is not None else False
 
 
 async def wait_for_resume(thread_id: str, timeout: float) -> bool:
@@ -265,3 +290,21 @@ async def wait_for_resume(thread_id: str, timeout: float) -> bool:
         return True
     except asyncio.TimeoutError:
         return False
+
+
+async def get_pause_event(thread_id: str) -> asyncio.Event:
+    """获取或创建 thread_id 对应的暂停事件。
+
+    DeepAgent 可通过 ``await event.wait()`` 阻塞直到 ``clear_pause`` 被调用。
+    获取即更新活动时间（event 通常用于后续 ``await``，应被 reaper 视为活跃）。
+    """
+    async with _state_lock:
+        ts = _now()
+        entry = _pause_events.get(thread_id)
+        if entry is None:
+            event = asyncio.Event()
+            _pause_events[thread_id] = (event, ts)
+            return event
+        event = entry[0]
+        _pause_events[thread_id] = (event, ts)
+        return event

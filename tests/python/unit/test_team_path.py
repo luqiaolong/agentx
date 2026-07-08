@@ -323,7 +323,7 @@ async def test_run_team_path_emits_team_plan_progress_result(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
 
     async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
@@ -372,7 +372,7 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
         if False:
             yield {}
@@ -400,7 +400,7 @@ async def test_run_team_path_partial_failure_continues(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码成功"}
 
     async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
@@ -486,7 +486,7 @@ async def test_run_team_path_token_data_is_plain_string(
     }
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
 
     monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)

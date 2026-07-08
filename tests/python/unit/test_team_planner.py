@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 from app.team.blackboard import TeamPlanTask
 from app.team.planner import _validate_task

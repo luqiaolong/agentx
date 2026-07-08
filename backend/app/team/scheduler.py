@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, AsyncIterator
 
-from app.approval import get_abort_event
+from app.security.approval import get_abort_event
 from app.config import get_settings
 from app.utils.sse_events import make_team_event
 from app.utils.text import extract_chunk_text

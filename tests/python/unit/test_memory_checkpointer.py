@@ -8,7 +8,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
 import app.memory.checkpointer as cp_module

@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.config import PROJECT_ROOT
 from app.main import app
-from app.utils.security import get_sandbox
+from app.sandbox import get_sandbox
 
 
 @pytest.fixture
@@ -74,7 +74,9 @@ def test_authorize_list_revoke_roundtrip(client: TestClient) -> None:
         assert resp.status_code == 200, resp.text
         assert resp.json()["dirs"] == [], f"撤销后列表非空: {resp.json()}"
     finally:
-        get_sandbox().clear(thread_id)
+        _sandbox = get_sandbox()
+        _sandbox._authorized_dirs.pop(thread_id, None)
+        _sandbox._temp_authorized.pop(thread_id, None)
 
 
 @pytest.mark.integration
@@ -94,7 +96,9 @@ def test_authorize_writable_flag(client: TestClient) -> None:
         dirs = resp.json()["dirs"]
         assert any(d["writable"] is True for d in dirs), f"未反映 writable 标记: {dirs}"
     finally:
-        get_sandbox().clear(thread_id)
+        _sandbox = get_sandbox()
+        _sandbox._authorized_dirs.pop(thread_id, None)
+        _sandbox._temp_authorized.pop(thread_id, None)
 
 
 @pytest.mark.integration
@@ -113,7 +117,9 @@ def test_authorize_system_critical_dir_returns_400(client: TestClient) -> None:
         assert resp.status_code == 400, f"系统关键目录应返回 400: {resp.status_code} {resp.text}"
         assert "关键目录" in resp.text, resp.text
     finally:
-        get_sandbox().clear(thread_id)
+        _sandbox = get_sandbox()
+        _sandbox._authorized_dirs.pop(thread_id, None)
+        _sandbox._temp_authorized.pop(thread_id, None)
 
 
 @pytest.mark.integration
@@ -129,4 +135,6 @@ def test_revoke_nonexistent_returns_false(client: TestClient) -> None:
         assert resp.status_code == 200, resp.text
         assert resp.json()["revoked"] is False
     finally:
-        get_sandbox().clear(thread_id)
+        _sandbox = get_sandbox()
+        _sandbox._authorized_dirs.pop(thread_id, None)
+        _sandbox._temp_authorized.pop(thread_id, None)

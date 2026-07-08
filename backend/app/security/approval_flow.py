@@ -18,9 +18,8 @@
    而非 ``float("inf")``。
 
 审批状态 API（``pop_approval`` / ``is_aborted`` / ``is_paused`` / ``get_pause_event``）
-继续使用 ``app.approval``（旧包），保持与 ``/api/chat/approve`` /
-``/api/chat/abort`` / ``/api/chat/pause`` 端点的连通性。Phase 5 统一迁移到
-``app.security.approval`` 后切换。
+使用 ``app.security.approval``，与 ``/api/chat/approve`` /
+``/api/chat/abort`` / ``/api/chat/pause`` 端点共用同一审批状态模块。
 
 沙箱操作使用新的 async ``app.sandbox.SessionSandbox``。参数脱敏使用新的
 ``app.security.command_filter.redact_args``（支持 cli_execute 命令脱敏）。
@@ -32,8 +31,12 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from app.approval import is_aborted, is_paused, pop_approval
-from app.approval.state import get_pause_event
+from app.security.approval import (
+    get_pause_event,
+    is_aborted,
+    is_paused,
+    pop_approval,
+)
 from app.config import get_settings
 from app.observability.logger import logger
 from app.sandbox import SessionSandbox

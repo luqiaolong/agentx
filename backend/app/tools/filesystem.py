@@ -15,10 +15,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR
+from app.config import PROJECT_ROOT, WORKSPACE_DIR
 from app.observability.logger import logger
 from app.utils.paths import normalize_path
-from app.utils.security import PathNotAuthorized, get_sandbox
+from app.sandbox import PathNotAuthorized, get_sandbox
 
 # 读权限缺失时的统一错误信息（与 SessionSandbox.check_read 一致）
 _UNAUTHORIZED_READ = "路径 {path} 未授权，请通过 dialog 选择目录后重试"
@@ -47,7 +47,7 @@ async def read_file(thread_id: str, path: str, base: str | Path | None = None) -
     """
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path, base=base)
+        await sandbox.check_read(thread_id, path, base=base)
     except PathNotAuthorized:
         logger.warning("fs.read_file denied", thread_id=thread_id, path=str(path))
         return _deny_read(path)
@@ -66,7 +66,7 @@ async def list_dir(thread_id: str, path: str, base: str | Path | None = None) ->
     """
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path, base=base)
+        await sandbox.check_read(thread_id, path, base=base)
     except PathNotAuthorized:
         logger.warning("fs.list_dir denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
@@ -90,7 +90,7 @@ async def glob(thread_id: str, pattern: str, base: str | Path | None = None) -> 
     sandbox = get_sandbox()
     base_dir = _glob_base(pattern)
     try:
-        sandbox.check_read(thread_id, base_dir, base=base)
+        await sandbox.check_read(thread_id, base_dir, base=base)
     except PathNotAuthorized:
         logger.warning(
             "fs.glob denied", thread_id=thread_id, pattern=pattern, base=str(base_dir)
@@ -118,7 +118,7 @@ async def grep(thread_id: str, pattern: str, path: str, base: str | Path | None 
     """
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path, base=base)
+        await sandbox.check_read(thread_id, path, base=base)
     except PathNotAuthorized:
         logger.warning("fs.grep denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
@@ -210,7 +210,7 @@ async def write_file(thread_id: str, path: str, content: str, base: str | Path |
 
     # ---- 2. 权限校验 ----
     try:
-        sandbox.check_write(thread_id, path, base=base)
+        await sandbox.check_write(thread_id, path, base=base)
     except PathNotAuthorized as exc:
         msg = str(exc)
         matched_readonly = "仅授权读取" in msg
@@ -273,7 +273,7 @@ async def edit_file(thread_id: str, path: str, old_text: str, new_text: str, bas
     """
     sandbox = get_sandbox()
     try:
-        sandbox.check_write(thread_id, path, base=base)
+        await sandbox.check_write(thread_id, path, base=base)
     except PathNotAuthorized as exc:
         msg = str(exc)
         matched_readonly = "仅授权读取" in msg
@@ -326,7 +326,7 @@ async def list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
     # 白名单 + 授权校验：复用 sandbox.check_read（统一入口，含 _temp_authorized）
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id or "", target)
+        await sandbox.check_read(thread_id or "", target)
     except PathNotAuthorized:
         raise ValueError(f"路径不在白名单内且未授权: {path}") from None
 
@@ -399,7 +399,7 @@ async def read_workspace_file(path: str, thread_id: str | None = None) -> dict[s
     """
     # 1. 复用沙箱读校验（白名单 + 授权目录 + 系统关键目录）
     sandbox = get_sandbox()
-    sandbox.check_read(thread_id or "", path)
+    await sandbox.check_read(thread_id or "", path)
 
     # 2. 解析为实际目标路径
     target = normalize_path(path)

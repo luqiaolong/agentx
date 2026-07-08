@@ -15,13 +15,12 @@ from pathlib import Path
 
 import pytest
 
+from app.sandbox import get_sandbox
+from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args
 from app.tools.cli import (
-    _DEFAULT_BLOCKLIST,
-    _has_forbidden_chars,
     _is_command_blocked,
     cli_execute,
 )
-from app.utils.security import get_sandbox
 
 
 def test_cli_tool_schema_uses_arguments_not_vargs() -> None:
@@ -39,14 +38,14 @@ def test_cli_tool_schema_uses_arguments_not_vargs() -> None:
 @pytest.fixture
 def fresh_sandbox():
     """每个测试使用独立 sandbox 内存状态。"""
-    import app.utils.security
+    import app.sandbox.session_sandbox
 
-    old = app.utils.security._sandbox
-    from app.utils.security import SessionSandbox
+    old = app.sandbox.session_sandbox._sandbox
+    from app.sandbox import SessionSandbox
 
-    app.utils.security._sandbox = SessionSandbox()
-    yield app.utils.security._sandbox
-    app.utils.security._sandbox = old
+    app.sandbox.session_sandbox._sandbox = SessionSandbox()
+    yield app.sandbox.session_sandbox._sandbox
+    app.sandbox.session_sandbox._sandbox = old
 
 
 # ============================================================
@@ -56,11 +55,11 @@ def fresh_sandbox():
 
 def test_default_blocklist_contains_dangerous_commands() -> None:
     """默认黑名单包含删除/格式化/提权等命令。"""
-    assert "rm" in _DEFAULT_BLOCKLIST
-    assert "del" in _DEFAULT_BLOCKLIST
-    assert "format" in _DEFAULT_BLOCKLIST
-    assert "sudo" in _DEFAULT_BLOCKLIST
-    assert "shutdown" in _DEFAULT_BLOCKLIST
+    assert "rm" in DEFAULT_BLOCKLIST
+    assert "del" in DEFAULT_BLOCKLIST
+    assert "format" in DEFAULT_BLOCKLIST
+    assert "sudo" in DEFAULT_BLOCKLIST
+    assert "shutdown" in DEFAULT_BLOCKLIST
 
 
 def test_is_command_blocked() -> None:
@@ -80,16 +79,16 @@ def test_is_command_blocked() -> None:
 
 def test_has_forbidden_chars() -> None:
     """包含 shell 元字符的参数被检测到。"""
-    assert _has_forbidden_chars("hello;world")
-    assert _has_forbidden_chars("a && b")
-    assert _has_forbidden_chars("a | b")
-    assert _has_forbidden_chars("$(whoami)")
-    assert _has_forbidden_chars("`whoami`")
-    assert _has_forbidden_chars("file > /dev/null")
-    assert _has_forbidden_chars("file < input")
-    assert not _has_forbidden_chars("normal_arg")
-    assert not _has_forbidden_chars("--flag")
-    assert not _has_forbidden_chars("path/to/file")
+    assert has_forbidden_args("hello;world")
+    assert has_forbidden_args("a && b")
+    assert has_forbidden_args("a | b")
+    assert has_forbidden_args("$(whoami)")
+    assert has_forbidden_args("`whoami`")
+    assert has_forbidden_args("file > /dev/null")
+    assert has_forbidden_args("file < input")
+    assert not has_forbidden_args("normal_arg")
+    assert not has_forbidden_args("--flag")
+    assert not has_forbidden_args("path/to/file")
 
 
 # ============================================================
@@ -143,7 +142,7 @@ async def test_cli_execute_unauthorized_cwd(fresh_sandbox, tmp_path: Path) -> No
 async def test_cli_execute_authorized_cwd(fresh_sandbox, tmp_path: Path) -> None:
     """workspace 模式下已授权目录可执行。"""
     sandbox = get_sandbox()
-    sandbox.authorize("t1", str(tmp_path), writable=True)
+    await sandbox.authorize("t1", str(tmp_path), writable=True)
 
     # 使用 git --version（不依赖 cwd 是 git 仓库）
     result = await cli_execute("t1", "git", ["--version"], cwd=str(tmp_path))
@@ -155,7 +154,7 @@ async def test_cli_execute_relative_cwd_uses_workspace_path(
 ) -> None:
     """传入 workspace_path 时，相对路径 cwd 应基于 workspace_path 解析。"""
     sandbox = get_sandbox()
-    sandbox.authorize("t1", str(tmp_path), writable=True)
+    await sandbox.authorize("t1", str(tmp_path), writable=True)
 
     # cwd="." 应解析为 tmp_path，而非 PROJECT_ROOT
     result = await cli_execute(
@@ -169,7 +168,7 @@ async def test_cli_execute_empty_cwd_falls_back_to_workspace_path(
 ) -> None:
     """未传 cwd 时，应回退到 workspace_path。"""
     sandbox = get_sandbox()
-    sandbox.authorize("t1", str(tmp_path), writable=True)
+    await sandbox.authorize("t1", str(tmp_path), writable=True)
 
     result = await cli_execute(
         "t1", "git", ["--version"], workspace_path=str(tmp_path)
@@ -180,7 +179,7 @@ async def test_cli_execute_empty_cwd_falls_back_to_workspace_path(
 async def test_cli_execute_full_trust(fresh_sandbox, tmp_path: Path) -> None:
     """full_trust 模式下跳过授权检查。"""
     sandbox = get_sandbox()
-    sandbox.set_full_trust("t1", True)
+    await sandbox.set_full_trust("t1", True)
 
     result = await cli_execute("t1", "git", ["--version"], cwd=str(tmp_path))
     assert "git version" in result

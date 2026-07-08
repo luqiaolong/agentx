@@ -18,7 +18,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _clear_abort_state() -> None:
     """每个测试前清理全局 abort 状态，避免事件泄漏。"""
-    from app.approval import state as approval_state
+    from app.security.approval import state as approval_state
 
     approval_state._abort_flags.clear()
     approval_state._abort_events.clear()
@@ -31,7 +31,7 @@ def _clear_abort_state() -> None:
 async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) -> None:
     """DeepAgent 流式事件生成器在中止后应抛出 CancelledError。"""
     from app.deep.streaming import _stream_agent_events
-    from app.approval import set_abort
+    from app.security.approval import set_abort
 
     async def _fake_astream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
         from langchain_core.messages import AIMessage
@@ -44,7 +44,7 @@ async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
 
     async def _abort_after() -> None:
         await asyncio.sleep(0.05)
-        set_abort("t-abort-deep")
+        await set_abort("t-abort-deep")
 
     task = asyncio.create_task(_abort_after())
     events: list[dict[str, str]] = []
@@ -67,7 +67,7 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
     from app.team.orchestrator import run_team_path
     import app.team.orchestrator as orch_module
 
-    from app.approval import set_abort
+    from app.security.approval import set_abort
 
     # 降级：让简单任务不走 chat 路径，强制进入 team 路径
     monkeypatch.setattr(
@@ -124,7 +124,7 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     async def _abort_before() -> None:
-        set_abort("t-abort-team")
+        await set_abort("t-abort-team")
 
     await _abort_before()
 

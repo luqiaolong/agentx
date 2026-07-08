@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import AsyncIterator
 
 from app.config import get_settings

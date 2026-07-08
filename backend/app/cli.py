@@ -130,8 +130,7 @@ async def _consume_events(
 
 async def _handle_approval(thread_id: str) -> None:
     """终端审批交互：阻塞等待用户输入。"""
-    from app.approval.decision import ApprovalDecision
-    from app.approval.state import submit_approval
+    from app.security.approval import ApprovalDecision, ApprovalResult, submit_approval
 
     while True:
         try:
@@ -140,23 +139,23 @@ async def _handle_approval(thread_id: str) -> None:
             )
         except (EOFError, KeyboardInterrupt):
             # 用户 Ctrl+C 或 Ctrl+D → 拒绝
-            await submit_approval(thread_id, ApprovalDecision(approved=False, decision="deny"))
+            await submit_approval(thread_id, ApprovalResult(decision=ApprovalDecision.DENY))
             print("[已拒绝]")
             return
 
         choice = user_input.strip().lower()
         if choice in ("y", "yes"):
-            await submit_approval(thread_id, ApprovalDecision(approved=True, decision="approve"))
+            await submit_approval(thread_id, ApprovalResult(decision=ApprovalDecision.APPROVE))
             return
         elif choice in ("n", "no"):
-            await submit_approval(thread_id, ApprovalDecision(approved=False, decision="deny"))
+            await submit_approval(thread_id, ApprovalResult(decision=ApprovalDecision.DENY))
             print("[已拒绝]")
             return
         elif choice in ("o", "once"):
-            await submit_approval(thread_id, ApprovalDecision(approved=True, decision="once"))
+            await submit_approval(thread_id, ApprovalResult(decision=ApprovalDecision.ONCE))
             return
         elif choice in ("s", "session"):
-            await submit_approval(thread_id, ApprovalDecision(approved=True, decision="session"))
+            await submit_approval(thread_id, ApprovalResult(decision=ApprovalDecision.SESSION))
             return
         else:
             print("请输入 y/n/o/s")
@@ -244,7 +243,7 @@ async def run_repl(
             paused = False  # 正常完成，重置暂停状态
         except KeyboardInterrupt:
             # 生成过程中按 Ctrl+C → 暂停
-            from app.approval.state import set_pause
+            from app.security.approval import set_pause
             await set_pause(thread_id)
             paused = True
             print("\n[已暂停，再次 Ctrl+C 退出]")
@@ -358,12 +357,12 @@ def _print_help() -> None:
 
 def _cmd_reset(thread_id: str, checkpointer) -> None:
     """清空会话状态。"""
-    from app.utils.security import get_sandbox
+    from app.sandbox import get_sandbox
 
     if checkpointer and hasattr(checkpointer, "adelete_thread"):
         try:
             asyncio.get_event_loop().create_task(checkpointer.adelete_thread(thread_id))
-            get_sandbox().clear(thread_id)
+            asyncio.get_event_loop().create_task(get_sandbox().clear(thread_id))
             print("[会话已重置]")
         except Exception as exc:
             print(f"[重置失败] {exc}")
@@ -388,10 +387,12 @@ def _cmd_mode(parts: list[str], current_mode: str) -> str | tuple[str]:
 
 def _cmd_init(workspace_path: str, thread_id: str) -> None:
     """授权当前目录为 workspace。"""
-    from app.utils.security import get_sandbox
+    from app.sandbox import get_sandbox
 
     try:
-        get_sandbox().authorize(workspace_path, thread_id)
+        asyncio.get_event_loop().create_task(
+            get_sandbox().authorize(thread_id, workspace_path)
+        )
         print(f"[已授权] {workspace_path} → thread {thread_id}")
     except Exception as exc:
         print(f"[授权失败] {exc}")
@@ -444,7 +445,6 @@ async def _cmd_compact(thread_id: str, checkpointer) -> None:
     """压缩会话历史。"""
     from langchain_core.messages import SystemMessage
     from app.memory import summarize_messages
-    from app.observability.logger import logger
 
     if not checkpointer:
         print("[checkpointer 未初始化]")
@@ -500,7 +500,7 @@ async def _cmd_compact(thread_id: str, checkpointer) -> None:
 
 def _cmd_abort(thread_id: str) -> None:
     """中止当前生成。"""
-    from app.approval.state import set_abort
+    from app.security.approval import set_abort
 
     try:
         asyncio.get_event_loop().create_task(set_abort(thread_id))
@@ -511,7 +511,7 @@ def _cmd_abort(thread_id: str) -> None:
 
 def _cmd_pause(thread_id: str) -> None:
     """暂停生成。"""
-    from app.approval.state import set_pause
+    from app.security.approval import set_pause
 
     try:
         asyncio.get_event_loop().create_task(set_pause(thread_id))
@@ -522,7 +522,7 @@ def _cmd_pause(thread_id: str) -> None:
 
 def _cmd_resume(thread_id: str) -> None:
     """恢复生成。"""
-    from app.approval.state import clear_pause
+    from app.security.approval import clear_pause
 
     try:
         asyncio.get_event_loop().create_task(clear_pause(thread_id))

@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.config import UPLOADS_DIR, WORKSPACE_DIR
+from app.config import WORKSPACE_DIR
 from app.sandbox.path_guard import PathNotAuthorized
 from app.sandbox.session_sandbox import SessionSandbox, get_sandbox
 from app.sandbox.store import SandboxStore

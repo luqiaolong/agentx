@@ -27,10 +27,10 @@ from app.memory import (
     list_skills_files,
     list_threads,
 )
-from app.memory.sandbox_store import get_sandbox_store
+from app.sandbox.store import get_sandbox_store
 from app.memory.skills_store import save_skill_file
 from app.observability.logger import logger
-from app.utils.security import get_sandbox
+from app.sandbox import get_sandbox
 
 
 def register_memory_routes(app: FastAPI) -> None:
@@ -187,7 +187,7 @@ def register_memory_routes(app: FastAPI) -> None:
         # 联动删除沙箱授权记录
         try:
             get_sandbox_store().delete_by_thread(thread_id)
-            get_sandbox().clear(thread_id)
+            await get_sandbox().clear(thread_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("sandbox cleanup failed for thread {}: {}", thread_id, exc)
         return {"ok": True, "deleted": deleted}

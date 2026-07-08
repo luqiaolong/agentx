@@ -27,7 +27,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, AsyncIterator
 
-from app.approval import get_abort_event
+from app.security.approval import get_abort_event
 from app.config import get_settings
 from app.deep.agent import run_deep_path  # noqa: F401 — 供 scheduler 经 orchestrator.run_deep_path 访问（monkeypatch 兼容）
 from app.llm import get_chat_model

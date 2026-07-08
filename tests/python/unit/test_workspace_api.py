@@ -18,9 +18,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR
+from app.config import PROJECT_ROOT, WORKSPACE_DIR
 from app.tools.filesystem import list_workspace, read_workspace_file
-from app.utils.security import PathNotAuthorized
+from app.sandbox import PathNotAuthorized
 
 
 # ============================================================

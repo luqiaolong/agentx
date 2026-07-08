@@ -37,6 +37,7 @@ from app.config.prompts.team import (
     _DEFAULT_UI_DESIGNER_SYSTEM_PROMPT,
     _DEFAULT_UI_DESIGNER_TRIGGER_DESCRIPTION,
 )
+from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
 
 __all__ = [
     "SubagentSettings",
@@ -96,22 +97,6 @@ BUILTIN_TEAM_KEYS: frozenset[str] = frozenset(
         "devops",
         "ui_designer",
         "product_manager",
-    }
-)
-
-# 自定义子代理禁止绑定的危险工具（与 claude.md §10 安全红线一致）
-# subagent 无 interrupt_before 审批流，暴露写/编辑/git 写操作会绕过 DeepAgent 审批
-# cli_execute 允许子代理使用（黑名单 + 沙箱授权 + 元字符过滤已足够安全）
-FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
-    {
-        "write_file",
-        "edit_file",
-        "shell_exec",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
     }
 )
 

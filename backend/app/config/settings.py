@@ -16,7 +16,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.agents import (
     AgentsConfig,
-    _default_agents_config,
     _parse_agents_config,
 )
 from app.config.subagents import (

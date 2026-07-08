@@ -13,8 +13,9 @@ from app.api.schemas import (
     ChatRequest,
     CompactRequest,
 )
-from app.approval import (
+from app.security.approval import (
     ApprovalDecision,
+    ApprovalResult,
     clear_abort,
     clear_pause,
     is_aborted,
@@ -82,7 +83,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
         if req.message.startswith("/reset"):
             await _clear_thread_state(req.thread_id)
             if not settings.persist_authorized_dirs:
-                get_sandbox().clear(req.thread_id)
+                await get_sandbox().clear(req.thread_id)
                 yield {"event": "token", "data": "已清空会话状态与授权目录"}
             else:
                 yield {"event": "token", "data": "已清空会话状态（授权目录已持久化，未清空）"}
@@ -125,7 +126,7 @@ def register_chat_routes(app: FastAPI) -> None:
 
     @app.post("/api/chat/approve")
     async def chat_approve(req: ApproveRequest) -> dict[str, Any]:
-        """提交审批决定，写入 ``app.approval`` 供 DeepAgent 消费。
+        """提交审批决定，写入 ``app.security.approval`` 供 DeepAgent 消费。
 
         支持两种审批场景：
         - dangerous_tool：approval=True/False，decision="approve"/"deny"
@@ -135,11 +136,12 @@ def register_chat_routes(app: FastAPI) -> None:
         否则按用户实际操作记录 user_approve / user_reject。
         """
         settings = get_settings()
+        # approval=False → 强制 deny（覆盖 decision 默认值 "approve"）
+        effective_decision = "deny" if not req.approval else req.decision
         await submit_approval(
             req.thread_id,
-            ApprovalDecision(
-                approved=req.approval,
-                decision=req.decision,
+            ApprovalResult(
+                decision=ApprovalDecision(effective_decision),
                 path=req.path,
                 writable=req.writable,
             ),
