@@ -10,13 +10,16 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 from app.config import get_settings
 from app.observability.logger import logger
 from app.utils.sse_events import make_team_event
 from app.utils.text import ThinkFilter, extract_chunk_text
 from app.team.blackboard import Blackboard, _serialize_blackboard
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 __all__ = [
     "_AGGREGATOR_PROMPT",
@@ -79,8 +82,14 @@ def _quality_gate(blackboard: Blackboard) -> tuple[bool, str]:
 async def _run_aggregator(
     user_message: str,
     blackboard: Blackboard,
+    chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """调用 Aggregator LLM，流式输出最终回复。"""
+    """调用 Aggregator LLM，流式输出最终回复。
+
+    Args:
+        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
+            None 时调用 ``orchestrator.get_chat_model()`` 获取真实 LLM。
+    """
     # 通过 orchestrator 模块属性访问 get_chat_model，
     # 以便测试通过 monkeypatch app.team.orchestrator.get_chat_model 替换。
     # 延迟 import 避免与 orchestrator.py 顶部的 import 形成循环。
@@ -99,7 +108,7 @@ async def _run_aggregator(
         return
 
     try:
-        llm = orchestrator.get_chat_model(temperature=0.5, streaming=True)
+        llm = chat_model if chat_model is not None else orchestrator.get_chat_model(temperature=0.5, streaming=True)
     except ValueError as exc:
         yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
         return

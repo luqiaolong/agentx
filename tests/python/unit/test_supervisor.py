@@ -206,7 +206,7 @@ class TestBuildWorkSupervisor:
             with patch("app.agents.supervisor.work_supervisor._make_deep_tools", return_value=[]):
                 with patch("app.agents.supervisor.work_supervisor.make_delegation_tools", return_value=[]):
                     with patch("app.agents.supervisor.work_supervisor.get_async_checkpointer", new_callable=AsyncMock):
-                        with patch("app.agents.supervisor.work_supervisor.create_react_agent") as mock_create:
+                        with patch("app.agents.supervisor.work_supervisor.create_agent") as mock_create:
                             mock_agent = MagicMock()
                             mock_create.return_value = mock_agent
 
@@ -217,7 +217,6 @@ class TestBuildWorkSupervisor:
                             # 验证 name="work_supervisor"
                             call_kwargs = mock_create.call_args.kwargs
                             assert call_kwargs["name"] == "work_supervisor"
-                            assert call_kwargs["interrupt_before"] == ["tools"]
 
     @pytest.mark.asyncio
     async def test_build_with_custom_tools(self) -> None:
@@ -229,12 +228,12 @@ class TestBuildWorkSupervisor:
 
         with patch("app.agents.supervisor.work_supervisor.get_chat_model", return_value=mock_model):
             with patch("app.agents.supervisor.work_supervisor.get_async_checkpointer", new_callable=AsyncMock):
-                with patch("app.agents.supervisor.work_supervisor.create_react_agent") as mock_create:
+                with patch("app.agents.supervisor.work_supervisor.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
                     await build_work_supervisor("test-thread", tools=custom_tools)
 
                     call_args = mock_create.call_args.args
-                    assert call_args[1] == custom_tools  # tools 参数
+                    assert call_args[1] == custom_tools  # tools 参数（位置参数）
 
 
 # ============================================================
@@ -288,21 +287,19 @@ class TestMentionRouting:
                         with patch("app.agents.supervisor.work_supervisor.build_work_supervisor", new_callable=AsyncMock):
                             with patch("app.agents.supervisor.work_supervisor._stream_agent_events") as mock_stream:
                                 with patch("app.agents.supervisor.work_supervisor._is_interrupted", new_callable=AsyncMock, return_value=False):
-                                    with patch("app.agents.supervisor.work_supervisor._inject_tool_error_messages", new_callable=AsyncMock):
-                                        with patch("app.agents.supervisor.work_supervisor._sanitize_message_history", side_effect=lambda x, y: x):
 
-                                            async def mock_supervisor_stream(*args, **kwargs):
-                                                yield {"event": "token", "data": "supervisor synthesis"}
+                                    async def mock_supervisor_stream(*args, **kwargs):
+                                        yield {"event": "token", "data": "supervisor synthesis"}
 
-                                            mock_stream.return_value = mock_supervisor_stream()
+                                    mock_stream.return_value = mock_supervisor_stream()
 
-                                            events = []
-                                            async for sse in run_work_supervisor(
-                                                "@rag 查询文档",
-                                                "test-thread",
-                                            ):
-                                                events.append(sse)
+                                    events = []
+                                    async for sse in run_work_supervisor(
+                                        "@rag 查询文档",
+                                        "test-thread",
+                                    ):
+                                        events.append(sse)
 
-                                            # 应该有 delegation 事件（到 rag）
-                                            delegation_events = [e for e in events if e.get("event") == "delegation"]
-                                            assert len(delegation_events) >= 1
+                                    # 应该有 delegation 事件（到 rag）
+                                    delegation_events = [e for e in events if e.get("event") == "delegation"]
+                                    assert len(delegation_events) >= 1

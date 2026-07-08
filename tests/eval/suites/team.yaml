@@ -1,0 +1,32 @@
+id: team
+name: AgentTeam 协作评测集
+description: 验证 coding_team 场景的团队协作流程
+cases:
+  - id: team-collaboration
+    user_message: "团队协作分析项目结构"
+    agent_mode: coding_team
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: team-delegation
+    user_message: "委派子任务给专家"
+    agent_mode: coding_team
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: team-with-rubric
+    user_message: "团队汇总分析结果"
+    agent_mode: coding_team
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      rubric: "回复必须包含各专家的分析结果汇总，且结论逻辑一致"

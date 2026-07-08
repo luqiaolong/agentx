@@ -10,6 +10,6 @@
 - ``store``：Tauri store 配置读取 + 凭证解密
 """
 
-from app.cli.app import main
+from app.cli.app import _build_eval_parser, _build_parser, main
 
-__all__ = ["main"]
+__all__ = ["main", "_build_parser", "_build_eval_parser"]

@@ -1,0 +1,44 @@
+id: router
+name: Router 分发评测集
+description: 验证 run_router 按 agent_mode 正确分发到各场景 runner
+cases:
+  - id: router-work-mode
+    user_message: "你好"
+    agent_mode: work
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: router-coding-mode
+    user_message: "你好，帮我写代码"
+    agent_mode: coding
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: router-team-mode
+    user_message: "团队协作完成复杂任务"
+    agent_mode: coding_team
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: router-work-with-rubric
+    user_message: "你好，请介绍你自己"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+      rubric: "回复必须包含自我介绍，且语气友好"

@@ -189,7 +189,7 @@ async def test_deny_multiple_dangerous_tools_injects_errors(
     )
 
     fake_agent = _patch_deep_dependencies["agent"]
-    # 过滤出注入 ToolMessage 的调用（aupdate_state 也可能被 _inject_tool_error_messages 调用）
+    # 过滤出注入 ToolMessage 的调用（aupdate_state 也可能被 _inject_tool_error_for_call 调用）
     injected_calls = [
         call
         for call in fake_agent.aupdate_state.call_args_list

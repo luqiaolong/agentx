@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "本地优先的个人助理桌面应用 (Electron + React + FastAPI + LangGraph)"
 requires-python = ">=3.11"
 dependencies = [
-    "deepagents>=0.2.0",
+    "deepagents>=0.6.0",
     "langgraph>=0.5.0",
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
@@ -22,10 +22,15 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",
     "mcp>=1.0.0",
     "colorama>=0.4.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
 ]
 
 [project.scripts]
 agentx = "app.cli:main"
+
+[project.entry-points.pytest11]
+agentx_eval = "app.eval.pytest_plugin"
 
 [project.optional-dependencies]
 dev = [
@@ -45,6 +50,7 @@ where = ["backend"]
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
 asyncio_mode = "auto"
+pythonpath = ["backend"]
 markers = [
     "integration: requires myserver connectivity, skipped in CI",
     "requires_myserver: requires myserver TEI/Milvus reachable",

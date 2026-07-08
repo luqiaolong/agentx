@@ -28,6 +28,8 @@ from app.team.aggregator import _build_summary
 from app.team.blackboard import TeamPlanTask
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+
     from app.router.state import RouterState
 
 __all__ = [
@@ -61,6 +63,7 @@ async def _run_subtask(
     profile_prompt: str,
     task_index: int = 0,
     workspace_path: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """执行单个子任务，流式产出透传事件，最后产出 _subtask_done 哨兵。
 
@@ -73,6 +76,8 @@ async def _run_subtask(
             避免并行 deep 子任务共享 checkpoint 与审批流冲突。
         workspace_path: 当前会话绑定的 workspace 路径，透传到 fs 工具
             用于解析相对路径。
+        chat_model: 可选注入的 ChatModel，透传到 ``run_deep_path`` /
+            ``run_coding_expert`` / ``run_work_supervisor``。None 时使用真实 LLM。
     """
     # 通过 orchestrator 模块属性访问 run_xxx 函数，
     # 以便测试通过 monkeypatch app.team.orchestrator.run_xxx 替换。
@@ -135,6 +140,7 @@ async def _run_subtask(
                 scene_prompt=scene_prompt,
                 workspace_path=workspace_path,
                 parent_thread_id=thread_id,
+                chat_model=chat_model,
             ):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")
@@ -175,6 +181,7 @@ async def _run_subtask(
                 permission_mode=permission_mode,
                 workspace_path=workspace_path,
                 parent_thread_id=thread_id,
+                chat_model=chat_model,
             ):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")
@@ -253,6 +260,7 @@ async def _run_subtask(
                     permission_mode=permission_mode,
                     workspace_path=workspace_path,
                     parent_thread_id=thread_id,
+                    chat_model=chat_model,
                 ):
                     if abort_event.is_set():
                         yield _done(False, "用户中止")

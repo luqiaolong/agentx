@@ -1,0 +1,7 @@
+- match: "你好"
+  response: "你好！我是 AgentX 助手，很高兴为你服务。"
+  tool_calls: []
+
+- match: "介绍"
+  response: "我是 AgentX，一个本地优先的个人助理桌面应用，支持代码、知识检索和团队协作。"
+  tool_calls: []

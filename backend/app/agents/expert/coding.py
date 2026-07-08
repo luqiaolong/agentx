@@ -16,16 +16,12 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from langchain_core.tools import tool
 
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
 from app.deep.agent import build_deep_agent
-from app.deep.recovery import (
-    _inject_tool_error_messages,
-    _sanitize_message_history,
-)
 from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
@@ -37,6 +33,9 @@ from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.security.approval_flow import run_approval_loop
 from app.utils.sse_events import make_sse_event
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 __all__ = [
     "build_coding_expert",
@@ -163,6 +162,7 @@ async def build_coding_expert(
     profile_prompt: str = "",
     checkpointer: Any = None,
     workspace_path: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> Any:
     """构造 coding 场景 Expert agent。
 
@@ -178,6 +178,7 @@ async def build_coding_expert(
         profile_prompt: 可选，用户画像前缀，拼到 system prompt 前。
         checkpointer: 可选，共享的 LangGraph checkpointer。
         workspace_path: 可选当前工作区绝对路径。
+        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；None 时调用 ``get_chat_model()`` 获取真实 LLM。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -210,6 +211,7 @@ async def build_coding_expert(
         checkpointer=checkpointer,
         scene_prompt=scene_prompt,
         workspace_path=workspace_path,
+        chat_model=chat_model,
     )
 
 
@@ -233,6 +235,7 @@ async def run_coding_expert(
     permission_mode: str = "standard",
     workspace_path: str | None = None,
     parent_thread_id: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict]:
     """运行 coding 场景 Expert，yield SSE 事件。
 
@@ -248,6 +251,7 @@ async def run_coding_expert(
         permission_mode: 权限模式，"standard" 或 "full_trust"。
         workspace_path: 可选当前工作区绝对路径。
         parent_thread_id: 父 thread_id（Team 模式下子任务继承父 thread 的沙箱授权）。
+        chat_model: 可选注入的 ChatModel，透传到 ``build_coding_expert``。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -284,6 +288,7 @@ async def run_coding_expert(
                 tools=all_tools,
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
+                chat_model=chat_model,
             )
         except ValueError as exc:
             yield make_sse_event("error", f"LLM 不可用: {exc}")
@@ -299,17 +304,13 @@ async def run_coding_expert(
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-        # 防御性清理
-        await _inject_tool_error_messages(
-            agent, config, "上次操作未正常完成，已自动清理状态"
-        )
-        inputs["messages"] = _sanitize_message_history(
-            inputs["messages"], "上次操作未正常完成，已自动清理状态"
-        )
+        # deepagents 0.6+ PatchToolCallsMiddleware 自动修复悬空 tool_calls，
+        # 无需 _inject_tool_error_messages / _sanitize_message_history 预清理。
 
         # ---- 公共审批循环（security.approval_flow.run_approval_loop）----
-        # stream_fn / is_interrupted_fn / inject_tool_error_messages_fn 传入模块级
-        # 引用，以便测试通过 patch("app.agents.expert.coding._xxx") 替换。
+        # stream_fn / is_interrupted_fn 传入模块级引用，以便测试通过
+        # patch("app.agents.expert.coding._xxx") 替换。inject_tool_error_messages_fn
+        # 使用 run_approval_loop 默认实现（_inject_tool_error_messages_default）。
         # readonly_streak_threshold=10 启用循环保护（防过度探索）。
         async for sse in run_approval_loop(
             agent,
@@ -326,7 +327,6 @@ async def run_coding_expert(
             inputs=inputs,
             stream_fn=_stream_agent_events,
             is_interrupted_fn=_is_interrupted,
-            inject_tool_error_messages_fn=_inject_tool_error_messages,
             readonly_streak_threshold=10,
         ):
             yield sse
