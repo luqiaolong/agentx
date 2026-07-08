@@ -1,7 +1,9 @@
 """AgentTeam Orchestrator：拆解任务为子任务计划。
 
 包含：
-- ``_BASE_EXPERTS`` / ``_TEAM_EXPERTS``：可用专家清单（基础 + coding 场景团队角色）。
+- ``_BASE_EXPERTS``：基础专家清单（硬编码：code / rag / web / deep）。
+- ``_build_team_experts_description``：声明式团队角色描述生成器，从
+  ``settings.team_subagents`` 动态生成团队专家清单。
 - ``_ORCHESTRATOR_PROMPT``：Orchestrator 系统 prompt 模板。
 - ``_build_project_context``：构建项目上下文摘要，避免 subagent 盲探索。
 - ``_build_orchestrator_prompt``：根据场景组装 Orchestrator prompt。
@@ -10,6 +12,7 @@
   JSON 提取辅助（支持纯 JSON / markdown 代码块 / 前后带额外文本三种形态）。
 - ``_looks_like_dangerous_task``：启发式判断子任务是否涉及危险操作。
 - ``_validate_task``：校验子任务 agent 是否可用（含 custom / 团队角色）。
+  团队角色集合由 ``BUILTIN_TEAM_KEYS`` 决定（不硬编码字面量）。
 """
 
 from __future__ import annotations
@@ -18,15 +21,16 @@ import json
 import re
 from typing import Any
 
+from app.config.subagents import BUILTIN_TEAM_KEYS
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
 
 __all__ = [
     "_BASE_EXPERTS",
-    "_TEAM_EXPERTS",
     "_ORCHESTRATOR_PROMPT",
     "_build_project_context",
     "_build_orchestrator_prompt",
+    "_build_team_experts_description",
     "_parse_plan",
     "_try_parse_json",
     "_extract_codeblock",
@@ -44,16 +48,33 @@ _BASE_EXPERTS = (
     "- deep: 执行需要写文件、编辑文件或系统命令的危险任务（会走审批）。\n"
 )
 
-# 软件开发专家团角色（coding 场景下可用）
-_TEAM_EXPERTS = (
-    "- frontend_dev: 前端开发专家，擅长 React/Vue/HTML/CSS/JS/TS、组件开发、前端性能优化。\n"
-    "- backend_dev: 后端开发专家，擅长 Python/Java/Go/Node.js、API 设计、数据库、业务逻辑。\n"
-    "- tester: 测试专家，擅长单元测试/集成测试/E2E、测试框架、覆盖率分析。\n"
-    "- architect: 架构专家，擅长系统设计、技术选型、性能优化、微服务架构。\n"
-    "- devops: 运维专家，擅长 CI/CD、Docker/K8s、部署流水线、监控告警。\n"
-    "- ui_designer: UI 设计师，擅长界面设计、交互设计、视觉规范、用户体验。\n"
-    "- product_manager: 产品专家，擅长需求分析、PRD 撰写、用户故事、功能规划。\n"
-)
+
+def _build_team_experts_description(settings: Any) -> str:
+    """声明式生成团队角色描述（从 settings.team_subagents 动态生成）。
+
+    替代旧的硬编码 ``_TEAM_EXPERTS`` 元组：现在新增/删除/重命名团队角色
+    只需修改 config，无需改 planner 代码。
+
+    Args:
+        settings: 全局配置（含 team_subagents 字典）。
+
+    Returns:
+        多行字符串，每行一个 ``- key: trigger_description``；空配置返回空串。
+    """
+    team = getattr(settings, "team_subagents", None) or {}
+    lines: list[str] = []
+    for key, cfg in team.items():
+        if not getattr(cfg, "enabled", True):
+            continue
+        desc = (
+            getattr(cfg, "trigger_description", "")
+            or getattr(cfg, "system_prompt", "")
+            or "(无描述)"
+        )
+        # 描述截断到第一句/第一个换行，避免 prompt 过长
+        desc = desc.strip().split("\n", 1)[0].strip()
+        lines.append(f"- {key}: {desc}")
+    return "\n".join(lines)
 
 _ORCHESTRATOR_PROMPT = (
     "你是一个任务拆解专家（Orchestrator）。请把用户请求拆分成若干子任务，"
@@ -101,11 +122,22 @@ def _build_project_context() -> str:
     return "\n".join(lines)
 
 
-def _build_orchestrator_prompt(user_message: str, max_tasks: int, context: str = "", scene: str = "work") -> str:
-    """构建 Orchestrator prompt，根据场景选择可用专家。"""
+def _build_orchestrator_prompt(
+    user_message: str,
+    max_tasks: int,
+    context: str = "",
+    scene: str = "work",
+    settings: Any | None = None,
+) -> str:
+    """构建 Orchestrator prompt，根据场景选择可用专家。
+
+    coding 场景下，团队角色清单从 ``settings.team_subagents`` 动态生成。
+    """
     experts = _BASE_EXPERTS
-    if scene == "coding":
-        experts = _BASE_EXPERTS + _TEAM_EXPERTS
+    if scene == "coding" and settings is not None:
+        team_desc = _build_team_experts_description(settings)
+        if team_desc:
+            experts = experts + "\n" + team_desc
     return (
         _ORCHESTRATOR_PROMPT.format(max_tasks=max_tasks, context=context, experts=experts)
         + f"\n\n用户请求：{user_message}"
@@ -245,13 +277,13 @@ def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:
         if not any(settings.tools_enabled.get(t, True) for t in cfg.tools):
             return False, f"子代理 {task.agent} 绑定的工具全部被禁用"
         return True, ""
-    # 软件开发团队角色（仅 coding 场景下可用）
-    team_keys = {"frontend_dev", "backend_dev", "tester", "architect", "devops", "ui_designer", "product_manager"}
-    if task.agent in team_keys:
-        cfg = settings.team_subagents.get(task.agent)
+    # 软件开发团队角色（含 BUILTIN_TEAM_KEYS 与 settings.team_subagents 中声明的扩展角色）
+    # 用 BUILTIN_TEAM_KEYS 作起点，扩展由 settings 提供（声明式）。
+    if task.agent in BUILTIN_TEAM_KEYS or task.agent in (settings.team_subagents or {}):
+        cfg = (settings.team_subagents or {}).get(task.agent)
         if not cfg or not cfg.enabled:
             return False, f"团队角色 {task.agent} 已禁用"
-        if not any(settings.tools_enabled.get(t, True) for t in cfg.tools):
+        if not any(settings.tools_enabled.get(t, True) for t in (cfg.tools or [])):
             return False, f"团队角色 {task.agent} 绑定的工具全部被禁用"
         return True, ""
     if task.agent.startswith("custom-"):

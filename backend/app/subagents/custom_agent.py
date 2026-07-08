@@ -149,13 +149,17 @@ def build_custom_agent(
     temperature: float | None = None,
     workspace_path: str | None = None,
     checkpointer: Any = None,
+    rubric: str = "",
+    grader_model: Any = None,
 ) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
     支持两种调用模式：
     1. 从配置加载：``build_custom_agent(key, thread_id)`` — 从 ``Settings.custom_subagents`` 读取配置。
+       此时 ``rubric`` / ``grader_model`` 从 config 透传（如果有）。
     2. 显式参数：``build_custom_agent(key, system_prompt=..., tools=..., temperature=...)`` —
        用于软件开发专家团角色等动态构建场景。
+       ``rubric`` 非空时由 ``create_agent`` 注入 RubricMiddleware。
 
     Args:
         key: 子代理 key（用于命名和日志）。
@@ -165,6 +169,8 @@ def build_custom_agent(
         temperature: 显式指定温度（模式 2）。
         workspace_path: 当前会话绑定的 workspace 路径，fs 工具解析相对路径用。
         checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
+        rubric: 可选自纠规则文本；非空时由 create_agent 挂载 RubricMiddleware。
+        grader_model: 可选判官模型；为 None 时 create_agent 默认用 get_chat_model(temperature=0)。
 
     Raises:
         KeyError: 模式 1 中 key 不存在于 custom_subagents。
@@ -193,6 +199,8 @@ def build_custom_agent(
             thread_id=thread_id or "",
             workspace_path=workspace_path,
             name=f"custom_{key}",
+            rubric=rubric or None,
+            grader_model=grader_model,
         )
 
     # 模式 1：从配置加载
@@ -218,6 +226,8 @@ def build_custom_agent(
         thread_id=thread_id or "",
         workspace_path=workspace_path,
         name=f"custom_{key}",
+        rubric=cfg.rubric or None,
+        grader_model=cfg.grader_model,
     )
 
 
