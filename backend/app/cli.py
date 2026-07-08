@@ -208,13 +208,11 @@ async def run_repl(
 
         # 内建命令
         if user_input.startswith("/"):
-            cmd_result = _handle_command(user_input, current_mode, thread_id, checkpointer)
+            cmd_result = _handle_command(user_input, current_mode, thread_id, checkpointer, workspace_path)
             if cmd_result is None:
                 break  # /quit
             if isinstance(cmd_result, tuple):
                 current_mode = cmd_result[0]
-                if not json_mode:
-                    print(f"模式已切换为 {current_mode}")
             continue
 
         # 发送给 LLM
@@ -245,7 +243,7 @@ def _print_banner(agent_mode: str, thread_id: str, model: str) -> None:
 
 
 def _handle_command(
-    cmd: str, current_mode: str, thread_id: str, checkpointer
+    cmd: str, current_mode: str, thread_id: str, checkpointer, workspace_path: str
 ) -> str | tuple[str] | None:
     """处理 REPL 内建命令。
 
@@ -261,39 +259,283 @@ def _handle_command(
         return None
 
     if command == "/help":
-        print("可用命令:")
-        print("  /reset              清空当前会话历史")
-        print("  /mode <mode>        切换模式: work / coding / coding_team")
-        print("  /quit (或 /q)       退出")
-        print("  /help               显示此帮助")
+        _print_help()
         return current_mode
 
     if command == "/reset":
-        if checkpointer and hasattr(checkpointer, "adelete_thread"):
-            try:
-                asyncio.get_event_loop().create_task(checkpointer.adelete_thread(thread_id))
-                print("[会话已重置]")
-            except Exception as exc:
-                print(f"[重置失败] {exc}")
-        else:
-            print("[checkpointer 不支持重置]")
+        _cmd_reset(thread_id, checkpointer)
         return current_mode
 
     if command == "/mode":
-        if len(parts) < 2:
-            print(f"当前模式: {current_mode}")
-            print("用法: /mode <work|coding|coding_team>")
-            return current_mode
-        new_mode = parts[1].strip().lower()
-        if new_mode in ("work", "coding", "coding_team"):
-            return (new_mode,)
-        else:
-            print(f"无效模式: {new_mode}，可选: work / coding / coding_team")
-            return current_mode
+        return _cmd_mode(parts, current_mode)
+
+    if command == "/init":
+        _cmd_init(workspace_path, thread_id)
+        return current_mode
+
+    if command == "/model":
+        _cmd_model()
+        return current_mode
+
+    if command == "/models":
+        _cmd_models()
+        return current_mode
+
+    if command == "/compact":
+        asyncio.get_event_loop().create_task(_cmd_compact(thread_id, checkpointer))
+        return current_mode
+
+    if command == "/abort":
+        _cmd_abort(thread_id)
+        return current_mode
+
+    if command == "/pause":
+        _cmd_pause(thread_id)
+        return current_mode
+
+    if command == "/resume":
+        _cmd_resume(thread_id)
+        return current_mode
+
+    if command == "/clear":
+        _cmd_clear()
+        return current_mode
+
+    if command == "/thread":
+        print(f"当前 thread_id: {thread_id}")
+        return current_mode
+
+    if command == "/threads":
+        asyncio.get_event_loop().create_task(_cmd_threads())
+        return current_mode
 
     # 未知命令
     print(f"未知命令: {command}（输入 /help 查看可用命令）")
     return current_mode
+
+
+def _print_help() -> None:
+    """打印帮助信息。"""
+    print("可用命令:")
+    print("  /reset              清空当前会话历史")
+    print("  /mode <mode>        切换模式: work / coding / coding_team")
+    print("  /init               授权当前目录为 workspace")
+    print("  /model              显示当前模型")
+    print("  /models             列出所有可用模型")
+    print("  /compact            压缩会话历史（保留最近2条）")
+    print("  /abort              中止当前生成")
+    print("  /pause              暂停生成")
+    print("  /resume             恢复生成")
+    print("  /clear              清空终端屏幕")
+    print("  /thread             显示当前 thread_id")
+    print("  /threads            列出所有历史会话")
+    print("  /quit (或 /q)       退出")
+    print("  /help               显示此帮助")
+
+
+def _cmd_reset(thread_id: str, checkpointer) -> None:
+    """清空会话状态。"""
+    from app.utils.security import get_sandbox
+
+    if checkpointer and hasattr(checkpointer, "adelete_thread"):
+        try:
+            asyncio.get_event_loop().create_task(checkpointer.adelete_thread(thread_id))
+            get_sandbox().clear(thread_id)
+            print("[会话已重置]")
+        except Exception as exc:
+            print(f"[重置失败] {exc}")
+    else:
+        print("[checkpointer 不支持重置]")
+
+
+def _cmd_mode(parts: list[str], current_mode: str) -> str | tuple[str]:
+    """切换模式。"""
+    if len(parts) < 2:
+        print(f"当前模式: {current_mode}")
+        print("用法: /mode <work|coding|coding_team>")
+        return current_mode
+    new_mode = parts[1].strip().lower()
+    if new_mode in ("work", "coding", "coding_team"):
+        print(f"模式已切换为 {new_mode}")
+        return (new_mode,)
+    else:
+        print(f"无效模式: {new_mode}，可选: work / coding / coding_team")
+        return current_mode
+
+
+def _cmd_init(workspace_path: str, thread_id: str) -> None:
+    """授权当前目录为 workspace。"""
+    from app.utils.security import get_sandbox
+
+    try:
+        get_sandbox().authorize(workspace_path, thread_id)
+        print(f"[已授权] {workspace_path} → thread {thread_id}")
+    except Exception as exc:
+        print(f"[授权失败] {exc}")
+
+
+def _cmd_model() -> None:
+    """显示当前模型。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    print(f"当前模型: {settings.default_model}")
+    if settings.openai_base_url:
+        print(f"  base_url: {settings.openai_base_url}")
+    if settings.max_output_tokens:
+        print(f"  max_tokens: {settings.max_output_tokens}")
+
+
+def _cmd_models() -> None:
+    """列出所有可用模型（从 Tauri store 读取）。"""
+    from app.cli_store import _read_config_json
+
+    config = _read_config_json()
+    if not config:
+        print("[无法读取模型配置]")
+        return
+
+    models = config.get("models", {})
+    entries = models.get("entries", [])
+    active_id = models.get("activeId")
+
+    if not entries:
+        print("未配置模型")
+        return
+
+    print("可用模型:")
+    for entry in entries:
+        model_id = entry.get("id", "?")
+        model_name = entry.get("model", "?")
+        label = entry.get("label", "")
+        provider = entry.get("providerId", "custom")
+        marker = " *" if model_id == active_id else ""
+        display = f"  [{provider}] {model_name}"
+        if label:
+            display += f" ({label})"
+        print(f"{display}{marker}")
+    print("\n* 表示当前激活模型")
+
+
+async def _cmd_compact(thread_id: str, checkpointer) -> None:
+    """压缩会话历史。"""
+    from langchain_core.messages import SystemMessage
+    from app.memory import summarize_messages
+    from app.observability.logger import logger
+
+    if not checkpointer:
+        print("[checkpointer 未初始化]")
+        return
+
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        if hasattr(checkpointer, "aget"):
+            checkpoint = await checkpointer.aget(config)
+        else:
+            checkpoint = checkpointer.get(config)
+    except Exception as exc:
+        print(f"[加载失败] {exc}")
+        return
+
+    if not checkpoint:
+        print("[无 checkpoint 可压缩]")
+        return
+
+    channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
+    messages = list(channel_values.get("messages", []))
+    if len(messages) < 4:
+        print("[消息不足，无需压缩]")
+        return
+
+    to_compress = messages[:-2]
+    keep_recent = messages[-2:]
+    try:
+        summary = await summarize_messages(to_compress)
+    except Exception as exc:
+        print(f"[摘要失败] {exc}")
+        return
+
+    new_messages = [SystemMessage(content=summary), *keep_recent]
+    new_channel_values = {**channel_values, "messages": new_messages}
+    new_checkpoint = {**checkpoint, "channel_values": new_channel_values}
+
+    try:
+        if hasattr(checkpointer, "aput"):
+            await checkpointer.aput(config, new_checkpoint, {"messages": "any"}, [])
+        elif hasattr(checkpointer, "put"):
+            checkpointer.put(config, new_checkpoint, {"messages": "any"}, [])
+        else:
+            print("[checkpointer 不支持写回]")
+            return
+    except Exception as exc:
+        print(f"[写回失败] {exc}")
+        return
+
+    print(f"[已压缩] {len(to_compress)} 条消息 → 摘要 ({len(summary)} 字符)")
+
+
+def _cmd_abort(thread_id: str) -> None:
+    """中止当前生成。"""
+    from app.approval.state import set_abort
+
+    try:
+        asyncio.get_event_loop().create_task(set_abort(thread_id))
+        print("[已发送中止信号]")
+    except Exception as exc:
+        print(f"[中止失败] {exc}")
+
+
+def _cmd_pause(thread_id: str) -> None:
+    """暂停生成。"""
+    from app.approval.state import set_pause
+
+    try:
+        asyncio.get_event_loop().create_task(set_pause(thread_id))
+        print("[已暂停]")
+    except Exception as exc:
+        print(f"[暂停失败] {exc}")
+
+
+def _cmd_resume(thread_id: str) -> None:
+    """恢复生成。"""
+    from app.approval.state import clear_pause
+
+    try:
+        asyncio.get_event_loop().create_task(clear_pause(thread_id))
+        print("[已恢复]")
+    except Exception as exc:
+        print(f"[恢复失败] {exc}")
+
+
+def _cmd_clear() -> None:
+    """清空终端屏幕。"""
+    if sys.platform == "win32":
+        os.system("cls")
+    else:
+        os.system("clear")
+
+
+async def _cmd_threads() -> None:
+    """列出所有历史会话。"""
+    from app.memory.checkpointer import list_threads
+
+    try:
+        threads = await list_threads()
+    except Exception as exc:
+        print(f"[加载失败] {exc}")
+        return
+
+    if not threads:
+        print("无历史会话")
+        return
+
+    print("历史会话:")
+    for t in threads:
+        tid = t.get("thread_id", "?")
+        count = t.get("message_count", "?")
+        updated = t.get("updated_at", "?")
+        print(f"  {tid} | {count} 条消息 | {updated}")
 
 
 # ============================================================
