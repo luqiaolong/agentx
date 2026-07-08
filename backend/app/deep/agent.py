@@ -334,9 +334,16 @@ async def run_deep_path(
             sandbox.set_full_trust(thread_id, False)
         return
 
+    # 只读工具集合（用于循环保护检测）
+    _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
+
     # 3. 中断/恢复循环
     max_iterations = 50  # 安全上限，防止无限循环
     iteration = 0
+    # 连续只读工具调用计数（用于防过度探索保护）
+    readonly_streak = 0
+    # 只读工具调用阈值：超过此值认为 LLM 在过度探索，强制终止
+    readonly_streak_threshold = 10
 
     while iteration < max_iterations:
         iteration += 1
@@ -360,6 +367,35 @@ async def run_deep_path(
             # 无待执行工具调用，不应发生但安全退出
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
+
+        # ---- 循环保护：检测连续只读工具过度探索 ----
+        pending_names = {tc.get("name", "") for tc in pending_calls}
+        has_dangerous = bool(pending_names & runtime_dangerous)
+        all_readonly = pending_names.issubset(_READONLY_TOOLS)
+        if all_readonly and not has_dangerous:
+            readonly_streak += 1
+        else:
+            readonly_streak = 0
+
+        if readonly_streak >= readonly_streak_threshold:
+            logger.warning(
+                "deep agent readonly streak exceeded, forcing stop",
+                thread_id=thread_id,
+                readonly_streak=readonly_streak,
+                pending_tools=list(pending_names),
+            )
+            # 强制注入错误消息，让 LLM 停止探索并直接回答
+            for tc in pending_calls:
+                await _inject_tool_error_for_call(
+                    agent, config, tc,
+                    "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。"
+                )
+            yield make_sse_event(
+                "error",
+                "工具调用次数过多，已强制停止。请简化您的请求或明确指定目标路径。"
+            )
+            sandbox.set_full_trust(thread_id, False)
+            return
 
         # full_trust 模式：所有工具直接放行，不弹审批
         if is_full_trust:

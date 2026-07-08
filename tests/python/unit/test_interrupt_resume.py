@@ -116,13 +116,13 @@ async def test_deep_path_pause_resume(
     monkeypatch.setattr(agent_module, "_stream_agent_events", _fake_stream)
 
     # 预置 abort 标志，验证 pause 不会清理它
-    set_abort("t-pause")
+    await set_abort("t-pause")
 
     async def _pause_resume() -> None:
         await asyncio.sleep(0.03)
-        set_pause("t-pause")
+        await set_pause("t-pause")
         await asyncio.sleep(0.1)
-        clear_pause("t-pause")
+        await clear_pause("t-pause")
 
     task = asyncio.create_task(_pause_resume())
     events = [e async for e in run_deep_path({"thread_id": "t-pause"}, "hello")]
@@ -135,7 +135,7 @@ async def test_deep_path_pause_resume(
     assert "token" in event_names
 
     # abort 标志未被清理（run_deep_path 不消费 abort，只依赖 _await_approval 检查）
-    assert is_aborted("t-pause")
+    assert await is_aborted("t-pause")
 
 
 @pytest.mark.asyncio
@@ -170,8 +170,8 @@ async def test_clear_pause_before_wait_does_not_block(
     monkeypatch.setattr(agent_module, "_stream_agent_events", _fake_stream)
 
     # 先设置再立即清除 pause，模拟 race：run_deep_path 检查时可能仍为 True
-    set_pause("t-race")
-    clear_pause("t-race")
+    await set_pause("t-race")
+    await clear_pause("t-race")
 
     events = [e async for e in run_deep_path({"thread_id": "t-race"}, "hello")]
     event_names = [e.get("event") for e in events]
@@ -192,9 +192,9 @@ async def test_chat_pause_resume_endpoints() -> None:
     response = client.post("/api/chat/pause", json={"thread_id": tid})
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert is_paused(tid)
+    assert await is_paused(tid)
 
     response = client.post("/api/chat/resume", json={"thread_id": tid})
     assert response.status_code == 200
     assert response.json()["ok"] is True
-    assert not is_paused(tid)
+    assert not await is_paused(tid)
