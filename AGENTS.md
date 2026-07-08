@@ -228,6 +228,7 @@ agentx/
 │   │   ├── workspace.py        ← workspace list
 │   │   ├── config_reload.py    ← 配置热重载
 │   │   ├── models_test.py      ← 模型连通性测试
+│   │   ├── project_config.py   ← /api/project-config/init + /api/project-config（.agentx/ 项目级配置）
 │   │   └── __init__.py         ← register_routes(app) 聚合
 │   ├── approval/               ← 审批状态解耦（消除 deep → main 反射）
 │   │   ├── decision.py         ← ApprovalDecision dataclass
@@ -276,6 +277,12 @@ agentx/
 │   │   ├── checkpointer.py     ← LangGraph checkpointer
 │   │   ├── context.py          ← 消息截断（trim_messages_with_budget）
 │   │   └── sandbox_store.py    ← 授权目录存储
+│   ├── project_config/         ← .agentx/ 项目级配置（generator/loader/merger/templates）
+│   │   ├── __init__.py         ← 包导出
+│   │   ├── templates.py        ← 6 个文件模板（AGENTS.md/mcp.json/subagents.json/tools.json/system_prompt.md/rules/README.md）
+│   │   ├── generator.py        ← generate_agentx_dir 幂等生成
+│   │   ├── loader.py           ← load_project_config 容错加载
+│   │   └── merger.py           ← merge_configs 合并到 Settings 之上
 │   ├── vectorstore/            ← Milvus 客户端
 │   ├── embedding/              ← TEI 客户端
 │   ├── mcp/                    ← MCP 客户端 + 配置
@@ -609,6 +616,42 @@ uv run ruff check backend/                              # 风格检查
 不重启 Tauri 窗口）。全量重启 Tauri（`invoke("app_restart")`）仅用于
 ErrorBoundary 渲染错误恢复。
 
+### 16.1 `.agentx/` 项目级配置（工作区根目录）
+
+类似 Cursor 的 `.cursor/`，AgentX 支持在工作区根目录放置 `.agentx/` 目录承载
+**项目级 AI 规则与配置覆盖**。用户在前端选择工作区时，后端通过
+`POST /api/project-config/init` **幂等生成**该目录（仅创建缺失文件，已存在的
+文件保持不动，保护用户编辑）。读取配置状态走
+`GET /api/project-config?path=<ws>&thread_id=<tid>`。
+
+目录结构（由 [backend/app/project_config/templates.py](file:///d:/java/agentprojects/agentx/backend/app/project_config/templates.py) 生成）：
+
+| 文件 | 作用 |
+|---|---|
+| `.agentx/AGENTS.md` | 项目级 AI 规则（注入到 profile_prompt） |
+| `.agentx/mcp.json` | 项目级 MCP servers |
+| `.agentx/subagents.json` | 项目级子代理配置覆盖 |
+| `.agentx/tools.json` | 项目级工具开关覆盖 |
+| `.agentx/system_prompt.md` | 项目级系统提示词（前置到默认提示词之前） |
+| `.agentx/rules/*.md` | 项目级规则文件（最多 10 个，每个最大 4KB，注入到 profile_prompt） |
+
+合并策略（[backend/app/project_config/merger.py](file:///d:/java/agentprojects/agentx/backend/app/project_config/merger.py) `merge_configs`，在全局 `Settings` 之上叠加）：
+
+- **MCP servers**：追加去重（项目优先，按 name 去重）
+- **subagents**：深合并（项目字段覆盖全局同名字代理）
+- **tools**：覆盖模式（项目配置整体覆盖全局工具开关）
+- **system_prompt**：前置模式（项目提示词拼接到默认提示词之前）
+- **AGENTS.md + rules**：注入到 profile_prompt
+- **凭证**：全局独占（安全红线，**不**进项目配置、**不**合并）
+
+配置变更**下次发送消息即生效**（无需重启后端）：每次发起会话时 `load_project_config`
+容错读取最新文件内容，合并后注入该会话的运行时配置。
+
+> **当前限制**：由于下游 agent 内部硬编码 `get_settings()`，MCP / subagents / tools
+> 的合并在 router 层暂未接入下游，**仅 `system_prompt` + `AGENTS.md` + `rules`
+> 注入生效**。MCP / subagents / tools 合并代码已就绪，待后续下游 agent 支持
+> `merge_configs` 结果后即可启用。
+
 ---
 
 ## 17. 修改前必读清单（按需查阅）
@@ -624,6 +667,7 @@ ErrorBoundary 渲染错误恢复。
 | 调整 AgentTeam | [team/orchestrator.py](file:///d:/java/agentprojects/agentx/backend/app/team/orchestrator.py) + [openspec/2026-07-06-agent-team](file:///d:/java/agentprojects/agentx/openspec/changes/2026-07-06-agent-team/proposal.md) |
 | 写 ADR / 提案 | [openspec/changes/archive/](file:///d:/java/agentprojects/agentx/openspec/changes/archive/) 历史格式参考 |
 | 重启前后端 | §14.7（清理两棵树 → `npm run dev` → 健康验证脚本） |
+| 修改项目配置 | [backend/app/project_config/](file:///d:/java/agentprojects/agentx/backend/app/project_config/) + §16.1 `.agentx/` 项目级配置 |
 
 ---
 

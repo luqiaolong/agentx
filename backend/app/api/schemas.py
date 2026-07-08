@@ -24,6 +24,7 @@ __all__ = [
     "ModelTestRequest",
     "ModelTestResponse",
     "CompactRequest",
+    "ProjectConfigInitRequest",
 ]
 
 
@@ -199,3 +200,10 @@ class CompactRequest(BaseModel):
     """``/compact`` 请求体。"""
 
     thread_id: str = Field(..., description="会话 ID")
+
+
+class ProjectConfigInitRequest(BaseModel):
+    """``POST /api/project-config/init`` 请求体。"""
+
+    path: str = Field(..., description="工作区绝对路径")
+    thread_id: str = Field(..., description="会话 ID，用于沙箱授权校验")

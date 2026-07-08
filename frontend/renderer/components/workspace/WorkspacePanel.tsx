@@ -12,6 +12,7 @@ import { FileTree } from "./FileTree";
 import { GitPanel } from "./GitPanel";
 import { CompactTaskList } from "./CompactTaskList";
 import { ContextTabPanel } from "./ContextTabPanel";
+import { ProjectConfigBadge } from "./ProjectConfigBadge";
 
 /* ------------------------------------------------------------------ */
 /*  WorkspacePanel — 主组件                                              */
@@ -32,8 +33,12 @@ export function WorkspacePanel({
   const currentSession = useChatStore((s) =>
     s.currentId ? s.sessions[s.currentId] ?? null : null,
   );
+  const currentId = useChatStore((s) => s.currentId);
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
   const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath;
+  // threadId 用于 ProjectConfigBadge 调用后端 .agentx/ 端点时的沙箱授权校验；
+  // 无当前会话时降级为空串，后端会返回 4xx，徽章 best-effort 记 warn 不阻塞 UI。
+  const threadId = currentId ?? "";
 
   useEffect(() => {
     if (workspacePath) {
@@ -78,10 +83,13 @@ export function WorkspacePanel({
             工作区
           </span>
         </div>
-        <div className="flex items-center gap-0.5">
-          {tabBtn("tasks", "任务", ListChecks)}
-          {tabBtn("files", "文件", Folder)}
-          {tabBtn("git", "Git", GitBranch, gitRepoStatus.isGitRepo && !gitRepoStatus.clean ? 1 : undefined)}
+        <div className="flex items-center gap-2">
+          <ProjectConfigBadge workspacePath={workspacePath} threadId={threadId} />
+          <div className="flex items-center gap-0.5">
+            {tabBtn("tasks", "任务", ListChecks)}
+            {tabBtn("files", "文件", Folder)}
+            {tabBtn("git", "Git", GitBranch, gitRepoStatus.isGitRepo && !gitRepoStatus.clean ? 1 : undefined)}
+          </div>
         </div>
       </div>
 

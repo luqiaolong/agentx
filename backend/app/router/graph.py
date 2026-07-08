@@ -19,6 +19,7 @@ Router 保留的公共职责：
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, AsyncIterator
 
@@ -31,6 +32,7 @@ from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
+from app.project_config import load_project_config, merge_configs
 from app.utils.sse_events import make_sse_event
 
 __all__ = ["run_router", "_parse_skill_tag"]
@@ -196,13 +198,59 @@ async def run_router(
                         error=str(exc),
                     )
 
-        # ---- 4. 读取用户画像 ----
+        # ---- 4. 读取用户画像 + 项目级配置上下文 ----
         # build_profile_prompt 失败时返回空字符串，不影响主流程
         try:
             profile_prompt = build_profile_prompt()
         except Exception as exc:  # noqa: BLE001 — 画像读取兜底
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
+
+        # 加载项目级配置（.agentx/ 目录），合并到全局 Settings 之上
+        # 当前限制：下游 agent 内部硬编码 get_settings()，无法直接替换为 MergedConfig；
+        # 此处仅取 context_prompt（AGENTS.md + rules）+ default_system_prompt（项目系统提示词）
+        # 注入 profile_prompt。MCP/subagents/tools 合并代码已就绪（merger.py）但待下游
+        # agent 支持传入 settings 参数后接入。
+        project_context_prompt = ""
+        project_system_prompt = ""
+        if effective_workspace:
+            try:
+                from pathlib import Path
+
+                # H2: async 热路径中用 to_thread 包装同步文件 IO，避免阻塞事件循环
+                project_config = await asyncio.to_thread(
+                    load_project_config, Path(effective_workspace)
+                )
+                if project_config.exists:
+                    merged = merge_configs(get_settings(), project_config)
+                    project_context_prompt = merged.context_prompt
+                    project_system_prompt = (
+                        merged.default_system_prompt
+                        if project_config.system_prompt
+                        else ""
+                    )
+                    if project_context_prompt or project_system_prompt:
+                        logger.info(
+                            "router.project_config_loaded",
+                            thread_id=thread_id,
+                            workspace=effective_workspace,
+                            context_len=len(project_context_prompt),
+                            has_system_prompt=bool(project_system_prompt),
+                        )
+            except Exception as exc:  # noqa: BLE001 — 项目配置加载兜底
+                logger.warning(
+                    "router.project_config_load_failed",
+                    thread_id=thread_id,
+                    workspace=effective_workspace,
+                    error=str(exc),
+                )
+
+        # 项目级上下文前置到 profile_prompt（所有场景都注入）
+        # 顺序：项目 system_prompt → 项目 AGENTS.md + rules → 用户画像 → skill
+        if project_context_prompt:
+            profile_prompt = (project_context_prompt + "\n" + profile_prompt).strip()
+        if project_system_prompt:
+            profile_prompt = (project_system_prompt + "\n" + profile_prompt).strip()
 
         # work 场景：skill_content 拼到 profile_prompt 前（作为 system prompt 前缀）
         # coding / coding_team 场景：skill_content 不注入（Expert 有自己的 prompt 体系）

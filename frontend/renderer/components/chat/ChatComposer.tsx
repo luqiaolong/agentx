@@ -26,6 +26,8 @@ import { PermissionToggle } from "./PermissionToggle";
 import { ModelToggle } from "./ModelToggle";
 import { ModeToggle } from "./ModeToggle";
 import { openFile, openFolder, saveDroppedFile } from "@/lib/api/dialog";
+import { initProjectConfig } from "@/lib/api/projectConfig";
+import { logger } from "@/lib/logger";
 
 /**
  * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）+ @mention 委派面板。
@@ -406,6 +408,14 @@ export function ChatComposer({
         `授权目录「${dirPath}」失败：${err instanceof Error ? err.message : String(err)}`,
       );
       return;
+    }
+    // best-effort：授权成功后静默生成 .agentx/ 项目级配置目录。
+    // 失败不阻塞工作区绑定，仅记录告警。
+    // tid 来自上方 createSession / currentId，必为非空 string。
+    try {
+      await initProjectConfig(dirPath, tid!);
+    } catch (err) {
+      logger.warn("initProjectConfig failed", err);
     }
   };
 
