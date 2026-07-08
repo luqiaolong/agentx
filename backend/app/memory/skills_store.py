@@ -41,6 +41,7 @@ class SkillFileInfo(BaseModel):
     size: int
     mtime: str  # ISO 格式时间戳
     content_preview: str  # 前 200 字符
+    path: str = ""  # 真实文件绝对路径（DATA_DIR/skills/<name>/SKILL.md）
 
 
 class SkillNameInvalid(ValueError):
@@ -115,6 +116,7 @@ def list_skills_files() -> list[SkillFileInfo]:
                 size=stat.st_size,
                 mtime=mtime,
                 content_preview=text[:_PREVIEW_LEN],
+                path=str(md_file),
             )
         )
     return files
@@ -140,8 +142,9 @@ def list_skills() -> list[SkillDef]:
             logger.warning("读取技能文件失败", file=str(md_file), error=str(exc))
             continue
         parsed = _parse_frontmatter(text)
+        md_abs_path = str(md_file)
         if parsed is None:
-            skills.append(SkillDef(name=skill_dir.name, content=text))
+            skills.append(SkillDef(name=skill_dir.name, content=text, path=md_abs_path))
             continue
         meta, body = parsed
         try:
@@ -152,6 +155,7 @@ def list_skills() -> list[SkillDef]:
                     trigger=str(meta.get("trigger", "")),
                     tools=_tools_from_meta(meta.get("tools")),
                     content=body,
+                    path=md_abs_path,
                 )
             )
         except Exception as exc:  # noqa: BLE001

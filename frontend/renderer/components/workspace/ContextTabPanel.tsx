@@ -72,38 +72,50 @@ export function ContextTabPanel({
           </div>
         ) : (
           <div className="space-y-0.5">
-            {currentFiles.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => onFileClick?.(f)}
-                className="group flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left transition-colors hover:bg-hover-soft"
-                title={f.path || f.name}
-              >
-                <FileText className="h-3 w-3 shrink-0 text-muted-c" />
-                <span className="min-w-0 flex-1 truncate text-secondary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
-                  {f.name}
-                </span>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {f.meta && (
-                    <span
-                      className="rounded bg-subtle px-1 py-px text-muted-c"
-                      style={{ fontSize: 'var(--fs-ws-file-size)' }}
-                    >
-                      {f.meta}
-                    </span>
-                  )}
-                  {f.ts > 0 && (
-                    <span
-                      className="shrink-0 text-muted-c tabular-nums"
-                      style={{ fontSize: 'var(--fs-ws-file-size)' }}
-                    >
-                      {formatTime(f.ts)}
-                    </span>
-                  )}
-                </div>
-              </button>
-            ))}
+            {currentFiles.map((f) => {
+              const canOpen = Boolean(f.path);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => onFileClick?.(f)}
+                  disabled={!canOpen}
+                  className={`group flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left transition-colors ${
+                    canOpen
+                      ? "hover:bg-hover-soft"
+                      : "cursor-not-allowed opacity-60"
+                  }`}
+                  title={
+                    canOpen
+                      ? (f.path || f.name)
+                      : "该条目不是文件，暂不支持编辑器打开"
+                  }
+                >
+                  <FileText className="h-3 w-3 shrink-0 text-muted-c" />
+                  <span className="min-w-0 flex-1 truncate text-secondary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
+                    {f.name}
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {f.meta && (
+                      <span
+                        className="rounded bg-subtle px-1 py-px text-muted-c"
+                        style={{ fontSize: 'var(--fs-ws-file-size)' }}
+                      >
+                        {f.meta}
+                      </span>
+                    )}
+                    {f.ts > 0 && (
+                      <span
+                        className="shrink-0 text-muted-c tabular-nums"
+                        style={{ fontSize: 'var(--fs-ws-file-size)' }}
+                      >
+                        {formatTime(f.ts)}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

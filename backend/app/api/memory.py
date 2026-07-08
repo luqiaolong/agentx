@@ -44,7 +44,7 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_skills_list() -> dict[str, Any]:
         """返回技能文件列表（不含完整 content）。
 
-        每项含 ``name`` / ``size`` / ``mtime`` / ``content_preview``。
+        每项含 ``name`` / ``size`` / ``mtime`` / ``content_preview`` / ``path``。
         """
         files = list_skills_files()
         return {
@@ -54,6 +54,7 @@ def register_memory_routes(app: FastAPI) -> None:
                     "size": f.size,
                     "mtime": f.mtime,
                     "content_preview": f.content_preview,
+                    "path": f.path,
                 }
                 for f in files
             ]

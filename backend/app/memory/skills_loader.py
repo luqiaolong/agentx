@@ -30,6 +30,7 @@ class SkillDef(BaseModel):
     trigger: str = ""
     tools: list[str] = Field(default_factory=list)
     content: str = ""
+    path: str = ""  # SKILL.md 真实绝对路径（DATA_DIR/skills/<name>/SKILL.md）
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str] | None:

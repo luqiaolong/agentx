@@ -7,6 +7,8 @@ export interface SkillSummary {
   trigger: string;
   tools: string[];
   content_preview: string;
+  /** SKILL.md 真实绝对路径（DATA_DIR/skills/<name>/SKILL.md） */
+  path: string;
 }
 
 interface SkillsState {

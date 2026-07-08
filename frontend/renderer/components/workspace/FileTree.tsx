@@ -7,6 +7,7 @@ import {
   Home,
   FolderOpen,
   ChevronDown,
+  Eye,
 } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import { workspace } from "@/lib/api/http";
@@ -34,6 +35,8 @@ interface TreeNodeProps {
   workspacePath: string | null;
   currentId: string | null;
   onRefreshRoot: () => void;
+  /** 在内置编辑器中打开文件（与 ContextTabPanel → CodeViewerModal 保持一致） */
+  onOpenEditor?: (file: { id: string; path: string; name: string }) => void;
 }
 
 const TreeNode = memo(function TreeNode({
@@ -43,6 +46,7 @@ const TreeNode = memo(function TreeNode({
   workspacePath,
   currentId,
   onRefreshRoot,
+  onOpenEditor,
 }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<Entry[] | null>(null);
@@ -89,6 +93,15 @@ const TreeNode = memo(function TreeNode({
     }
   };
 
+  const openInEditor = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onOpenEditor?.({
+      id: `file-${fullPath}`,
+      path: fullPath,
+      name: entry.name,
+    });
+  };
+
   const indent = depth * 14; /* 每层缩进 14px */
 
   return (
@@ -125,12 +138,26 @@ const TreeNode = memo(function TreeNode({
         </span>
 
         {entry.type === "file" && (
-          <span
-            className="shrink-0 text-muted-c"
-            style={{ fontSize: "var(--fs-ws-file-size)" }}
-          >
-            {formatSize(entry.size)}
-          </span>
+          <>
+            <span
+              className="shrink-0 text-muted-c"
+              style={{ fontSize: "var(--fs-ws-file-size)" }}
+            >
+              {formatSize(entry.size)}
+            </span>
+            {/* hover 时显示「在编辑器中打开」按钮，与 ContextTabPanel → CodeViewerModal 体验对齐 */}
+            {onOpenEditor && (
+              <button
+                type="button"
+                onClick={openInEditor}
+                className="hidden shrink-0 rounded p-px text-muted-c transition-all hover:bg-hover-soft hover:text-brand-500 group-hover:block"
+                title="在编辑器中打开"
+                aria-label="在编辑器中打开"
+              >
+                <Eye className="h-3 w-3" />
+              </button>
+            )}
+          </>
         )}
       </button>
 
@@ -168,6 +195,7 @@ const TreeNode = memo(function TreeNode({
                 workspacePath={workspacePath}
                 currentId={currentId}
                 onRefreshRoot={onRefreshRoot}
+                onOpenEditor={onOpenEditor}
               />
             ))
           )}
@@ -180,7 +208,12 @@ const TreeNode = memo(function TreeNode({
 /* ------------------------------------------------------------------ */
 /*  FileTree — 根组件                                                   */
 /* ------------------------------------------------------------------ */
-export function FileTree() {
+interface FileTreeProps {
+  /** 在内置编辑器中打开文件（与 ContextTabPanel → CodeViewerModal 保持一致） */
+  onOpenEditor?: (file: { id: string; path: string; name: string }) => void;
+}
+
+export function FileTree({ onOpenEditor }: FileTreeProps = {}) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -296,6 +329,7 @@ export function FileTree() {
               workspacePath={workspacePath}
               currentId={currentId}
               onRefreshRoot={refresh}
+              onOpenEditor={onOpenEditor}
             />
           ))}
         </div>

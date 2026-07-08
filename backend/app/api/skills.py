@@ -16,7 +16,8 @@ def register_skills_routes(app: FastAPI) -> None:
     async def list_skills_endpoint() -> dict[str, Any]:
         """返回已加载技能列表。
 
-        每项含 ``name`` / ``description`` / ``trigger`` / ``tools`` / ``content_preview``（body 前 200 字符）。
+        每项含 ``name`` / ``description`` / ``trigger`` / ``tools`` /
+        ``content_preview``（body 前 200 字符）/ ``path``（SKILL.md 绝对路径）。
         ``data/skills/`` 不存在时返回空列表。
         """
         skills = list_skills()
@@ -28,6 +29,7 @@ def register_skills_routes(app: FastAPI) -> None:
                     "trigger": s.trigger,
                     "tools": s.tools,
                     "content_preview": s.content[:200],
+                    "path": s.path,
                 }
                 for s in skills
             ]
