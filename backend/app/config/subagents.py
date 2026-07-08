@@ -74,6 +74,10 @@ class SubagentSettings(BaseModel):
       既作为 LLM 的系统提示词，也作为 UI 展示的描述。
     - trigger_description: 触发条件描述（短句）。用于 LLM 语义路由决策
       和降级关键词匹配（从短句中提取关键词）。
+    - rubric: 可选自纠规则文本；非空时由 create_agent 挂载
+      RubricMiddleware 启用运行时自纠（graders/feedback loop）。
+    - grader_model: 可选判官模型名（如 "gpt-4o-mini"）；为 None 时
+      create_agent 默认用 get_chat_model(temperature=0)。
     """
 
     enabled: bool = True
@@ -81,6 +85,8 @@ class SubagentSettings(BaseModel):
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
     trigger_description: str = ""
+    rubric: str = ""
+    grader_model: str | None = None
 
 
 # 内置子代理键名集合（与 _default_subagents 一致，用于区分内置/自定义）
@@ -109,6 +115,8 @@ class CustomSubagentEntry(BaseModel):
     ``key`` 字段严格校验：仅允许 ``[a-zA-Z0-9_-]{1,64}``（与前端
     ``frontend/main/store.ts::sanitizeCustomEntry::CUSTOM_KEY_RE`` 一致）。
     防止 env JSON 序列化、shell 注入、URL 路径解析等下游环节出错。
+
+    ``rubric`` 字段为可选自纠规则文本，透传到 build_custom_agent → create_agent。
     """
 
     key: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
@@ -118,6 +126,7 @@ class CustomSubagentEntry(BaseModel):
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     tools: list[str] = Field(default_factory=list)
     trigger_description: str = ""
+    rubric: str = ""
 
 
 def _default_team_subagents() -> dict[str, SubagentSettings]:
@@ -150,6 +159,14 @@ def _default_team_subagents() -> dict[str, SubagentSettings]:
             system_prompt=_DEFAULT_ARCHITECT_SYSTEM_PROMPT,
             tools=list(_DEFAULT_TEAM_TOOLS),
             trigger_description=_DEFAULT_ARCHITECT_TRIGGER_DESCRIPTION,
+            # 架构自纠 rubric：要求 trade-off 表 + 风险评估，启用 RubricMiddleware
+            # 运行时校验 LLM 输出是否包含这些要素；缺失则触发 grader 重写。
+            rubric=(
+                "输出必须包含:\n"
+                "1. 至少 2 个备选方案的对比表（维度: 性能/成本/复杂度/团队匹配度）\n"
+                "2. 明确推荐方案及 3 条以内核心理由\n"
+                "3. 风险评估：列出 1-3 个主要风险及对应缓解措施"
+            ),
         ),
         "devops": SubagentSettings(
             enabled=True,
@@ -258,6 +275,7 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
                 trigger_description=str(
                     val.get("trigger_description") or val.get("triggerDescription") or ""
                 ),
+                rubric=str(val.get("rubric") or ""),
             )
         except (TypeError, ValueError, ValidationError) as exc:
             logger.warning(

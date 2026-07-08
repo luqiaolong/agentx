@@ -173,6 +173,7 @@ async def build_coding_expert(
         workspace_path=workspace_path,
         chat_model=chat_model,
         subagents=subagents,
+        rubric=expert_cfg.rubric or None,
     )
 
 

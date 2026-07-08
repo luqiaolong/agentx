@@ -83,6 +83,9 @@ class ExpertSettings(BaseModel):
     Expert 基于 ``build_deep_agent`` 构建，替换 system prompt 为领域专用。
     每个 Expert 绑定唯一场景，可调用 rag/web 子代理（通过 ``delegate_to_subagent``）。
     Expert 不可委派其他 Expert，也不可触发 AgentTeam。
+
+    ``rubric`` 字段为可选自纠规则文本，透传到 ``build_deep_agent`` →
+    ``create_agent``，非空时挂载 RubricMiddleware 启用运行时自纠。
     """
 
     enabled: bool = True
@@ -93,6 +96,8 @@ class ExpertSettings(BaseModel):
     interrupt_before_tools: list[str] = Field(
         default_factory=lambda: list(_DEFAULT_INTERRUPT_BEFORE_TOOLS)
     )
+    rubric: str = ""
+    grader_model: str | None = None
 
 
 class ScenarioTeamSettings(BaseModel):
