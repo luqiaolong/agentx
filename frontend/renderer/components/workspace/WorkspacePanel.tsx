@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   ListChecks,
   X,
   Folder,
   GitBranch,
 } from "lucide-react";
-import { useTasksStore } from "@/stores/tasks";
+import { useTasksStore, type Task } from "@/stores/tasks";
 import { useGitStore } from "@/stores/git";
 import { useChatStore } from "@/stores/chat";
 import { FileTree } from "./FileTree";
@@ -13,6 +13,8 @@ import { GitPanel } from "./GitPanel";
 import { CompactTaskList } from "./CompactTaskList";
 import { ContextTabPanel } from "./ContextTabPanel";
 import { ProjectConfigBadge } from "./ProjectConfigBadge";
+
+const EMPTY_TASKS: readonly Task[] = Object.freeze([]) as readonly Task[];
 
 /* ------------------------------------------------------------------ */
 /*  WorkspacePanel — 主组件                                              */
@@ -27,9 +29,14 @@ export function WorkspacePanel({
 } = {}) {
   const [active, setActive] = useState<Tab>("tasks");
   const currentId = useChatStore((s) => s.currentId);
-  // 任务按会话隔离：只统计和展示当前会话的任务
-  const tasks = useTasksStore((s) =>
-    currentId ? s.tasks.filter((t) => t.sessionId === currentId) : [],
+  // 任务按会话隔离：稳定 selector 返回稳定引用，避免 "getSnapshot cached" 警告。
+  const allTasks = useTasksStore((s) => s.tasks);
+  const tasks = useMemo(
+    () =>
+      currentId
+        ? allTasks.filter((t) => t.sessionId === currentId)
+        : (EMPTY_TASKS as Task[]),
+    [allTasks, currentId],
   );
   const clearDone = useTasksStore((s) => s.clearDone);
   const gitRepoStatus = useGitStore((s) => s.repoStatus);

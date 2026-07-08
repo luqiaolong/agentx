@@ -24,6 +24,9 @@ const STATUS_CONFIG: Record<
   failed: { Icon: CircleX, color: "text-rose-500 dark:text-rose-400", label: "失败" },
 };
 
+// 稳定空数组常量：避免 useTasksStore selector 返回新引用导致 "getSnapshot cached" 警告。
+const EMPTY_TASKS: readonly Task[] = Object.freeze([]) as readonly Task[];
+
 /* ------------------------------------------------------------------ */
 /*  TaskCard — 单个任务行（memo 化）                                     */
 /* ------------------------------------------------------------------ */
@@ -68,8 +71,15 @@ const TaskCard = memo(function TaskCard({ task, onRemove }: TaskCardProps) {
 
 export function CompactTaskList() {
   const currentId = useChatStore((s) => s.currentId);
-  const tasks = useTasksStore((s) =>
-    currentId ? s.tasks.filter((t) => t.sessionId === currentId) : [],
+  // 用 stable selector：currentId 不变时 useTasksStore 不会重新订阅；filter 的结果
+  // 用 useMemo 缓存，避免每次渲染都产生新数组触发 "getSnapshot should be cached" 警告。
+  const allTasks = useTasksStore((s) => s.tasks);
+  const tasks = useMemo(
+    () =>
+      currentId
+        ? allTasks.filter((t) => t.sessionId === currentId)
+        : (EMPTY_TASKS as Task[]),
+    [allTasks, currentId],
   );
   const removeTask = useTasksStore((s) => s.removeTask);
   const listRef = useRef<HTMLDivElement>(null);

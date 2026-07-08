@@ -114,6 +114,12 @@ const mockApi = {
   workspace: {
     list: vi.fn().mockResolvedValue({ entries: [] }),
   },
+  // projectConfig：确保 ProjectConfigBadge 在 smoke 渲染时不会因 fetch 失败
+  // 进入 setExists(null) → setExists 检查的循环（jsdom 不支持真实 scroll）。
+  projectConfig: {
+    init: vi.fn().mockResolvedValue({ ok: true, path: "", created: [], skipped: [] }),
+    get: vi.fn().mockResolvedValue({ exists: false, files: [], agents_md_preview: null }),
+  },
   python: {
     onStatus: vi.fn().mockReturnValue(() => {}),
   },

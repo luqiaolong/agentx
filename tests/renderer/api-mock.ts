@@ -230,6 +230,11 @@ const fetchRoutes: FetchRoute[] = [
   } },
   { pattern: /\/api\/memory\/profile$/, method: "POST", handler: (_u, b, api) => api.memory.saveProfile(b) },
   { pattern: /\/api\/memory\/profile$/, method: "GET", handler: (u, _b, api) => api.memory.getProfile(u.searchParams.get("category") ?? undefined) },
+  // ---- Project config (.agentx/) ----
+  // Use vi.fn() style handlers so tests can override via mockApi.projectConfig.
+  // Default behavior: 返回未配置，避免与 ProjectConfigBadge 的 setExists(null) 死循环。
+  { pattern: /\/api\/project-config\/init$/, method: "POST", handler: (_u, _b, api) => api.projectConfig?.init() ?? { ok: true, path: "", created: [], skipped: [] } },
+  { pattern: /\/api\/project-config$/, method: "GET", handler: (_u, _b, api) => api.projectConfig?.get() ?? { exists: false, files: [], agents_md_preview: null } },
 ];
 
 // ============================================================
