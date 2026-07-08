@@ -175,14 +175,21 @@ AgentTeam 多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggreg
 
 ## 9.5 前端界面概念定义
 
-主界面采用**单窗口会话模式**，左右分栏布局：
+主界面采用**单窗口会话模式**，左右分栏布局；顶部为自定义 title bar。
 
 | 区域 | 术语 | 说明 |
 |---|---|---|
+| **顶部 title bar（左侧）** | **场景 tab**（Scene Tab） | 位于 Bot icon 旁、`v0.1` badge 之后。**场景**为 UI 维度，取值 `work` / `coding`；点 tab 触发联动修改 `agent_mode`（`work` 强制 mode=work；`coding` 保留原 mode，work→coding 升级为 `coding`）|
+| **顶部 title bar（左侧）** | **agent 类型选择器**（位于输入框旁，不在 title bar） | 输入框左下角的 ModeToggle，**agent 类型**为 UI 维度，仅展示当前场景下的选项：work 场景下为 `Work`；coding 场景下为 `Coding Agent` / `Coding Team`（`coding_team_enabled=false` 时隐藏 Team）|
 | **左侧** | **会话列表**（Session List / Chat List）| 展示历史会话，以用户首条消息内容作为主标题，UUID 短码弱化展示 |
 | **右侧** | **工作区**（Workspace）| 当前选中会话的聊天内容区域，包含消息流、输入框、工具栏 |
 
 > 所有 AI 代理在讨论前端 UI 时，**必须使用上述术语**，避免"左边""右边"等模糊描述。
+
+**场景 vs agent 类型的派生关系**：
+- 后端 `agent_mode` 仍为单字段 `work` / `coding` / `coding_team`（见 [shared/api-types.ts::AgentMode](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts#L89)），后端契约零改动。
+- 场景 **从 mode 派生**：`scene = mode === "work" ? "work" : "coding"`（见 [stores/scene.ts::getSceneFromMode](file:///d:/java/agentprojects/agentx/frontend/renderer/stores/scene.ts)）。
+- 场景 tab 写回 mode 的逻辑见 [stores/scene.ts::applySceneChange](file:///d:/java/agentprojects/agentx/frontend/renderer/stores/scene.ts)。
 
 ---
 
@@ -344,6 +351,15 @@ agentx/
 
 > 旧的 CHAT / SINGLE_TOOL / DEEP_TASK / AgentTeam 四路径分类已删除（推倒重来，无兼容层）。
 > 旧值 `"agent"` / `"agent_team"` 已废弃，前端 store migrate 时重置为 `"work"`。
+
+**前端 UI 场景/模式双层结构**（后端 agent_mode 单字段不变，前端双层展示）：
+
+- **L1 场景**（顶部 title bar tab，[App.tsx](file:///d:/java/agentprojects/agentx/frontend/renderer/App.tsx)）：场景为 UI 维度，取值 `work` / `coding`，从 `agent_mode.mode` 派生。点 tab 触发 [applySceneChange](file:///d:/java/agentprojects/agentx/frontend/renderer/stores/scene.ts) 联动修改 mode。
+- **L2 agent 类型**（输入框旁的 [ModeToggle](file:///d:/java/agentprojects/agentx/frontend/renderer/components/chat/ModeToggle.tsx)）：仅展示当前场景下的选项（work → `Work`；coding → `Coding Agent` / `Coding Team`），由 [getSceneFromMode](file:///d:/java/agentprojects/agentx/frontend/renderer/stores/scene.ts) 联动 mode。
+- 后端 `agent_mode` 契约不变；Renderer 透传该字段给后端（见 [lib/api/chat.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/lib/api/chat.ts)）。
+
+> 详细 UI 概念与术语见 §9.5；场景/模式双层交互的动机见
+> [openspec/2026-07-08-restore-scenario-mode-separation](file:///d:/java/agentprojects/agentx/openspec/changes/2026-07-08-restore-scenario-mode-separation/proposal.md)。
 
 **危险工具审批流**：`FORBIDDEN_SUBAGENT_TOOLS`（write_file / edit_file / cli_execute / git_write 等）
 在 Supervisor 和 Coding Expert 中通过 LangGraph `interrupt_before=["tools"]` 触发用户审批；

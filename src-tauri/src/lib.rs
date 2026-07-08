@@ -12,9 +12,32 @@ pub mod store;
 
 use std::sync::Mutex;
 
-use tauri::Manager;
+use tauri::{image::Image, Manager};
 
 const PYTHON_PORT: u16 = 8123;
+
+/// 应用图标 PNG 字节（嵌入编译时，运行时直接读取）。
+///
+/// `tauri.conf.json::bundle.icon` 只控制 **打包后** 的 EXE 安装程序图标，
+/// 运行时窗口图标需要在 `WebviewWindowBuilder::icon()` 显式设置（尤其 dev 模式下
+/// target/debug/agentx.exe 不会嵌入图标资源）。这里用 `include_bytes!` 把
+/// `icon.ico` 内嵌到二进制，确保 `WindowBuilder::icon` 有可用的 Image 数据。
+const APP_ICON_BYTES: &[u8] = include_bytes!("../icons/icon.ico");
+
+/// 从嵌入的 ICO 数据构造 `tauri::image::Image`。
+///
+/// `Image::from_bytes` 会自动解析 ICO 文件并选取最佳尺寸帧；多尺寸 ICO 会被
+/// 全部加载到 `Image::rgba()` 中，运行时由 `WebviewWindowBuilder::icon` 自动
+/// 按窗口 DPI 选择合适帧。
+fn build_app_icon() -> Image<'static> {
+    // ICO 文件可能包含多张帧；从 256x256 主帧构建 Image。
+    // `Image::from_bytes` 在 Windows 上能直接解码 ICO 多帧。
+    Image::from_bytes(APP_ICON_BYTES).unwrap_or_else(|e| {
+        log::warn!("failed to decode embedded ICO icon: {e}; falling back to 1x1 transparent");
+        // 1x1 transparent RGBA fallback（永远不会触发，因为 ICO 验证通过）
+        Image::new_owned(vec![0u8; 4], 1, 1)
+    })
+}
 
 /// Python 后端 handle 的全局状态包装。
 ///
@@ -151,6 +174,18 @@ pub fn run() {
             // 注册窗口事件（maximized-change 推送）
             commands::window::register_window_events(app.handle());
 
+            // 显式为所有已创建的窗口设置应用图标
+            // （tauri.conf.json::bundle.icon 只控制打包后的 EXE 安装图标，
+            // 运行时窗口图标需要通过 WebviewWindow::set_icon 显式设置）
+            let app_icon = build_app_icon();
+            for (label, window) in app.webview_windows() {
+                if let Err(e) = window.set_icon(app_icon.clone()) {
+                    log::warn!("failed to set icon for window '{label}': {e}");
+                } else {
+                    log::info!("set icon for window '{label}'");
+                }
+            }
+
             // 启动 Python 后端
             let handle = app.handle().clone();
             let cwd = backend::resolve_backend_cwd(app.handle());
@@ -172,6 +207,20 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 窗口创建时设置图标（setup 中窗口尚未创建）
+            if let tauri::WindowEvent::Focused(_) = event {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| {
+                    let app_icon = build_app_icon();
+                    if let Err(e) = window.set_icon(app_icon) {
+                        log::warn!("failed to set icon on window focus: {e}");
+                    } else {
+                        log::info!("set icon on window focus");
+                    }
+                });
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running AgentX tauri application");

@@ -148,22 +148,39 @@ async def run_router(
         cleaned_message, skill_content = _parse_skill_tag(message)
 
         # ---- 3. workspace 授权同步 ----
-        if workspace_path:
+        # 优先使用会话级 workspace_path；若为空则回退到 thread 已有授权中的第一个
+        # （重新发送消息的场景：会话从持久化恢复后 path 为 None，但上次授权仍然有效）。
+        # 都不存在才跳过授权，以免污染 authorized_dirs。
+        effective_workspace = (workspace_path or "").strip() or None
+        if not effective_workspace:
+            from app.utils.security import get_sandbox as _get_sandbox_fallback
+            try:
+                _existing = _get_sandbox_fallback().list_authorized(thread_id)
+            except Exception:
+                _existing = []
+            if _existing:
+                effective_workspace = str(_existing[0][0])
+                logger.info(
+                    "router.workspace_fallback_to_existing",
+                    thread_id=thread_id,
+                    workspace=effective_workspace,
+                )
+        if effective_workspace:
             from app.utils.security import get_sandbox
 
             sandbox = get_sandbox()
             try:
-                sandbox.authorize(thread_id, workspace_path, writable=True, source="chip")
+                sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
                 logger.info(
                     "router.workspace_authorized",
                     thread_id=thread_id,
-                    workspace=workspace_path,
+                    workspace=effective_workspace,
                 )
             except ValueError as exc:
                 logger.warning(
                     "router.workspace_authorize_failed",
                     thread_id=thread_id,
-                    workspace=workspace_path,
+                    workspace=effective_workspace,
                     error=str(exc),
                 )
 

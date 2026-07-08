@@ -58,6 +58,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
+ "embed-resource 2.5.2",
  "git2",
  "libc",
  "log",
@@ -1426,6 +1427,20 @@ dependencies = [
 
 [[package]]
 name = "embed-resource"
+version = "2.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d506610004cfc74a6f5ee7e8c632b355de5eca1f03ee5e5e0ec11b77d4eb3d61"
+dependencies = [
+ "cc",
+ "memchr",
+ "rustc_version",
+ "toml 0.8.2",
+ "vswhom",
+ "winreg 0.52.0",
+]
+
+[[package]]
+name = "embed-resource"
 version = "3.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbfdaacccebec3b28e4866b8973543c7647797db5ada1bdab552e48fe665fbbd"
@@ -1435,7 +1450,7 @@ dependencies = [
  "rustc_version",
  "toml 1.1.2+spec-1.1.0",
  "vswhom",
- "winreg",
+ "winreg 0.55.0",
 ]
 
 [[package]]
@@ -5251,6 +5266,7 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
+ "image",
  "jni 0.21.1",
  "libc",
  "log",
@@ -5676,7 +5692,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc65d45c68858bfe420dd29e834b5d15dbecf8a07a8a16cf4d532c7b1f69d4b6"
 dependencies = [
  "dunce",
- "embed-resource",
+ "embed-resource 3.0.11",
  "toml 1.1.2+spec-1.1.0",
 ]
 
@@ -7286,6 +7302,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

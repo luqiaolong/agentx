@@ -413,9 +413,14 @@ export function ChatView() {
 
     try {
       // 权限模式已下沉为会话级字段，从当前 session 读取
-      const session = useChatStore.getState().sessions[tid];
+      const storeState = useChatStore.getState();
+      const session = storeState.sessions[tid];
       const permissionMode = session?.permissionMode ?? "standard";
-      const workspacePath = session?.workspacePath ?? null;
+      // 优先使用 session 显式绑定的 workspace；为空时回退到 homeWorkspacePath，
+      // 否则后端 router 会跳过 chip 隐式授权，list_dir 等只读工具会因沙箱
+      // authorized_dirs 为空而返回 "路径 . 未授权" 错误。
+      const workspacePath =
+        session?.workspacePath ?? storeState.homeWorkspacePath ?? null;
       await chat.send(
         { role: "user", content: sendContent },
         {

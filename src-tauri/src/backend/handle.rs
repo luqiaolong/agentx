@@ -393,7 +393,11 @@ fn open_log_window(app: &AppHandle) {
     .always_on_top(false)
     .resizable(true)
     .visible(false)
-    .build();
+    .icon(
+        tauri::image::Image::from_bytes(include_bytes!("../../icons/icon.ico"))
+            .unwrap_or_else(|_| tauri::image::Image::new_owned(vec![0u8; 4], 1, 1)),
+    )
+    .and_then(|b| b.build());
 
     match window_result {
         Ok(window) => {

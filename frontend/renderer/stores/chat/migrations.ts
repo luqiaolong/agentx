@@ -24,7 +24,9 @@ function buildSessionShell(
     workspacePath:
       typeof raw.workspacePath === "string" && raw.workspacePath.length > 0
         ? raw.workspacePath
-        : null,
+        : typeof raw.workspace === "string" && raw.workspace.length > 0
+          ? raw.workspace
+          : null,
     manuallyRevokedPaths:
       Array.isArray(raw.manuallyRevokedPaths) ? raw.manuallyRevokedPaths : [],
     isRunning: false,

@@ -23,6 +23,12 @@ import { SettingsModal } from "./components/settings/SettingsModal";
 import { CodeViewerModal } from "./components/code/CodeViewerModal";
 import { useSettingsStore } from "./stores/settings";
 import { useChatStore } from "./stores/chat";
+import { useAgentModeStore } from "./stores/agentMode";
+import {
+  applySceneChange,
+  getSceneFromMode,
+  type Scene,
+} from "./stores/scene";
 
 type PythonStatus = "starting" | "ready" | "crashed" | "giving_up" | null;
 
@@ -37,6 +43,19 @@ export default function App() {
   const [viewerLoading, setViewerLoading] = useState(false);
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
+  const agentMode = useAgentModeStore((s) => s.mode);
+  const setAgentMode = useAgentModeStore((s) => s.setMode);
+  const currentScene = getSceneFromMode(agentMode);
+
+  // 场景切换：顶部 tab 触发，联动修改 agent_mode
+  // - scene=work → 强制 mode=work（work 场景不允许 Team）
+  // - scene=coding → 保留当前 mode，若 mode===work 则升级为 coding（默认 Coding Agent）
+  const handleSceneChange = (target: Scene) => {
+    const nextMode = applySceneChange(target, agentMode);
+    if (nextMode !== agentMode) {
+      setAgentMode(nextMode);
+    }
+  };
 
   // 订阅 Python 后端启动状态
   useEffect(() => {
@@ -169,6 +188,31 @@ export default function App() {
           <span className="ml-1 rounded-full bg-subtle px-1.5 py-px font-medium text-secondary-c" style={{ fontSize: 'var(--fs-version)' }}>
             v0.1
           </span>
+          {/* 场景切换器：Work / Coding，由 agent_mode.mode 派生，联动修改 mode */}
+          <div
+            className="app-no-drag ml-1.5 inline-flex items-center rounded-md border border-default bg-surface"
+            role="tablist"
+            aria-label="场景切换"
+          >
+            {(["work", "coding"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="tab"
+                aria-selected={currentScene === s}
+                onClick={() => handleSceneChange(s)}
+                className={`h-5 px-2 font-medium transition-colors ${
+                  currentScene === s
+                    ? "bg-brand-700 text-brand-200"
+                    : "text-secondary-c hover:text-primary-c"
+                }`}
+                style={{ fontSize: 'var(--fs-scene-tab)' }}
+                title={s === "work" ? "工作场景" : "编程场景"}
+              >
+                {s === "work" ? "Work" : "Coding"}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="app-no-drag flex items-center gap-2">
