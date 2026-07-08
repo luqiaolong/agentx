@@ -7,9 +7,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from app.deep.approval import _extract_paths_from_tool_call
+from app.security.approval_flow import _extract_paths_from_tool_call
 
 
 def test_extract_paths_read_file() -> None:

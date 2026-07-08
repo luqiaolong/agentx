@@ -503,12 +503,12 @@ async def test_router_workspace_path_passed_to_runner(
         yield {"event": "token", "data": "ok"}
 
     # mock sandbox.authorize 避免真实文件系统操作
-    from app.utils.security import get_sandbox
+    from unittest.mock import AsyncMock
 
     mock_sandbox = MagicMock()
-    mock_sandbox.authorize = MagicMock()
+    mock_sandbox.authorize = AsyncMock()
     monkeypatch.setattr(
-        "app.utils.security.get_sandbox",
+        "app.sandbox.get_sandbox",
         lambda: mock_sandbox,
     )
 
@@ -561,7 +561,7 @@ async def test_router_reset_clears_checkpoint(
 
     # Mock get_sandbox 返回带 clear 的 mock
     mock_sandbox = MagicMock()
-    mock_sandbox.clear = MagicMock()
+    mock_sandbox.clear = AsyncMock()
     monkeypatch.setattr("app.main.get_sandbox", MagicMock(return_value=mock_sandbox))
 
     # 调用 _event_generator 处理 /reset
@@ -572,7 +572,7 @@ async def test_router_reset_clears_checkpoint(
     mock_checkpointer.adelete_thread.assert_awaited_once_with("t-reset")
 
     # 验证沙箱被清理（persist_authorized_dirs=False）
-    mock_sandbox.clear.assert_called_once_with("t-reset")
+    mock_sandbox.clear.assert_awaited_once_with("t-reset")
 
     # 验证事件：有 token 和 done
     token_events = [e for e in events if e["event"] == "token"]
@@ -606,7 +606,7 @@ async def test_router_reset_preserves_authorized_dirs(
 
     # Mock get_sandbox
     mock_sandbox = MagicMock()
-    mock_sandbox.clear = MagicMock()
+    mock_sandbox.clear = AsyncMock()
     monkeypatch.setattr("app.main.get_sandbox", MagicMock(return_value=mock_sandbox))
 
     req = ChatRequest(message="/reset", thread_id="t-preserve")
@@ -616,7 +616,7 @@ async def test_router_reset_preserves_authorized_dirs(
     mock_checkpointer.adelete_thread.assert_awaited_once_with("t-preserve")
 
     # 沙箱未被清理
-    mock_sandbox.clear.assert_not_called()
+    mock_sandbox.clear.assert_not_awaited()
 
     # token 事件提示授权目录已持久化
     token_events = [e for e in events if e["event"] == "token"]

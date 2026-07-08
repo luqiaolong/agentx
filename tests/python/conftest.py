@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from app.config import Settings, get_settings
+from app.config import DATA_DIR, Settings, get_settings
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -21,6 +21,17 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "requires_myserver: requires myserver TEI/Milvus reachable"
     )
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_data_dir() -> None:
+    """确保 ``DATA_DIR`` 存在。
+
+    ``SandboxStore.__init__`` 通过 ``sqlite3.connect(DATA_DIR/agentx.db)`` 建表，
+    父目录不存在会报 ``unable to open database file``。worktree 环境可能无
+    ``data/`` 目录，此处统一创建（``exist_ok=True`` 对主仓库无副作用）。
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture(autouse=True)

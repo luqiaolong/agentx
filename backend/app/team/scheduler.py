@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, AsyncIterator
 
-from app.approval import get_abort_event
+from app.security.approval import get_abort_event
 from app.config import get_settings
 from app.utils.sse_events import make_team_event
 from app.utils.text import extract_chunk_text
@@ -133,6 +133,7 @@ async def _run_subtask(
                 permission_mode=permission_mode,
                 scene_prompt=scene_prompt,
                 workspace_path=workspace_path,
+                parent_thread_id=thread_id,
             ):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")
@@ -172,6 +173,7 @@ async def _run_subtask(
                 history=history,
                 permission_mode=permission_mode,
                 workspace_path=workspace_path,
+                parent_thread_id=thread_id,
             ):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")
@@ -249,6 +251,7 @@ async def _run_subtask(
                     history=history,
                     permission_mode=permission_mode,
                     workspace_path=workspace_path,
+                    parent_thread_id=thread_id,
                 ):
                     if abort_event.is_set():
                         yield _done(False, "用户中止")

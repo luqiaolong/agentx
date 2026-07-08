@@ -24,7 +24,7 @@ def client() -> TestClient:
 
 def test_approve_true_records_pending_approval(client: TestClient) -> None:
     """POST /api/chat/approve approval=true → 写入 _pending_approvals[tid] = True。"""
-    from app.approval.state import _pending_approvals
+    from app.security.approval.state import _pending_approvals
 
     tid = "unit-test-approve-1"
     _pending_approvals.pop(tid, None)
@@ -35,17 +35,17 @@ def test_approve_true_records_pending_approval(client: TestClient) -> None:
         )
         assert r.status_code == 200
         assert r.json() == {"ok": True}
-        # _pending_approvals 现存 ApprovalDecision 对象（非 bool），校验 approved 字段
+        # _pending_approvals 现存 tuple[ApprovalResult, float]，校验 approved 字段
         decision = _pending_approvals.get(tid)
         assert decision is not None
-        assert decision.approved is True
+        assert decision[0].approved is True
     finally:
         _pending_approvals.pop(tid, None)
 
 
 def test_approve_false_records_pending_approval(client: TestClient) -> None:
     """POST /api/chat/approve approval=false → 写入 _pending_approvals[tid].approved = False。"""
-    from app.approval.state import _pending_approvals
+    from app.security.approval.state import _pending_approvals
 
     tid = "unit-test-approve-2"
     _pending_approvals.pop(tid, None)
@@ -57,14 +57,14 @@ def test_approve_false_records_pending_approval(client: TestClient) -> None:
         assert r.status_code == 200
         decision = _pending_approvals.get(tid)
         assert decision is not None
-        assert decision.approved is False
+        assert decision[0].approved is False
     finally:
         _pending_approvals.pop(tid, None)
 
 
 def test_approve_overwrites_previous_decision(client: TestClient) -> None:
     """同一 thread_id 多次调用 approve，后值覆盖前值。"""
-    from app.approval.state import _pending_approvals
+    from app.security.approval.state import _pending_approvals
 
     tid = "unit-test-approve-3"
     _pending_approvals.pop(tid, None)
@@ -73,7 +73,7 @@ def test_approve_overwrites_previous_decision(client: TestClient) -> None:
         client.post("/api/chat/approve", json={"thread_id": tid, "approval": False})
         decision = _pending_approvals.get(tid)
         assert decision is not None
-        assert decision.approved is False
+        assert decision[0].approved is False
     finally:
         _pending_approvals.pop(tid, None)
 
@@ -85,7 +85,7 @@ def test_approve_overwrites_previous_decision(client: TestClient) -> None:
 
 def test_abort_sets_flag(client: TestClient) -> None:
     """POST /api/chat/abort → 设置 _abort_flags[tid] = True。"""
-    from app.approval.state import _abort_flags
+    from app.security.approval.state import _abort_flags
 
     tid = "unit-test-abort-1"
     _abort_flags.pop(tid, None)
@@ -93,14 +93,14 @@ def test_abort_sets_flag(client: TestClient) -> None:
         r = client.post("/api/chat/abort", json={"thread_id": tid})
         assert r.status_code == 200
         assert r.json() == {"ok": True}
-        assert _abort_flags.get(tid) is True
+        assert _abort_flags.get(tid, (False, 0.0))[0] is True
     finally:
         _abort_flags.pop(tid, None)
 
 
 def test_abort_idempotent(client: TestClient) -> None:
     """多次 abort 同一 tid 都成功（幂等）。"""
-    from app.approval.state import _abort_flags
+    from app.security.approval.state import _abort_flags
 
     tid = "unit-test-abort-2"
     _abort_flags.pop(tid, None)
@@ -109,7 +109,7 @@ def test_abort_idempotent(client: TestClient) -> None:
         r2 = client.post("/api/chat/abort", json={"thread_id": tid})
         assert r1.status_code == 200
         assert r2.status_code == 200
-        assert _abort_flags.get(tid) is True
+        assert _abort_flags.get(tid, (False, 0.0))[0] is True
     finally:
         _abort_flags.pop(tid, None)
 

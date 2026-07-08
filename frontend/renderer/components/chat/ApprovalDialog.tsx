@@ -17,8 +17,8 @@ import type { ApprovalDecision } from "../../../shared/api-types";
  * directory_extension 必须用户显式选择 once/session/deny，避免静默扩张授权范围。
  */
 export function ApprovalDialog() {
-  const approvalRequest = useChatStore((s) => s.approvalRequest);
-  const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
+  const approvalRequest = useChatStore((s) => s.approvalQueue[0] ?? null);
+  const dequeueApprovalRequest = useChatStore((s) => s.dequeueApprovalRequest);
   const autoApproveAfterSeconds = useSettingsStore((s) => s.autoApproveAfterSeconds);
   const [remaining, setRemaining] = useState(autoApproveAfterSeconds);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +38,7 @@ export function ApprovalDialog() {
           void approve
             .submit(approvalRequest.threadId, true)
             .catch(() => {});
-          setApprovalRequest(null);
+          dequeueApprovalRequest();
           return 0;
         }
         return r - 1;
@@ -47,7 +47,7 @@ export function ApprovalDialog() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [approvalRequest, autoApproveEnabled, autoApproveAfterSeconds, setApprovalRequest]);
+  }, [approvalRequest, autoApproveEnabled, autoApproveAfterSeconds, dequeueApprovalRequest]);
 
   // 通用提交：dangerous_tool 走 (true,false) 旧路径；directory_extension 走 decision/path/writable
   const submit = async (
@@ -65,7 +65,7 @@ export function ApprovalDialog() {
         approvalRequest.requestedPath,
         approvalRequest.writable ?? false,
       );
-      setApprovalRequest(null);
+      dequeueApprovalRequest();
     } catch (err) {
       // 提交失败时保留对话框，让用户可重试；恢复倒计时定时器
       setError(err instanceof Error ? err.message : String(err));
@@ -78,7 +78,7 @@ export function ApprovalDialog() {
               void approve
                 .submit(approvalRequest.threadId, true)
                 .catch(() => {});
-              setApprovalRequest(null);
+              dequeueApprovalRequest();
               return 0;
             }
             return r - 1;

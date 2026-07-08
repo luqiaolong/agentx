@@ -15,54 +15,21 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import shutil
 import subprocess
 from pathlib import Path
 
 from app.config import PROJECT_ROOT, get_settings
 from app.observability.logger import logger
+from app.sandbox import PathNotAuthorized, get_sandbox, is_critical
+from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args
 from app.utils.paths import normalize_path
-from app.utils.security import PathNotAuthorized, get_sandbox
 
 __all__ = ["CLI_TOOL_NAME", "cli_execute"]
 
 CLI_TOOL_NAME: str = "cli_execute"
 
-# 默认命令黑名单：极度危险的命令，任何模式下都直接拒绝
-_DEFAULT_BLOCKLIST: frozenset[str] = frozenset(
-    {
-        "rm",
-        "rmdir",
-        "del",
-        "erase",
-        "unlink",
-        "format",
-        "mkfs",
-        "dd",
-        "fdisk",
-        "parted",
-        "shutdown",
-        "reboot",
-        "halt",
-        "poweroff",
-        "sudo",
-        "su",
-        "doas",
-        "chmod",
-        "chown",
-        "kill",
-        "killall",
-        "taskkill",
-        "reg",
-        "regedit",
-    }
-)
-
-# 禁止出现在命令参数中的 shell 元字符（一条正则覆盖所有危险字符）
-_FORBIDDEN_ARG_PATTERN: re.Pattern[str] = re.compile(r"[;&|`$<>]")
-
-# 系统关键目录校验委托给 SessionSandbox._is_critical()（与 security.py 统一），
+# 系统关键目录校验委托给 app.sandbox.is_critical()（与 session_sandbox.py 统一），
 # 不再维护第二套正则模式——此前 cli.py 的 Windows 正则 `^C:\\\\Windows` 因
 # 反斜杠转义错误（匹配 2 个字面反斜杠，实际路径只有 1 个）导致形同虚设。
 
@@ -71,24 +38,19 @@ def _effective_blocklist() -> frozenset[str]:
     """合并默认黑名单与用户配置黑名单。"""
     cfg = get_settings().cli_tool_blocklist
     if not cfg:
-        return _DEFAULT_BLOCKLIST
+        return DEFAULT_BLOCKLIST
     user_blocked = frozenset(cmd.strip().lower() for cmd in cfg if isinstance(cmd, str) and cmd.strip())
-    return _DEFAULT_BLOCKLIST | user_blocked
+    return DEFAULT_BLOCKLIST | user_blocked
 
 
 def _is_command_blocked(command: str) -> bool:
-    """命令名是否在黑名单内。"""
+    """命令名是否在黑名单内（含用户配置合并）。"""
     return command.strip().lower() in _effective_blocklist()
 
 
-def _has_forbidden_chars(value: str) -> bool:
-    """检查字符串是否包含 shell 元字符。"""
-    return bool(_FORBIDDEN_ARG_PATTERN.search(value))
-
-
 def _is_critical_dir(path: Path) -> bool:
-    """路径是否为系统关键目录。委托给 SessionSandbox._is_critical() 统一实现。"""
-    return get_sandbox()._is_critical(path)
+    """路径是否为系统关键目录。委托给 app.sandbox.is_critical() 统一实现。"""
+    return is_critical(path)
 
 
 def _resolve_cwd(cwd: str | None, workspace_path: str | None = None) -> Path:
@@ -115,14 +77,14 @@ def _format_output(exit_code: int, stdout: str, stderr: str, max_chars: int) -> 
     return text
 
 
-def _check_cwd_authorization(thread_id: str, cwd: Path) -> str | None:
+async def _check_cwd_authorization(thread_id: str, cwd: Path) -> str | None:
     """校验 cwd 是否可执行命令（workspace 模式）。
 
     full_trust 模式下 sandbox.check_write 内部跳过检查，直接通过。
     """
     sandbox = get_sandbox()
     try:
-        sandbox.check_write(thread_id, str(cwd))
+        await sandbox.check_write(thread_id, str(cwd))
     except PathNotAuthorized as exc:
         msg = str(exc)
         matched_readonly = "仅授权读取" in msg
@@ -172,14 +134,14 @@ async def cli_execute(
 
     arguments = list(arguments) if arguments else []
     for idx, arg in enumerate(arguments):
-        if _has_forbidden_chars(arg):
+        if has_forbidden_args(arg):
             return f"参数 [{idx}] 包含非法字符: {arg!r}"
 
     resolved_cwd = _resolve_cwd(cwd, workspace_path)
     if _is_critical_dir(resolved_cwd):
         return f"拒绝在系统关键目录执行: {resolved_cwd}"
 
-    if err := _check_cwd_authorization(thread_id, resolved_cwd):
+    if err := await _check_cwd_authorization(thread_id, resolved_cwd):
         return err
 
     exe = shutil.which(command)

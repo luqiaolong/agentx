@@ -16,23 +16,12 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, AsyncIterator
-from uuid import uuid4
 
 from langchain_core.tools import tool
 
-from app.approval import is_paused
-from app.approval.state import get_pause_event
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
 from app.deep.agent import build_deep_agent
-from app.deep.approval import (
-    _APPROVAL_POLL_INTERVAL,
-    _await_approval,
-    _extract_paths_from_tool_call,
-    _handle_directory_extension,
-    _make_approval_event,
-)
 from app.deep.recovery import (
     _inject_tool_error_messages,
     _sanitize_message_history,
@@ -45,7 +34,8 @@ from app.deep.tools import (
     _make_deep_tools,
 )
 from app.observability.logger import logger
-from app.utils.security import get_sandbox
+from app.sandbox import get_sandbox
+from app.security.approval_flow import run_approval_loop
 from app.utils.sse_events import make_sse_event
 
 __all__ = [
@@ -223,44 +213,16 @@ async def build_coding_expert(
     )
 
 
-async def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
-    """从 agent 状态中提取待执行的工具调用列表。"""
-    state = await agent.aget_state(config)
-    if not state or not state.values:
-        return []
-    messages = state.values.get("messages", [])
-    if not messages:
-        return []
-    last_msg = messages[-1]
-    tool_calls = getattr(last_msg, "tool_calls", None) or []
-    return list(tool_calls)
-
-
 async def _is_interrupted(agent: Any, config: dict) -> bool:
-    """检查 agent 是否在 interrupt 处暂停。"""
+    """检查 agent 是否在 interrupt 处暂停。
+
+    保留为模块级函数以兼容测试 patch（``patch("app.agents.expert.coding._is_interrupted")``）。
+    实际审批循环逻辑由 ``app.security.approval_flow.run_approval_loop`` 提供。
+    """
     state = await agent.aget_state(config)
     if not state or not state.next:
         return False
     return "tools" in state.next
-
-
-async def _inject_tool_error_for_call(
-    agent: Any, config: dict, tool_call: dict, error_text: str
-) -> None:
-    """为单个 tool_call 注入 ToolMessage 错误。"""
-    from langchain_core.messages import ToolMessage
-
-    tc_id = tool_call.get("id") or str(uuid4())
-    tool_msg = ToolMessage(content=error_text, tool_call_id=tc_id)
-    try:
-        await agent.aupdate_state(config, {"messages": [tool_msg]})
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "coding_expert.inject_tool_error_for_call failed",
-            thread_id=config.get("configurable", {}).get("thread_id", ""),
-            tool=tool_call.get("name"),
-            error=str(exc),
-        )
 
 
 async def run_coding_expert(
@@ -270,6 +232,7 @@ async def run_coding_expert(
     history: list | None = None,
     permission_mode: str = "standard",
     workspace_path: str | None = None,
+    parent_thread_id: str | None = None,
 ) -> AsyncIterator[dict]:
     """运行 coding 场景 Expert，yield SSE 事件。
 
@@ -284,6 +247,7 @@ async def run_coding_expert(
         history: 历史 messages 列表（已截断）。
         permission_mode: 权限模式，"standard" 或 "full_trust"。
         workspace_path: 可选当前工作区绝对路径。
+        parent_thread_id: 父 thread_id（Team 模式下子任务继承父 thread 的沙箱授权）。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -292,281 +256,80 @@ async def run_coding_expert(
     sandbox = get_sandbox()
     is_full_trust = permission_mode == "full_trust"
 
-    if is_full_trust:
-        sandbox.set_full_trust(thread_id, True)
-        logger.info("coding_expert full_trust mode enabled", thread_id=thread_id)
-
-    history_msgs = list(history) if history else []
-    inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
-
-    # 构建 agent
     try:
-        agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-        mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
-        if mcp_tools:
-            agent_tools.extend(mcp_tools)
-            logger.info(
-                "MCP tools merged into coding Expert",
-                thread_id=thread_id,
-                count=len(mcp_tools),
-                untrusted=len(mcp_untrusted_names),
-            )
-        delegation_tools = make_expert_delegation_tools(thread_id, workspace_path)
-        all_tools = [*agent_tools, *delegation_tools]
-
-        agent = await build_coding_expert(
-            thread_id,
-            tools=all_tools,
-            profile_prompt=profile_prompt,
-            workspace_path=workspace_path,
-        )
-    except ValueError as exc:
-        yield make_sse_event("error", f"LLM 不可用: {exc}")
         if is_full_trust:
-            sandbox.set_full_trust(thread_id, False)
-        return
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("build_coding_expert failed", thread_id=thread_id)
-        yield make_sse_event("error", f"Coding Expert 初始化失败: {exc}")
-        if is_full_trust:
-            sandbox.set_full_trust(thread_id, False)
-        return
+            await sandbox.set_full_trust(thread_id, True)
+            logger.info("coding_expert full_trust mode enabled", thread_id=thread_id)
 
-    # 运行时危险工具集合
-    enabled_tool_names = {
-        _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
-    }
-    runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+        history_msgs = list(history) if history else []
+        inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
 
-    # 防御性清理
-    await _inject_tool_error_messages(
-        agent, config, "上次操作未正常完成，已自动清理状态"
-    )
-    inputs["messages"] = _sanitize_message_history(
-        inputs["messages"], "上次操作未正常完成，已自动清理状态"
-    )
-
-    # 只读工具集合（用于循环保护检测）
-    _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
-
-    # 流式执行 + 中断/恢复循环
-    try:
-        async for sse in _stream_agent_events(agent, inputs, config, source="coding"):
-            yield sse
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("coding_expert stream failed", thread_id=thread_id)
-        await _inject_tool_error_messages(agent, config, f"Coding Expert 执行失败: {exc}")
-        yield make_sse_event("error", f"Coding Expert 执行失败: {exc}")
-        if is_full_trust:
-            sandbox.set_full_trust(thread_id, False)
-        return
-
-    max_iterations = 50
-    iteration = 0
-    # 连续只读工具调用计数（用于防过度探索保护）
-    readonly_streak = 0
-    # 只读工具调用阈值：超过此值认为 LLM 在过度探索，强制其基于已有信息回答
-    readonly_streak_threshold = 10
-    # 强制回答模式：注入错误消息迫使 LLM 停止工具调用、直接产出最终回复
-    force_answer = False
-    # 上一轮 tool_call 签名集合（用于检测完全相同的重复调用 = 真循环）
-    prev_signatures: set[tuple[str, str]] = set()
-
-    while iteration < max_iterations:
-        iteration += 1
-
-        if await is_paused(thread_id):
-            yield make_sse_event("paused", {})
-            pause_event = await get_pause_event(thread_id)
-            if await is_paused(thread_id):
-                await pause_event.wait()
-            yield make_sse_event("resumed", {})
-
-        if not await _is_interrupted(agent, config):
-            break
-
-        pending_calls = await _get_pending_tool_calls(agent, config)
-        if not pending_calls:
-            logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
-            break
-
-        # ---- 强制回答模式：注入错误并恢复，让 LLM 直接产出最终回复 ----
-        # 触发条件：readonly_streak 超限 或 检测到完全相同的重复 tool_call。
-        # 注入 ToolMessage 错误后恢复执行，LLM 看到错误后会基于已收集的信息回答。
-        # 若 LLM 仍尝试调用工具，下一轮 force_answer=True 分支会继续注入错误。
-        if force_answer:
-            for tc in pending_calls:
-                await _inject_tool_error_for_call(
-                    agent, config, tc,
-                    "已进入强制回答模式，请基于已收集的信息直接回答用户，不要再调用任何工具。"
-                )
-            try:
-                async for sse in _stream_agent_events(agent, None, config, source="coding"):
-                    yield sse
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("coding_expert force-answer resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
-                yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
-                sandbox.set_full_trust(thread_id, False)
-                return
-            continue
-
-        # ---- 循环保护：检测连续只读工具过度探索 ----
-        pending_names = {tc.get("name", "") for tc in pending_calls}
-        has_dangerous = bool(pending_names & runtime_dangerous)
-        all_readonly = pending_names.issubset(_READONLY_TOOLS)
-        if all_readonly and not has_dangerous:
-            readonly_streak += 1
-        else:
-            readonly_streak = 0
-
-        # ---- 真循环检测：连续两轮完全相同的 tool_call 签名 → 立即强制回答 ----
-        current_signatures = {
-            (tc.get("name", ""), json.dumps(tc.get("args", {}), sort_keys=True, ensure_ascii=False))
-            for tc in pending_calls
-        }
-        repeated = current_signatures & prev_signatures
-        prev_signatures = current_signatures
-
-        trigger_force_answer = False
-        if repeated:
-            logger.warning(
-                "coding_expert duplicate tool calls detected, forcing answer",
-                thread_id=thread_id,
-                repeated=sorted(repeated),
-            )
-            trigger_force_answer = True
-        elif readonly_streak >= readonly_streak_threshold:
-            logger.warning(
-                "coding_expert readonly streak exceeded, forcing answer",
-                thread_id=thread_id,
-                readonly_streak=readonly_streak,
-                pending_tools=sorted(pending_names),
-            )
-            trigger_force_answer = True
-
-        if trigger_force_answer:
-            # 注入错误消息告诉 LLM 停止探索，然后恢复执行让其产出最终回复
-            for tc in pending_calls:
-                await _inject_tool_error_for_call(
-                    agent, config, tc,
-                    "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。"
-                )
-            yield make_sse_event(
-                "reasoning",
-                {"content": "已收集足够上下文，正在基于已有信息生成回复...", "source": "coding"},
-            )
-            force_answer = True
-            try:
-                async for sse in _stream_agent_events(agent, None, config, source="coding"):
-                    yield sse
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("coding_expert force-answer resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
-                yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
-                sandbox.set_full_trust(thread_id, False)
-                return
-            continue
-
-        if is_full_trust:
-            sandbox.clear_temp(thread_id)
-            try:
-                async for sse in _stream_agent_events(agent, None, config, source="coding"):
-                    yield sse
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("coding_expert resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
-                yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
-                sandbox.set_full_trust(thread_id, False)
-                return
-            continue
-
-        # standard 模式：检查危险工具
-        dangerous_calls = []
-        for tc in pending_calls:
-            name = tc.get("name", "")
-            if name not in runtime_dangerous:
-                continue
-            paths = _extract_paths_from_tool_call(tc, workspace_path)
-            if not paths:
-                # 无路径参数的工具（如 shell_exec）：若已选工作区则自动放行
-                if workspace_path and sandbox.is_path_authorized(
-                    thread_id, workspace_path, writable=True
-                ):
-                    continue
-                dangerous_calls.append(tc)
-                continue
-            all_authorized = all(
-                sandbox.is_path_authorized(thread_id, p, writable=True)
-                for p in paths
-            )
-            if not all_authorized:
-                dangerous_calls.append(tc)
-
-        if dangerous_calls:
-            for tc in dangerous_calls:
-                yield _make_approval_event(tc, thread_id, kind="dangerous_tool")
-
-            decision = await _await_approval(
-                thread_id,
-                poll_interval=_APPROVAL_POLL_INTERVAL,
-                max_wait=float("inf")
-                if get_settings().approval_max_wait == 0
-                else get_settings().approval_max_wait,
-            )
-
-            if decision is None or not decision.approved:
-                for tc in dangerous_calls:
-                    await _inject_tool_error_for_call(
-                        agent, config, tc, "用户拒绝执行危险操作"
-                    )
-                yield make_sse_event("error", "用户拒绝执行危险操作")
-                sandbox.set_full_trust(thread_id, False)
-                return
-
-            logger.info(
-                "coding_expert approval granted",
-                thread_id=thread_id,
-                tool_count=len(dangerous_calls),
-                tools=[tc.get("name") for tc in dangerous_calls],
-            )
-        else:
-            # 非危险工具：检查只读 fs 工具是否越界
-            extension_handled = await _handle_directory_extension(
-                pending_calls, thread_id, sandbox
-            )
-            for evt in extension_handled.events:
-                yield evt
-            if extension_handled.denied:
-                yield make_sse_event("error", "用户拒绝访问该目录")
-                await _inject_tool_error_messages(agent, config, "用户拒绝访问该目录")
-                sandbox.set_full_trust(thread_id, False)
-                return
-            if extension_handled.timed_out:
-                yield make_sse_event("error", "目录授权等待被中断，操作未执行")
-                await _inject_tool_error_messages(agent, config, "目录授权等待被中断，操作未执行")
-                sandbox.set_full_trust(thread_id, False)
-                return
-
-        # 恢复执行
+        # 构建 agent
         try:
-            async for sse in _stream_agent_events(agent, None, config, source="coding"):
-                yield sse
+            agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
+            mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
+            if mcp_tools:
+                agent_tools.extend(mcp_tools)
+                logger.info(
+                    "MCP tools merged into coding Expert",
+                    thread_id=thread_id,
+                    count=len(mcp_tools),
+                    untrusted=len(mcp_untrusted_names),
+                )
+            delegation_tools = make_expert_delegation_tools(thread_id, workspace_path)
+            all_tools = [*agent_tools, *delegation_tools]
+
+            agent = await build_coding_expert(
+                thread_id,
+                tools=all_tools,
+                profile_prompt=profile_prompt,
+                workspace_path=workspace_path,
+            )
+        except ValueError as exc:
+            yield make_sse_event("error", f"LLM 不可用: {exc}")
+            return
         except Exception as exc:  # noqa: BLE001
-            logger.exception("coding_expert resume failed", thread_id=thread_id)
-            await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
-            yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
-            sandbox.set_full_trust(thread_id, False)
+            logger.exception("build_coding_expert failed", thread_id=thread_id)
+            yield make_sse_event("error", f"Coding Expert 初始化失败: {exc}")
             return
 
-        sandbox.clear_temp(thread_id)
+        # 运行时危险工具集合
+        enabled_tool_names = {
+            _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
+        }
+        runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-    if iteration >= max_iterations:
-        logger.warning("coding_expert hit max iterations", thread_id=thread_id)
-        yield make_sse_event("error", "Coding Expert 达到最大迭代上限")
-        await _inject_tool_error_messages(agent, config, "Coding Expert 达到最大迭代上限")
-        sandbox.set_full_trust(thread_id, False)
-        return
+        # 防御性清理
+        await _inject_tool_error_messages(
+            agent, config, "上次操作未正常完成，已自动清理状态"
+        )
+        inputs["messages"] = _sanitize_message_history(
+            inputs["messages"], "上次操作未正常完成，已自动清理状态"
+        )
 
-    if is_full_trust:
-        sandbox.set_full_trust(thread_id, False)
+        # ---- 公共审批循环（security.approval_flow.run_approval_loop）----
+        # stream_fn / is_interrupted_fn / inject_tool_error_messages_fn 传入模块级
+        # 引用，以便测试通过 patch("app.agents.expert.coding._xxx") 替换。
+        # readonly_streak_threshold=10 启用循环保护（防过度探索）。
+        async for sse in run_approval_loop(
+            agent,
+            config,
+            thread_id,
+            workspace_path,
+            permission_mode,
+            runtime_dangerous,
+            agent_tools,
+            yield_event=None,
+            sandbox=sandbox,
+            parent_thread_id=parent_thread_id,
+            source="coding",
+            inputs=inputs,
+            stream_fn=_stream_agent_events,
+            is_interrupted_fn=_is_interrupted,
+            inject_tool_error_messages_fn=_inject_tool_error_messages,
+            readonly_streak_threshold=10,
+        ):
+            yield sse
+    finally:
+        if is_full_trust:
+            await sandbox.set_full_trust(thread_id, False)

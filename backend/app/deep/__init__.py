@@ -4,7 +4,6 @@ from app.deep.agent import (
     DANGEROUS_TOOLS,
     build_deep_agent,
     run_deep_path,
-    wait_for_approval,
 )
 
-__all__ = ["DANGEROUS_TOOLS", "build_deep_agent", "run_deep_path", "wait_for_approval"]
+__all__ = ["DANGEROUS_TOOLS", "build_deep_agent", "run_deep_path"]

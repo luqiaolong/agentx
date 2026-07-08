@@ -186,7 +186,7 @@ class TestHandleApproval:
     @pytest.mark.asyncio
     async def test_approve_yes(self):
         with patch("builtins.input", return_value="y"):
-            with patch("app.approval.state.submit_approval") as mock_submit:
+            with patch("app.security.approval.submit_approval") as mock_submit:
                 await _handle_approval("test-thread")
                 mock_submit.assert_called_once()
                 decision = mock_submit.call_args[0][1]
@@ -196,7 +196,7 @@ class TestHandleApproval:
     @pytest.mark.asyncio
     async def test_approve_no(self):
         with patch("builtins.input", return_value="n"):
-            with patch("app.approval.state.submit_approval") as mock_submit:
+            with patch("app.security.approval.submit_approval") as mock_submit:
                 await _handle_approval("test-thread")
                 mock_submit.assert_called_once()
                 decision = mock_submit.call_args[0][1]
@@ -206,7 +206,7 @@ class TestHandleApproval:
     @pytest.mark.asyncio
     async def test_approve_once(self):
         with patch("builtins.input", return_value="o"):
-            with patch("app.approval.state.submit_approval") as mock_submit:
+            with patch("app.security.approval.submit_approval") as mock_submit:
                 await _handle_approval("test-thread")
                 decision = mock_submit.call_args[0][1]
                 assert decision.approved is True
@@ -215,7 +215,7 @@ class TestHandleApproval:
     @pytest.mark.asyncio
     async def test_approve_session(self):
         with patch("builtins.input", return_value="s"):
-            with patch("app.approval.state.submit_approval") as mock_submit:
+            with patch("app.security.approval.submit_approval") as mock_submit:
                 await _handle_approval("test-thread")
                 decision = mock_submit.call_args[0][1]
                 assert decision.approved is True
@@ -226,6 +226,6 @@ class TestHandleApproval:
         """先输入无效值，再输入有效值。"""
         inputs = iter(["invalid", "y"])
         with patch("builtins.input", side_effect=lambda *a: next(inputs)):
-            with patch("app.approval.state.submit_approval") as mock_submit:
+            with patch("app.security.approval.submit_approval") as mock_submit:
                 await _handle_approval("test-thread")
                 mock_submit.assert_called_once()

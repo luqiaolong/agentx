@@ -106,7 +106,6 @@ class TestBuildCodingExpert:
     async def test_build_uses_coding_system_prompt(self) -> None:
         """build_coding_expert 使用 coding Expert 专用 system prompt。"""
         from app.agents.expert.coding import build_coding_expert
-        from app.config.prompts.agent import _DEFAULT_CODING_EXPERT_SYSTEM_PROMPT
 
         mock_agent = MagicMock()
         with patch("app.agents.expert.coding.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:

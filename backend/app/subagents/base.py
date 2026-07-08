@@ -134,7 +134,6 @@ def make_git_tools(thread_id: str) -> list:
 
     工具启用由 ``get_settings().tools_enabled`` 过滤；函数名与配置 key 一致。
     """
-    import subprocess
 
     @tool
     async def git_status(repo_path: str) -> str:

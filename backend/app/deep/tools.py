@@ -16,8 +16,9 @@ from __future__ import annotations
 
 from app.config import get_settings
 from app.observability.logger import logger
+from app.security.dangerous_tools import DANGEROUS_TOOLS
 from app.subagents.base import _make_fs_tools, _make_git_tools, _make_rag_tools, _make_web_tools
-from app.tools.cli import CLI_TOOL_NAME, cli_execute as cli_execute_impl
+from app.tools.cli import cli_execute as cli_execute_impl
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -25,10 +26,6 @@ __all__ = [
     "_make_deep_tools",
     "_load_mcp_tools",
 ]
-
-# 触发人工审批中断的工具集合：写操作、CLI 与 Git 写操作
-# 模块级常量保持不变；运行时危险集合 = DANGEROUS_TOOLS ∩ 已启用工具名
-DANGEROUS_TOOLS: set[str] = {"edit_file", "write_file", "shell_exec", CLI_TOOL_NAME, "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit"}
 
 # 工具名映射：将内部 tool 函数名映射到 settings.tools_enabled 的 key
 # （_make_fs_tools 中 glob_files/grep_files 与 config key glob/grep 不一致）

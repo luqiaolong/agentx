@@ -37,7 +37,7 @@ beforeEach(() => {
     currentId: null,
     homeWorkspacePath: null,
     isStreaming: false,
-    approvalRequest: null,
+    approvalQueue: [],
   });
 });
 

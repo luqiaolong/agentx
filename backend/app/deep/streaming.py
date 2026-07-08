@@ -20,7 +20,7 @@ import asyncio
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from app.approval import get_abort_event
+from app.security.approval import get_abort_event
 from app.utils.sse_events import (
     make_sse_event,
     make_todo_event,

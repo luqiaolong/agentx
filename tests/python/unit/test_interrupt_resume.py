@@ -30,7 +30,7 @@ def _fake_tool(name: str) -> MagicMock:
 @pytest.fixture(autouse=True)
 def _clear_pause_state() -> None:
     """每个测试前清理全局 pause 状态。"""
-    from app.approval import state as approval_state
+    from app.security.approval import state as approval_state
 
     approval_state._pause_flags.clear()
     approval_state._pause_events.clear()
@@ -68,6 +68,9 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     )
 
     fake_sandbox = MagicMock()
+    fake_sandbox.set_full_trust = AsyncMock()
+    fake_sandbox.clear_temp = AsyncMock()
+    fake_sandbox.is_path_authorized = AsyncMock(return_value=False)
     monkeypatch.setattr(agent_module, "get_sandbox", lambda: fake_sandbox)
 
     return {"agent": fake_agent, "sandbox": fake_sandbox}
@@ -81,7 +84,7 @@ async def test_deep_path_pause_resume(
     """pause 后阻塞并 yield paused，resume 后 yield resumed 并继续。"""
     from app.deep.agent import run_deep_path
     import app.deep.agent as agent_module
-    from app.approval import set_pause, clear_pause, is_aborted, set_abort
+    from app.security.approval import set_pause, clear_pause, is_aborted, set_abort
 
     # 迭代 1 有非危险待执行工具，迭代 2 检测到 pause，resume 后图完成
     monkeypatch.setattr(
@@ -146,7 +149,7 @@ async def test_clear_pause_before_wait_does_not_block(
     """若 clear_pause 在 wait 前已调用，不应永久阻塞。"""
     from app.deep.agent import run_deep_path
     import app.deep.agent as agent_module
-    from app.approval import set_pause, clear_pause
+    from app.security.approval import set_pause, clear_pause
 
     monkeypatch.setattr(
         agent_module,
@@ -184,7 +187,7 @@ async def test_chat_pause_resume_endpoints() -> None:
     """pause/resume 端点设置/清除标志。"""
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.approval import is_paused
+    from app.security.approval import is_paused
 
     client = TestClient(app)
     tid = "t-api"

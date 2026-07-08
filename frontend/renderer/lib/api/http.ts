@@ -27,6 +27,31 @@ import type {
   ModelTestResponse,
 } from "../../../shared/api-types";
 import { API_BASE } from "../api-constants";
+import { ApiError } from "../errors";
+
+/**
+ * 检查 HTTP 响应状态，非 2xx 时抛 ApiError。
+ *
+ * 尝试读取 body 文本作为错误信息（后端 FastAPI 异常返回 `{"detail": "..."}` JSON，
+ * 也可能返回纯文本），失败时回退到状态码描述。
+ */
+async function assertOk(r: Response): Promise<void> {
+  if (r.ok) return;
+  let body = "";
+  try {
+    const text = await r.text();
+    // 尝试解析 FastAPI 的 {"detail": "..."} 格式
+    try {
+      const parsed = JSON.parse(text) as { detail?: string };
+      body = parsed.detail ?? text;
+    } catch {
+      body = text;
+    }
+  } catch {
+    body = `HTTP ${r.status}`;
+  }
+  throw new ApiError(r.status, body);
+}
 
 // ---- Sandbox ----
 
@@ -47,6 +72,7 @@ export const sandbox = {
         source: source ?? "manual",
       }),
     });
+    await assertOk(r);
     return r.json();
   },
   revoke: async (threadId: string, path: string): Promise<unknown> => {
@@ -55,10 +81,12 @@ export const sandbox = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ thread_id: threadId, path }),
     });
+    await assertOk(r);
     return r.json();
   },
   listAuthorized: async (threadId: string): Promise<AuthorizedDir[]> => {
     const r = await fetch(`${API_BASE}/api/sandbox/authorized/${encodeURIComponent(threadId)}`);
+    await assertOk(r);
     const data = (await r.json()) as { dirs?: AuthorizedDir[] };
     return data.dirs ?? [];
   },
@@ -128,7 +156,7 @@ export const approve = {
     path?: string,
     writable?: boolean,
   ): Promise<void> => {
-    await fetch(`${API_BASE}/api/chat/approve`, {
+    const r = await fetch(`${API_BASE}/api/chat/approve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -139,6 +167,7 @@ export const approve = {
         writable: writable ?? false,
       }),
     });
+    await assertOk(r);
   },
 };
 

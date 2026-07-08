@@ -42,13 +42,15 @@ lifespan / 中间件 / app 实例 / ``__main__`` 入口。
   保证 monkeypatch 在调用时生效。
 - ``ChatRequest`` / ``_event_generator`` 等 schemas 与辅助函数 —— 直接 re-export。
 
-跨进程状态（已迁移至 ``app.approval`` 模块）：
-- 审批决策 dict — 见 ``app.approval.state.submit_approval`` / ``pop_approval``。
-- 中止标志 dict — 见 ``app.approval.state.set_abort`` / ``is_aborted``。
+跨进程状态（已迁移至 ``app.security.approval`` 模块）：
+- 审批决策 dict — 见 ``app.security.approval.state.submit_approval`` / ``pop_approval``。
+- 中止标志 dict — 见 ``app.security.approval.state.set_abort`` / ``is_aborted``。
+- TTL reaper — 见 ``app.security.approval.state.start_reaper``（lifespan 启动）。
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -76,7 +78,7 @@ from app.vectorstore import MilvusUnavailable, get_milvus_client
 from app.router import run_router  # noqa: F401
 from app.memory.skills_loader import get_skills, reload_skills  # noqa: F401
 from app.tools.filesystem import list_workspace, read_workspace_file  # noqa: F401
-from app.utils.security import get_sandbox  # noqa: F401 — lifespan 亦用
+from app.sandbox import get_sandbox  # noqa: F401 — lifespan 亦用
 
 # ---- 向后兼容 re-export（测试 from app.main import X）----
 from app.api.schemas import *  # noqa: F401, F403 — ChatRequest / ApproveRequest 等模型
@@ -113,7 +115,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 0.5. 沙箱授权从 DB 恢复
     # bootstrap_from_store 内部 try/except + 记日志（成功 bootstrap_loaded / 失败 bootstrap_failed），
     # 不阻塞启动，外层无需再包 try/except（否则失败时仍会误报 completed）。
-    get_sandbox().bootstrap_from_store()
+    await get_sandbox().bootstrap_from_store()
+
+    # 0.6. 启动审批状态 reaper（清理 30 分钟无活动的 thread_id）
+    from app.security.approval import start_reaper
+
+    reaper_task = start_reaper()
 
     # 1. 嵌入客户端：get_embedding_client() 懒构造，此处显式 warmup 记日志
     logger.info("embedding client initialized", url=settings.embedding_url)
@@ -133,7 +140,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # 关闭：先 Milvus 后 embedding 后 checkpointer（逆序）
+        # 关闭：先 reaper，再 Milvus 后 embedding 后 checkpointer（逆序）
+        reaper_task.cancel()
+        try:
+            await reaper_task
+        except asyncio.CancelledError:
+            pass
         if milvus._connected:  # noqa: SLF001 — 单例内部状态检查
             try:
                 await milvus.disconnect()

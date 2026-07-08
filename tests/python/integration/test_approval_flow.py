@@ -15,8 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app import main
-from app.approval import state as approval_state
+from app.security.approval import state as approval_state
 from app.main import app
 
 
@@ -103,18 +102,18 @@ async def test_approve_and_abort_endpoints(client: AsyncClient) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
-    assert approval_state._pending_approvals.get(thread_id).approved is True
+    assert approval_state._pending_approvals.get(thread_id)[0].approved is True
 
     resp = await client.post(
         "/api/chat/approve", json={"thread_id": thread_id, "approval": False}
     )
     assert resp.status_code == 200
-    assert approval_state._pending_approvals.get(thread_id).approved is False
+    assert approval_state._pending_approvals.get(thread_id)[0].approved is False
 
     resp = await client.post("/api/chat/abort", json={"thread_id": thread_id})
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
-    assert approval_state._abort_flags.get(thread_id) is True
+    assert approval_state._abort_flags.get(thread_id, (False, 0.0))[0] is True
 
 
 @pytest.mark.integration
@@ -151,7 +150,7 @@ async def test_full_approval_flow_auto_resume(client: AsyncClient) -> None:
         # 等待审批决定
         for _ in range(100):  # 最多 5 秒
             decision = approval_state._pending_approvals.get(tid)
-            if decision is not None and decision.approved:
+            if decision is not None and decision[0].approved:
                 break
             await asyncio.sleep(0.05)
         else:

@@ -10,8 +10,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 __all__ = [
-    "AuthorizeRequest",
-    "RevokeRequest",
     "ApproveRequest",
     "AbortRequest",
     "ChatRequest",
@@ -26,20 +24,6 @@ __all__ = [
     "CompactRequest",
     "ProjectConfigInitRequest",
 ]
-
-
-class AuthorizeRequest(BaseModel):
-    thread_id: str = Field(..., description="会话 ID")
-    path: str = Field(..., description="待授权目录绝对路径")
-    writable: bool = Field(False, description="是否允许写入（默认只读）")
-    source: Literal["manual", "chip", "legacy"] = Field(
-        "manual", description="授权来源：manual（用户手动）/ chip（工作区自动同步）/ legacy（历史数据）"
-    )
-
-
-class RevokeRequest(BaseModel):
-    thread_id: str = Field(..., description="会话 ID")
-    path: str = Field(..., description="待撤销目录绝对路径")
 
 
 class ApproveRequest(BaseModel):

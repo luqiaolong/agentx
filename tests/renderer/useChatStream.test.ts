@@ -77,7 +77,7 @@ beforeEach(() => {
     sessions: {},
     currentId: null,
     isStreaming: false,
-    approvalRequest: null,
+    approvalQueue: [],
   });
   useTasksStore.setState({ tasks: [] });
 });
@@ -277,7 +277,7 @@ describe("useChatStream hook", () => {
     expect(task.title).not.toMatch(/<file>/);
   });
 
-  it("approval_request 写入 store.approvalRequest", async () => {
+  it("approval_request 写入 store.approvalQueue", async () => {
     const req = {
       threadId: "t-1",
       toolName: "shell_exec",
@@ -298,7 +298,7 @@ describe("useChatStream hook", () => {
     act(() => {
       emitApproval(req);
     });
-    const stored = useChatStore.getState().approvalRequest;
+    const stored = useChatStore.getState().approvalQueue[0];
     expect(stored?.threadId).toBe("t-1");
     expect(stored?.toolName).toBe("shell_exec");
   });
@@ -647,7 +647,7 @@ describe("useChatStream part 分发", () => {
         preview: "",
       });
     });
-    expect(useChatStore.getState().approvalRequest?.threadId).toBe("t-1");
+    expect(useChatStore.getState().approvalQueue[0]?.threadId).toBe("t-1");
 
     // error 写入 errorMsg
     act(() => {

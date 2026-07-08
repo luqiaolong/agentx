@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from app.utils.security import PathNotAuthorized
+from app.sandbox import PathNotAuthorized
 
 
 def register_workspace_routes(app: FastAPI) -> None:

@@ -4,24 +4,23 @@
 - 工具集: filesystem 全部 + rag_retrieve + web_search
 - ``interrupt_before=["tools"]``：调用任何工具前 LangGraph 暂停，SSE handler 检查待执行
   工具是否属于 ``DANGEROUS_TOOLS``，是则 yield approval_request 等用户审批，否则自动放行
-- 审批恢复: ``_await_approval`` 轮询 ``app.approval``，通过后以
+- 审批恢复: ``_await_approval`` 轮询 ``app.security.approval``，通过后以
   ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_before`` 的标准恢复方式）
 - 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer，支持跨轮次历史 + interrupt/resume
 - 权限模式：
   - ``standard``（默认）：危险工具走审批；只读 fs 工具访问未授权目录时弹扩展授权弹窗
   - ``full_trust``：会话内全量放行，不弹任何审批弹窗（系统关键目录仍拒绝）
 
-模块拆分（Phase 2.3）:
+模块拆分:
 - ``app.deep.tools``：``DANGEROUS_TOOLS`` / ``_TOOL_NAME_MAP`` / ``_make_deep_tools`` / ``_load_mcp_tools``
 - ``app.deep.streaming``：``_stream_agent_events``
-- ``app.deep.approval``：``wait_for_approval`` / ``_await_approval`` / ``_make_approval_event`` /
+- ``app.security.approval_flow``：``_await_approval`` / ``_make_approval_event`` /
   ``_handle_directory_extension`` 及辅助函数
 - ``app.deep.recovery``：``_inject_tool_error_messages`` / ``_sanitize_message_history`` /
   ``_collect_unpaired_tool_call_ids`` / ``_to_serializable``
 
 本模块仅保留编排层：``_DEEP_SYSTEM_PROMPT`` / ``build_deep_agent`` / ``run_deep_path`` /
-``_extract_tasks`` / ``_get_pending_tool_calls`` / ``_is_interrupted``，并通过 ``from ... import``
-re-export 子模块符号，保持向后兼容（``from app.deep.agent import _make_approval_event`` 等仍可用）。
+``_extract_tasks`` / ``_get_pending_tool_calls`` / ``_is_interrupted``。
 """
 
 from __future__ import annotations
@@ -32,17 +31,7 @@ from uuid import uuid4
 
 from langgraph.prebuilt import create_react_agent
 
-from app.approval import clear_pause, is_paused
-from app.approval.state import get_pause_event
 from app.config import get_settings
-from app.deep.approval import (
-    _APPROVAL_POLL_INTERVAL,
-    _await_approval,
-    _extract_paths_from_tool_call,
-    _handle_directory_extension,
-    _make_approval_event,
-    wait_for_approval,
-)
 from app.deep.recovery import (
     _inject_tool_error_messages,
     _sanitize_message_history,
@@ -57,8 +46,17 @@ from app.deep.tools import (
 from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
+from app.sandbox import get_sandbox
+from app.security.approval import get_pause_event, is_paused
+from app.security.approval_flow import (
+    _ABSOLUTE_MAX_WAIT,
+    _APPROVAL_POLL_INTERVAL,
+    _await_approval,
+    _extract_paths_from_tool_call,
+    _handle_directory_extension,
+    _make_approval_event,
+)
 from app.utils.prompts import resolve_system_prompt
-from app.utils.security import get_sandbox
 from app.utils.sse_events import make_sse_event
 
 if TYPE_CHECKING:
@@ -87,7 +85,6 @@ __all__ = [
     "DANGEROUS_TOOLS",
     "build_deep_agent",
     "run_deep_path",
-    "wait_for_approval",
 ]
 
 
@@ -220,6 +217,7 @@ async def run_deep_path(
     permission_mode: str = "standard",
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
+    parent_thread_id: str | None = None,
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器（真实实现）。
 
@@ -258,7 +256,7 @@ async def run_deep_path(
 
     # full_trust 模式：设置 sandbox 标志，fs 工具自动放行
     if is_full_trust:
-        sandbox.set_full_trust(thread_id, True)
+        await sandbox.set_full_trust(thread_id, True)
         logger.info("deep agent full_trust mode enabled", thread_id=thread_id)
 
     # 构建完整 inputs：history + 当前消息
@@ -290,13 +288,13 @@ async def run_deep_path(
     except ValueError as exc:
         yield make_sse_event("error", f"LLM 不可用: {exc}")
         if is_full_trust:
-            sandbox.set_full_trust(thread_id, False)
+            await sandbox.set_full_trust(thread_id, False)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("build_deep_agent failed", thread_id=thread_id)
         yield make_sse_event("error", f"DeepAgent 初始化失败: {exc}")
         if is_full_trust:
-            sandbox.set_full_trust(thread_id, False)
+            await sandbox.set_full_trust(thread_id, False)
         return
 
     # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集
@@ -332,7 +330,7 @@ async def run_deep_path(
         await _inject_tool_error_messages(agent, config, f"DeepAgent 执行失败: {exc}")
         yield make_sse_event("error", f"DeepAgent 执行失败: {exc}")
         if is_full_trust:
-            sandbox.set_full_trust(thread_id, False)
+            await sandbox.set_full_trust(thread_id, False)
         return
 
     # 只读工具集合（用于循环保护检测）
@@ -395,13 +393,13 @@ async def run_deep_path(
                 "error",
                 "工具调用次数过多，已强制停止。请简化您的请求或明确指定目标路径。"
             )
-            sandbox.set_full_trust(thread_id, False)
+            await sandbox.set_full_trust(thread_id, False)
             return
 
         # full_trust 模式：所有工具直接放行，不弹审批
         if is_full_trust:
             # 清理 once 临时授权（防御性，full_trust 模式理论上不用 temp）
-            sandbox.clear_temp(thread_id)
+            await sandbox.clear_temp(thread_id)
             try:
                 async for sse in _stream_agent_events(agent, None, config):
                     yield sse
@@ -409,7 +407,7 @@ async def run_deep_path(
                 logger.exception("deep agent resume failed", thread_id=thread_id)
                 await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
                 yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
-                sandbox.set_full_trust(thread_id, False)
+                await sandbox.set_full_trust(thread_id, False)
                 return
             continue
 
@@ -426,18 +424,25 @@ async def run_deep_path(
             paths = _extract_paths_from_tool_call(tc, workspace_path)
             # 无路径参数的工具（如 shell_exec）：若已选工作区则自动放行
             if not paths:
-                if workspace_path and sandbox.is_path_authorized(
-                    thread_id, workspace_path, writable=True
+                if workspace_path and await sandbox.is_path_authorized(
+                    thread_id, workspace_path, writable=True, base=workspace_path,
+                    parent_thread_id=parent_thread_id,
                 ):
                     continue
                 dangerous_calls.append(tc)
                 continue
             # 所有路径均已授权写入 → 跳过审批
-            all_authorized = all(
-                sandbox.is_path_authorized(thread_id, p, writable=True)
-                for p in paths
+            # 注意：不能用 `all(await ... for ...)`，改用 asyncio.gather
+            path_checks = await asyncio.gather(
+                *[
+                    sandbox.is_path_authorized(
+                        thread_id, p, writable=True, base=workspace_path,
+                        parent_thread_id=parent_thread_id,
+                    )
+                    for p in paths
+                ]
             )
-            if not all_authorized:
+            if not all(path_checks):
                 dangerous_calls.append(tc)
 
         if dangerous_calls:
@@ -445,12 +450,14 @@ async def run_deep_path(
             for tc in dangerous_calls:
                 yield _make_approval_event(tc, thread_id, kind="dangerous_tool")
 
+            configured_max_wait = get_settings().approval_max_wait
+            max_wait = _ABSOLUTE_MAX_WAIT if configured_max_wait == 0 else min(
+                float(configured_max_wait), _ABSOLUTE_MAX_WAIT
+            )
             decision = await _await_approval(
                 thread_id,
                 poll_interval=_APPROVAL_POLL_INTERVAL,
-                max_wait=float("inf")
-                if get_settings().approval_max_wait == 0
-                else get_settings().approval_max_wait,
+                max_wait=max_wait,
             )
 
             if decision is None or not decision.approved:
@@ -461,7 +468,7 @@ async def run_deep_path(
                         agent, config, tc, "用户拒绝执行危险操作"
                     )
                 yield make_sse_event("error", "用户拒绝执行危险操作")
-                sandbox.set_full_trust(thread_id, False)
+                await sandbox.set_full_trust(thread_id, False)
                 return
 
             # 审批通过，继续恢复执行
@@ -474,7 +481,11 @@ async def run_deep_path(
         else:
             # 4b. 非危险工具：检查只读 fs 工具是否越界（directory_extension）
             extension_handled = await _handle_directory_extension(
-                pending_calls, thread_id, sandbox
+                pending_calls,
+                thread_id,
+                sandbox,
+                workspace_path=workspace_path,
+                parent_thread_id=parent_thread_id,
             )
             for evt in extension_handled.events:
                 yield evt
@@ -483,14 +494,14 @@ async def run_deep_path(
                 await _inject_tool_error_messages(
                     agent, config, "用户拒绝访问该目录"
                 )
-                sandbox.set_full_trust(thread_id, False)
+                await sandbox.set_full_trust(thread_id, False)
                 return
             if extension_handled.timed_out:
                 yield make_sse_event("error", "目录授权等待被中断，操作未执行")
                 await _inject_tool_error_messages(
                     agent, config, "目录授权等待被中断，操作未执行"
                 )
-                sandbox.set_full_trust(thread_id, False)
+                await sandbox.set_full_trust(thread_id, False)
                 return
 
         # 5. 恢复执行：用 None 输入续跑（LangGraph interrupt_before 标准恢复方式）
@@ -501,11 +512,11 @@ async def run_deep_path(
             logger.exception("deep agent resume failed", thread_id=thread_id)
             await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
             yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
-            sandbox.set_full_trust(thread_id, False)
+            await sandbox.set_full_trust(thread_id, False)
             return
 
         # 6. 清理 once 临时授权（每次工具调用恢复后清理）
-        sandbox.clear_temp(thread_id)
+        await sandbox.clear_temp(thread_id)
 
     if iteration >= max_iterations:
         logger.warning("deep agent hit max iterations", thread_id=thread_id)
@@ -513,12 +524,12 @@ async def run_deep_path(
         await _inject_tool_error_messages(
             agent, config, "DeepAgent 达到最大迭代上限"
         )
-        sandbox.set_full_trust(thread_id, False)
+        await sandbox.set_full_trust(thread_id, False)
         return
 
     # 7. 清理 full_trust 标志（防御性）
     if is_full_trust:
-        sandbox.set_full_trust(thread_id, False)
+        await sandbox.set_full_trust(thread_id, False)
 
     # T10：路径 C 流式结束后，若开关开启则异步触发画像抽取（失败仅 warning，不报错）
     # 不阻塞 done 事件：fire-and-forget（spec memory-management R10）
