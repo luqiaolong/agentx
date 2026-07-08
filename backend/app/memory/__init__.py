@@ -4,8 +4,10 @@
 - ``skills_store``：技能文件 CRUD（``data/skills/*.md``）
 - ``profile_store``：长期用户画像 CRUD（``data/config/profile.json``）
 - ``checkpointer_view``：checkpointer 只读视图 + 单会话清理
-- ``context``：上下文管理 — 滑动窗口消息截断 + token 预算
 - ``summarizer``：消息摘要压缩（``/compact`` 命令后端）
+
+上下文管理（消息截断 + token 预算）已由 deepagents SummarizationMiddleware
++ PatchToolCallsMiddleware 接管，``context`` 模块已删除。
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from .checkpointer_view import (
     get_db_size,
     list_threads,
 )
-from .context import trim_messages_with_budget
 from .profile_store import (
     ProfileCategoryInvalid,
     ProfileContentTooLong,
@@ -67,5 +68,4 @@ __all__ = [
     "reload_skills",
     "save_skill_file",
     "summarize_messages",
-    "trim_messages_with_budget",
 ]

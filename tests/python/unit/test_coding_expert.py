@@ -141,21 +141,19 @@ class TestRunCodingExpert:
                     with patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock):
                         with patch("app.agents.expert.coding._stream_agent_events") as mock_sse:
                             with patch("app.agents.expert.coding._is_interrupted", new_callable=AsyncMock, return_value=False):
-                                with patch("app.agents.expert.coding._inject_tool_error_messages", new_callable=AsyncMock):
-                                    with patch("app.agents.expert.coding._sanitize_message_history", side_effect=lambda x, y: x):
 
-                                        mock_sse.return_value = mock_stream()
+                                mock_sse.return_value = mock_stream()
 
-                                        events = []
-                                        async for sse in run_coding_expert(
-                                            "帮我写代码",
-                                            "test-thread",
-                                        ):
-                                            events.append(sse)
+                                events = []
+                                async for sse in run_coding_expert(
+                                    "帮我写代码",
+                                    "test-thread",
+                                ):
+                                    events.append(sse)
 
-                                        assert len(events) >= 1
-                                        assert events[0]["event"] == "token"
-                                        assert events[0]["data"] == "hello"
+                                assert len(events) >= 1
+                                assert events[0]["event"] == "token"
+                                assert events[0]["data"] == "hello"
 
     @pytest.mark.asyncio
     async def test_run_llm_unavailable_yields_error(self) -> None:
@@ -223,8 +221,7 @@ class TestReadonlyStreakProtection:
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
             stack.enter_context(patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
-            stack.enter_context(patch("app.agents.expert.coding._sanitize_message_history", side_effect=lambda x, y: x))
-            stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_messages", new_callable=AsyncMock))
+            stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding.is_paused", new_callable=AsyncMock, return_value=False))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=MagicMock()))
@@ -281,8 +278,7 @@ class TestReadonlyStreakProtection:
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
             stack.enter_context(patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
-            stack.enter_context(patch("app.agents.expert.coding._sanitize_message_history", side_effect=lambda x, y: x))
-            stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_messages", new_callable=AsyncMock))
+            stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding.is_paused", new_callable=AsyncMock, return_value=False))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=MagicMock()))
@@ -339,8 +335,7 @@ class TestReadonlyStreakProtection:
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
             stack.enter_context(patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
-            stack.enter_context(patch("app.agents.expert.coding._sanitize_message_history", side_effect=lambda x, y: x))
-            stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_messages", new_callable=AsyncMock))
+            stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding.is_paused", new_callable=AsyncMock, return_value=False))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=MagicMock()))

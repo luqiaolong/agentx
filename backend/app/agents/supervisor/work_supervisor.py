@@ -1,7 +1,7 @@
 """work 场景 Supervisor（全能 agent）实现。
 
-基于 ``create_react_agent`` 构建，与 DeepAgent 共享 streaming/approval 基础设施，
-但有以下区别：
+基于 ``deepagents.create_deep_agent``（经 ``app.deep.harness.create_agent`` 封装）构建，
+与 DeepAgent 共享 streaming/approval 基础设施，但有以下区别：
 1. 使用 Supervisor 专用 system prompt（``_DEFAULT_SUPERVISOR_SYSTEM_PROMPT``）
 2. 额外注入 ``delegate_to_expert`` / ``delegate_to_subagent`` 委派工具
 3. 支持 @mention 语法强制委派
@@ -9,7 +9,7 @@
 
 流程:
 1. 解析 @mention：若命中 Expert 则直接运行 Expert；若命中子代理则运行后回注 Supervisor
-2. 构建 Supervisor agent（含委派工具 + 完整工具集 + interrupt_before 审批）
+2. 构建 Supervisor agent（含委派工具 + 完整工具集 + interrupt_on 审批）
 3. ``astream_events`` 驱动图执行，流式产出 token / tool_call / tool_result 事件
 4. 危险工具中断 → yield approval_request → 等待审批 → 恢复执行
 5. 循环直至图完成
@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import json
 from typing import Any, AsyncIterator
-
-from langgraph.prebuilt import create_react_agent
 
 from app.agents.supervisor.delegation import make_delegation_tools
 from app.agents.supervisor.mention import parse_mention
@@ -34,10 +32,7 @@ from app.deep.approval import (
     _handle_directory_extension,
     _make_approval_event,
 )
-from app.deep.recovery import (
-    _inject_tool_error_messages,
-    _sanitize_message_history,
-)
+from app.deep.harness import create_agent
 from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
@@ -80,9 +75,8 @@ async def build_work_supervisor(
 ) -> Any:
     """构造 work 场景 Supervisor agent。
 
-    用 ``create_react_agent`` 构建 ReAct 图，``interrupt_before=["tools"]`` 使图在
-    执行任何工具前暂停，由外层 ``run_work_supervisor`` 检查是否为危险工具并
-    触发审批流。
+    用 ``create_agent``（封装 ``deepagents.create_deep_agent``）构建图，
+    ``interrupt_on`` 仅在 ``DANGEROUS_TOOLS`` 中的工具前暂停，只读工具自动放行。
 
     Args:
         thread_id: 会话 ID（用于工具沙箱授权绑定）。
@@ -119,13 +113,14 @@ async def build_work_supervisor(
     )
     system_prompt = base_prompt + _workspace_prompt_suffix(workspace_path)
 
-    return create_react_agent(
+    return create_agent(
         model,
         tools,
-        name="work_supervisor",
-        prompt=system_prompt,
-        interrupt_before=["tools"],
+        system_prompt=system_prompt,
         checkpointer=checkpointer,
+        thread_id=thread_id,
+        workspace_path=workspace_path,
+        name="work_supervisor",
     )
 
 
@@ -303,21 +298,12 @@ async def run_work_supervisor(
     }
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-    # 防御性清理：修复 checkpoint 中残留的未配对 tool_calls
-    await _inject_tool_error_messages(
-        agent, config, "上次操作未正常完成，已自动清理状态"
-    )
-    inputs["messages"] = _sanitize_message_history(
-        inputs["messages"], "上次操作未正常完成，已自动清理状态"
-    )
-
     # ---- 3. 流式执行 + 中断/恢复循环 ----
     try:
         async for sse in _stream_agent_events(agent, inputs, config, source="work"):
             yield sse
     except Exception as exc:  # noqa: BLE001
         logger.exception("supervisor stream failed", thread_id=thread_id)
-        await _inject_tool_error_messages(agent, config, f"Supervisor 执行失败: {exc}")
         yield make_sse_event("error", f"Supervisor 执行失败: {exc}")
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
@@ -326,7 +312,7 @@ async def run_work_supervisor(
     # 只读工具集合（用于循环保护检测）
     _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
 
-    max_iterations = 50
+    max_iterations = 100  # 安全上限（SummarizationMiddleware 处理上下文长度）
     iteration = 0
     # 连续只读工具调用计数（用于防过度探索保护）
     readonly_streak = 0
@@ -371,7 +357,6 @@ async def run_work_supervisor(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("supervisor force-answer resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Supervisor 恢复失败: {exc}")
                 yield make_sse_event("error", f"Supervisor 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -427,7 +412,6 @@ async def run_work_supervisor(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("supervisor force-answer resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Supervisor 恢复失败: {exc}")
                 yield make_sse_event("error", f"Supervisor 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -441,7 +425,6 @@ async def run_work_supervisor(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("supervisor resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Supervisor 恢复失败: {exc}")
                 yield make_sse_event("error", f"Supervisor 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -505,12 +488,10 @@ async def run_work_supervisor(
                 yield evt
             if extension_handled.denied:
                 yield make_sse_event("error", "用户拒绝访问该目录")
-                await _inject_tool_error_messages(agent, config, "用户拒绝访问该目录")
                 sandbox.set_full_trust(thread_id, False)
                 return
             if extension_handled.timed_out:
                 yield make_sse_event("error", "目录授权等待被中断，操作未执行")
-                await _inject_tool_error_messages(agent, config, "目录授权等待被中断，操作未执行")
                 sandbox.set_full_trust(thread_id, False)
                 return
 
@@ -520,7 +501,6 @@ async def run_work_supervisor(
                 yield sse
         except Exception as exc:  # noqa: BLE001
             logger.exception("supervisor resume failed", thread_id=thread_id)
-            await _inject_tool_error_messages(agent, config, f"Supervisor 恢复失败: {exc}")
             yield make_sse_event("error", f"Supervisor 恢复失败: {exc}")
             sandbox.set_full_trust(thread_id, False)
             return
@@ -530,7 +510,6 @@ async def run_work_supervisor(
     if iteration >= max_iterations:
         logger.warning("supervisor hit max iterations", thread_id=thread_id)
         yield make_sse_event("error", "Supervisor 达到最大迭代上限")
-        await _inject_tool_error_messages(agent, config, "Supervisor 达到最大迭代上限")
         sandbox.set_full_trust(thread_id, False)
         return
 

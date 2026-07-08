@@ -27,7 +27,6 @@ from app.agents.expert import run_coding_expert
 from app.agents.supervisor import run_work_supervisor
 from app.agents.team import run_coding_team
 from app.config import get_settings
-from app.memory.context import trim_messages_with_budget
 from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import get_skills
 from app.observability.langsmith import trace_span
@@ -198,7 +197,7 @@ async def run_router(
                         error=str(exc),
                     )
 
-        # ---- 4. 读取用户画像 + 项目级配置上下文 ----
+        # ---- 4. 读取用户画像 + 项目级 system_prompt ----
         # build_profile_prompt 失败时返回空字符串，不影响主流程
         try:
             profile_prompt = build_profile_prompt()
@@ -206,12 +205,8 @@ async def run_router(
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
 
-        # 加载项目级配置（.agentx/ 目录），合并到全局 Settings 之上
-        # 当前限制：下游 agent 内部硬编码 get_settings()，无法直接替换为 MergedConfig；
-        # 此处仅取 context_prompt（AGENTS.md + rules）+ default_system_prompt（项目系统提示词）
-        # 注入 profile_prompt。MCP/subagents/tools 合并代码已就绪（merger.py）但待下游
-        # agent 支持传入 settings 参数后接入。
-        project_context_prompt = ""
+        # 加载项目级 system_prompt（.agentx/system_prompt.md）
+        # AGENTS.md + rules 由 deepagents memory= 参数自动加载（harness.resolve_memory_paths）
         project_system_prompt = ""
         if effective_workspace:
             try:
@@ -221,21 +216,15 @@ async def run_router(
                 project_config = await asyncio.to_thread(
                     load_project_config, Path(effective_workspace)
                 )
-                if project_config.exists:
+                if project_config.exists and project_config.system_prompt:
                     merged = merge_configs(get_settings(), project_config)
-                    project_context_prompt = merged.context_prompt
-                    project_system_prompt = (
-                        merged.default_system_prompt
-                        if project_config.system_prompt
-                        else ""
-                    )
-                    if project_context_prompt or project_system_prompt:
+                    project_system_prompt = merged.default_system_prompt
+                    if project_system_prompt:
                         logger.info(
                             "router.project_config_loaded",
                             thread_id=thread_id,
                             workspace=effective_workspace,
-                            context_len=len(project_context_prompt),
-                            has_system_prompt=bool(project_system_prompt),
+                            has_system_prompt=True,
                         )
             except Exception as exc:  # noqa: BLE001 — 项目配置加载兜底
                 logger.warning(
@@ -245,10 +234,8 @@ async def run_router(
                     error=str(exc),
                 )
 
-        # 项目级上下文前置到 profile_prompt（所有场景都注入）
-        # 顺序：项目 system_prompt → 项目 AGENTS.md + rules → 用户画像 → skill
-        if project_context_prompt:
-            profile_prompt = (project_context_prompt + "\n" + profile_prompt).strip()
+        # 项目级 system_prompt 前置到 profile_prompt
+        # AGENTS.md + rules 由 deepagents memory= 自动注入，不再手动拼接
         if project_system_prompt:
             profile_prompt = (project_system_prompt + "\n" + profile_prompt).strip()
 
@@ -266,13 +253,12 @@ async def run_router(
                 logger.warning("load history failed", error=str(exc))
                 history = []
 
-        # 截断历史到预算内（不含当前消息，当前消息在 runner 内部 append）
+        # 简单按消息数截断（token 预算由 deepagents SummarizationMiddleware 自动处理，
+        # tool_call 配对由 PatchToolCallsMiddleware 自动修复）
         settings = get_settings()
-        history = trim_messages_with_budget(
-            history,
-            max_messages=settings.context_max_messages,
-            max_tokens=settings.context_max_tokens,
-        )
+        max_msgs = settings.context_max_messages
+        if len(history) > max_msgs:
+            history = history[-max_msgs:]
 
         logger.info(
             "router dispatch",

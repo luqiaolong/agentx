@@ -1,11 +1,12 @@
 """DeepAgent 路径（路径 C）：deepagents + LangGraph，带危险工具中断。
 
-- 用 ``langgraph.prebuilt.create_react_agent`` 构建 ReAct DeepAgent（与 subagents 一致）
+- 用 ``deepagents.create_deep_agent``（经 ``app.deep.harness.create_agent`` 封装）构建 DeepAgent
 - 工具集: filesystem 全部 + rag_retrieve + web_search
-- ``interrupt_before=["tools"]``：调用任何工具前 LangGraph 暂停，SSE handler 检查待执行
-  工具是否属于 ``DANGEROUS_TOOLS``，是则 yield approval_request 等用户审批，否则自动放行
+- ``interrupt_on``：仅当 LLM 调用 ``DANGEROUS_TOOLS`` 中的工具时 LangGraph 暂停，
+  只读工具自动放行。SSE handler 检查待执行工具是否属于 ``DANGEROUS_TOOLS``，
+  是则 yield approval_request 等用户审批
 - 审批恢复: ``_await_approval`` 轮询 ``app.approval``，通过后以
-  ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_before`` 的标准恢复方式）
+  ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_on`` 的标准恢复方式）
 - 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer，支持跨轮次历史 + interrupt/resume
 - 权限模式：
   - ``standard``（默认）：危险工具走审批；只读 fs 工具访问未授权目录时弹扩展授权弹窗
@@ -16,8 +17,9 @@
 - ``app.deep.streaming``：``_stream_agent_events``
 - ``app.deep.approval``：``wait_for_approval`` / ``_await_approval`` / ``_make_approval_event`` /
   ``_handle_directory_extension`` 及辅助函数
-- ``app.deep.recovery``：``_inject_tool_error_messages`` / ``_sanitize_message_history`` /
-  ``_collect_unpaired_tool_call_ids`` / ``_to_serializable``
+- ``app.deep.harness``：``create_agent`` / ``build_interrupt_config`` / ``ensure_harness_profile``
+  等 deepagents 0.6+ 集成层
+- ``app.deep.recovery``：``_collect_unpaired_tool_call_ids`` / ``_to_serializable``
 
 本模块仅保留编排层：``_DEEP_SYSTEM_PROMPT`` / ``build_deep_agent`` / ``run_deep_path`` /
 ``_extract_tasks`` / ``_get_pending_tool_calls`` / ``_is_interrupted``，并通过 ``from ... import``
@@ -30,8 +32,6 @@ import asyncio
 from typing import TYPE_CHECKING, Any, AsyncIterator
 from uuid import uuid4
 
-from langgraph.prebuilt import create_react_agent
-
 from app.approval import clear_pause, is_paused
 from app.approval.state import get_pause_event
 from app.config import get_settings
@@ -43,10 +43,7 @@ from app.deep.approval import (
     _make_approval_event,
     wait_for_approval,
 )
-from app.deep.recovery import (
-    _inject_tool_error_messages,
-    _sanitize_message_history,
-)
+from app.deep.harness import create_agent
 from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
@@ -67,16 +64,12 @@ if TYPE_CHECKING:
     # 场景化架构下 graph.py 不再 import run_deep_path，但 team/scheduler.py 仍调用。
     from app.router.state import RouterState
 
-# DeepAgent 系统提示
+# DeepAgent 系统提示（基础描述，任务规划由 deepagents 内置 write_todos 工具承担）
 _DEEP_SYSTEM_PROMPT = (
     "你是一个强大的个人助理。你可以读写文件、搜索知识库、搜索网页。"
     "执行危险操作（写文件、执行命令）前需要用户审批。"
     "请根据用户任务规划步骤，调用合适的工具完成。"
-    "\n\n对于需要多步执行的复杂任务，请先输出 JSON 计划，格式："
-    '{"plan": [{"id": "1", "title": "步骤标题", "status": "pending"}, ...]}'
-    "；执行过程中每次完成一步输出："
-    '{"plan_update": {"id": "...", "status": "done"}}'
-    "。"
+    "复杂任务可调用 write_todos 工具创建结构化待办清单，管理子任务进度。"
 )
 
 # T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
@@ -114,9 +107,10 @@ async def build_deep_agent(
 ) -> Any:
     """构造真实 DeepAgent 图。
 
-    用 ``create_react_agent`` 构建 ReAct 子图，``interrupt_before=["tools"]`` 使图在
-    执行任何工具前暂停。使用共享的 ``AsyncSqliteSaver`` 作为 checkpointer，支持
-    跨轮次历史恢复与 interrupt/resume 循环。
+    用 ``create_agent``（封装 ``deepagents.create_deep_agent``）构建图，
+    ``interrupt_on`` 仅在 ``DANGEROUS_TOOLS`` 中的工具前暂停。使用共享的
+    ``AsyncSqliteSaver`` 作为 checkpointer，支持跨轮次历史恢复与
+    interrupt/resume 循环。
 
     Args:
         thread_id: 会话 ID（用于工具的沙箱授权绑定）。
@@ -145,13 +139,13 @@ async def build_deep_agent(
         skill_extra=profile_prompt or None,
     )
     system_prompt = base_prompt + _workspace_prompt_suffix(workspace_path)
-    return create_react_agent(
+    return create_agent(
         model,
         tools,
-        name="deep_agent",
-        prompt=system_prompt,
-        interrupt_before=["tools"],
+        system_prompt=system_prompt,
         checkpointer=checkpointer,
+        thread_id=thread_id,
+        workspace_path=workspace_path,
     )
 
 
@@ -307,29 +301,12 @@ async def run_deep_path(
     }
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-    # 1b. 防御性清理：若之前异常退出导致 checkpoint 中残留未配对的
-    # tool_calls，首次 astream 会因 _validate_chat_history 抛 INVALID_CHAT_HISTORY。
-    # 此处提前注入 ToolMessage 修复，确保历史消息一致性。
-    await _inject_tool_error_messages(
-        agent, config, "上次操作未正常完成，已自动清理状态"
-    )
-
-    # 1c. 净化 inputs：当 checkpoint 被 DELETE 清空（用户清空历史）或
-    # history 含中断残留的未配对 AIMessage 时，_inject_tool_error_messages
-    # 因 state 为空直接返回，但 inputs["messages"] 仍含未配对 tool_calls，
-    # _validate_chat_history 仍会抛 INVALID_CHAT_HISTORY。此处直接对 inputs
-    # 补齐 ToolMessage，确保 astream 不会因校验失败而中断。
-    inputs["messages"] = _sanitize_message_history(
-        inputs["messages"], "上次操作未正常完成，已自动清理状态"
-    )
-
-    # 2. 初始流式运行（可能中断在 tools 前）
+    # 2. 初始流式运行（interrupt_on 仅在危险工具前暂停）
     try:
         async for sse in _stream_agent_events(agent, inputs, config):
             yield sse
     except Exception as exc:  # noqa: BLE001 — SSE 兜底
         logger.exception("deep agent stream failed", thread_id=thread_id)
-        await _inject_tool_error_messages(agent, config, f"DeepAgent 执行失败: {exc}")
         yield make_sse_event("error", f"DeepAgent 执行失败: {exc}")
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
@@ -339,7 +316,7 @@ async def run_deep_path(
     _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
 
     # 3. 中断/恢复循环
-    max_iterations = 50  # 安全上限，防止无限循环
+    max_iterations = 100  # 安全上限，防止无限循环（SummarizationMiddleware 处理上下文长度）
     iteration = 0
     # 连续只读工具调用计数（用于防过度探索保护）
     readonly_streak = 0
@@ -407,7 +384,6 @@ async def run_deep_path(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("deep agent resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
                 yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -480,26 +456,19 @@ async def run_deep_path(
                 yield evt
             if extension_handled.denied:
                 yield make_sse_event("error", "用户拒绝访问该目录")
-                await _inject_tool_error_messages(
-                    agent, config, "用户拒绝访问该目录"
-                )
                 sandbox.set_full_trust(thread_id, False)
                 return
             if extension_handled.timed_out:
                 yield make_sse_event("error", "目录授权等待被中断，操作未执行")
-                await _inject_tool_error_messages(
-                    agent, config, "目录授权等待被中断，操作未执行"
-                )
                 sandbox.set_full_trust(thread_id, False)
                 return
 
-        # 5. 恢复执行：用 None 输入续跑（LangGraph interrupt_before 标准恢复方式）
+        # 5. 恢复执行：用 None 输入续跑（LangGraph interrupt_on 标准恢复方式）
         try:
             async for sse in _stream_agent_events(agent, None, config):
                 yield sse
         except Exception as exc:  # noqa: BLE001 — SSE 兜底
             logger.exception("deep agent resume failed", thread_id=thread_id)
-            await _inject_tool_error_messages(agent, config, f"DeepAgent 恢复失败: {exc}")
             yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
             sandbox.set_full_trust(thread_id, False)
             return
@@ -510,9 +479,6 @@ async def run_deep_path(
     if iteration >= max_iterations:
         logger.warning("deep agent hit max iterations", thread_id=thread_id)
         yield make_sse_event("error", "DeepAgent 达到最大迭代上限")
-        await _inject_tool_error_messages(
-            agent, config, "DeepAgent 达到最大迭代上限"
-        )
         sandbox.set_full_trust(thread_id, False)
         return
 

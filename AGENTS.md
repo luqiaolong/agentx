@@ -201,7 +201,7 @@ AgentTeam 多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggreg
 | 渲染层 | React 18 + TypeScript + Tailwind v4 + zustand |
 | 主进程 | Rust（tokio async runtime） |
 | 后端 | Python ≥ 3.11 + FastAPI + uvicorn |
-| AI 编排 | LangGraph `StateGraph` + DeepAgents (`create_react_agent`) |
+| AI 编排 | LangGraph `StateGraph` + DeepAgents 0.6.12 (`create_deep_agent`) |
 | 嵌入 | TEI（BGE-M3，部署在 myserver:8093） |
 | 向量库 | Milvus（部署在 myserver:19530） |
 | 检查点 | LangGraph `SqliteSaver` / `AsyncSqliteSaver` |
@@ -247,13 +247,14 @@ agentx/
 │   ├── chat/                   ← 路径 A：LLM 直答
 │   │   ├── __init__.py
 │   │   └── run.py              ← run_chat_path（ThinkFilter 流式 token）
-│   ├── deep/                   ← 路径 C：DeepAgent + interrupt_before 审批
+│   ├── deep/                   ← 路径 C：DeepAgent + interrupt_on 审批（deepagents 0.6+）
 │   │   ├── __init__.py
 │   │   ├── agent.py            ← run_deep_path / build_deep_agent（主入口，~200 行）
+│   │   ├── harness.py          ← deepagents 集成层（create_agent + excluded_tools + interrupt_on + memory= + skills= + backend=）
 │   │   ├── tools.py            ← _make_deep_tools + _load_mcp_tools + DANGEROUS_TOOLS
 │   │   ├── streaming.py        ← _stream_agent_events
 │   │   ├── approval.py         ← _await_approval + wait_for_approval + _make_approval_event
-│   │   └── recovery.py         ← _inject_tool_error_messages + _sanitize_message_history
+│   │   └── recovery.py         ← _collect_unpaired_tool_call_ids + _to_serializable（消息修复由 PatchToolCallsMiddleware 接管）
 │   ├── team/                   ← 路径 D：AgentTeam 多代理协作
 │   │   ├── __init__.py
 │   │   ├── orchestrator.py     ← run_team_path（主入口，~200 行）
@@ -272,10 +273,10 @@ agentx/
 │   ├── memory/                 ← skills / profile / checkpointer / sandbox
 │   │   ├── profile_extractor.py ← LLM 画像抽取（extract_profile_via_llm）
 │   │   ├── profile_store.py    ← 画像存储（upsert_from_llm / build_profile_prompt）
-│   │   ├── skills_loader.py    ← 技能加载
+│   │   ├── skills_loader.py    ← 技能加载（@skill: 标签解析 + /api/skills 端点）
 │   │   ├── skills_store.py     ← 技能存储
 │   │   ├── checkpointer.py     ← LangGraph checkpointer
-│   │   ├── context.py          ← 消息截断（trim_messages_with_budget）
+│   │   ├── summarizer.py       ← 消息摘要（/compact 手动触发；自动摘要由 SummarizationMiddleware 接管）
 │   │   └── sandbox_store.py    ← 授权目录存储
 │   ├── project_config/         ← .agentx/ 项目级配置（generator/loader/merger/templates）
 │   │   ├── __init__.py         ← 包导出

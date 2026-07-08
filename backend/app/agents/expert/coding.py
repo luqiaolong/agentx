@@ -33,10 +33,6 @@ from app.deep.approval import (
     _handle_directory_extension,
     _make_approval_event,
 )
-from app.deep.recovery import (
-    _inject_tool_error_messages,
-    _sanitize_message_history,
-)
 from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
@@ -338,14 +334,6 @@ async def run_coding_expert(
     }
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-    # 防御性清理
-    await _inject_tool_error_messages(
-        agent, config, "上次操作未正常完成，已自动清理状态"
-    )
-    inputs["messages"] = _sanitize_message_history(
-        inputs["messages"], "上次操作未正常完成，已自动清理状态"
-    )
-
     # 只读工具集合（用于循环保护检测）
     _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
 
@@ -355,7 +343,6 @@ async def run_coding_expert(
             yield sse
     except Exception as exc:  # noqa: BLE001
         logger.exception("coding_expert stream failed", thread_id=thread_id)
-        await _inject_tool_error_messages(agent, config, f"Coding Expert 执行失败: {exc}")
         yield make_sse_event("error", f"Coding Expert 执行失败: {exc}")
         if is_full_trust:
             sandbox.set_full_trust(thread_id, False)
@@ -405,7 +392,6 @@ async def run_coding_expert(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("coding_expert force-answer resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
                 yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -462,7 +448,6 @@ async def run_coding_expert(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("coding_expert force-answer resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
                 yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -475,7 +460,6 @@ async def run_coding_expert(
                     yield sse
             except Exception as exc:  # noqa: BLE001
                 logger.exception("coding_expert resume failed", thread_id=thread_id)
-                await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
                 yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
                 sandbox.set_full_trust(thread_id, False)
                 return
@@ -539,12 +523,10 @@ async def run_coding_expert(
                 yield evt
             if extension_handled.denied:
                 yield make_sse_event("error", "用户拒绝访问该目录")
-                await _inject_tool_error_messages(agent, config, "用户拒绝访问该目录")
                 sandbox.set_full_trust(thread_id, False)
                 return
             if extension_handled.timed_out:
                 yield make_sse_event("error", "目录授权等待被中断，操作未执行")
-                await _inject_tool_error_messages(agent, config, "目录授权等待被中断，操作未执行")
                 sandbox.set_full_trust(thread_id, False)
                 return
 
@@ -554,7 +536,6 @@ async def run_coding_expert(
                 yield sse
         except Exception as exc:  # noqa: BLE001
             logger.exception("coding_expert resume failed", thread_id=thread_id)
-            await _inject_tool_error_messages(agent, config, f"Coding Expert 恢复失败: {exc}")
             yield make_sse_event("error", f"Coding Expert 恢复失败: {exc}")
             sandbox.set_full_trust(thread_id, False)
             return
@@ -564,7 +545,6 @@ async def run_coding_expert(
     if iteration >= max_iterations:
         logger.warning("coding_expert hit max iterations", thread_id=thread_id)
         yield make_sse_event("error", "Coding Expert 达到最大迭代上限")
-        await _inject_tool_error_messages(agent, config, "Coding Expert 达到最大迭代上限")
         sandbox.set_full_trust(thread_id, False)
         return
 
