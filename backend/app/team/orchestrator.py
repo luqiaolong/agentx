@@ -175,7 +175,7 @@ async def run_team_path(
 
         async def _runner(t: TeamPlanTask, idx: int) -> None:
             async with semaphore:
-                abort_event = get_abort_event(thread_id)
+                abort_event = await get_abort_event(thread_id)
                 if abort_event.is_set():
                     await queue.put(
                         make_team_event(

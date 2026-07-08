@@ -101,13 +101,14 @@ async def run_router(
     permission_mode: str = "standard",
     agent_mode: str = "work",
     workspace_path: str | None = None,
+    revoked_paths: list[str] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """运行 Router，按 ``agent_mode`` 分发到对应场景 runner，yield SSE 事件。
 
     流程:
     1. 校验 ``agent_mode``，非法值直接 yield error
     2. 解析 ``@skill:<name>`` 标记（仅 work 场景注入 system prompt）
-    3. 从请求字段同步 workspace 授权
+    3. 从请求字段同步 workspace 授权（跳过 revoked_paths 中的路径）
     4. 读取用户画像
     5. 从 checkpointer 加载历史 messages（若提供）+ 截断到预算
     6. 按 ``agent_mode`` 分发：
@@ -125,6 +126,8 @@ async def run_router(
         agent_mode: 场景+模式枚举，``"work"`` / ``"coding"`` / ``"coding_team"``。
             默认 ``"work"``（Supervisor 全能 agent）。
         workspace_path: 可选当前会话绑定的 workspace 绝对路径，非空时自动授权沙箱写入。
+        revoked_paths: 可选用户手动撤销过的路径列表；若 effective_workspace 在此列表中，
+            则跳过 chip 自动授权，尊重用户撤销意图。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -166,23 +169,32 @@ async def run_router(
                     workspace=effective_workspace,
                 )
         if effective_workspace:
-            from app.utils.security import get_sandbox
-
-            sandbox = get_sandbox()
-            try:
-                sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
+            # 若用户已显式撤销该路径，跳过 chip 自动授权，尊重撤销意图
+            _revoked = {str(p).strip().lower() for p in (revoked_paths or [])}
+            if effective_workspace.strip().lower() in _revoked:
                 logger.info(
-                    "router.workspace_authorized",
+                    "router.workspace_skipped_revoked",
                     thread_id=thread_id,
                     workspace=effective_workspace,
                 )
-            except ValueError as exc:
-                logger.warning(
-                    "router.workspace_authorize_failed",
-                    thread_id=thread_id,
-                    workspace=effective_workspace,
-                    error=str(exc),
-                )
+            else:
+                from app.utils.security import get_sandbox
+
+                sandbox = get_sandbox()
+                try:
+                    sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
+                    logger.info(
+                        "router.workspace_authorized",
+                        thread_id=thread_id,
+                        workspace=effective_workspace,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "router.workspace_authorize_failed",
+                        thread_id=thread_id,
+                        workspace=effective_workspace,
+                        error=str(exc),
+                    )
 
         # ---- 4. 读取用户画像 ----
         # build_profile_prompt 失败时返回空字符串，不影响主流程

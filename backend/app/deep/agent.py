@@ -343,10 +343,10 @@ async def run_deep_path(
 
         # 5b. 暂停/恢复检查：pause 时 yield paused 事件并阻塞，resume 后 yield resumed
         # 注意：不清理 pending_approvals 或 abort_flags，只暂停 LLM 流。
-        if is_paused(thread_id):
+        if await is_paused(thread_id):
             yield make_sse_event("paused", {})
-            pause_event = get_pause_event(thread_id)
-            if is_paused(thread_id):
+            pause_event = await get_pause_event(thread_id)
+            if await is_paused(thread_id):
                 await pause_event.wait()
             yield make_sse_event("resumed", {})
 
@@ -387,8 +387,12 @@ async def run_deep_path(
             # 提取路径并检查是否已授权写入
             # cli_execute 未指定 cwd 时，用 workspace_path 兜底，避免已选工作区仍弹审批
             paths = _extract_paths_from_tool_call(tc, workspace_path)
-            # 无路径参数的工具（如 shell_exec）或路径未授权 → 需审批
+            # 无路径参数的工具（如 shell_exec）：若已选工作区则自动放行
             if not paths:
+                if workspace_path and sandbox.is_path_authorized(
+                    thread_id, workspace_path, writable=True
+                ):
+                    continue
                 dangerous_calls.append(tc)
                 continue
             # 所有路径均已授权写入 → 跳过审批

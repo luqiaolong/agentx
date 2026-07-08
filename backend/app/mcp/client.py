@@ -109,19 +109,22 @@ class McpClientManager:
         """返回 (tools, untrusted_tool_names)。
 
         - ``tools``: 所有已连接 server 的 LangChain 工具列表。
-        - ``untrusted_tool_names``: 来自 ``trusted=False`` server 的工具名集合，
-          调用方应将其加入运行时危险集合，触发 ``interrupt_before`` 审批流。
+        - ``untrusted_tool_names``: 所有 MCP 工具名集合（BUG-5 修复：不再区分
+          trusted/untrusted，所有 MCP 工具均进入运行时危险集合，触发
+          ``interrupt_before`` 审批流）。
 
-        安全模型：MCP 工具可执行任意操作（写文件 / shell / 远程调用），默认
-        ``trusted=False`` 时需用户审批；``trusted=True`` 时自动放行（仅用于完全可信的 server）。
+        安全模型：MCP 工具可执行任意操作（写文件 / shell / 远程调用），
+        无论 server 配置为 trusted=True 还是 trusted=False，所有 MCP 工具
+        均须经过用户审批。trusted 标记仅影响审批 UI 的默认行为（未来扩展），
+        不用于绕过审批流。
         """
         if not self._initialized:
             async with self._lock:
                 if not self._initialized:
                     await self._initialize_locked()
 
-        # 重新探测以获取每个工具的来源 server（_tools 是扁平列表，丢失了来源信息）
-        # 这里用 server→tools 映射重建，避免修改 _initialize_locked 的缓存结构
+        # 所有 MCP 工具均视为危险工具，统一加入 untrusted_names
+        # 避免 trusted=True 配置错误导致安全绕过（BUG-5 修复）
         untrusted_names: set[str] = set()
         if self._client is None:
             return list(self._tools), untrusted_names
@@ -129,8 +132,6 @@ class McpClientManager:
         for server in self._servers:
             if not server.enabled or server.name in self._errors:
                 continue
-            if server.trusted:
-                continue  # 可信 server 的工具不需要审批
             try:
                 server_tools = await self._client.get_tools(server_name=server.name)
                 for t in server_tools:

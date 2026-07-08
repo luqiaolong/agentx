@@ -73,7 +73,7 @@ async def _stream_agent_events(
     from app.utils.text import strip_think
 
     thread_id = config.get("configurable", {}).get("thread_id", "")
-    abort_event = get_abort_event(thread_id)
+    abort_event = await get_abort_event(thread_id)
 
     async for state in agent.astream(inputs, config=config, stream_mode="values"):
         if abort_event.is_set():

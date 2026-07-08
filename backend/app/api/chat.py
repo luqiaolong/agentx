@@ -102,11 +102,12 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             permission_mode=req.permission_mode,
             agent_mode=effective_agent_mode,
             workspace_path=req.workspace_path,
+            revoked_paths=req.revoked_paths,
         ):
             # 检查中止标志
-            if is_aborted(req.thread_id):
+            if await is_aborted(req.thread_id):
                 yield {"event": "error", "data": "用户已中止"}
-                clear_abort(req.thread_id)
+                await clear_abort(req.thread_id)
                 return
             yield event
 
@@ -134,7 +135,7 @@ def register_chat_routes(app: FastAPI) -> None:
         否则按用户实际操作记录 user_approve / user_reject。
         """
         settings = get_settings()
-        submit_approval(
+        await submit_approval(
             req.thread_id,
             ApprovalDecision(
                 approved=req.approval,
@@ -182,21 +183,21 @@ def register_chat_routes(app: FastAPI) -> None:
     @app.post("/api/chat/abort")
     async def chat_abort(req: AbortRequest) -> dict[str, Any]:
         """设置中止标志，SSE handler 在下一轮迭代退出。"""
-        set_abort(req.thread_id)
+        await set_abort(req.thread_id)
         logger.info("abort flag set", thread_id=req.thread_id)
         return {"ok": True}
 
     @app.post("/api/chat/pause")
     async def chat_pause(req: AbortRequest) -> dict[str, Any]:
         """设置暂停标志，DeepAgent 在迭代起点进入等待。"""
-        set_pause(req.thread_id)
+        await set_pause(req.thread_id)
         logger.info("pause flag set", thread_id=req.thread_id)
         return {"ok": True}
 
     @app.post("/api/chat/resume")
     async def chat_resume(req: AbortRequest) -> dict[str, Any]:
         """清除暂停标志并唤醒等待中的 DeepAgent。"""
-        clear_pause(req.thread_id)
+        await clear_pause(req.thread_id)
         logger.info("pause cleared", thread_id=req.thread_id)
         return {"ok": True}
 

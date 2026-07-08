@@ -225,6 +225,9 @@ class SessionSandbox:
 
         拒绝空字符串 / 纯空白 / "." / ".." —— 否则会被 ``Path.resolve()`` 静默解析为
         CWD（当前目录），授权 CWD 等价于一次性把仓库根目录读权限交给 LLM。
+
+        幂等优化：若内存中已存在完全相同的 (path, writable) 授权，则跳过 DB 双写，
+        减少高频交互场景下的 DB IO 压力（BUG-9 修复）。
         """
         path_str = str(path).strip()
         if not path_str or path_str in (".", ".."):
@@ -232,6 +235,12 @@ class SessionSandbox:
         resolved = self._normalize(path)
         if self._is_critical(resolved):
             raise ValueError(f"路径 {path} 是系统关键目录，不可授权")
+
+        entries = self.authorized_dirs.setdefault(thread_id, set())
+        # 幂等检测：已存在完全相同的 (path, writable) 则跳过 DB 写
+        if (resolved, writable) in entries:
+            return resolved
+
         with trace_span(
             "sandbox.authorize",
             thread_id=thread_id,
@@ -239,7 +248,6 @@ class SessionSandbox:
             writable=writable,
             action="authorize",
         ):
-            entries = self.authorized_dirs.setdefault(thread_id, set())
             # 同路径重新授权时更新 writable（先移除旧条目再添加）
             entries = {(p, w) for (p, w) in entries if p != resolved}
             entries.add((resolved, writable))

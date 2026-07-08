@@ -195,7 +195,7 @@ async def wait_for_approval(thread_id: str, timeout: float = 0.5) -> ApprovalDec
     """
     from app.approval import pop_approval
 
-    return pop_approval(thread_id)
+    return await pop_approval(thread_id)
 
 
 async def _await_approval(
@@ -216,9 +216,9 @@ async def _await_approval(
     elapsed = 0.0
     while elapsed < max_wait:
         # abort 检查
-        if is_aborted(thread_id):
+        if await is_aborted(thread_id):
             return None
-        decision = pop_approval(thread_id)
+        decision = await pop_approval(thread_id)
         if decision is not None:
             return decision
         await asyncio.sleep(poll_interval)
@@ -242,11 +242,16 @@ async def _handle_directory_extension(
 ) -> _ExtensionResult:
     """处理只读 fs 工具的目录越界扩展授权。
 
-    遍历 pending_calls，对每个只读 fs 工具提取路径，检查是否已授权。
-    未授权的工具调用 yield approval_request(kind=directory_extension)，等待用户决策：
-    - once：``sandbox.authorize_temp`` 临时授权
-    - session：``sandbox.authorize`` 持久授权
+    遍历 pending_calls，收集所有越界路径，**一次性批量 yield** 所有
+    approval_request(kind=directory_extension) 事件，然后等待用户统一决策。
+    用户可一次性 approve all / deny all / per-path 选择（前端支持批量审批 UI）。
+
+    决策映射：
+    - once：``sandbox.authorize_temp`` 临时授权（所有越界路径）
+    - session：``sandbox.authorize`` 持久授权（所有越界路径）
     - deny：返回 denied=True
+
+    BUG-4 修复：从串行逐个审批改为批量审批，避免 50 次迭代上限被串行阻塞耗尽。
 
     Args:
         pending_calls: 待执行的工具调用列表。
@@ -256,7 +261,9 @@ async def _handle_directory_extension(
     Returns:
         _ExtensionResult：含 events（需 yield 的 SSE 事件）+ denied/timed_out 标志。
     """
-    events: list[dict[str, str]] = []
+    # 第一步：收集所有越界路径（去重）
+    unauthorized_paths: list[str] = []
+    seen: set[str] = set()
     for tc in pending_calls:
         name = tc.get("name", "")
         if not _is_read_only_fs_tool(name):
@@ -267,44 +274,72 @@ async def _handle_directory_extension(
         for path in paths:
             if sandbox.is_path_authorized(thread_id, path, writable=False):
                 continue
-            # 越界 → 弹扩展授权
-            events.append(
-                _make_approval_event(
-                    tc,
-                    thread_id,
-                    kind="directory_extension",
-                    requested_path=path,
-                    writable=False,
-                )
-            )
-            decision = await _await_approval(
+            if path not in seen:
+                seen.add(path)
+                unauthorized_paths.append(path)
+
+    if not unauthorized_paths:
+        return _ExtensionResult(events=[])
+
+    # 若所有越界路径均位于已授权写入的目录下，则自动放行（工作区内免审批）。
+    # 用户已选择工作区并授权 writable=True，意味着整个工作区目录应被信任。
+    all_under_workspace = all(
+        sandbox.is_path_authorized(thread_id, path, writable=True)
+        for path in unauthorized_paths
+    )
+    if all_under_workspace:
+        return _ExtensionResult(events=[])
+
+    # 第二步：批量 yield 所有越界审批请求（前端可展示为批量审批对话框）
+    events: list[dict[str, str]] = []
+    for path in unauthorized_paths:
+        # 用第一个涉及该路径的 tool_call 构造审批事件
+        representative_tc = next(
+            (
+                tc
+                for tc in pending_calls
+                if _is_read_only_fs_tool(tc.get("name", ""))
+                and path in _extract_paths_from_tool_call(tc)
+            ),
+            {},
+        )
+        events.append(
+            _make_approval_event(
+                representative_tc,
                 thread_id,
-                poll_interval=_APPROVAL_POLL_INTERVAL,
-                max_wait=float("inf")
-                if get_settings().approval_max_wait == 0
-                else get_settings().approval_max_wait,
+                kind="directory_extension",
+                requested_path=path,
+                writable=False,
             )
-            if decision is None:
-                return _ExtensionResult(events=events, timed_out=True)
-            if decision.decision == "deny" or not decision.approved:
+        )
+
+    # 第三步：等待一次统一审批决策（覆盖所有越界路径）
+    decision = await _await_approval(
+        thread_id,
+        poll_interval=_APPROVAL_POLL_INTERVAL,
+        max_wait=float("inf")
+        if get_settings().approval_max_wait == 0
+        else get_settings().approval_max_wait,
+    )
+    if decision is None:
+        return _ExtensionResult(events=events, timed_out=True)
+    if decision.decision == "deny" or not decision.approved:
+        return _ExtensionResult(events=events, denied=True)
+
+    # 第四步：统一应用决策到所有越界路径
+    if decision.decision in ("once", "approve"):
+        for path in unauthorized_paths:
+            try:
+                sandbox.authorize_temp(thread_id, path, writable=False)
+            except ValueError as exc:
+                logger.warning("authorize_temp failed", path=path, error=str(exc))
                 return _ExtensionResult(events=events, denied=True)
-            if decision.decision == "once":
-                try:
-                    sandbox.authorize_temp(thread_id, path, writable=False)
-                except ValueError as exc:
-                    logger.warning("authorize_temp failed", path=path, error=str(exc))
-                    return _ExtensionResult(events=events, denied=True)
-            elif decision.decision == "session":
-                try:
-                    sandbox.authorize(thread_id, path, writable=False)
-                except ValueError as exc:
-                    logger.warning("authorize session failed", path=path, error=str(exc))
-                    return _ExtensionResult(events=events, denied=True)
-            # approve（旧 dangerous_tool 决策类型）不应当出现在 directory_extension，
-            # 防御性按 once 处理
-            elif decision.decision == "approve":
-                try:
-                    sandbox.authorize_temp(thread_id, path, writable=False)
-                except ValueError:
-                    pass
+    elif decision.decision == "session":
+        for path in unauthorized_paths:
+            try:
+                sandbox.authorize(thread_id, path, writable=False)
+            except ValueError as exc:
+                logger.warning("authorize session failed", path=path, error=str(exc))
+                return _ExtensionResult(events=events, denied=True)
+
     return _ExtensionResult(events=events)

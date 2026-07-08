@@ -90,7 +90,7 @@ async def _run_subtask(
             {"agent": agent_name, "success": success, "payload": payload},
         )
 
-    abort_event = get_abort_event(thread_id)
+    abort_event = await get_abort_event(thread_id)
 
     if agent_name == "deep":
         # deep 子任务使用独立 thread_id，避免并行 deep 子任务共享 checkpoint

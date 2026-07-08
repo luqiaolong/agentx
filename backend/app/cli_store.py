@@ -1,6 +1,7 @@
 """Tauri store 配置读取器。
 
-从 ``%APPDATA%/agentx/config.json`` 读取 Tauri 持久化配置，
+从 ``%APPDATA%/com.agentx.desktop/config.json`` 读取 Tauri 持久化配置，
+兼容旧路径 ``%APPDATA%/agentx/config.json``。
 解析为 ``AGENTX_*`` 环境变量映射，供 CLI 启动时注入。
 
 凭证格式：
@@ -31,17 +32,23 @@ def _candidate_config_paths() -> list[Path]:
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         if appdata:
+            # Tauri 应用标识符 com.agentx.desktop（实际存储路径）
+            paths.append(Path(appdata) / "com.agentx.desktop" / "config.json")
+            # 兼容旧路径 agentx
             paths.append(Path(appdata) / "agentx" / "config.json")
         local_appdata = os.environ.get("LOCALAPPDATA")
         if local_appdata:
+            paths.append(Path(local_appdata) / "com.agentx.desktop" / "config.json")
             paths.append(Path(local_appdata) / "agentx" / "config.json")
     else:
         # macOS / Linux
         xdg_config = os.environ.get("XDG_CONFIG_HOME")
         if xdg_config:
+            paths.append(Path(xdg_config) / "com.agentx.desktop" / "config.json")
             paths.append(Path(xdg_config) / "agentx" / "config.json")
         home = os.environ.get("HOME")
         if home:
+            paths.append(Path(home) / ".config" / "com.agentx.desktop" / "config.json")
             paths.append(Path(home) / ".config" / "agentx" / "config.json")
     return paths
 
@@ -51,7 +58,13 @@ def _local_state_path() -> Path | None:
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         if appdata:
-            return Path(appdata) / "agentx" / "Local State"
+            # 优先 com.agentx.desktop，兼容旧路径 agentx
+            for subdir in ("com.agentx.desktop", "agentx"):
+                p = Path(appdata) / subdir / "Local State"
+                if p.exists():
+                    return p
+            # 均未找到，返回优先路径（后续会检查 exists）
+            return Path(appdata) / "com.agentx.desktop" / "Local State"
     return None
 
 

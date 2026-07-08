@@ -421,6 +421,9 @@ export function ChatView() {
       // authorized_dirs 为空而返回 "路径 . 未授权" 错误。
       const workspacePath =
         session?.workspacePath ?? storeState.homeWorkspacePath ?? null;
+      // 传递用户手动撤销过的路径列表，后端 router 收到后跳过对这些路径的
+      // chip 自动授权，尊重用户撤销意图（BUG-6 修复）。
+      const revokedPaths = storeState.manuallyRevokedPaths ?? [];
       await chat.send(
         { role: "user", content: sendContent },
         {
@@ -428,6 +431,7 @@ export function ChatView() {
           permissionMode,
           agentMode,
           workspacePath,
+          revokedPaths,
           mentionTargets,
           onError: (err) => setErrorMsg(err.message),
         },

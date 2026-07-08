@@ -26,6 +26,8 @@ interface SendMessageOpts {
   systemPrompt?: string;
   agentMode?: AgentMode;
   workspacePath?: string | null;
+  /** 用户手动撤销过的路径列表；后端收到后跳过对这些路径的 chip 自动授权 */
+  revokedPaths?: string[];
   /** work 模式下 @mention 解析出的目标 agent key 列表（强制委派目标） */
   mentionTargets?: string[];
   onError?: (err: Error) => void;
@@ -50,6 +52,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         system_prompt: opts?.systemPrompt ?? null,
         agent_mode: opts?.agentMode ?? "work",
         workspace_path: opts?.workspacePath ?? null,
+        revoked_paths: opts?.revokedPaths ?? null,
         mention_targets: opts?.mentionTargets ?? null,
       }),
     });

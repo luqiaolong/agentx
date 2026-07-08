@@ -75,6 +75,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="当前会话绑定的 workspace 绝对路径",
     )
+    revoked_paths: list[str] = Field(
+        default_factory=list,
+        description="用户手动撤销过的路径列表；router 收到后跳过对这些路径的 chip 自动授权",
+    )
 
 
 class SkillSaveRequest(BaseModel):

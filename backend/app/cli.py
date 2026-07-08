@@ -134,23 +134,23 @@ async def _handle_approval(thread_id: str) -> None:
             )
         except (EOFError, KeyboardInterrupt):
             # 用户 Ctrl+C 或 Ctrl+D → 拒绝
-            submit_approval(thread_id, ApprovalDecision(approved=False, decision="deny"))
+            await submit_approval(thread_id, ApprovalDecision(approved=False, decision="deny"))
             print("[已拒绝]")
             return
 
         choice = user_input.strip().lower()
         if choice in ("y", "yes"):
-            submit_approval(thread_id, ApprovalDecision(approved=True, decision="approve"))
+            await submit_approval(thread_id, ApprovalDecision(approved=True, decision="approve"))
             return
         elif choice in ("n", "no"):
-            submit_approval(thread_id, ApprovalDecision(approved=False, decision="deny"))
+            await submit_approval(thread_id, ApprovalDecision(approved=False, decision="deny"))
             print("[已拒绝]")
             return
         elif choice in ("o", "once"):
-            submit_approval(thread_id, ApprovalDecision(approved=True, decision="once"))
+            await submit_approval(thread_id, ApprovalDecision(approved=True, decision="once"))
             return
         elif choice in ("s", "session"):
-            submit_approval(thread_id, ApprovalDecision(approved=True, decision="session"))
+            await submit_approval(thread_id, ApprovalDecision(approved=True, decision="session"))
             return
         else:
             print("请输入 y/n/o/s")
