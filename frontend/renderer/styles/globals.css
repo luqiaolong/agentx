@@ -315,6 +315,32 @@
     transform: scale(0.97);
   }
 
+  /* Danger button (destructive confirmations) */
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.5rem;
+    background-color: var(--color-rose-700, #be123c);
+    padding: 0.375rem 0.75rem;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 200ms ease, transform 120ms ease;
+  }
+  .btn-danger:hover {
+    background-color: var(--color-rose-600, #e11d48);
+  }
+  .btn-danger:active {
+    transform: scale(0.97);
+  }
+  .btn-danger:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   /* Ghost button (icon-only) */
   .btn-ghost {
     display: inline-flex;
