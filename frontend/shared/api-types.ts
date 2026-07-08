@@ -399,3 +399,27 @@ export interface TodoItem {
   title: string;
   done: boolean;
 }
+
+// ---- 项目级配置目录 .agentx/ ----
+
+/** POST /api/project-config/init 响应：初始化 .agentx/ 的结果。 */
+export interface ProjectConfigInitResult {
+  ok: boolean;
+  path: string;
+  created: string[];
+  skipped: string[];
+}
+
+/** .agentx/ 下单个文件的状态。 */
+export interface ProjectConfigFileStatus {
+  name: string;
+  exists: boolean;
+  size: number;
+}
+
+/** GET /api/project-config 响应：.agentx/ 目录的当前状态。 */
+export interface ProjectConfigStatus {
+  exists: boolean;
+  files: ProjectConfigFileStatus[];
+  agents_md_preview: string | null;
+}
