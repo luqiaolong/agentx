@@ -222,8 +222,8 @@ async def run_agent_with_approval(
             if name not in runtime_dangerous:
                 continue
 
-            # cli_execute 始终需要审批（让用户审查命令内容）
-            if name == "cli_execute":
+            # execute 始终需要审批（让用户审查命令内容）
+            if name == "execute":
                 dangerous_calls.append(tc)
                 continue
 

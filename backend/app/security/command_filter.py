@@ -1,8 +1,10 @@
 """CLI 命令过滤 + 参数脱敏。
 
 从 ``app.tools.cli`` 提取命令黑名单 / 元字符校验逻辑，
-从 ``app.deep.approval`` 提取 ``_redact_args`` 并扩展支持 ``cli_execute``
-的 ``command`` / ``arguments`` 脱敏（token / password / user:pass@host）。
+从 ``app.deep.approval`` 提取 ``_redact_args`` 并扩展支持 ``execute``
+（deepagents LocalShellBackend 内置工具）和 ``cli_execute``（旧自研工具，
+子代理路径仍使用）的 ``command`` / ``arguments`` 脱敏
+（token / password / user:pass@host）。
 
 新增 ``redact_args``：统一脱敏入口，支持 dict / list / str 输入。
 """
@@ -121,37 +123,41 @@ def redact_args(tool_name: str, args: dict | list | str) -> dict:
 
     根据工具名选择脱敏策略：
     - ``write_file`` / ``edit_file``：隐藏 ``content`` / ``new_text`` / ``old_text``。
-    - ``cli_execute``：对 ``command`` / ``arguments`` 做凭证脱敏
+    - ``execute`` / ``cli_execute``：对 ``command`` / ``arguments`` 做凭证脱敏
       （token=xxx / password=xxx / user:pass@host → ``***REDACTED***``）。
+      ``execute`` 是 deepagents ``LocalShellBackend`` 内置工具（单 ``command`` 参数）；
+      ``cli_execute`` 是旧自研工具（``command`` + ``arguments`` 列表），子代理路径仍使用。
     - 其他工具：原样返回。
 
     输入类型处理：
     - ``dict``：原地脱敏后返回新 dict。
     - ``list``：包装为 ``{"arguments": [...]}`` 后脱敏（适用于 cli_execute）。
-    - ``str``：包装为 ``{"command": "..."}`` 后脱敏（适用于 cli_execute）。
+    - ``str``：包装为 ``{"command": "..."}`` 后脱敏（适用于 execute / cli_execute）。
     - ``None`` / 其他：返回 ``{}``。
 
     Args:
-        tool_name: 工具名（如 ``"write_file"`` / ``"cli_execute"``）。
+        tool_name: 工具名（如 ``"write_file"`` / ``"execute"`` / ``"cli_execute"``）。
         args: 工具参数，可为 dict / list / str。
 
     Returns:
         脱敏后的 dict。
     """
+    _CLI_TOOL_NAMES = frozenset({"execute", "cli_execute"})
+
     if isinstance(args, dict):
         if tool_name in ("write_file", "edit_file"):
             return _redact_fs_args(args)
-        if tool_name == "cli_execute":
+        if tool_name in _CLI_TOOL_NAMES:
             return _redact_cli_execute_args(args)
         return dict(args)
 
     if isinstance(args, list):
-        if tool_name == "cli_execute":
+        if tool_name in _CLI_TOOL_NAMES:
             return {"arguments": [_redact_command_string(a) if isinstance(a, str) else a for a in args]}
         return {"arguments": list(args)}
 
     if isinstance(args, str):
-        if tool_name == "cli_execute":
+        if tool_name in _CLI_TOOL_NAMES:
             return {"command": _redact_command_string(args)}
         return {"input": args}
 

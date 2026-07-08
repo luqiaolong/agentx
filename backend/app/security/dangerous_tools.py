@@ -5,9 +5,7 @@
 
 变更：
 - ``DANGEROUS_TOOLS`` / ``FORBIDDEN_SUBAGENT_TOOLS`` 改为 ``frozenset``。
-- **移除 ``shell_exec`` 死代码**：``shell_exec`` 已被 ``cli_execute`` 取代
-  （见 ``app.tools.cli``），旧常量中保留 ``shell_exec`` 仅为历史兼容，
-  实际工具集已不含此名称。新包不再保留死代码。
+- CLI 工具名从 ``cli_execute`` 改为 ``execute``（由 ``SafeLocalShellBackend`` 提供）。
 
 新增 ``compute_runtime_dangerous``：根据已启用工具名 + MCP 不可信工具名，
 计算运行时实际触发 ``interrupt_before`` 审批的工具集合。
@@ -21,11 +19,11 @@ __all__ = [
     "compute_runtime_dangerous",
 ]
 
-# CLI 工具名（与 ``app.tools.cli.CLI_TOOL_NAME`` 一致，硬编码避免循环导入）
-CLI_TOOL_NAME = "cli_execute"
+# CLI 工具名：deepagents ``LocalShellBackend`` 内置的 ``execute`` 工具
+# （由 ``SafeLocalShellBackend`` 继承并提供，blocklist + 元字符过滤）。
+CLI_TOOL_NAME = "execute"
 
 # 触发人工审批中断的工具集合：写操作 + CLI + Git 写操作。
-# 移除 ``shell_exec``（已被 ``cli_execute`` 取代，旧常量保留仅为历史兼容，实际工具集无此名称）。
 DANGEROUS_TOOLS: frozenset[str] = frozenset(
     {
         "edit_file",
@@ -41,8 +39,6 @@ DANGEROUS_TOOLS: frozenset[str] = frozenset(
 
 # 自定义子代理禁止绑定的危险工具（与 AGENTS.md §18 安全红线一致）。
 # subagent 无 interrupt_before 审批流，暴露写/编辑/git 写操作会绕过审批。
-# 移除 ``shell_exec``（同上，死代码）。
-# 注意：``cli_execute`` 允许子代理使用（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
 FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
     {
         "write_file",

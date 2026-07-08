@@ -5,7 +5,9 @@
 - ``interrupt_on`` 从 ``DANGEROUS_TOOLS`` 动态生成
 - ``memory=`` 自动加载 ``.agentx/AGENTS.md`` + ``rules/*.md``
 - ``skills=`` 指向 ``data/skills/`` 目录
-- ``backend=`` 启用 ``FilesystemBackend`` Context Offloading
+- ``backend=`` 启用 ``SafeLocalShellBackend``（继承 ``LocalShellBackend``），提供 ``execute`` 工具
+- ``permissions=`` 注入 ``FilesystemPermission`` 静态安全基线
+- ``middleware=`` 注入 ``RubricMiddleware``（当 ``rubric=`` 非 None 时）
 - 整体配置通过 ``create_agent`` 正确组装
 """
 
@@ -124,11 +126,15 @@ def test_resolve_skills_dir_none_when_missing(tmp_path: Path, monkeypatch: pytes
     assert resolve_skills_dir() is None
 
 
-def test_resolve_backend_returns_filesystem_backend(tmp_path: Path) -> None:
-    """``resolve_backend`` 返回 ``FilesystemBackend`` 实例。"""
-    from deepagents.backends import FilesystemBackend
+def test_resolve_backend_returns_safe_local_shell_backend(tmp_path: Path) -> None:
+    """``resolve_backend`` 返回 ``SafeLocalShellBackend`` 实例（继承 ``LocalShellBackend`` → ``FilesystemBackend``）。"""
+    from deepagents.backends import FilesystemBackend, LocalShellBackend
+
+    from app.deep.safe_shell_backend import SafeLocalShellBackend
 
     backend = resolve_backend(str(tmp_path))
+    assert isinstance(backend, SafeLocalShellBackend)
+    assert isinstance(backend, LocalShellBackend)
     assert isinstance(backend, FilesystemBackend)
 
 
@@ -208,6 +214,230 @@ async def test_create_agent_uses_default_name_and_none_backend(tmp_path: Path, m
 
 
 # ============================================================
+# permissions= 默认注入 + 自定义透传
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_create_agent_default_permissions_injected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """未传 ``permissions=`` 时注入 ``_DEFAULT_PERMISSIONS``（deny 写系统目录 + .git）。"""
+    from app.deep.harness import _DEFAULT_PERMISSIONS
+
+    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    with patch("app.deep.harness.create_deep_agent") as mock_create:
+        mock_create.return_value = MagicMock()
+        create_agent(
+            MagicMock(),
+            [],
+            system_prompt="prompt",
+            workspace_path=str(tmp_path),
+        )
+        _, kwargs = mock_create.call_args
+        # 默认注入 _DEFAULT_PERMISSIONS（非 None）
+        assert kwargs["permissions"] is _DEFAULT_PERMISSIONS
+        # 应有 2 条规则：deny 写 /proc /sys /dev /etc + deny 写 .git
+        assert len(kwargs["permissions"]) == 2
+        modes = {p.mode for p in kwargs["permissions"]}
+        assert modes == {"deny"}
+        # 所有规则都是 write 操作
+        for perm in kwargs["permissions"]:
+            assert "write" in perm.operations
+
+
+@pytest.mark.asyncio
+async def test_create_agent_custom_permissions_override_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """传入自定义 ``permissions=`` 时覆盖默认值，原样透传给 ``create_deep_agent``。"""
+    from deepagents import FilesystemPermission
+
+    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    custom_perms = [
+        FilesystemPermission(
+            operations=["read", "write"],
+            paths=["/tmp/**"],
+            mode="allow",
+        ),
+    ]
+    with patch("app.deep.harness.create_deep_agent") as mock_create:
+        mock_create.return_value = MagicMock()
+        create_agent(
+            MagicMock(),
+            [],
+            system_prompt="prompt",
+            workspace_path=str(tmp_path),
+            permissions=custom_perms,
+        )
+        _, kwargs = mock_create.call_args
+        # 自定义 permissions 原样透传，未被替换为默认值
+        assert kwargs["permissions"] is custom_perms
+        assert len(kwargs["permissions"]) == 1
+        assert kwargs["permissions"][0].mode == "allow"
+        assert "/tmp/**" in kwargs["permissions"][0].paths
+
+
+@pytest.mark.asyncio
+async def test_create_agent_no_workspace_still_has_default_permissions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``workspace_path=None`` 时仍然注入 ``_DEFAULT_PERMISSIONS`` 作为静态基线。"""
+    from app.deep.harness import _DEFAULT_PERMISSIONS
+
+    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    with patch("app.deep.harness.create_deep_agent") as mock_create:
+        mock_create.return_value = MagicMock()
+        create_agent(
+            MagicMock(),
+            [],
+            system_prompt="prompt",
+            # workspace_path=None
+        )
+        _, kwargs = mock_create.call_args
+        # 即使没有 workspace，permissions 仍注入默认值（框架级静态基线）
+        assert kwargs["permissions"] is _DEFAULT_PERMISSIONS
+
+
+def test_default_permissions_cover_sensitive_paths() -> None:
+    """``_DEFAULT_PERMISSIONS`` 覆盖系统敏感目录 + .git 目录。"""
+    from app.deep.harness import _DEFAULT_PERMISSIONS
+
+    all_paths: list[str] = []
+    for perm in _DEFAULT_PERMISSIONS:
+        all_paths.extend(perm.paths)
+    # /proc /sys /dev /etc 系统目录
+    assert "/proc/**" in all_paths
+    assert "/sys/**" in all_paths
+    assert "/dev/**" in all_paths
+    assert "/etc/**" in all_paths
+    # .git 目录
+    assert "/**/.git/**" in all_paths
+    # 全部 deny 模式
+    assert all(p.mode == "deny" for p in _DEFAULT_PERMISSIONS)
+    # 全部只针对 write 操作
+    for perm in _DEFAULT_PERMISSIONS:
+        assert perm.operations == ["write"]
+
+
+# ============================================================
+# RubricMiddleware 注入
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rubric_injects_rubric_middleware(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rubric=`` 非 None 时注入 ``RubricMiddleware`` 到 ``middleware`` 列表。"""
+    from deepagents import RubricMiddleware
+
+    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    fake_grader = MagicMock(name="auto_grader")
+    with patch("app.deep.harness.create_deep_agent") as mock_create, \
+         patch("app.deep.harness.get_chat_model", return_value=fake_grader) as mock_get_model:
+        mock_create.return_value = MagicMock()
+        create_agent(
+            MagicMock(),
+            [],
+            system_prompt="prompt",
+            workspace_path=str(tmp_path),
+            rubric="answer must be concise and accurate",
+        )
+        _, kwargs = mock_create.call_args
+        # middleware 含一个 RubricMiddleware 实例
+        assert len(kwargs["middleware"]) == 1
+        mw = kwargs["middleware"][0]
+        assert isinstance(mw, RubricMiddleware)
+        # max_iterations 默认 3
+        assert mw.max_iterations == 3
+        # 未传 grader_model 时调用 get_chat_model(temperature=0)
+        mock_get_model.assert_called_once_with(temperature=0)
+
+
+@pytest.mark.asyncio
+async def test_create_agent_no_rubric_yields_empty_middleware(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rubric=`` 为 None 时 ``middleware`` 为空列表（不注入 RubricMiddleware）。"""
+    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    with patch("app.deep.harness.create_deep_agent") as mock_create:
+        mock_create.return_value = MagicMock()
+        create_agent(
+            MagicMock(),
+            [],
+            system_prompt="prompt",
+            workspace_path=str(tmp_path),
+            # rubric=None
+        )
+        _, kwargs = mock_create.call_args
+        assert kwargs["middleware"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rubric_uses_grader_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rubric=`` + ``grader_model=`` 时使用传入的 grader 而非 ``get_chat_model``。"""
+    from deepagents import RubricMiddleware
+
+    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    fake_grader = MagicMock(name="custom_grader")
+
+    with patch("app.deep.harness.create_deep_agent") as mock_create, \
+         patch("app.deep.harness.get_chat_model") as mock_get_model:
+        mock_create.return_value = MagicMock()
+        create_agent(
+            MagicMock(),
+            [],
+            system_prompt="prompt",
+            workspace_path=str(tmp_path),
+            rubric="any rubric",
+            grader_model=fake_grader,
+        )
+        _, kwargs = mock_create.call_args
+        mw = kwargs["middleware"][0]
+        assert isinstance(mw, RubricMiddleware)
+        # grader_model 应被直接使用，get_chat_model 不应被调用
+        # （RubricMiddleware 将 model 存储为私有属性 _model，不依赖私有 API；
+        # 通过 get_chat_model 未被调用来间接验证）
+        mock_get_model.assert_not_called()
+
+
+# ============================================================
+# SafeLocalShellBackend 提供 execute 工具
+# ============================================================
+
+
+def test_safe_local_shell_backend_inherits_from_local_shell_backend() -> None:
+    """``SafeLocalShellBackend`` 继承 ``LocalShellBackend`` → ``FilesystemBackend``。"""
+    from deepagents.backends import FilesystemBackend, LocalShellBackend
+
+    from app.deep.safe_shell_backend import SafeLocalShellBackend
+
+    assert issubclass(SafeLocalShellBackend, LocalShellBackend)
+    assert issubclass(SafeLocalShellBackend, FilesystemBackend)
+
+
+def test_safe_local_shell_backend_execute_blocks_blocklisted_command(tmp_path: Path) -> None:
+    """``SafeLocalShellBackend.execute`` 拦截黑名单命令（如 ``rm``）。"""
+    from app.deep.safe_shell_backend import SafeLocalShellBackend
+
+    backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
+    result = backend.execute("rm -rf /")
+    assert isinstance(result, str)
+    assert "黑名单" in result
+
+
+def test_safe_local_shell_backend_execute_blocks_metachar(tmp_path: Path) -> None:
+    """``SafeLocalShellBackend.execute`` 拦截 shell 元字符（命令链/管道/重定向）。"""
+    from app.deep.safe_shell_backend import SafeLocalShellBackend
+
+    backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
+    # ; 是命令分隔符
+    result = backend.execute("echo hello; rm -rf /")
+    assert isinstance(result, str)
+    assert "元字符" in result or "非法" in result
+
+
+def test_safe_local_shell_backend_execute_blocks_empty_command(tmp_path: Path) -> None:
+    """``SafeLocalShellBackend.execute`` 拒绝空命令。"""
+    from app.deep.safe_shell_backend import SafeLocalShellBackend
+
+    backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
+    assert backend.execute("") == "command 不能为空"
+    assert backend.execute("   ") == "command 不能为空"
+
+
+# ============================================================
 # 工具冲突排除清单
 # ============================================================
 
@@ -215,3 +445,10 @@ async def test_create_agent_uses_default_name_and_none_backend(tmp_path: Path, m
 def test_excluded_builtin_tools_covers_fs_and_task() -> None:
     """内置 fs 工具在排除清单中，避免绕过沙箱授权。"""
     assert {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}.issubset(_EXCLUDED_BUILTIN_TOOLS)
+
+
+def test_dangerous_tools_contains_execute_after_migration() -> None:
+    """``DANGEROUS_TOOLS`` 含 ``execute``（替代原 ``cli_execute``）。"""
+    assert "execute" in DANGEROUS_TOOLS
+    # cli_execute 已从 DANGEROUS_TOOLS 中移除
+    assert "cli_execute" not in DANGEROUS_TOOLS

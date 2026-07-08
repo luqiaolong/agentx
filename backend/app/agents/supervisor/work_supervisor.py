@@ -58,9 +58,8 @@ def _workspace_prompt_suffix(workspace_path: str | None) -> str:
     return (
         f"\n\n当前工作目录: {workspace_path}\n"
         "该目录已授权，你可以直接使用 list_dir、read_file、glob、grep 等工具访问。"
-        "执行 cli_execute 工具时，若用户未指定其他目录，"
-        "必须将 cwd 参数设为当前工作目录；执行文件读写工具时，"
-        "优先使用当前工作目录下的相对路径。"
+        "执行 execute 工具时，命令默认在当前工作目录下运行。"
+        "执行文件读写工具时，优先使用当前工作目录下的相对路径。"
     )
 
 
@@ -211,6 +210,8 @@ async def build_work_supervisor(
     checkpointer: Any = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    rubric: str | None = None,
+    grader_model: Any | None = None,
 ) -> Any:
     """构造 work 场景 Supervisor agent。
 
@@ -267,6 +268,8 @@ async def build_work_supervisor(
         workspace_path=workspace_path,
         name="work_supervisor",
         subagents=subagents,
+        rubric=rubric,
+        grader_model=grader_model,
     )
 
 
@@ -406,6 +409,9 @@ async def run_work_supervisor(
             _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+        # execute 由 SafeLocalShellBackend 提供，不在 agent_tools 中但需审批
+        if workspace_path:
+            runtime_dangerous = runtime_dangerous | {"execute"}
 
         # ---- 3. 公共审批执行层（app.deep.execution.run_agent_with_approval）----
         # 由统一执行层负责 _is_interrupted、中断循环、危险工具判定等逻辑，

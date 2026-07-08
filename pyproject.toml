@@ -56,12 +56,7 @@ markers = [
     "requires_myserver: requires myserver TEI/Milvus reachable",
     "e2e: requires backend running on http://127.0.0.1:8000 (or AGENTX_E2E_BASE_URL)",
 ]
-filterwarnings = [
-    # 抑制 langgraph V1.0 → V2.0 迁移期的已知 deprecation 噪音。
-    # create_react_agent 在 langchain 包更新到包含 create_agent 之前仍可用，
-    # 待上游更新后迁移导入路径即可移除本条。
-    "ignore:create_react_agent has been moved:DeprecationWarning",
-]
+filterwarnings = []
 
 [tool.ruff]
 line-length = 100

@@ -70,9 +70,8 @@ def _workspace_prompt_suffix(workspace_path: str | None) -> str:
     return (
         f"\n\n当前工作目录: {workspace_path}\n"
         "该目录已授权，你可以直接使用 list_dir、read_file、glob、grep 等工具访问。"
-        "执行 cli_execute 工具时，若用户未指定其他目录，"
-        "必须将 cwd 参数设为当前工作目录；执行文件读写工具时，"
-        "优先使用当前工作目录下的相对路径。"
+        "执行 execute 工具时，命令默认在当前工作目录下运行。"
+        "执行文件读写工具时，优先使用当前工作目录下的相对路径。"
     )
 
 
@@ -85,6 +84,7 @@ async def build_deep_agent(
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
     rubric: str | None = None,
+    grader_model: Any | None = None,
     subagents: list | None = None,
 ) -> Any:
     """构造真实 DeepAgent 图。"""
@@ -110,6 +110,7 @@ async def build_deep_agent(
         thread_id=thread_id,
         workspace_path=workspace_path,
         rubric=rubric,
+        grader_model=grader_model,
         subagents=subagents,
     )
 
@@ -171,6 +172,9 @@ async def run_deep_path(
 
     enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+    # execute 由 SafeLocalShellBackend 提供，不在 agent_tools 中但需审批
+    if workspace_path:
+        runtime_dangerous = runtime_dangerous | {"execute"}
 
     try:
         async for sse in run_agent_with_approval(

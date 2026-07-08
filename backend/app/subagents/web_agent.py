@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from langgraph.prebuilt import create_react_agent
-
 from app.config import get_settings
 from app.llm import get_chat_model
 from app.subagents.base import (
@@ -22,22 +20,30 @@ def build_web_agent(
     thread_id: str,
     checkpointer: Any = None,
 ) -> Any:
-    """构建 Web 子代理 ReAct 子图，返回 CompiledStateGraph。
+    """构建 Web 子代理 deep_agent 子图，返回 CompiledStateGraph。
+
+    使用 ``harness.create_agent``（即 ``deepagents.create_deep_agent``）构建，
+    自动获得 ``SummarizationMiddleware`` / ``PatchToolCallsMiddleware`` / ``write_todos``
+    等中间件能力。子代理无危险工具，``interrupt_on`` 不触发中断。
 
     ``checkpointer`` 可选的 LangGraph checkpointer，用于状态持久化。
     """
+    from app.deep.harness import create_agent
+
     settings = get_settings()
     cfg = settings.subagents["web"]
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
     tools = _make_web_tools(thread_id)
-    kwargs: dict[str, Any] = {}
     # 合并用户配置的角色定义与 think 标签指令
     prompt = cfg.system_prompt or ""
     prompt = prompt + THINK_PROMPT_SUFFIX
-    kwargs["prompt"] = prompt
-    if checkpointer is not None:
-        kwargs["checkpointer"] = checkpointer
-    return create_react_agent(model, tools, name="web_agent", **kwargs)
+    return create_agent(
+        model,
+        tools,
+        system_prompt=prompt,
+        checkpointer=checkpointer,
+        name="web_agent",
+    )
 
 
 async def run_web_agent(
