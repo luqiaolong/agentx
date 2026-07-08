@@ -94,6 +94,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const addTask = useTasksStore((s) => s.addTask);
   const updateTask = useTasksStore((s) => s.updateTask);
+  const currentId = useChatStore((s) => s.currentId);
 
   // 缓存最新 callbacks 与 threadId，避免事件处理闭包捕获旧值
   //（特别是用户切换会话后，SSE 事件仍按原 thread_id 路由）。
@@ -205,6 +206,14 @@ export function useChatStream(args: UseChatStreamArgs) {
             currentTaskIdRef.current = null;
           }
           callbacksRef.current.setPaused?.(false);
+
+          // 首条有效对话（任一 agent 模式）完成后异步收敛 .agentx/ 生成（fire-and-forget）。
+          // generatedAgentx 标记 + getProjectConfig 真实存在性构成双层防护；
+          // 详见 stores/chat/index.ts::ensureAgentxGenerated 注释。
+          const activeTid = targetThreadId();
+          if (activeTid) {
+            void useChatStore.getState().ensureAgentxGenerated(activeTid);
+          }
           break;
         }
         case "error": {
@@ -260,12 +269,15 @@ export function useChatStream(args: UseChatStreamArgs) {
               .replace(/<file>.*?<\/file>\s?/g, "")
               .trim();
             const title = rawQuery.slice(0, 40) || "深度任务";
+            // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离
+            const sessionId = activeThreadIdRef?.current ?? currentId ?? "";
             addTask({
               id: newId,
               title,
               status: "running",
               todos: incoming,
               createdAt: Date.now(),
+              sessionId,
             });
           }
           break;
