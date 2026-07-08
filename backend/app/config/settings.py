@@ -14,6 +14,11 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.config.agents import (
+    AgentsConfig,
+    _default_agents_config,
+    _parse_agents_config,
+)
 from app.config.subagents import (
     CustomSubagentEntry,
     SubagentSettings,
@@ -33,6 +38,7 @@ __all__ = [
     "WORKSPACE_DIR",
     "UPLOADS_DIR",
     "_default_tools_enabled",
+    "AgentsConfig",
 ]
 
 
@@ -149,14 +155,18 @@ class Settings(BaseSettings):
     # 形如 {"frontend_dev":{"enabled":false,"temperature":0.5,...}}
     team_subagents_config: dict[str, Any] = Field(default_factory=dict)
 
-    # ---- Agent Team 配置 ----
-    agent_team_enabled: bool = True  # 总开关
+    # ---- Agent Team 配置（场景化架构下由 agents.teams.coding.enabled 控制）----
     agent_team_max_tasks: int = Field(default=5, ge=1, le=10)
     agent_team_max_parallel: int = Field(default=3, ge=1, le=5)
     agent_team_result_max_chars: int = Field(default=2000, ge=500, le=8000)
     agent_team_subtask_timeout: int = Field(
         default=300, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
     )
+
+    # ---- 场景化智能体配置（Supervisor + Expert + ScenarioTeam）----
+    # AGENTX_AGENTS_CONFIG: JSON 字符串，结构见 app.config.agents.AgentsConfig
+    # 形如 {"supervisor": {"temperature": 0.3, ...}, "experts": {"coding": {...}}, "teams": {"coding": {...}}}
+    agents_config: dict[str, Any] = Field(default_factory=dict)
 
     # ---- CLI 工具配置 ----
     # 总开关；默认开启，用户可在设置面板关闭
@@ -172,6 +182,7 @@ class Settings(BaseSettings):
         "custom_subagents_config",
         "tools_config",
         "team_subagents_config",
+        "agents_config",
         mode="before",
     )
     @classmethod
@@ -269,6 +280,14 @@ class Settings(BaseSettings):
         result = _default_tools_enabled()
         result.update(self.tools_config)
         return result
+
+    @property
+    def agents(self) -> AgentsConfig:
+        """返回场景化智能体配置（Supervisor + Expert + ScenarioTeam）。
+
+        合并默认值，env 覆盖。每次调用都重新解析，确保 env 变化即时生效。
+        """
+        return _parse_agents_config(self.agents_config)
 
     @property
     def milvus_credentials_configured(self) -> bool:

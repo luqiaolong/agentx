@@ -86,15 +86,17 @@ def _build_project_context() -> str:
     lines = [
         "项目结构（agentx）：",
         "- 后端 Python: backend/app/（FastAPI + LangGraph）",
-        "  - router/ (classifier.py, graph.py, state.py) — 消息分类 + StateGraph",
-        "  - chat/ (run.py), subagents/ (dispatch.py), deep/ (agent.py), team/ (orchestrator.py)",
-        "  - subagents/ (code/rag/web/custom) — 子代理",
+        "  - router/ (graph.py, state.py) — 场景化分发 StateGraph",
+        "  - agents/ (supervisor/, expert/, team/) — 场景化智能体",
+        "  - subagents/ (rag/web/custom) — 子代理（code 已由 coding Expert 取代）",
+        "  - deep/ (agent.py) — DeepAgent 框架（供 coding Expert 复用）",
+        "  - team/ (orchestrator.py) — AgentTeam 多代理协作",
         "  - tools/ (filesystem + rag_retrieve) — 工具",
         "- 前端 Tauri+React: frontend/",
         "  - renderer/components/chat/ — 聊天组件",
         "  - renderer/hooks/useChatStream.ts — SSE 事件处理",
         "  - renderer/stores/ (chat.ts, agentMode.ts) — zustand 状态",
-        "- 配置: AGENTS.md（工程规范 + 文件地图 + Router 路径说明）",
+        "- 配置: AGENTS.md（工程规范 + 文件地图 + Router 场景分发说明）",
     ]
     return "\n".join(lines)
 
@@ -233,7 +235,10 @@ def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:
     """
     if task.agent == "deep":
         return True, ""
-    if task.agent in ("code", "rag", "web"):
+    # code 任务映射到 coding Expert（场景化架构），不依赖 subagents 配置
+    if task.agent == "code":
+        return True, ""
+    if task.agent in ("rag", "web"):
         cfg = settings.subagents.get(task.agent)
         if not cfg or not cfg.enabled:
             return False, f"子代理 {task.agent} 已禁用"

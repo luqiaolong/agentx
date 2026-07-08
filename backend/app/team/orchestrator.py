@@ -34,12 +34,12 @@ from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.subagents import (  # noqa: F401 — 供 scheduler 经 orchestrator.run_xxx 访问（monkeypatch 兼容）
-    run_code_agent,
     run_custom_agent,
     run_rag_agent,
     run_web_agent,
 )
-from app.utils.sse_events import make_team_event
+from app.agents.expert.coding import run_coding_expert  # noqa: F401 — 供 scheduler 经 orchestrator.run_coding_expert 访问
+from app.utils.sse_events import make_sse_event, make_team_event
 
 # 从子模块 re-export，保持 ``from app.team.orchestrator import X`` 向后兼容
 from app.team.blackboard import (  # noqa: F401
@@ -102,21 +102,16 @@ async def run_team_path(
     """
     settings = get_settings()
 
-    # 简单任务降级：短消息 / 问候 / 翻译等无需 team 协作，直接走 chat 路径
-    # 避免浪费 Orchestrator + Aggregator 两次 LLM 调用
+    # 简单任务降级：短消息 / 问候 / 翻译等无需 team 协作
+    # 场景化架构下不再回退到 CHAT 路径，改为建议用户切换到 work 模式
     downgrade, reason = _should_downgrade_to_single(message)
     if downgrade:
-        logger.info("team downgrade to chat", reason=reason, message_len=len(message))
-        # 延迟 import 避免循环依赖（graph.py 顶层 import team_path）
-        from app.chat.run import run_chat_path
-        async for sse in run_chat_path(
-            message,
-            thread_id,
-            system_prompt_extra=profile_prompt or None,
-            history=history,
-            scene_prompt=scene_prompt,
-        ):
-            yield sse
+        logger.info("team downgrade suggest switch mode", reason=reason, message_len=len(message))
+        yield make_sse_event(
+            "token",
+            f"该任务似乎不需要团队协作（{reason}）。建议切换到 work 模式由 Supervisor 直接处理。",
+        )
+        yield make_team_event("team_done", {"status": "done"})
         return
 
     max_tasks = settings.agent_team_max_tasks

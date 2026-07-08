@@ -1,9 +1,9 @@
-"""路径 A/B/D 写回 checkpointer 的持久化测试。
+"""场景 runner 写回 checkpointer 的持久化测试。
 
-覆盖：
-1. CHAT 路径结束后将 user + assistant 消息写入 checkpointer
-2. SINGLE_TOOL 路径结束后将 user + assistant 消息写入 checkpointer
-3. AGENT_TEAM 路径结束后将 user + assistant 消息写入 checkpointer
+覆盖（Phase 2e 新架构）：
+1. work 场景结束后将 user + assistant 消息写入 checkpointer
+2. coding 场景结束后将 user + assistant 消息写入 checkpointer
+3. coding_team 场景结束后将 user + assistant 消息写入 checkpointer
 4. 空 assistant 内容时不写入
 5. 无 checkpointer 时跳过持久化
 
@@ -32,26 +32,30 @@ def _collect_messages(saver: InMemorySaver, thread_id: str) -> list:
 
 
 @pytest.mark.asyncio
-async def test_chat_path_persists_messages() -> None:
-    """路径 A 结束后写入 HumanMessage + AIMessage。"""
+async def test_work_mode_persists_messages() -> None:
+    """work 场景结束后写入 HumanMessage + AIMessage。"""
     from app.router.graph import run_router
 
     checkpointer = InMemorySaver()
 
-    async def _fake_run_chat_path(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+    async def _fake_run_work_supervisor(
+        message: str,
+        thread_id: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "你好"}
 
     import app.router.graph as graph_module
 
-    original = graph_module.run_chat_path
-    graph_module.run_chat_path = _fake_run_chat_path
+    original = graph_module.run_work_supervisor
+    graph_module.run_work_supervisor = _fake_run_work_supervisor
     try:
-        events = [e async for e in run_router("hi", "t-chat", checkpointer=checkpointer)]
+        events = [e async for e in run_router("hi", "t-work", checkpointer=checkpointer, agent_mode="work")]
     finally:
-        graph_module.run_chat_path = original
+        graph_module.run_work_supervisor = original
 
     assert any(e.get("event") == "done" for e in events)
-    messages = _collect_messages(checkpointer, "t-chat")
+    messages = _collect_messages(checkpointer, "t-work")
     assert len(messages) >= 2, f"expected at least 2 messages, got {len(messages)}"
     assert any(isinstance(m, HumanMessage) and m.content == "hi" for m in messages)
     assert any(
@@ -60,57 +64,58 @@ async def test_chat_path_persists_messages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_path_persists_messages() -> None:
-    """SINGLE_TOOL 路径结束后写入 user + assistant 消息。"""
+async def test_coding_mode_persists_messages() -> None:
+    """coding 场景结束后写入 user + assistant 消息。"""
     from app.router.graph import run_router
 
     checkpointer = InMemorySaver()
 
-    async def _fake_classify(message: str) -> str:
-        return "SINGLE_TOOL"
-
-    async def _fake_run_tool_path(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
-        yield {"event": "delegation", "data": "{\"target\": \"code\"}"}
-        yield {"event": "token", "data": "tool result"}
+    async def _fake_run_coding_expert(
+        message: str,
+        thread_id: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, str]]:
+        yield {"event": "token", "data": "code result"}
 
     import app.router.graph as graph_module
 
-    orig_classify = graph_module.classify_message
-    orig_tool_path = graph_module.run_tool_path
-    graph_module.classify_message = _fake_classify
-    graph_module.run_tool_path = _fake_run_tool_path
+    original = graph_module.run_coding_expert
+    graph_module.run_coding_expert = _fake_run_coding_expert
     try:
         events = [
             e
             async for e in run_router(
-                "查找文件", "t-tool", checkpointer=checkpointer
+                "查找文件", "t-coding", checkpointer=checkpointer, agent_mode="coding"
             )
         ]
     finally:
-        graph_module.classify_message = orig_classify
-        graph_module.run_tool_path = orig_tool_path
+        graph_module.run_coding_expert = original
 
     assert any(e.get("event") == "done" for e in events)
-    messages = _collect_messages(checkpointer, "t-tool")
+    messages = _collect_messages(checkpointer, "t-coding")
     assert len(messages) >= 2
     assert any(isinstance(m, HumanMessage) and m.content == "查找文件" for m in messages)
-    assert any(isinstance(m, AIMessage) and "tool result" in m.content for m in messages)
+    assert any(isinstance(m, AIMessage) and "code result" in m.content for m in messages)
 
 
 @pytest.mark.asyncio
-async def test_team_path_persists_messages() -> None:
-    """AGENT_TEAM 路径结束后写入 user + assistant 消息。"""
+async def test_coding_team_mode_persists_messages() -> None:
+    """coding_team 场景结束后写入 user + assistant 消息。"""
     from app.router.graph import run_router
 
     checkpointer = InMemorySaver()
 
-    async def _fake_run_team_path(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+    async def _fake_run_coding_team(
+        message: str,
+        thread_id: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "team summary"}
 
     import app.router.graph as graph_module
 
-    orig_team_path = graph_module.run_team_path
-    graph_module.run_team_path = _fake_run_team_path
+    original = graph_module.run_coding_team
+    graph_module.run_coding_team = _fake_run_coding_team
     try:
         events = [
             e
@@ -118,11 +123,11 @@ async def test_team_path_persists_messages() -> None:
                 "复杂任务",
                 "t-team",
                 checkpointer=checkpointer,
-                agent_mode="agent_team",
+                agent_mode="coding_team",
             )
         ]
     finally:
-        graph_module.run_team_path = orig_team_path
+        graph_module.run_coding_team = original
 
     assert any(e.get("event") == "done" for e in events)
     messages = _collect_messages(checkpointer, "t-team")
@@ -133,22 +138,26 @@ async def test_team_path_persists_messages() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_assistant_content_skips_persistence() -> None:
-    """路径产生的 assistant 内容为空时跳过持久化（仅 error/done 时不写）。"""
+    """场景 runner 产生的 assistant 内容为空时跳过持久化（仅 error/done 时不写）。"""
     from app.router.graph import run_router
 
     checkpointer = InMemorySaver()
 
-    async def _fake_run_chat_path(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+    async def _fake_run_work_supervisor(
+        message: str,
+        thread_id: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, str]]:
         yield {"event": "error", "data": "LLM 不可用"}
 
     import app.router.graph as graph_module
 
-    original = graph_module.run_chat_path
-    graph_module.run_chat_path = _fake_run_chat_path
+    original = graph_module.run_work_supervisor
+    graph_module.run_work_supervisor = _fake_run_work_supervisor
     try:
-        events = [e async for e in run_router("hi", "t-empty", checkpointer=checkpointer)]
+        events = [e async for e in run_router("hi", "t-empty", checkpointer=checkpointer, agent_mode="work")]
     finally:
-        graph_module.run_chat_path = original
+        graph_module.run_work_supervisor = original
 
     # error 时没有 assistant_content 应跳过持久化
     messages = _collect_messages(checkpointer, "t-empty")
@@ -160,16 +169,20 @@ async def test_no_checkpointer_skips_persistence() -> None:
     """无 checkpointer 参数时不应抛错。"""
     from app.router.graph import run_router
 
-    async def _fake_run_chat_path(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+    async def _fake_run_work_supervisor(
+        message: str,
+        thread_id: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "ok"}
 
     import app.router.graph as graph_module
 
-    original = graph_module.run_chat_path
-    graph_module.run_chat_path = _fake_run_chat_path
+    original = graph_module.run_work_supervisor
+    graph_module.run_work_supervisor = _fake_run_work_supervisor
     try:
-        events = [e async for e in run_router("hi", "t-no-cp", checkpointer=None)]
+        events = [e async for e in run_router("hi", "t-no-cp", checkpointer=None, agent_mode="work")]
     finally:
-        graph_module.run_chat_path = original
+        graph_module.run_work_supervisor = original
 
     assert any(e.get("event") == "done" for e in events)

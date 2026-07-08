@@ -43,7 +43,7 @@ def _extract_plan_or_update(text: str) -> tuple[str, Any] | None:
 
 
 async def _stream_agent_events(
-    agent: Any, inputs: Any, config: dict
+    agent: Any, inputs: Any, config: dict, source: str = "deep"
 ) -> AsyncIterator[dict[str, str]]:
     """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_before``。
 
@@ -51,16 +51,23 @@ async def _stream_agent_events(
     MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
 
     SSE 事件映射（spec D1 + T5 扩展）:
-    - AIMessage with tool_calls → ``tool_call`` SSE（含 id/name/args/source="deep"）
+    - AIMessage with tool_calls → ``tool_call`` SSE（含 id/name/args/source）
       + ``todo_update``（任务级进度，与 tool_call 事件并存，语义不同）
     - AIMessage without tool_calls → ``token``（最终回复，strip_think 后一次性 yield）
       或 ``plan`` / ``plan_update``（结构化任务计划/更新）
-    - ToolMessage → ``tool_result`` SSE（含 id/name/result/source="deep"）
+    - ToolMessage → ``tool_result`` SSE（含 id/name/result/source）
       + ``todo_update``（标记完成）
 
     在 ``interrupt_before=["tools"]`` 处暂停时，最后一个 state 的 messages[-1]
     是 AIMessage（含 tool_calls），此处 yield tool_call + todo_update 后流结束，
     调用方 ``_is_interrupted`` 返回 True 进入审批流程。
+
+    Args:
+        agent: 已编译的 LangGraph agent。
+        inputs: agent 输入，None 表示从 interrupt 处恢复。
+        config: LangGraph 运行配置。
+        source: SSE 事件 source 标识，默认 "deep"（DeepAgent）。
+            Supervisor 传 "work"，Expert 传 "coding" 等。
     """
     from langchain_core.messages import AIMessage, ToolMessage
     from app.utils.text import strip_think
@@ -88,7 +95,7 @@ async def _stream_agent_events(
                     else ""
                     for block in content
                 )
-            yield make_tool_result_event(tool_call_id, tool_name, content, source="deep")
+            yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
             yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
 
         elif isinstance(last_msg, AIMessage):
@@ -116,7 +123,7 @@ async def _stream_agent_events(
                     # yield reasoning 事件供前端展示思考过程
                     yield make_sse_event(
                         "reasoning",
-                        {"content": display_plan, "source": "deep"},
+                        {"content": display_plan, "source": source},
                     )
                 # 再 yield 每个 tool_call
                 for tc in last_msg.tool_calls:
@@ -128,7 +135,7 @@ async def _stream_agent_events(
                         tc_name = getattr(tc, "name", "unknown")
                         tc_args = getattr(tc, "args", {}) or {}
                         tc_id = getattr(tc, "id", None) or str(uuid4())
-                    yield make_tool_call_event(tc_id, tc_name, tc_args, source="deep")
+                    yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
                     yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
             elif getattr(last_msg, "content", ""):
                 # AIMessage without tool_calls → 最终回复

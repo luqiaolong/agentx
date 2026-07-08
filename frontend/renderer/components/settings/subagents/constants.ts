@@ -16,8 +16,9 @@ import {
   ClipboardList,
 } from "lucide-react";
 
-// 子代理键名与后端 backend/app/config.py _default_subagents() 一致
-export type BuiltinSubagentKey = "code" | "rag" | "web";
+// 子代理键名与后端 backend/app/config/subagents.py BUILTIN_SUBAGENT_KEYS 一致
+// 场景化架构下 code 子代理已被 coding Expert 取代，仅保留 rag/web
+export type BuiltinSubagentKey = "rag" | "web";
 
 // 软件开发专家团角色键名
 export type TeamSubagentKey =
@@ -40,12 +41,6 @@ export interface BuiltinMeta {
 }
 
 export const BUILTIN_SUBAGENTS: BuiltinMeta[] = [
-  {
-    key: "code",
-    label: "Code 子代理",
-    desc: "代码与文件操作专家：擅长读取、搜索、分析代码文件和目录结构，回答与代码、文件内容、项目结构、HTML/CSS/JS/Python/Java 等技术实现相关的问题。",
-    Icon: Code2,
-  },
   {
     key: "rag",
     label: "RAG 子代理",
@@ -113,13 +108,6 @@ export const TEAM_SUBAGENTS: TeamMeta[] = [
 ];
 
 export const EMPTY_CONFIG: SubagentsConfig = {
-  code: {
-    enabled: true,
-    temperature: 0.2,
-    systemPrompt: "",
-    tools: ["read_file", "list_dir", "glob", "grep"],
-    triggerDescription: "",
-  },
   rag: {
     enabled: true,
     temperature: 0.2,
@@ -138,7 +126,7 @@ export const EMPTY_CONFIG: SubagentsConfig = {
 
 function normalizeSubagentConfig(
   raw: Partial<SubagentConfig> | unknown,
-  fallback: SubagentConfig = EMPTY_CONFIG.code,
+  fallback: SubagentConfig = EMPTY_CONFIG.rag,
 ): SubagentConfig {
   if (!raw || typeof raw !== "object") {
     return { ...fallback };
@@ -163,7 +151,6 @@ export function normalizeSubagentsConfig(
 ): SubagentsConfig {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<SubagentsConfig>;
   return {
-    code: normalizeSubagentConfig(r.code),
     rag: normalizeSubagentConfig(r.rag),
     web: normalizeSubagentConfig(r.web),
   };

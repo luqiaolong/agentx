@@ -1,4 +1,9 @@
-"""LLM 流与路径 D 子任务响应中止的测试。"""
+"""LLM 流与路径 D 子任务响应中止的测试。
+
+场景化架构下，路径 A（CHAT）已删除，本测试仅覆盖：
+1. DeepAgent 流式事件生成器中止行为
+2. AgentTeam（coding_team）子任务中止行为
+"""
 
 from __future__ import annotations
 
@@ -20,43 +25,6 @@ def _clear_abort_state() -> None:
     yield
     approval_state._abort_flags.clear()
     approval_state._abort_events.clear()
-
-
-@pytest.mark.asyncio
-async def test_chat_path_responds_to_abort() -> None:
-    """路径 A 的 LLM 流在中止标志设置后应抛出 CancelledError。"""
-    from app.chat.run import run_chat_path
-    import app.chat.run as chat_module
-
-    async def _fake_astream(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        # 模拟一个慢速流：先 yield 一个 chunk，然后挂起等待 abort
-        yield MagicMock(content="hello")
-        await asyncio.sleep(10)
-
-    fake_llm = MagicMock()
-    fake_llm.astream = _fake_astream
-    monkeypatch_local = pytest.MonkeyPatch()
-    monkeypatch_local.setattr(chat_module, "get_chat_model", lambda *args, **kwargs: fake_llm)
-
-    from app.approval import set_abort
-
-    async def _abort_after() -> None:
-        await asyncio.sleep(0.05)
-        set_abort("t-abort-chat")
-
-    task = asyncio.create_task(_abort_after())
-    events: list[dict[str, str]] = []
-    try:
-        async for event in run_chat_path("hi", "t-abort-chat"):
-            events.append(event)
-    except asyncio.CancelledError:
-        pass
-    finally:
-        await asyncio.gather(task, return_exceptions=True)
-        monkeypatch_local.undo()
-
-    # 至少收到第一个 token，随后因中止退出
-    assert any(e.get("event") == "token" for e in events)
 
 
 @pytest.mark.asyncio
@@ -165,7 +133,7 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         async for e in run_team_path(
             "team task",
             "t-abort-team",
-            {"thread_id": "t-abort-team", "messages": [], "classification": "AGENT_TEAM"},
+            {"thread_id": "t-abort-team", "messages": [], "agent_mode": "coding_team"},
         )
     ]
 

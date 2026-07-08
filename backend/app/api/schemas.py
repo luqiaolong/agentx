@@ -67,9 +67,9 @@ class ChatRequest(BaseModel):
         default=None,
         description="可选场景 prompt；非空时覆盖 default_system_prompt（场景切换器注入）",
     )
-    agent_mode: Literal["agent", "agent_team"] = Field(
-        default="agent",
-        description='代理模式：agent（单代理，默认）或 agent_team（多代理协作）',
+    agent_mode: Literal["work", "coding", "coding_team"] = Field(
+        default="work",
+        description='场景+模式：work（Supervisor 全能 agent）/ coding（coding Expert）/ coding_team（coding 场景级 AgentTeam）',
     )
     workspace_path: str | None = Field(
         default=None,

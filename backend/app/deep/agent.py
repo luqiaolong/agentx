@@ -63,10 +63,8 @@ from app.utils.sse_events import make_sse_event
 
 if TYPE_CHECKING:
     # RouterState 仅用于类型注解（``from __future__ import annotations`` 使注解
-    # 在运行时为字符串），延迟到 TYPE_CHECKING 避免与 ``app.router.graph`` 形成循环导入：
-    # graph.py 顶部 ``from app.deep.agent import run_deep_path``，
-    # 而 deep/agent.py 原本 ``from app.router.state import RouterState`` 触发
-    # ``app.router.__init__`` 加载 graph.py，此时 deep/agent.py 仅部分初始化 → ImportError。
+    # 在运行时为字符串），延迟到 TYPE_CHECKING 避免运行时循环导入。
+    # 场景化架构下 graph.py 不再 import run_deep_path，但 team/scheduler.py 仍调用。
     from app.router.state import RouterState
 
 # DeepAgent 系统提示

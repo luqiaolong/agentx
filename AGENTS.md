@@ -324,38 +324,44 @@ agentx/
 
 ---
 
-## 12. Router 四路径（消息分类 → 路径分发）
+## 12. Router 场景+模式分发
 
-`backend/app/router/graph.py::run_router` 是聊天主入口，分类后驱动：
+`backend/app/router/graph.py::run_router` 是聊天主入口，按 `agent_mode` 单字段直接分发到对应场景 agent（场景化架构：Supervisor + Expert）：
 
-| 分类 / 模式 | 路径 | 文件 | 典型场景 |
-|---|---|---|---|
-| `CHAT` | A | [chat/run.py](file:///d:/java/agentprojects/agentx/backend/app/chat/run.py) | 闲聊、问答、翻译 |
-| `SINGLE_TOOL` | B | [subagents/dispatch.py](file:///d:/java/agentprojects/agentx/backend/app/subagents/dispatch.py) | 单工具调用（读文件 / 搜索 / 联网） |
-| `DEEP_TASK` | C | [deep/agent.py](file:///d:/java/agentprojects/agentx/backend/app/deep/agent.py) | 多步规划 + 工具，含**危险工具审批** |
-| `agent_team` 模式 | D | [team/orchestrator.py](file:///d:/java/agentprojects/agentx/backend/app/team/orchestrator.py) | 多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggregator） |
+| `agent_mode` | 场景 | 执行器 | 文件 | 典型场景 |
+|---|---|---|---|---|
+| `"work"` | Work | `run_work_supervisor()` | [agents/supervisor/work_supervisor.py](file:///d:/java/agentprojects/agentx/backend/app/agents/supervisor/work_supervisor.py) | 全能 Supervisor：自主决策执行或委派 Expert/子代理，含危险工具审批 |
+| `"coding"` | Coding | `run_coding_expert()` | [agents/expert/coding.py](file:///d:/java/agentprojects/agentx/backend/app/agents/expert/coding.py) | 单一 Coding Expert：代码任务专家，含 interrupt 审批流 |
+| `"coding_team"` | Coding | `run_coding_team()` | [agents/team/coding_team.py](file:///d:/java/agentprojects/agentx/backend/app/agents/team/coding_team.py) | 多代理协作（Orchestrator + 并行 Expert + Blackboard + Aggregator） |
 
-`run_router` 关键步骤（与 [graph.py](file:///d:/java/agentprojects/agentx/backend/app/router/graph.py#L183-L311) 对齐）：
+`run_router` 关键步骤（与 [graph.py](file:///d:/java/agentprojects/agentx/backend/app/router/graph.py) 对齐）：
 
 1. 解析 `@skill:<name>` 标记 → 提取 skill content
 2. 读取用户画像（`build_profile_prompt`）
 3. 从 checkpointer 加载历史 messages
 4. 按预算截断历史（`context_max_messages` / `context_max_tokens`）
-5. 若 `agent_mode == "agent_team"` → 直接进入路径 D
-6. 否则按分类（CHAT / SINGLE_TOOL / DEEP_TASK）分发到对应路径
+5. 按 `agent_mode` 直接分发到 `run_work_supervisor` / `run_coding_expert` / `run_coding_team`
 
-**危险工具**（`FORBIDDEN_SUBAGENT_TOOLS = {"write_file", "edit_file", "shell_exec"}`，见
-[config.py](file:///d:/java/agentprojects/agentx/backend/app/config.py#L69-L71)）**只在路径 C
-暴露**，配合 LangGraph `interrupt_before=["tools"]` 触发用户审批；路径 B 子代理与
-自定义子代理**严禁**直接暴露写工具——这是安全设计的硬约束。
+> 旧的 CHAT / SINGLE_TOOL / DEEP_TASK / AgentTeam 四路径分类已删除（推倒重来，无兼容层）。
+> 旧值 `"agent"` / `"agent_team"` 已废弃，前端 store migrate 时重置为 `"work"`。
 
-**AgentTeam 模式**安全约束：
+**危险工具审批流**：`FORBIDDEN_SUBAGENT_TOOLS`（write_file / edit_file / cli_execute / git_write 等）
+在 Supervisor 和 Coding Expert 中通过 LangGraph `interrupt_before=["tools"]` 触发用户审批；
+子代理（rag / web）与自定义子代理**严禁**直接暴露写工具——这是安全设计的硬约束。
 
-- 基础专家：`code` / `rag` / `web`（只读 / 安全工具）
+**Work Supervisor 委派能力**：
+- `delegate_to_expert(expert_name, task, context)` — 委派 Coding Expert
+- `delegate_to_subagent(agent_name, task)` — 委派 rag / web 子代理
+- `@mention` 语法（`@coding` / `@rag` / `@web`）强制委派，覆盖 LLM 自主决策
+
+**Coding Team 安全约束**：
+
+- 基础子代理：`rag` / `web`（只读 / 安全工具）
 - 软件开发专家团：`frontend_dev` / `backend_dev` / `tester` / `architect` / `devops` /
   `ui_designer` / `product_manager`
-- 写/编辑/shell 等危险任务必须分配为 `deep` 子任务，由 `run_deep_path` 执行并走审批
-- 若 Orchestrator 把危险任务误分配给普通子代理，后端会强制改写为 `deep` 子任务
+- `code` 角色映射到 `run_coding_expert`（不依赖 subagents 配置，由 scheduler 直接分发）
+- 写/编辑/shell 等危险任务由 Coding Expert 执行并走审批
+- 若 Orchestrator 把危险任务误分配给普通子代理，后端会强制改写为 `code` 子任务（映射到 Coding Expert）
 
 ---
 
@@ -394,6 +400,17 @@ agentx/
 | `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
 | `done` | `"{}"` | 流结束 |
 | `error` | 错误消息字符串 | 错误 |
+
+**`source` 字段标识**（reasoning / tool_call / tool_result / delegation 事件携带）：
+
+| `source` 值 | 来源 | 说明 |
+|---|---|---|
+| `"work"` | Work Supervisor | 场景化架构下的全能 agent |
+| `"coding"` | Coding Expert | 代码任务专家 |
+| `"rag"` | RAG 子代理 | 知识库检索子代理 |
+| `"web"` | Web 子代理 | 联网搜索子代理 |
+
+> 旧值 `"code"` / `"deep"` / `"agent"` 已删除（推倒重来，无兼容层）。
 
 > 修改任一事件类型或字段名，**必须**同步更新
 > [chat.py](file:///d:/java/agentprojects/agentx/backend/app/api/chat.py)、

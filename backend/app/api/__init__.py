@@ -12,9 +12,10 @@ from fastapi import FastAPI
 def register_routes(app: FastAPI) -> None:
     """注册全部 API 路由到给定 FastAPI app 实例。
 
-    依次调用 9 个域注册函数。使用延迟 import 避免循环依赖
+    依次调用 10 个域注册函数。使用延迟 import 避免循环依赖
     （``app.main`` import 本模块时，本模块不能再 top-level import ``app.main``）。
     """
+    from app.api.agents import register_agents_routes
     from app.api.chat import register_chat_routes
     from app.api.config_reload import register_config_reload_routes
     from app.api.health import register_health_routes
@@ -30,6 +31,7 @@ def register_routes(app: FastAPI) -> None:
     register_skills_routes(app)
     register_workspace_routes(app)
     register_chat_routes(app)
+    register_agents_routes(app)
     register_memory_routes(app)
     register_mcp_routes(app)
     register_config_reload_routes(app)

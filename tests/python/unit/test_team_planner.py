@@ -21,13 +21,20 @@ def _make_settings(
     *,
     code_enabled: bool = True,
     code_tools: list[str] | None = None,
+    rag_tools: list[str] | None = None,
     custom: dict[str, dict] | None = None,
     team_enabled: bool = True,
     team_tools: list[str] | None = None,
     tools_enabled: dict[str, bool] | None = None,
 ) -> SimpleNamespace:
-    """构造用于 _validate_task 的模拟 settings 对象。"""
+    """构造用于 _validate_task 的模拟 settings 对象。
+
+    注: ``code_enabled`` 同时控制 rag/web 的 enabled 字段（mock 简化）。
+    场景化架构下 code 子代理已由 coding Expert 取代，_validate_task 对
+    ``agent="code"`` 直接返回 True，不再读取 settings.subagents["code"]。
+    """
     code_tools = code_tools or ["read_file", "list_dir"]
+    rag_tools = rag_tools or ["rag_retrieve"]
     team_tools = team_tools or ["read_file", "list_dir"]
     tools_enabled = tools_enabled or {}
     custom = custom or {}
@@ -44,9 +51,8 @@ def _make_settings(
 
     return SimpleNamespace(
         subagents={
-            "code": SimpleNamespace(enabled=code_enabled, tools=code_tools),
-            "rag": SimpleNamespace(enabled=code_enabled, tools=code_tools),
-            "web": SimpleNamespace(enabled=code_enabled, tools=code_tools),
+            "rag": SimpleNamespace(enabled=code_enabled, tools=rag_tools),
+            "web": SimpleNamespace(enabled=code_enabled, tools=["web_search"]),
         },
         team_subagents={
             "frontend_dev": SimpleNamespace(enabled=team_enabled, tools=team_tools),
@@ -77,25 +83,29 @@ def test_validate_unknown_agent_fails() -> None:
 
 
 def test_validate_builtin_enabled_with_enabled_tools_ok() -> None:
-    """内置子代理启用且至少一个工具启用时可用。"""
-    settings = _make_settings(tools_enabled={"read_file": True, "list_dir": False})
-    ok, err = _validate_task(TeamPlanTask(agent="code", input="read", purpose="test"), settings)
+    """内置子代理（rag）启用且至少一个工具启用时可用。
+
+    注: code 已映射到 coding Expert（场景化架构），_validate_task 直接返回 True，
+    不走 subagents 配置校验，故用 rag 验证通用校验逻辑。
+    """
+    settings = _make_settings(tools_enabled={"rag_retrieve": True})
+    ok, err = _validate_task(TeamPlanTask(agent="rag", input="检索", purpose="test"), settings)
     assert ok is True
     assert err == ""
 
 
 def test_validate_builtin_disabled_fails() -> None:
-    """内置子代理被禁用时不可用。"""
+    """内置子代理（rag）被禁用时不可用。"""
     settings = _make_settings(code_enabled=False)
-    ok, err = _validate_task(TeamPlanTask(agent="code", input="read", purpose="test"), settings)
+    ok, err = _validate_task(TeamPlanTask(agent="rag", input="检索", purpose="test"), settings)
     assert ok is False
     assert "已禁用" in err
 
 
 def test_validate_builtin_all_tools_disabled_fails() -> None:
-    """内置子代理启用但所有绑定工具被禁用时不可用。"""
-    settings = _make_settings(tools_enabled={"read_file": False, "list_dir": False})
-    ok, err = _validate_task(TeamPlanTask(agent="code", input="read", purpose="test"), settings)
+    """内置子代理（rag）启用但所有绑定工具被禁用时不可用。"""
+    settings = _make_settings(rag_tools=["rag_retrieve"], tools_enabled={"rag_retrieve": False})
+    ok, err = _validate_task(TeamPlanTask(agent="rag", input="检索", purpose="test"), settings)
     assert ok is False
     assert "工具全部被禁用" in err
 
