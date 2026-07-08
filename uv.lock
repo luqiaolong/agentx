@@ -18,6 +18,7 @@ name = "agentx"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "colorama" },
     { name = "deepagents" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -47,6 +48,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "colorama", specifier = ">=0.4.0" },
     { name = "deepagents", specifier = ">=0.2.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.0" },
