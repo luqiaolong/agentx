@@ -312,9 +312,11 @@ class TestMakeReporter:
             _make_reporter("xml")
 
     def test_ext_for(self):
-        assert _ext_for("console") == "txt"
+        """``md`` / ``json`` → 对应扩展名；``console`` 不入映射（永远走 print 分支）。"""
         assert _ext_for("md") == "md"
         assert _ext_for("json") == "json"
+        with pytest.raises(KeyError):
+            _ext_for("console")
 
 
 # ============================================================

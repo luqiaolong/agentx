@@ -5,7 +5,7 @@
   assertions 表达式 pass/fail、data_contains dict 子集匹配。
 - RubricJudge（L2）：--no-rubric 降级、无 API key 降级（基础 smoke 测试，
   完整成功路径见 test_eval_rubric_judge.py）。
-- CompositeJudge：多 Judge 组合、单 Judge 异常隔离、全部通过。
+- JudgeChain：多 Judge 组合、单 Judge 异常隔离、全部通过。
 
 AssertJudge 无外部依赖；RubricJudge 降级逻辑用 MonkeyPatch mock 环境变量。
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.eval.judges import AssertJudge, CompositeJudge, RubricJudge
+from app.eval.judges import AssertJudge, JudgeChain, RubricJudge
 from app.eval.models import (
     CaseExpect,
     EvalCase,
@@ -278,7 +278,7 @@ async def test_rubric_judge_no_api_key_skipped(monkeypatch: pytest.MonkeyPatch) 
 
 
 # ---------------------------------------------------------------------------
-# CompositeJudge: 组合 + 异常隔离
+# JudgeChain: 组合 + 异常隔离
 # ---------------------------------------------------------------------------
 
 
@@ -298,12 +298,12 @@ class _RaisingJudge:
         raise RuntimeError("boom")
 
 
-async def test_composite_judge_exception_isolation() -> None:
+async def test_judge_chain_exception_isolation() -> None:
     """单 Judge 异常隔离：抛异常的 Judge 记录失败，不影响其他 Judge。"""
     case = _case()
     events = [{"event": "token", "data": "hi"}]
-    composite = CompositeJudge([_PassingJudge(), _RaisingJudge()])
-    results = await composite.evaluate(events, case)
+    chain = JudgeChain([_PassingJudge(), _RaisingJudge()])
+    results = await chain.evaluate(events, case)
     assert len(results) == 2
     assert results[0].passed is True
     assert results[0].reason == "ok"
@@ -313,7 +313,7 @@ async def test_composite_judge_exception_isolation() -> None:
     assert results[1].layer == "L1"
 
 
-async def test_composite_judge_all_pass() -> None:
+async def test_judge_chain_all_pass() -> None:
     """全部通过：AssertJudge + _PassingJudge 组合，结果数 = Judge 数，全 passed。"""
     events = [
         {"event": "token", "data": "hi"},
@@ -325,17 +325,17 @@ async def test_composite_judge_all_pass() -> None:
             tools_called=["read_file"],
         )
     )
-    composite = CompositeJudge([AssertJudge(), _PassingJudge()])
-    results = await composite.evaluate(events, case)
+    chain = JudgeChain([AssertJudge(), _PassingJudge()])
+    results = await chain.evaluate(events, case)
     assert len(results) == 2
     assert all(r.passed for r in results)
     assert all(r.score == 5.0 for r in results)
 
 
-async def test_composite_judge_with_rubric_judge_skipped(
+async def test_judge_chain_with_rubric_judge_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CompositeJudge 组合 L1 + L2：无 API key 时 L2 skipped，L1 仍正常执行。"""
+    """JudgeChain 组合 L1 + L2：无 API key 时 L2 skipped，L1 仍正常执行。"""
     for key in _LLM_KEY_ENVS:
         monkeypatch.delenv(key, raising=False)
     events = [{"event": "token", "data": "hi"}]
@@ -345,8 +345,8 @@ async def test_composite_judge_with_rubric_judge_skipped(
             rubric="some rubric",
         )
     )
-    composite = CompositeJudge([AssertJudge(), RubricJudge()])
-    results = await composite.evaluate(events, case)
+    chain = JudgeChain([AssertJudge(), RubricJudge()])
+    results = await chain.evaluate(events, case)
     assert len(results) == 2
     assert results[0].layer == "L1"
     assert results[0].passed is True

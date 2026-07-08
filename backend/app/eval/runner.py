@@ -6,8 +6,10 @@
 - **独立 thread_id**：每个 case 用独立 thread_id，避免历史污染。
 - **异常隔离**：单个 case 抛异常 → 记录 ``CaseResult.error``，不阻塞 suite。
 - **超时控制**：用 ``asyncio.wait_for`` 包装 ``run_router`` 调用，超时算失败。
+- **打分合并**：``run_case`` 支持传入 ``judges`` 列表，在执行后立即打分，
+  避免 ``run_suite`` 与调用方各遍历一遍 ``case_results``。
 
-本模块仅负责"执行 + 收集事件"，不打分。打分由 ``judges/`` 模块负责，
+本模块负责"执行 + 收集事件 + （可选）打分"；判分规则由 ``judges/`` 模块负责，
 ``apply_judge_results`` 仅把 Judge 结果回填到 ``CaseResult``（passed/avg_score）。
 """
 
@@ -16,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.eval.models import CaseResult, EvalCase, EvalResult, EvalSuite, JudgeResult
@@ -23,6 +26,8 @@ from app.observability.logger import logger
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
+
+    from app.eval.judges.base import Judge
 
 __all__ = ["EvalRunner"]
 
@@ -63,23 +68,31 @@ class EvalRunner:
         self.permission_mode = permission_mode
         self.no_rubric = no_rubric
 
-    async def run_case(self, case: EvalCase) -> CaseResult:
-        """执行单个 case。
+    async def run_case(
+        self,
+        case: EvalCase,
+        judges: "list[Judge] | None" = None,
+    ) -> CaseResult:
+        """执行单个 case，可选地在执行后立即打分。
 
         L3 自纠模式（``case.expect.self_correct and case.expect.rubric and not self.no_rubric``）
-        走 ``SelfCorrectionRunner``；否则走 ``run_router``（默认路径）。
+        走 ``SelfCorrectionRunner``（其内部完成打分，不再调用 ``judges``）；
+        否则走 ``run_router``（默认路径）。
 
         异常 / 超时不抛出，而是记录到 ``CaseResult.error`` 返回。
         返回的 ``CaseResult.passed`` 默认 False、``avg_score`` 默认 0.0，
-        由外层（``run_suite`` 或调用方）调 ``apply_judge_results`` 填充。
+        在 ``judges`` 非空时由 ``apply_judge_results`` 填充。
 
         Args:
             case: 评测用例。
+            judges: 可选 Judge 列表；非空时在执行后立即打分并回填。
+                L3 自纠分支忽略此参数（其内部已打分）。
 
         Returns:
-            ``CaseResult``：含收集到的 events 列表；失败时 ``error`` 非空。
+            ``CaseResult``：含收集到的 events 列表与（可选的）judge_results。
+            失败时 ``error`` 非空。
         """
-        # L3 自纠模式：走 SelfCorrectionRunner
+        # L3 自纠模式：走 SelfCorrectionRunner（内部已完成打分）
         if case.expect.self_correct and case.expect.rubric and not self.no_rubric:
             from app.eval.judges.self_correction import SelfCorrectionRunner
 
@@ -91,7 +104,16 @@ class EvalRunner:
             )
             return await sc_runner.run_case(case)
 
-        return await self._run_case_via_router(case)
+        result = await self._run_case_via_router(case)
+
+        # 执行失败 case 跳过 Judge（保留 passed=False / avg_score=0.0）
+        if judges and not result.error:
+            from app.eval.judges.composite import JudgeChain
+
+            judge_results = await JudgeChain(judges).evaluate(result.events, case)
+            result = self.apply_judge_results(result, judge_results)
+
+        return result
 
     async def _run_case_via_router(self, case: EvalCase) -> CaseResult:
         """默认模式：in-process 调 ``run_router`` 收集 SSE 事件。"""
@@ -145,29 +167,32 @@ class EvalRunner:
             duration_ms=duration_ms,
         )
 
-    async def run_suite(self, suite: EvalSuite) -> EvalResult:
+    async def run_suite(
+        self,
+        suite: EvalSuite,
+        judges: "list[Judge] | None" = None,
+    ) -> EvalResult:
         """顺序执行 suite 中所有 case（非并行，避免 checkpointer 写入冲突）。
 
         单个 case 失败（异常/超时）不影响其他 case，结果汇总到 ``EvalResult``。
-        Judge 打分不在本方法职责内——调用方需自行调 ``apply_judge_results``
-        或外部 ``CompositeJudge`` 填充 ``passed`` / ``avg_score``。
+        ``judges`` 非空时在每个 case 执行后立即打分（合并到 ``run_case`` 内部循环，
+        避免执行 + 打分各遍历一次 ``case_results``）。
 
         Args:
             suite: 评测集。
+            judges: 可选 Judge 列表，透传到 ``run_case``。
 
         Returns:
-            ``EvalResult``：含每个 case 的 ``CaseResult``（未经 Judge 打分）。
+            ``EvalResult``：含每个 case 的 ``CaseResult``。若传 ``judges`` 则
+            ``CaseResult.passed`` / ``avg_score`` 已被填充。
         """
         started_at = time.time()
         start_perf = time.perf_counter()
         case_results: list[CaseResult] = []
         for case in suite.cases:
-            result = await self.run_case(case)
+            result = await self.run_case(case, judges=judges)
             case_results.append(result)
         duration_ms = int((time.perf_counter() - start_perf) * 1000)
-
-        # started_at 用 datetime，但避免 import 顶部 datetime（models 已用）
-        from datetime import datetime
 
         return EvalResult(
             suite_id=suite.id,

@@ -1,7 +1,10 @@
-"""组合评分器：逐个执行多个 Judge，异常隔离。
+"""Judge 链：逐个执行多个 Judge，异常隔离。
 
 单个 Judge 抛异常时，记录失败的 JudgeResult（layer=L1），不影响其他 Judge 执行。
-注意：``CompositeJudge.evaluate`` 返回 ``list[JudgeResult]``，不实现 ``Judge`` 协议。
+
+> 命名说明：原名 ``CompositeJudge`` 容易被误以为是 ``Judge`` 协议的实现，
+> 但本类 ``evaluate`` 返回 ``list[JudgeResult]`` 而非单个 ``JudgeResult``，与协议签名冲突。
+> 改名 ``JudgeChain`` 强调"管道/链式"语义，避免误用。
 """
 
 from __future__ import annotations
@@ -10,7 +13,7 @@ from app.eval.judges.base import Judge
 from app.eval.models import EvalCase, JudgeResult
 
 
-class CompositeJudge:
+class JudgeChain:
     """组合多个 Judge，逐个执行，异常隔离。"""
 
     def __init__(self, judges: list[Judge]):

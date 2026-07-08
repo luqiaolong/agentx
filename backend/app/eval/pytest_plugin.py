@@ -6,7 +6,7 @@
 1. ``pytest_collect_file`` 对路径含 ``suites`` 的 ``*.yaml`` 生成 ``EvalSuiteFile``
 2. ``EvalSuiteFile.collect`` 解析 YAML 为 ``EvalSuite``，按 ``--suite`` 过滤后逐 case
    生成 ``EvalItem``
-3. ``EvalItem.runtest`` 调 ``EvalRunner.run_case`` + ``CompositeJudge``，失败时
+3. ``EvalItem.runtest`` 调 ``EvalRunner.run_case`` + ``JudgeChain``，失败时
    ``raise AssertionError`` 并打印 JudgeResult 详情
 
 模式切换：
@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from app.eval.judges import AssertJudge, CompositeJudge, RubricJudge
+from app.eval.judges import AssertJudge, JudgeChain, RubricJudge
 from app.eval.mocks.llm import MockChatModel
 from app.eval.models import EvalCase, EvalSuite
 from app.eval.runner import EvalRunner
@@ -111,7 +111,7 @@ class EvalItem(pytest.Item):
             chat_model = MockChatModel.from_fixtures(fixtures_dir)
             judges = [AssertJudge(), RubricJudge(no_rubric=True)]
             runner = EvalRunner(chat_model=chat_model, no_rubric=True)
-        composite = CompositeJudge(judges)
+        composite = JudgeChain(judges)
 
         async def _run() -> tuple:
             case_result = await runner.run_case(self.case)

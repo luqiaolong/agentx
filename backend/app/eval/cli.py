@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from app.eval.judges import AssertJudge, CompositeJudge, RubricJudge
+from app.eval.judges import AssertJudge, RubricJudge
 from app.eval.mocks.llm import MockChatModel
 from app.eval.models import EvalResult, EvalSuite
 from app.eval.reporters import ConsoleReporter, JsonReporter, MarkdownReporter
@@ -64,8 +64,11 @@ def _make_reporter(format_name: str):
 
 
 def _ext_for(format_name: str) -> str:
-    """format 名 → 报告文件扩展名。"""
-    return {"console": "txt", "md": "md", "json": "json"}[format_name]
+    """``md`` / ``json`` → 报告文件扩展名。
+
+    ``console`` 永远走 ``print(content)`` 不会进此函数，因此不映射。
+    """
+    return {"md": "md", "json": "json"}[format_name]
 
 
 async def _run_suite_async(
@@ -76,28 +79,16 @@ async def _run_suite_async(
     - ``live=True`` 时 chat_model=None（用真实 LLM）；否则用 ``MockChatModel``
     - ``no_rubric=True`` 时只跑 L1 ``AssertJudge``，跳过 L2 ``RubricJudge``，
       且 L3 自纠分支不触发
-    - error case（执行失败）跳过 Judge，保留默认 passed=False/avg_score=0.0
+    - 评分逻辑已合并到 ``EvalRunner.run_suite(judges=...)`` 内部，
+      本函数不再二次循环 ``case_results``
     """
     chat_model = None if live else MockChatModel.from_fixtures(_FIXTURES_DIR)
-    runner = EvalRunner(chat_model=chat_model, no_rubric=no_rubric)
-    eval_result = await runner.run_suite(suite)
-
-    # 组装 Judge：L1 AssertJudge 必跑，L2 RubricJudge 可选
     judges: list = [AssertJudge()]
     if not no_rubric:
         judges.append(RubricJudge(no_rubric=no_rubric))
-    composite = CompositeJudge(judges)
 
-    # 对每个非 error case 跑 Judge，用 EvalRunner.apply_judge_results 回填
-    for idx, cr in enumerate(eval_result.case_results):
-        if cr.error:
-            continue  # 异常 case 已 failed，跳过 Judge
-        judge_results = await composite.evaluate(cr.events, cr.case)
-        eval_result.case_results[idx] = EvalRunner.apply_judge_results(
-            cr, judge_results
-        )
-
-    return eval_result
+    runner = EvalRunner(chat_model=chat_model, no_rubric=no_rubric)
+    return await runner.run_suite(suite, judges=judges)
 
 
 async def _run_all_suites_async(

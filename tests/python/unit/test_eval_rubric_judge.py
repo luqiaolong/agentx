@@ -4,7 +4,7 @@
 - 降级策略：--no-rubric / 无 rubric / 无 API key / _get_grader_model ValueError /
   grader 异常 / 无 structured_response
 - GraderResponse 映射：satisfied / needs_revision / failed
-- 助手函数：_build_transcript_from_events / _build_grader_payload
+- 助手函数：_build_grader_transcript_from_events / _build_grader_payload
 
 用 MockChatModel + monkeypatch create_agent 模拟 grader 子代理，零外部 LLM 调用。
 """
@@ -19,7 +19,7 @@ import pytest
 from app.eval.judges.rubric_judge import (
     RubricJudge,
     _build_grader_payload,
-    _build_transcript_from_events,
+    _build_grader_transcript_from_events,
 )
 from app.eval.models import CaseExpect, EvalCase
 
@@ -270,8 +270,8 @@ async def test_rubric_judge_no_structured_response_skipped(
 # ---------------------------------------------------------------------------
 
 
-def test_build_transcript_from_events() -> None:
-    """_build_transcript_from_events: token/tool_call/tool_result 事件 → transcript 文本。
+def test_build_grader_transcript_from_events() -> None:
+    """_build_grader_transcript_from_events: token/tool_call/tool_result 事件 → transcript 文本。
 
     验证事件 → messages 映射：
     - token 事件拼接为 AIMessage（连续 token 合并）
@@ -286,7 +286,7 @@ def test_build_transcript_from_events() -> None:
         {"event": "tool_result", "tool_call_id": "tc1", "result": "file content"},
         {"event": "done", "data": "{}"},
     ]
-    transcript = _build_transcript_from_events(events)
+    transcript = _build_grader_transcript_from_events(events)
     # 用户消息占位符
     assert "(original user message not available" in transcript
     # token 合并为 AIMessage

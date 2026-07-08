@@ -1,7 +1,7 @@
 """Judge 协议定义。
 
 所有评分器（AssertJudge / RubricJudge 等）需符合 ``Judge`` 协议。
-CompositeJudge 是组合器，返回 ``list[JudgeResult]``，不实现本协议。
+CompositeJudge 是组合器，返回 ``list[JudgeResult]``，不实现本协议。已重命名为 ``JudgeChain``。
 """
 
 from __future__ import annotations
