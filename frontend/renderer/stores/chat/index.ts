@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
 import type { ApprovalRequest, PermissionMode } from "../../../shared/api-types";
 import { sandbox, memory } from "@/lib/api/http";
+import { initProjectConfig, getProjectConfig } from "@/lib/api/projectConfig";
+import { logger } from "@/lib/logger";
 import {
   DEFAULT_TITLE,
   migrateV0toV1,
@@ -136,6 +138,12 @@ export interface Session {
    * - "full_trust"：session 内全放行
    */
   permissionMode: PermissionMode;
+  /**
+   * 是否已为本会话的工作区生成过 .agentx/。
+   * 仅作为"一次会话最多一次"的快速护栏；真实存在性以 getProjectConfig 为准。
+   * 缺省视为 false；旧 localStorage 数据迁移时不需特殊处理（undefined 兼容）。
+   */
+  generatedAgentx?: boolean;
 }
 
 export interface ChatState {
@@ -168,6 +176,15 @@ export interface ChatState {
    * null 表示迁回 Home。
    */
   moveSessionToWorkspace: (id: string, workspacePath: string | null) => Promise<void>;
+  /**
+   * 在 SSE done 事件触发后调用：
+   * 1) 若会话已 generatedAgentx=true → return
+   * 2) 若 workspacePath 为 null → return
+   * 3) 先调 getProjectConfig 检查 .agentx/ 是否真实存在；存在 → 标记 true, return
+   * 4) 立即抢占 set(true) 防并发；
+   * 5) fire-and-forget initProjectConfig；失败 → set 回 false 允许下次重试
+   */
+  ensureAgentxGenerated: (sessionId: string) => Promise<void>;
   /** 手动撤销授权并标记，阻止 chip 隐式授权覆盖。 */
   revokeAndMark: (sessionId: string, path: string) => Promise<void>;
   /** 手动授权并清除 revoked 标记（handleAttachWorkspace 复用）。 */
@@ -345,6 +362,64 @@ export const useChatStore = create<ChatState>()(
             const sessions = { ...s.sessions, [id]: { ...sess, title } };
             return { sessions };
           });
+        },
+
+        ensureAgentxGenerated: async (sessionId) => {
+          // 局部再取一次最新 session，避免并发 set 覆盖
+          const sess = get().sessions[sessionId];
+          if (!sess?.workspacePath) return;
+          if (sess.generatedAgentx) return;
+          const wsPath = sess.workspacePath;
+
+          // 第二层防护：先用 getProjectConfig 真实检查 .agentx/ 是否存在
+          try {
+            const status = await getProjectConfig(wsPath, sessionId);
+            if (status?.exists) {
+              set((s) => {
+                const cur = s.sessions[sessionId];
+                if (!cur) return s;
+                return {
+                  sessions: {
+                    ...s.sessions,
+                    [sessionId]: { ...cur, generatedAgentx: true },
+                  },
+                };
+              });
+              return;
+            }
+          } catch (err) {
+            // getProjectConfig 失败不阻塞；继续尝试 init
+            logger.warn("getProjectConfig precheck failed", err);
+          }
+
+          // 抢占：先 set(true) 防并发 done 事件重复触发
+          set((s) => {
+            const cur = s.sessions[sessionId];
+            if (!cur) return s;
+            return {
+              sessions: {
+                ...s.sessions,
+                [sessionId]: { ...cur, generatedAgentx: true },
+              },
+            };
+          });
+
+          // fire-and-forget；失败回滚 generatedAgentx=false
+          try {
+            await initProjectConfig(wsPath, sessionId);
+          } catch (err) {
+            logger.warn("initProjectConfig failed", err);
+            set((s) => {
+              const cur = s.sessions[sessionId];
+              if (!cur) return s;
+              return {
+                sessions: {
+                  ...s.sessions,
+                  [sessionId]: { ...cur, generatedAgentx: false },
+                },
+              };
+            });
+          }
         },
 
         moveSessionToWorkspace: async (id, workspacePath) => {
