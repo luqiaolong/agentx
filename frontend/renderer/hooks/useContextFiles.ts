@@ -62,6 +62,12 @@ export function useContextFiles() {
     };
   }, []);
 
+  // 只取当前会话的任务用于摘要展示
+  const sessionTasks = useMemo(
+    () => (currentSession ? tasks.filter((t) => t.sessionId === currentSession.id) : []),
+    [tasks, currentSession],
+  );
+
   const toolFiles = useMemo(
     () => extractCategorizedFiles(messages, workspacePath),
     [messages, workspacePath],
@@ -73,8 +79,8 @@ export function useContextFiles() {
   );
 
   const sessionSummary = useMemo<CategorizedFile[]>(
-    () => mapTasksToSummary(tasks),
-    [tasks],
+    () => mapTasksToSummary(sessionTasks),
+    [sessionTasks],
   );
 
   const memoryFiles = useMemo<CategorizedFile[]>(
@@ -96,14 +102,14 @@ export function useContextFiles() {
 
 function mapSkillsToFiles(
   skills: SkillSummary[],
-  workspacePath: string | null,
+  _workspacePath: string | null,
 ): CategorizedFile[] {
+  // 直接使用后端 /api/skills 返回的真实路径（DATA_DIR/skills/<name>/SKILL.md）。
+  // 旧实现误用 workspacePath/.qoder/skills/<name>.md 前缀拼路径，导致打开报错。
   return skills.map((s) => ({
     id: `skill-${s.name}`,
     name: s.name,
-    // 技能文件位置：workspacePath/.qoder/skills/<name>.md（与后端 skills_loader 约定一致）
-    // workspacePath 为 null 时 path 留空，点击时由调用方决定是否禁用
-    path: workspacePath ? `${workspacePath}/.qoder/skills/${s.name}.md` : "",
+    path: s.path,
     category: "skill_files" as const,
     ts: Date.now(),
     meta: s.trigger || undefined,

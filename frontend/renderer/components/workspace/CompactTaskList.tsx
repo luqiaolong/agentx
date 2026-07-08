@@ -7,6 +7,7 @@ import {
   X,
 } from "lucide-react";
 import { useTasksStore, type Task } from "@/stores/tasks";
+import { useChatStore } from "@/stores/chat";
 import { formatTime } from "@/lib/format";
 
 /* ------------------------------------------------------------------ */
@@ -66,7 +67,10 @@ const TaskCard = memo(function TaskCard({ task, onRemove }: TaskCardProps) {
 /* ------------------------------------------------------------------ */
 
 export function CompactTaskList() {
-  const tasks = useTasksStore((s) => s.tasks);
+  const currentId = useChatStore((s) => s.currentId);
+  const tasks = useTasksStore((s) =>
+    currentId ? s.tasks.filter((t) => t.sessionId === currentId) : [],
+  );
   const removeTask = useTasksStore((s) => s.removeTask);
   const listRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(tasks.length);

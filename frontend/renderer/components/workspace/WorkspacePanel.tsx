@@ -26,14 +26,17 @@ export function WorkspacePanel({
   onFileClick?: (file: { id: string; path: string; name: string }) => void;
 } = {}) {
   const [active, setActive] = useState<Tab>("tasks");
-  const tasks = useTasksStore((s) => s.tasks);
+  const currentId = useChatStore((s) => s.currentId);
+  // 任务按会话隔离：只统计和展示当前会话的任务
+  const tasks = useTasksStore((s) =>
+    currentId ? s.tasks.filter((t) => t.sessionId === currentId) : [],
+  );
   const clearDone = useTasksStore((s) => s.clearDone);
   const gitRepoStatus = useGitStore((s) => s.repoStatus);
   const setGitRepoPath = useGitStore((s) => s.setRepoPath);
   const currentSession = useChatStore((s) =>
     s.currentId ? s.sessions[s.currentId] ?? null : null,
   );
-  const currentId = useChatStore((s) => s.currentId);
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
   const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath;
   // threadId 用于 ProjectConfigBadge 调用后端 .agentx/ 端点时的沙箱授权校验；
@@ -117,7 +120,7 @@ export function WorkspacePanel({
                 {doneCount > 0 && (
                   <button
                     type="button"
-                    onClick={clearDone}
+                    onClick={() => clearDone(currentId ?? undefined)}
                     className="inline-flex items-center gap-1 rounded-md px-1 py-px text-muted-c transition-colors hover:bg-hover-soft hover:text-rose-500"
                     style={{ fontSize: 'var(--fs-ws-task-meta)' }}
                     title="清除已完成任务"
@@ -142,7 +145,7 @@ export function WorkspacePanel({
         )}
         {active === "files" && (
           <div className="flex-1 min-h-0 overflow-auto">
-            <FileTree />
+            <FileTree onOpenEditor={onFileClick} />
           </div>
         )}
         {active === "git" && (

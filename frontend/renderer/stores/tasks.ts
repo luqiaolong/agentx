@@ -8,6 +8,8 @@ export interface Task {
   todos?: { text: string; done: boolean }[];
   createdAt: number;
   updatedAt?: number;
+  /** 任务所属的会话 ID，用于按会话隔离任务列表 */
+  sessionId: string;
 }
 
 interface TasksState {
@@ -16,7 +18,10 @@ interface TasksState {
   updateTask: (id: string, patch: Partial<Task>) => void;
   removeTask: (id: string) => void;
   clearTasks: () => void;
-  clearDone: () => void;
+  /** 清除已完成任务；传入 sessionId 时只清除该会话的任务 */
+  clearDone: (sessionId?: string) => void;
+  /** 获取指定会话的任务列表 */
+  getTasksBySession: (sessionId: string) => Task[];
 }
 
 /**
@@ -29,6 +34,7 @@ interface TasksState {
  * - v0 -> v1: 补 createdAt，把残留 running 任务标为 failed（旧版 bug 遗留）
  * - v1 -> v2: 任务 title 剥掉 `<workspace>...</workspace>` / `<file>...</file>`
  *   LLM 协议标签 —— 旧逻辑会把 ChatComposer 拼上的工作区路径当任务名。
+ * - v2 -> v3: 补 sessionId（任务按会话隔离），旧任务默认空字符串（不匹配任何会话）
  */
 export function migrateTasksState(
   persisted: unknown,
@@ -56,6 +62,12 @@ export function migrateTasksState(
       return cleaned === t.title ? t : { ...t, title: cleaned };
     });
   }
+  if (version < 3) {
+    tasks = tasks.map((t) => ({
+      ...t,
+      sessionId: typeof t.sessionId === "string" ? t.sessionId : "",
+    }));
+  }
   p.tasks = tasks;
   return p as Partial<TasksState>;
 }
@@ -63,7 +75,7 @@ export function migrateTasksState(
 export const useTasksStore = create<TasksState>()(
   devtools(
     persist(
-      (set) => ({
+      (set, get) => ({
         tasks: [],
         addTask: (task) => set((s) => ({ tasks: [...s.tasks, task] })),
         updateTask: (id, patch) =>
@@ -74,13 +86,19 @@ export const useTasksStore = create<TasksState>()(
           })),
         removeTask: (id) => set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) })),
         clearTasks: () => set({ tasks: [] }),
-        clearDone: () =>
-          set((s) => ({ tasks: s.tasks.filter((t) => t.status !== "done") })),
+        clearDone: (sessionId) =>
+          set((s) => ({
+            tasks: s.tasks.filter(
+              (t) => t.status !== "done" || (sessionId && t.sessionId !== sessionId),
+            ),
+          })),
+        getTasksBySession: (sessionId) =>
+          get().tasks.filter((t) => t.sessionId === sessionId),
       }),
       {
         name: "agentx-tasks",
         storage: createJSONStorage(() => localStorage),
-        version: 2,
+        version: 3,
         migrate: migrateTasksState,
       },
     ),
