@@ -90,7 +90,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const markReasoningDone = useChatStore((s) => s.markReasoningDone);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const setStreaming = useChatStore((s) => s.setStreaming);
-  const setApprovalRequest = useChatStore((s) => s.setApprovalRequest);
+  const enqueueApprovalRequest = useChatStore((s) => s.enqueueApprovalRequest);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const addTask = useTasksStore((s) => s.addTask);
   const updateTask = useTasksStore((s) => s.updateTask);
@@ -328,7 +328,7 @@ export function useChatStream(args: UseChatStreamArgs) {
     });
 
     const unsubApproval = chat.onApprovalRequest((req) => {
-      setApprovalRequest(req);
+      enqueueApprovalRequest(req);
     });
 
     return () => {

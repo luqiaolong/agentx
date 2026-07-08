@@ -51,7 +51,7 @@ beforeEach(() => {
     sessions: {},
     currentId: null,
     isStreaming: false,
-    approvalRequest: null,
+    approvalQueue: [],
   });
 });
 

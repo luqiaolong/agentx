@@ -7,7 +7,7 @@ import {
   Check,
   type LucideIcon,
 } from "lucide-react";
-import type { PermissionMode } from "@/stores/permission";
+import type { PermissionMode } from "../../../shared/api-types";
 import { usePopover } from "@/components/ui/hooks/usePopover";
 
 /**

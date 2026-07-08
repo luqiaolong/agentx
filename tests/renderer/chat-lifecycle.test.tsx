@@ -151,7 +151,7 @@ beforeEach(() => {
     sessions: {},
     currentId: null,
     isStreaming: false,
-    approvalRequest: null,
+    approvalQueue: [],
   });
   useTasksStore.setState({ tasks: [] });
 });

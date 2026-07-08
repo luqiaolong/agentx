@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import React, { useState, type ComponentProps } from "react";
 import { installApiMock } from "./api-mock";
-import type { PermissionMode } from "@/stores/permission";
+import type { PermissionMode } from "@/shared/api-types";
 
 const approveSubmit = vi.fn().mockResolvedValue(undefined);
 vi.hoisted(() => {
@@ -38,7 +38,7 @@ beforeEach(() => {
     sessions: {},
     currentId: null,
     isStreaming: false,
-    approvalRequest: null,
+    approvalQueue: [],
   });
   useSettingsStore.setState({ autoApproveAfterSeconds: 0 });
   approveSubmit.mockClear();
@@ -215,12 +215,12 @@ describe("PermissionToggle 紧凑命令栏", () => {
 describe("ApprovalDialog directory_extension 三按钮", () => {
   it("dangerous_tool 渲染 [拒绝 / 批准] 二按钮", () => {
     useChatStore.setState({
-      approvalRequest: {
+      approvalQueue: [{
         threadId: "t1",
         toolName: "edit_file",
         args: {},
         preview: "write /tmp/x",
-      },
+      }],
     });
     const { getByText, queryByText } = render(<ApprovalDialog />);
     expect(getByText("操作审批")).not.toBeNull();
@@ -232,7 +232,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 渲染 [拒绝 / 本次允许 / 会话内允许] 三按钮", () => {
     useChatStore.setState({
-      approvalRequest: {
+      approvalQueue: [{
         threadId: "t2",
         toolName: "read_file",
         args: { path: "/outside/x" },
@@ -240,7 +240,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
         kind: "directory_extension",
         requestedPath: "/outside/x",
         writable: false,
-      },
+      }],
     });
     const { getByText, queryByText } = render(<ApprovalDialog />);
     expect(getByText("目录访问授权")).not.toBeNull();
@@ -252,7 +252,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 点本次允许 → submit(true, once, path, writable)", async () => {
     useChatStore.setState({
-      approvalRequest: {
+      approvalQueue: [{
         threadId: "t3",
         toolName: "read_file",
         args: {},
@@ -260,7 +260,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
         kind: "directory_extension",
         requestedPath: "/outside/y",
         writable: true,
-      },
+      }],
     });
     const { getByText } = render(<ApprovalDialog />);
     await act(async () => {
@@ -278,7 +278,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 点会话内允许 → submit(true, session)", async () => {
     useChatStore.setState({
-      approvalRequest: {
+      approvalQueue: [{
         threadId: "t4",
         toolName: "read_file",
         args: {},
@@ -286,7 +286,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
         kind: "directory_extension",
         requestedPath: "/outside/z",
         writable: false,
-      },
+      }],
     });
     const { getByText } = render(<ApprovalDialog />);
     await act(async () => {
@@ -301,7 +301,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 点拒绝 → submit(false, deny)", async () => {
     useChatStore.setState({
-      approvalRequest: {
+      approvalQueue: [{
         threadId: "t5",
         toolName: "read_file",
         args: {},
@@ -309,7 +309,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
         kind: "directory_extension",
         requestedPath: "/outside/w",
         writable: false,
-      },
+      }],
     });
     const { getByText } = render(<ApprovalDialog />);
     await act(async () => {
@@ -325,7 +325,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
   it("directory_extension 时 autoApproveAfterSeconds 不触发自动批准", () => {
     useSettingsStore.setState({ autoApproveAfterSeconds: 1 });
     useChatStore.setState({
-      approvalRequest: {
+      approvalQueue: [{
         threadId: "t6",
         toolName: "read_file",
         args: {},
@@ -333,7 +333,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
         kind: "directory_extension",
         requestedPath: "/outside",
         writable: false,
-      },
+      }],
     });
     render(<ApprovalDialog />);
     expect(approveSubmit).not.toHaveBeenCalled();

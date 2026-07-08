@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
-import type { ApprovalRequest } from "../../../shared/api-types";
+import type { ApprovalRequest, PermissionMode } from "../../../shared/api-types";
 import { sandbox, memory } from "@/lib/api/http";
 import {
   DEFAULT_TITLE,
@@ -135,7 +135,7 @@ export interface Session {
    * - "standard"：标准审批流
    * - "full_trust"：session 内全放行
    */
-  permissionMode: "standard" | "full_trust";
+  permissionMode: PermissionMode;
 }
 
 export interface ChatState {
@@ -146,7 +146,12 @@ export interface ChatState {
   homeWorkspacePath: string | null;
   // 通用状态
   isStreaming: boolean;
-  approvalRequest: ApprovalRequest | null;
+  /**
+   * 审批请求队列（FIFO）。后端批量 yield 多个 approval_request 事件时，
+   * 逐条入队，用户审批完队首后 shift 出队，展示下一条。
+   * 队首元素（approvalQueue[0]）即当前展示的审批请求。
+   */
+  approvalQueue: ApprovalRequest[];
   // 会话管理
   /**
    * 新建会话，并在 workspacePath 非空时向后端授权该目录（可写）。
@@ -245,13 +250,16 @@ export interface ChatState {
    */
   deleteMessage: (messageId: string) => void;
   setStreaming: (v: boolean) => void;
-  setApprovalRequest: (req: ApprovalRequest | null) => void;
+  /** 将审批请求追加到队列尾部（批量审批时多条入队）。 */
+  enqueueApprovalRequest: (req: ApprovalRequest) => void;
+  /** 移除并返回队首审批请求（用户审批完当前条后调用，展示下一条）。 */
+  dequeueApprovalRequest: () => void;
   /** 设置指定会话的执行状态。 */
   setSessionRunning: (id: string, running: boolean) => void;
   /** 清除指定会话的新结果标记。 */
   clearSessionNewResult: (id: string) => void;
   /** 设置指定会话的权限模式。 */
-  setSessionPermissionMode: (id: string, mode: "standard" | "full_trust") => void;
+  setSessionPermissionMode: (id: string, mode: PermissionMode) => void;
 }
 
 function createSessionRecord(id: string, workspacePath: string | null = null): Session {
@@ -276,7 +284,7 @@ export const useChatStore = create<ChatState>()(
         currentId: null,
         homeWorkspacePath: null,
         isStreaming: false,
-        approvalRequest: null,
+        approvalQueue: [],
 
         createSession: async (workspacePath = null) => {
           const id = crypto.randomUUID();
@@ -776,7 +784,10 @@ export const useChatStore = create<ChatState>()(
           set({ isStreaming: v });
         },
 
-        setApprovalRequest: (req) => set({ approvalRequest: req }),
+        enqueueApprovalRequest: (req) =>
+          set((s) => ({ approvalQueue: [...s.approvalQueue, req] })),
+        dequeueApprovalRequest: () =>
+          set((s) => ({ approvalQueue: s.approvalQueue.slice(1) })),
 
         setSessionRunning: (id, running) =>
           set((s) => {
