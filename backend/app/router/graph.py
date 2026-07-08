@@ -156,9 +156,9 @@ async def run_router(
         # 都不存在才跳过授权，以免污染 authorized_dirs。
         effective_workspace = (workspace_path or "").strip() or None
         if not effective_workspace:
-            from app.utils.security import get_sandbox as _get_sandbox_fallback
+            from app.sandbox import get_sandbox as _get_sandbox_fallback
             try:
-                _existing = _get_sandbox_fallback().list_authorized(thread_id)
+                _existing = await _get_sandbox_fallback().list_authorized(thread_id)
             except Exception:
                 _existing = []
             if _existing:
@@ -178,11 +178,11 @@ async def run_router(
                     workspace=effective_workspace,
                 )
             else:
-                from app.utils.security import get_sandbox
+                from app.sandbox import get_sandbox
 
                 sandbox = get_sandbox()
                 try:
-                    sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
+                    await sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
                     logger.info(
                         "router.workspace_authorized",
                         thread_id=thread_id,

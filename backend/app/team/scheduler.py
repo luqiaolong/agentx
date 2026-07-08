@@ -147,6 +147,7 @@ async def _run_subtask(
                 history=history,
                 permission_mode=permission_mode,
                 workspace_path=workspace_path,
+                parent_thread_id=thread_id,
             ):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")
@@ -223,6 +224,7 @@ async def _run_subtask(
                     history=history,
                     permission_mode=permission_mode,
                     workspace_path=workspace_path,
+                    parent_thread_id=thread_id,
                 ):
                     if abort_event.is_set():
                         yield _done(False, "用户中止")
