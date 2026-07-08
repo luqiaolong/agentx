@@ -13,8 +13,8 @@
 - ``POST /api/chat``              — SSE 流式响应（Router 三路径分发：CHAT / SINGLE_TOOL / DEEP_TASK）。
 - ``GET /api/memory/skills``      — 技能文件列表（不含完整 content）。
 - ``GET /api/memory/skills/{name}`` — 读取单个技能文件完整内容。
-- ``POST /api/memory/skills``     — 新建/覆盖技能文件（触发 reload_skills）。
-- ``DELETE /api/memory/skills/{name}`` — 删除技能文件（触发 reload_skills）。
+- ``POST /api/memory/skills``     — 新建/覆盖技能文件。
+- ``DELETE /api/memory/skills/{name}`` — 删除技能文件。
 - ``GET /api/memory/profile``     — 用户画像列表。
 - ``POST /api/memory/profile``    — 新建画像条目（key 重复 → 409）。
 - ``PUT /api/memory/profile/{key}`` — 更新画像条目（不存在 → 404）。
@@ -35,7 +35,7 @@ lifespan / 中间件 / app 实例 / ``__main__`` 入口。
 
 以下名称以本模块为「命名空间锚点」向后兼容 re-export（测试通过
 ``monkeypatch app.main.<name>`` 或 ``from app.main import <name>`` 访问）：
-- ``run_router`` / ``get_skills`` / ``reload_skills`` / ``list_workspace``
+- ``run_router`` / ``list_workspace`` / ``read_workspace_file``
   / ``read_workspace_file``
   / ``get_sandbox`` / ``get_async_checkpointer`` / ``get_mcp_manager`` / ``httpx``
   —— ``app.api.*`` 域文件内以延迟 ``from app.main import <name>`` 方式引用，
@@ -76,7 +76,6 @@ from app.vectorstore import MilvusUnavailable, get_milvus_client
 # app.api.* 域文件以延迟 `from app.main import <name>` 引用这些名字，
 # 使 monkeypatch 在调用时从 app.main 命名空间取到 fake。
 from app.router import run_router  # noqa: F401
-from app.memory.skills_loader import get_skills, reload_skills  # noqa: F401
 from app.tools.filesystem import list_workspace, read_workspace_file  # noqa: F401
 from app.sandbox import get_sandbox  # noqa: F401 — lifespan 亦用
 

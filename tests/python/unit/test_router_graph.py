@@ -21,7 +21,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import app.memory.skills_store as ss_module
 from app.router.graph import run_router
+
+
+def _write_skill(tmp_path: Any, name: str, content: str) -> None:
+    """在临时 skills 目录下写入 SKILL.md。"""
+    skill_dir = tmp_path / "skills" / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
 
 # ============================================================
@@ -306,6 +314,7 @@ async def test_router_default_agent_mode_is_work(
 
 async def test_router_skill_tag_injected_in_work_mode(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """work 场景下 @skill: 标记的 skill_content 拼到 profile_prompt 前。"""
 
@@ -321,12 +330,10 @@ async def test_router_skill_tag_injected_in_work_mode(
         captured["profile_prompt"] = profile_prompt
         yield {"event": "token", "data": "ok"}
 
-    # mock get_skills 返回一个名为 "coder" 的技能
-    fake_skill = SimpleNamespace(name="coder", content="CODER SKILL CONTENT")
-    monkeypatch.setattr(
-        "app.router.graph.get_skills",
-        lambda: [fake_skill],
-    )
+    # 隔离 skills 目录并写入 coder 技能文件
+    monkeypatch.setattr(ss_module, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ss_module, "_SKILLS_DIR", tmp_path / "skills")
+    _write_skill(tmp_path, "coder", "CODER SKILL CONTENT")
     monkeypatch.setattr(
         "app.router.graph.run_work_supervisor",
         _fake_run_work_supervisor,
@@ -348,6 +355,7 @@ async def test_router_skill_tag_injected_in_work_mode(
 
 async def test_router_skill_tag_not_injected_in_coding_mode(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """coding 场景下 @skill: 标记被移除但不注入 profile_prompt。"""
 
@@ -363,11 +371,10 @@ async def test_router_skill_tag_not_injected_in_coding_mode(
         captured["profile_prompt"] = profile_prompt
         yield {"event": "token", "data": "ok"}
 
-    fake_skill = SimpleNamespace(name="coder", content="CODER SKILL CONTENT")
-    monkeypatch.setattr(
-        "app.router.graph.get_skills",
-        lambda: [fake_skill],
-    )
+    # 隔离 skills 目录并写入 coder 技能文件
+    monkeypatch.setattr(ss_module, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ss_module, "_SKILLS_DIR", tmp_path / "skills")
+    _write_skill(tmp_path, "coder", "CODER SKILL CONTENT")
     monkeypatch.setattr(
         "app.router.graph.run_coding_expert",
         _fake_run_coding_expert,

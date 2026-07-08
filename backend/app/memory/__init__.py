@@ -1,13 +1,17 @@
-"""记忆与持久化：checkpointer（会话状态）+ skills_loader（技能加载）。
+"""记忆与持久化：checkpointer（会话状态）+ skills 文件 CRUD。
 
 新增模块：
-- ``skills_store``：技能文件 CRUD（``data/skills/*.md``）
+- ``skills_store``：技能文件 CRUD（``data/skills/<name>/SKILL.md``）+ ``SkillDef`` 解析
+- ``skills_loader``：仅保留 ``SkillDef`` 模型与 frontmatter 解析辅助函数
 - ``profile_store``：长期用户画像 CRUD（``data/config/profile.json``）
 - ``checkpointer_view``：checkpointer 只读视图 + 单会话清理
 - ``summarizer``：消息摘要压缩（``/compact`` 命令后端）
 
 上下文管理（消息截断 + token 预算）已由 deepagents SummarizationMiddleware
 + PatchToolCallsMiddleware 接管，``context`` 模块已删除。
+
+技能扫描与缓存已由 deepagents ``skills=`` 参数接管；``skills_loader`` 不再
+维护 ``load_skills`` / ``get_skills`` / ``reload_skills``。
 """
 
 from __future__ import annotations
@@ -27,13 +31,14 @@ from .profile_store import (
     ProfileStore,
     build_profile_prompt,
 )
-from .skills_loader import SkillDef, get_skills, load_skills, reload_skills
+from .skills_loader import SkillDef
 from .skills_store import (
     SkillFileInfo,
     SkillNameInvalid,
     SkillPathEscape,
     delete_skill_file,
     get_skill_file,
+    list_skills,
     list_skills_files,
     save_skill_file,
 )
@@ -58,11 +63,9 @@ __all__ = [
     "get_checkpointer",
     "get_db_size",
     "get_skill_file",
-    "get_skills",
+    "list_skills",
     "list_skills_files",
     "list_threads",
-    "load_skills",
-    "reload_skills",
     "save_skill_file",
     "summarize_messages",
 ]

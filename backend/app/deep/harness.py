@@ -117,10 +117,16 @@ def resolve_backend(workspace_path: str | None) -> FilesystemBackend | None:
     """构建 FilesystemBackend，启用 Context Offloading。
 
     workspace_path 为 None 时返回 None（不启用 backend）。
+
+    Notes:
+        - ``virtual_mode=True`` 显式指定，避免 deepagents 0.6.12 的弃用警告，
+          并使 backend 使用虚拟路径语义（非真实文件系统路径）。
+        - 该 backend 仅用于 Context Offloading 的虚拟文件系统暂存，
+          与项目自研 fs 工具操作的真实文件系统不冲突。
     """
     if workspace_path is None:
         return None
-    return FilesystemBackend(root_dir=workspace_path)
+    return FilesystemBackend(root_dir=workspace_path, virtual_mode=True)
 
 
 def create_agent(

@@ -28,7 +28,8 @@ from app.agents.supervisor import run_work_supervisor
 from app.agents.team import run_coding_team
 from app.config import get_settings
 from app.memory.profile_store import build_profile_prompt
-from app.memory.skills_loader import get_skills
+from app.memory.skills_loader import SkillDef, _parse_frontmatter, _tools_from_meta
+from app.memory.skills_store import get_skill_file
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.project_config import load_project_config, merge_configs
@@ -54,6 +55,31 @@ _SKILL_CONTENT_MAX = 4000
 _SKILL_TAG_RE = re.compile(r"@skill:(\S+)")
 
 
+def _load_skill_def(name: str) -> SkillDef | None:
+    """按名称读取 ``data/skills/<name>/SKILL.md`` 并解析为 ``SkillDef``。
+
+    文件不存在或解析失败时返回 None。
+    """
+    try:
+        text = get_skill_file(name)
+    except FileNotFoundError:
+        return None
+    parsed = _parse_frontmatter(text)
+    if parsed is None:
+        return SkillDef(name=name, content=text)
+    meta, body = parsed
+    try:
+        return SkillDef(
+            name=str(meta.get("name", name)),
+            description=str(meta.get("description", "")),
+            trigger=str(meta.get("trigger", "")),
+            tools=_tools_from_meta(meta.get("tools")),
+            content=body,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _parse_skill_tag(message: str) -> tuple[str, str | None]:
     """解析用户消息中的所有 ``@skill:<name>`` 标记。
 
@@ -74,11 +100,10 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
     if not matches:
         return (message, None)
 
-    skills = get_skills()
     skill_content: str | None = None
     for match in matches:
         skill_name = match.group(1)
-        skill = next((s for s in skills if s.name == skill_name), None)
+        skill = _load_skill_def(skill_name)
         if skill is not None:
             content = skill.content
             if len(content) > _SKILL_CONTENT_MAX:

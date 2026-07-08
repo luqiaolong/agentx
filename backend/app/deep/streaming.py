@@ -80,14 +80,29 @@ async def _stream_agent_events(
             raise asyncio.CancelledError("aborted")
         messages = state.get("messages", []) if hasattr(state, "get") else []
         if not messages:
+            logger.debug("stream_agent_events: empty messages, skipping")
             continue
         last_msg = messages[-1]
+        msg_type = type(last_msg).__name__
+        logger.debug(
+            "stream_agent_events: msg_type={msg_type} msg_count={msg_count} source={source}",
+            msg_type=msg_type,
+            msg_count=len(messages),
+            source=source,
+        )
 
         if isinstance(last_msg, ToolMessage):
             # 工具执行完成 → tool_result SSE + todo_update（任务级进度）
             tool_name = getattr(last_msg, "name", "") or ""
             tool_call_id = getattr(last_msg, "tool_call_id", "") or str(uuid4())
             content = getattr(last_msg, "content", "")
+            logger.debug(
+                "stream_agent_events: ToolMessage name={tool_name} tool_call_id={tool_call_id} content_len={content_len} source={source}",
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                content_len=len(content) if isinstance(content, str) else 0,
+                source=source,
+            )
             if isinstance(content, list):
                 content = "".join(
                     block if isinstance(block, str)

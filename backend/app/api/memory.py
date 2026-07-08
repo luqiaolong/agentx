@@ -72,7 +72,7 @@ def register_memory_routes(app: FastAPI) -> None:
 
     @app.post("/api/memory/skills")
     async def memory_skills_save(req: SkillSaveRequest) -> dict[str, Any]:
-        """新建/覆盖技能文件，触发 ``reload_skills``。"""
+        """新建/覆盖技能文件。"""
         try:
             save_skill_file(req.name, req.content)
         except (SkillNameInvalid, SkillPathEscape) as exc:
@@ -81,7 +81,7 @@ def register_memory_routes(app: FastAPI) -> None:
 
     @app.delete("/api/memory/skills/{name}")
     async def memory_skills_delete(name: str) -> dict[str, Any]:
-        """删除技能文件，触发 ``reload_skills``。"""
+        """删除技能文件。"""
         try:
             deleted = delete_skill_file(name)
         except (SkillNameInvalid, SkillPathEscape) as exc:
