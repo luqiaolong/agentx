@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installApiMock } from "./api-mock";
 
 // vitest jsdom 的 localStorage 在该环境下 setItem 不可用（--localstorage-file 路径无效），
 // 而 zustand persist 会在 store 模块导入时即捕获 storage，故在导入 store 之前替换为内存版。
@@ -35,6 +36,14 @@ function deriveContent(parts: MessagePart[] | undefined): string {
     .map((p) => p.text)
     .join("");
 }
+
+// 文件级默认 mock：sandbox.authorize / revoke 成功，供 moveSessionToWorkspace 等隐式授权调用使用。
+installApiMock({
+  sandbox: {
+    authorize: vi.fn().mockResolvedValue(undefined),
+    revoke: vi.fn().mockResolvedValue(undefined),
+  },
+});
 
 // useChatStore 是模块级单例（带 persist），每个用例前重置内存状态
 beforeEach(() => {

@@ -37,6 +37,15 @@ function deriveContent(parts: MessagePart[] | undefined): string {
     .join("");
 }
 
+// 文件级默认 mock：sandbox.authorize / revoke 成功，供未单独装 mock 的 describe 块使用。
+// 第 879 行的"沙箱授权逻辑"describe 有自己的 beforeEach 装 spy mock，会覆盖此处。
+installApiMock({
+  sandbox: {
+    authorize: vi.fn().mockResolvedValue(undefined),
+    revoke: vi.fn().mockResolvedValue(undefined),
+  },
+});
+
 // useChatStore 是模块级单例（带 persist），每个用例前重置内存状态
 beforeEach(() => {
   useChatStore.setState({
@@ -877,8 +886,9 @@ describe("chat store 持久化迁移 v3→v4", () => {
 // ============================================================
 
 describe("chat store 沙箱授权逻辑（manuallyRevokedPaths）", () => {
-  // createSession / moveSessionToWorkspace 用 optional chaining 调 authorize（失败静默）
-  // revokeAndMark / authorizeAndUnmark 用 await 直接调（需 mock 返回 Promise）
+  // createSession 用 await + catch 静默（失败不阻塞创建）
+  // moveSessionToWorkspace 用 await + catch 回滚 + throw（失败回滚旧路径，通知调用方）
+  // revokeAndMark / authorizeAndUnmark 用 await 直接调（失败 throw，需 mock 返回 Promise）
   let authorizeMock: ReturnType<typeof vi.fn>;
   let revokeMock: ReturnType<typeof vi.fn>;
 
