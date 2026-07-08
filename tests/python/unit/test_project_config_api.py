@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -29,14 +29,14 @@ def client(app: FastAPI) -> TestClient:
 def authorized_client(client: TestClient) -> TestClient:
     """mock 沙箱授权通过的 client。
 
-    patch ``app.utils.security.get_sandbox`` 返回的 sandbox 的 ``check_read``
+    patch ``app.sandbox.get_sandbox`` 返回的 sandbox 的 ``check_read``
     不抛异常，模拟路径已授权。
     """
-    with patch("app.utils.security.get_sandbox") as mock_get_sandbox:
+    with patch("app.sandbox.get_sandbox") as mock_get_sandbox:
         mock_sandbox = mock_get_sandbox.return_value
         # 默认 check_read / check_write 通过（不抛异常）
-        mock_sandbox.check_read.return_value = None
-        mock_sandbox.check_write.return_value = None
+        mock_sandbox.check_read = AsyncMock(return_value=None)
+        mock_sandbox.check_write = AsyncMock(return_value=None)
         yield client
 
 
@@ -156,9 +156,9 @@ class TestProjectConfigInit:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         """未授权路径应返回 400（沙箱校验失败）。"""
-        with patch("app.utils.security.get_sandbox") as mock_get_sandbox:
+        with patch("app.sandbox.get_sandbox") as mock_get_sandbox:
             mock_sandbox = mock_get_sandbox.return_value
-            mock_sandbox.check_read.side_effect = Exception("PathNotAuthorized")
+            mock_sandbox.check_read = AsyncMock(side_effect=Exception("PathNotAuthorized"))
             response = client.post(
                 "/api/project-config/init",
                 json={"path": str(tmp_path), "thread_id": _TEST_THREAD_ID},
@@ -228,9 +228,9 @@ class TestProjectConfigGet:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         """未授权路径应返回 400（沙箱校验失败）。"""
-        with patch("app.utils.security.get_sandbox") as mock_get_sandbox:
+        with patch("app.sandbox.get_sandbox") as mock_get_sandbox:
             mock_sandbox = mock_get_sandbox.return_value
-            mock_sandbox.check_read.side_effect = Exception("PathNotAuthorized")
+            mock_sandbox.check_read = AsyncMock(side_effect=Exception("PathNotAuthorized"))
             response = client.get(
                 "/api/project-config",
                 params={"path": str(tmp_path), "thread_id": _TEST_THREAD_ID},

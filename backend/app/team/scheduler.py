@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from app.security.approval import get_abort_event
 from app.config import get_settings
+from app.observability.logger import logger
 from app.utils.sse_events import make_team_event
 from app.utils.text import extract_chunk_text
 from app.team.aggregator import _build_summary
@@ -92,7 +93,7 @@ async def _run_subtask(
 
     abort_event = await get_abort_event(thread_id)
 
-    def _inherit_workspace(child_thread_id: str) -> None:
+    async def _inherit_workspace(child_thread_id: str) -> None:
         """将主 thread_id 的 workspace 授权继承到子任务 thread_id。
 
         子任务使用独立 thread_id（如 ``{thread_id}-team-code-{idx}``），
@@ -102,11 +103,11 @@ async def _run_subtask(
         """
         if not workspace_path:
             return
-        from app.utils.security import get_sandbox
+        from app.sandbox import get_sandbox
 
         sandbox = get_sandbox()
         try:
-            sandbox.authorize(child_thread_id, workspace_path, writable=True, source="team_inherit")
+            await sandbox.authorize(child_thread_id, workspace_path, writable=True, source="team_inherit")
         except ValueError as exc:  # noqa: BLE001
             logger.warning(
                 "team subtask workspace inherit failed",
@@ -119,7 +120,7 @@ async def _run_subtask(
         # deep 子任务使用独立 thread_id，避免并行 deep 子任务共享 checkpoint
         # 与 _pending_approvals 审批流冲突
         deep_thread_id = f"{thread_id}-team-deep-{task_index}"
-        _inherit_workspace(deep_thread_id)
+        await _inherit_workspace(deep_thread_id)
         deep_state: RouterState = {
             "thread_id": deep_thread_id,
             "messages": [{"role": "user", "content": input_text}],
@@ -164,7 +165,7 @@ async def _run_subtask(
         # code 子任务映射到 coding Expert（场景化架构）
         # coding Expert 使用独立 thread_id，避免并行子任务共享 checkpoint
         code_thread_id = f"{thread_id}-team-code-{task_index}"
-        _inherit_workspace(code_thread_id)
+        await _inherit_workspace(code_thread_id)
         try:
             async for event in orchestrator.run_coding_expert(
                 input_text,
@@ -243,7 +244,7 @@ async def _run_subtask(
         else:
             # 无专属配置时降级到 coding Expert
             fallback_thread_id = f"{thread_id}-team-fallback-{task_index}"
-            _inherit_workspace(fallback_thread_id)
+            await _inherit_workspace(fallback_thread_id)
             try:
                 async for event in orchestrator.run_coding_expert(
                     input_text,

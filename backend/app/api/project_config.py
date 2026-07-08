@@ -26,7 +26,7 @@ from app.project_config.loader import load_project_config
 def _is_critical_path(resolved: Path) -> bool:
     """路径是否为系统关键目录、其祖先或其后代（双向检查）。
 
-    复用 ``app.utils.security._critical_dirs`` + ``_is_under`` 实现，
+    复用 ``app.sandbox.CRITICAL_DIRS`` + ``is_under`` 实现，
     逻辑与 ``SessionSandbox._is_critical`` 一致：
 
     - 系统目录（``C:/Windows`` 等）：拒绝 resolved 是 crit 本身、其祖先
@@ -34,22 +34,22 @@ def _is_critical_path(resolved: Path) -> bool:
     - 用户主目录：仅拒绝 resolved 是 home 本身或其祖先（如 ``C:/Users``），
       不拒绝 home 的子目录（用户可在 ``C:/Users/me/Projects`` 生成 .agentx）
     """
-    from app.utils.security import _critical_dirs, _is_under
+    from app.sandbox import CRITICAL_DIRS, is_under
 
     home = Path.home().resolve()
-    for crit in _critical_dirs():
+    for crit in CRITICAL_DIRS:
         if crit == home:
             # home：仅拒绝授权 home 本身或其上级
-            if _is_under(crit, resolved):
+            if is_under(crit, resolved):
                 return True
             continue
         # 系统目录：双向拒绝（祖先与后代均不可）
-        if _is_under(resolved, crit) or _is_under(crit, resolved):
+        if is_under(resolved, crit) or is_under(crit, resolved):
             return True
     return False
 
 
-def _validate_workspace_path(path_str: str, thread_id: str) -> Path:
+async def _validate_workspace_path(path_str: str, thread_id: str) -> Path:
     """校验工作区路径：非空 + 非系统关键目录 + 沙箱授权 + 存在 + 是目录。
 
     Args:
@@ -79,11 +79,11 @@ def _validate_workspace_path(path_str: str, thread_id: str) -> Path:
         )
 
     # 沙箱授权校验：路径必须在已授权范围内（防止未授权目录被读写）
-    from app.utils.security import get_sandbox
+    from app.sandbox import get_sandbox
 
     sandbox = get_sandbox()
     try:
-        sandbox.check_read(thread_id, path)
+        await sandbox.check_read(thread_id, path)
     except Exception as exc:  # noqa: BLE001 — 沙箱校验失败统一报 400
         raise HTTPException(
             status_code=400,
@@ -108,7 +108,7 @@ def register_project_config_routes(app: FastAPI) -> None:
         已存在的文件不被覆盖，仅创建缺失文件。
         路径必须先通过沙箱授权（``POST /api/sandbox/authorize``）。
         """
-        path = _validate_workspace_path(req.path, req.thread_id)
+        path = await _validate_workspace_path(req.path, req.thread_id)
         try:
             result = generate_agentx_dir(path)
         except (FileNotFoundError, NotADirectoryError) as exc:
@@ -133,7 +133,7 @@ def register_project_config_routes(app: FastAPI) -> None:
 
         路径必须先通过沙箱授权。
         """
-        ws_path = _validate_workspace_path(path, thread_id)
+        ws_path = await _validate_workspace_path(path, thread_id)
         config = load_project_config(ws_path)
 
         if not config.exists:
