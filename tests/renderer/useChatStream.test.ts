@@ -53,6 +53,16 @@ const chatMock = vi.hoisted(() => {
 
 vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
 
+// Mock projectConfig API：useChatStream 的 done 事件分支会调 ensureAgentxGenerated，
+// 后者会触发 getProjectConfig / initProjectConfig。默认短路（exists=true），
+// 测试只验证 ensureAgentxGenerated 确实被调用（通过 getProjectConfig 间接断言）。
+const projectConfigMock = vi.hoisted(() => ({
+  initProjectConfig: vi.fn(),
+  getProjectConfig: vi.fn(),
+}));
+
+vi.mock("@/lib/api/projectConfig", () => projectConfigMock);
+
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatStore, type MessagePart } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
@@ -73,6 +83,8 @@ const emitApproval = (req: unknown) => chatMock.approvalHandlers.forEach((h) => 
 
 beforeEach(() => {
   resetChatMock(chatMock);
+  projectConfigMock.initProjectConfig.mockReset().mockResolvedValue({ ok: true, path: "", created: [], skipped: [] });
+  projectConfigMock.getProjectConfig.mockReset().mockResolvedValue({ exists: true, files: [], agents_md_preview: null });
   useChatStore.setState({
     sessions: {},
     currentId: null,
@@ -149,6 +161,31 @@ describe("useChatStream hook", () => {
       emitEvent({ type: "done", data: {} });
     });
     expect(useChatStore.getState().isStreaming).toBe(false);
+  });
+
+  it("done 事件触发 ensureAgentxGenerated(activeTid)", async () => {
+    // 用 workspacePath 创建一个会话，让 ensureAgentxGenerated 真正进入第二层
+    const id = await useChatStore.getState().createSession("/ws/proj");
+
+    renderHook(() =>
+      useChatStream({
+        activeThreadIdRef: { current: id },
+        pendingIdRef: { current: null },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    await act(async () => {
+      emitEvent({ type: "done", data: {} });
+      // 让 getProjectConfig (mocked async) 跑完 microtask
+      await Promise.resolve();
+    });
+
+    // getProjectConfig 必被调用（证明 ensureAgentxGenerated 进入第二层防护）
+    expect(projectConfigMock.getProjectConfig).toHaveBeenCalledWith("/ws/proj", id);
   });
 
   it("error 事件写入 errorMsg + 标记任务失败", async () => {
