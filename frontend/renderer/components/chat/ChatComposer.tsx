@@ -26,6 +26,8 @@ import { PermissionToggle } from "./PermissionToggle";
 import { ModelToggle } from "./ModelToggle";
 import { ModeToggle } from "./ModeToggle";
 import { openFile, openFolder, saveDroppedFile } from "@/lib/api/dialog";
+import { initProjectConfig } from "@/lib/api/projectConfig";
+import { logger } from "@/lib/logger";
 
 /**
  * 输入区 + 拖拽 + 命令面板（内置命令 + 技能）+ @mention 委派面板。
@@ -407,8 +409,14 @@ export function ChatComposer({
       );
       return;
     }
-    // .agentx/ 的初始化已迁移到「首条对话完成后」由 useChatStream.done 事件
-    // 触发 ensureAgentxGenerated(tid) 处理；此处不再同步生成，避免阻塞工作区绑定。
+    // best-effort：授权成功后静默生成 .agentx/ 项目级配置目录。
+    // 失败不阻塞工作区绑定，仅记录告警。
+    // tid 来自上方 createSession / currentId，必为非空 string。
+    try {
+      await initProjectConfig(dirPath, tid!);
+    } catch (err) {
+      logger.warn("initProjectConfig failed", err);
+    }
   };
 
   // 移除/切换 workspace chip：把当前会话迁回 Home（workspacePath=null）
