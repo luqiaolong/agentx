@@ -59,31 +59,12 @@ _DEFAULT_BLOCKLIST: frozenset[str] = frozenset(
     }
 )
 
-# 禁止出现在命令参数中的 shell 元字符与子 shell 序列
-_FORBIDDEN_ARG_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"[;&|`$]"),
-    re.compile(r"\$\("),
-    re.compile(r"`"),
-    re.compile(r"[<>]"),
-    re.compile(r"\|\|"),
-    re.compile(r"&&"),
-]
+# 禁止出现在命令参数中的 shell 元字符（一条正则覆盖所有危险字符）
+_FORBIDDEN_ARG_PATTERN: re.Pattern[str] = re.compile(r"[;&|`$<>]")
 
-# 系统关键目录关键字（最后防线）
-_CRITICAL_DIR_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"^/proc", re.I),
-    re.compile(r"^/sys", re.I),
-    re.compile(r"^/dev", re.I),
-    re.compile(r"^/etc$", re.I),
-    re.compile(r"^/usr/etc$", re.I),
-    re.compile(r"^/bin$", re.I),
-    re.compile(r"^/sbin$", re.I),
-    re.compile(r"^/lib", re.I),
-    re.compile(r"^/usr/lib", re.I),
-    re.compile(r"^/boot", re.I),
-    re.compile(r"^C:\\\\Windows", re.I),
-    re.compile(r"^C:\\\\Program\s+Files", re.I),
-]
+# 系统关键目录校验委托给 SessionSandbox._is_critical()（与 security.py 统一），
+# 不再维护第二套正则模式——此前 cli.py 的 Windows 正则 `^C:\\\\Windows` 因
+# 反斜杠转义错误（匹配 2 个字面反斜杠，实际路径只有 1 个）导致形同虚设。
 
 
 def _effective_blocklist() -> frozenset[str]:
@@ -102,13 +83,12 @@ def _is_command_blocked(command: str) -> bool:
 
 def _has_forbidden_chars(value: str) -> bool:
     """检查字符串是否包含 shell 元字符。"""
-    return any(p.search(value) for p in _FORBIDDEN_ARG_PATTERNS)
+    return bool(_FORBIDDEN_ARG_PATTERN.search(value))
 
 
 def _is_critical_dir(path: Path) -> bool:
-    """路径是否匹配系统关键目录模式。"""
-    s = str(path)
-    return any(p.search(s) for p in _CRITICAL_DIR_PATTERNS)
+    """路径是否为系统关键目录。委托给 SessionSandbox._is_critical() 统一实现。"""
+    return get_sandbox()._is_critical(path)
 
 
 def _resolve_cwd(cwd: str | None, workspace_path: str | None = None) -> Path:
