@@ -75,25 +75,16 @@ Orchestrator 把任务拆分成子任务计划（`team_plan` 事件），`schedu
 流控制端点（[api/chat.py](file:///d:/java/agentprojects/agentx/backend/app/api/chat.py)）：
 `POST /api/chat/{approve,abort,pause,resume,compact}`。
 
-### SSE 事件契约
+## 本应用支持的功能
 
-事件 discriminated union 定义见
-[shared/api-types.ts::ChatEvent](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts)，
-后端构造器 [utils/sse_events.py](file:///d:/java/agentprojects/agentx/backend/app/utils/sse_events.py)，
-后端流式分发 [api/chat.py::_event_generator](file:///d:/java/agentprojects/agentx/backend/app/api/chat.py)，
-**CLI 渲染** [cli_render.py](file:///d:/java/agentprojects/agentx/backend/app/cli_render.py)，
-前端解析 [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts)。
+- **双端入口**：[Tauri 桌面 GUI](#) + [终端 CLI `agentx`](#)，同一份 Tauri store 配置互用
+- **场景化多智能体架构**：Work Supervisor（全能）+ Coding Expert（专家）+ Coding Team（多代理协作）+ Subagent（rag / web / 自定义）
+- **`agent_mode` 单字段三态**：`work` / `coding` / `coding_team`，Router 按场景直接分发，不再做消息分类
+- **人在回路审批**：危险工具 + 目录越界扩展双类型审批，决策 `approve` / `once` / `session` / `deny`；支持 GUI 弹窗 + 终端阻塞输入
+- **长期记忆**：LangGraph `SqliteSaver` 会话检查点 + 技能（消息中 `@skill:<name>` 注入）+ 用户画像持久化
+- **工具与扩展**：14 项内置工具（filesystem 读写 + grep + glob + web_search + rag_retrieve + git_* + cli_execute）+ RAG 检索（Milvus + TEI BGE-M3）+ MCP 协议（stdio / sse / streamable_http）+ 自定义子代理
+- **流式响应**：FastAPI `StreamingResponse` + LangChain `astream_events`，实时回传 token / reasoning / tool_call / tool_result / delegation / approval_request / plan / team_* 等事件
+- **观测**：LangSmith trace + Langfuse + loguru 结构化日志
+- **配置热更新**：Tauri store 持久化 + LRU 缓存清除，配置变更即时生效（无需重启后端）
+- **Coding Team 多代理协作**：Orchestrator 拆解 + 并行 Expert（frontend_dev / backend_dev / tester / architect / devops / ui_designer / product_manager）+ Blackboard + Aggregator
 
-主要事件：`token` / `reasoning` / `tool_call` / `tool_result` / `delegation` /
-`todo_update` / `plan` / `plan_update` / `approval_request` / `paused` /
-`team_plan` / `team_progress` / `team_result` / `team_done` / `done` / `error`。
-
-`source` 字段标识：`work` / `coding` / `rag` / `web`。
-
-修改任一事件类型或字段名，**必须**同步更新以下五处：
-
-- [api/chat.py](file:///d:/java/agentprojects/agentx/backend/app/api/chat.py)（事件 yield）
-- [utils/sse_events.py](file:///d:/java/agentprojects/agentx/backend/app/utils/sse_events.py)（构造器）
-- [cli_render.py](file:///d:/java/agentprojects/agentx/backend/app/cli_render.py)（**CLI 渲染**）
-- [shared/api-types.ts](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts)（类型契约）
-- [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts)（前端解析）
