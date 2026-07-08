@@ -218,9 +218,8 @@ agentx/
 │   ├── main.py                 ← FastAPI 入口（lifespan + app + 中间件 + register_routes）
 │   ├── llm.py                  ← ChatModel 单例
 │   ├── api/                    ← REST + SSE 端点（按职责拆分，register_*_routes 注册）
-│   │   ├── schemas.py          ← 15 个 Pydantic 请求/响应模型
+│   │   ├── schemas.py          ← Pydantic 请求/响应模型
 │   │   ├── health.py           ← / + /api/health
-│   │   ├── sandbox.py          ← 沙箱授权 CRUD
 │   │   ├── chat.py             ← /api/chat + approve + abort + compact + _event_generator
 │   │   ├── memory.py           ← skills/profile/checkpointer CRUD
 │   │   ├── mcp.py              ← MCP servers/tools/test/refresh
@@ -229,9 +228,21 @@ agentx/
 │   │   ├── config_reload.py    ← 配置热重载
 │   │   ├── models_test.py      ← 模型连通性测试
 │   │   └── __init__.py         ← register_routes(app) 聚合
-│   ├── approval/               ← 审批状态解耦（消除 deep → main 反射）
-│   │   ├── decision.py         ← ApprovalDecision dataclass
-│   │   ├── state.py            ← submit/pop_approval + set/is/clear_abort
+│   ├── sandbox/                ← 沙箱路径授权（与 security/ 平行，独立包）
+│   │   ├── path_guard.py       ← 路径归一化 + 关键目录保护（Linux Path('/') bug 已修复）
+│   │   ├── store.py            ← SQLite WAL + busy_timeout 持久化
+│   │   ├── session_sandbox.py  ← SessionSandbox (async + asyncio.Lock + DB-first + parent_thread_id)
+│   │   ├── schemas.py          ← AuthorizeRequest / RevokeRequest
+│   │   ├── api.py              ← /api/sandbox/* 路由 + 审计日志
+│   │   └── __init__.py         ← 聚合导出
+│   ├── security/               ← 安全策略与审批（与 sandbox/ 平行，独立包）
+│   │   ├── approval/           ← 审批决策与状态
+│   │   │   ├── decision.py     ← ApprovalDecision(str, Enum) + ApprovalResult.approved property
+│   │   │   ├── state.py        ← TTL reaper + wait_for_resume/wait_for_abort 原子原语
+│   │   │   └── __init__.py     ← 聚合导出
+│   │   ├── dangerous_tools.py  ← DANGEROUS_TOOLS + FORBIDDEN_SUBAGENT_TOOLS (frozenset)
+│   │   ├── command_filter.py   ← DEFAULT_BLOCKLIST + redact_args (cli_execute 脱敏)
+│   │   ├── approval_flow.py    ← run_approval_loop 公共审批循环 (work/coding 统一)
 │   │   └── __init__.py         ← 聚合导出
 │   ├── config/                 ← pydantic-settings 包（替代单文件 config.py）
 │   │   ├── settings.py         ← Settings + get_settings + 路径常量
@@ -249,9 +260,8 @@ agentx/
 │   ├── deep/                   ← 路径 C：DeepAgent + interrupt_before 审批
 │   │   ├── __init__.py
 │   │   ├── agent.py            ← run_deep_path / build_deep_agent（主入口，~200 行）
-│   │   ├── tools.py            ← _make_deep_tools + _load_mcp_tools + DANGEROUS_TOOLS
+│   │   ├── tools.py            ← _make_deep_tools + _load_mcp_tools
 │   │   ├── streaming.py        ← _stream_agent_events
-│   │   ├── approval.py         ← _await_approval + wait_for_approval + _make_approval_event
 │   │   └── recovery.py         ← _inject_tool_error_messages + _sanitize_message_history
 │   ├── team/                   ← 路径 D：AgentTeam 多代理协作
 │   │   ├── __init__.py
@@ -268,19 +278,18 @@ agentx/
 │   │   ├── custom_agent.py     ← 自定义子代理工厂
 │   │   └── dispatch.py         ← run_tool_path（路径 B）+ select_subagent + 事件转换
 │   ├── tools/                  ← filesystem + rag_retrieve
-│   ├── memory/                 ← skills / profile / checkpointer / sandbox
+│   ├── memory/                 ← skills / profile / checkpointer
 │   │   ├── profile_extractor.py ← LLM 画像抽取（extract_profile_via_llm）
 │   │   ├── profile_store.py    ← 画像存储（upsert_from_llm / build_profile_prompt）
 │   │   ├── skills_loader.py    ← 技能加载
 │   │   ├── skills_store.py     ← 技能存储
 │   │   ├── checkpointer.py     ← LangGraph checkpointer
-│   │   ├── context.py          ← 消息截断（trim_messages_with_budget）
-│   │   └── sandbox_store.py    ← 授权目录存储
+│   │   └── context.py          ← 消息截断（trim_messages_with_budget）
 │   ├── vectorstore/            ← Milvus 客户端
 │   ├── embedding/              ← TEI 客户端
 │   ├── mcp/                    ← MCP 客户端 + 配置
 │   ├── observability/          ← LangSmith + logger
-│   └── utils/                  ← security(沙箱) + text(ThinkFilter) + chunks + sse_events + prompts + paths
+│   └── utils/                  ← text(ThinkFilter) + chunks + sse_events + prompts + paths
 ├── frontend/
 │   ├── renderer/               ← React UI（chat/settings/workspace 组件）
 │   │   ├── lib/
@@ -470,25 +479,34 @@ agentx/
 
 ### 14.3 沙箱与安全
 
-- 文件操作走 [app/utils/security.py::get_sandbox](file:///d:/java/agentprojects/agentx/backend/app/utils/security.py)，
-  未授权目录 → `PathNotAuthorized`。
-- 沙箱授权目录通过 `POST /api/sandbox/authorize` 显式开启（renderer 直连 HTTP，
-  **不**走 Tauri invoke）。
+> 2026-07-08 重构：沙箱与安全代码从 `utils/security.py` / `approval/` / `memory/sandbox_store.py` / `deep/approval.py` / `api/sandbox.py` 抽取为独立的 [sandbox/](file:///d:/java/agentprojects/agentx/backend/app/sandbox/) + [security/](file:///d:/java/agentprojects/agentx/backend/app/security/) 两个顶级包，与 `deep/` / `team/` / `tools/` 平行。
+
+- **沙箱授权**：文件操作走 [app.sandbox.get_sandbox](file:///d:/java/agentprojects/agentx/backend/app/sandbox/session_sandbox.py)（`SessionSandbox` async + `asyncio.Lock`），未授权目录 → `PathNotAuthorized`。
+- **持久化**：[app.sandbox.store](file:///d:/java/agentprojects/agentx/backend/app/sandbox/store.py) SQLite WAL + `busy_timeout=30000`，并发写不锁。
+- **路径保护**：[app.sandbox.path_guard](file:///d:/java/agentprojects/agentx/backend/app/sandbox/path_guard.py) 归一化 + 关键目录黑名单（修复 Linux `Path('/')` 误判 bug）。
+- **parent_thread_id 继承**：Team 模式子任务继承父 thread 授权（`run_coding_expert(parent_thread_id=thread_id)`）。
+- **审批决策**：[app.security.approval.ApprovalDecision](file:///d:/java/agentprojects/agentx/backend/app/security/approval/decision.py)（`str, Enum`：`approve/once/session/deny`），`ApprovalResult.approved` 为 property。
+- **审批状态**：[app.security.approval.state](file:///d:/java/agentprojects/agentx/backend/app/security/approval/state.py) 模块级 dict + `asyncio.Lock`，5 个 dict value 为 `tuple[T, float]`（TTL timestamp）。
+- **TTL reaper**：`start_reaper()` 后台协程每 5 分钟清理 30 分钟无活动的 thread_id（`main.py` lifespan 启动）。
+- **原子原语**：`wait_for_resume(thread_id, timeout)` / `wait_for_abort(thread_id, timeout)` 消除 "check 后、await 前 clear 已 set event" 竞态。
+- **公共审批循环**：[app.security.approval_flow.run_approval_loop](file:///d:/java/agentprojects/agentx/backend/app/security/approval_flow.py) 统一 work/coding 两场景审批逻辑。
+- **危险工具**：[app.security.dangerous_tools](file:///d:/java/agentprojects/agentx/backend/app/security/dangerous_tools.py) `DANGEROUS_TOOLS` + `FORBIDDEN_SUBAGENT_TOOLS`（`frozenset`，移除已废弃的 `shell_exec`）。
+- **命令过滤**：[app.security.command_filter](file:///d:/java/agentprojects/agentx/backend/app/security/command_filter.py) `DEFAULT_BLOCKLIST` + `redact_args`（`cli_execute` 的 `command`/`arguments` 脱敏）。
+- 沙箱授权目录通过 `POST /api/sandbox/authorize` 显式开启（renderer 直连 HTTP，**不**走 Tauri invoke）。
 - 系统关键目录黑名单（Windows / Unix）在 [src-tauri/src/commands/dialog.rs::save_dropped_file](file:///d:/java/agentprojects/agentx/src-tauri/src/commands/dialog.rs)。
-- `RouterState.authorized_dirs` 随 checkpoint 持久化，实现跨会话恢复。
-- `sandbox_persistence_enabled=False` 时所有双写降级为内存-only（故障注入 / 调试用）。
 - `POST /api/sandbox/revoke` 撤销授权；`GET /api/sandbox/authorized/{thread_id}` 列出已授权目录。
 
 ### 14.4 SSE / 审批流
 
-- 审批状态用模块级 `_pending_approvals: dict[str, ApprovalDecision]` 内存 dict 维护
-  （M2 计划迁移 checkpoint / Redis）。
+- 审批状态用模块级 `_pending_approvals: dict[str, tuple[ApprovalResult, float]]` 内存 dict 维护
+  （带 TTL timestamp，reaper 自动清理）。
 - 自动批准：`AGENTX_AUTO_APPROVE_AFTER_SECONDS > 0` 时倒计时归零自动 approve；
   `= 0` 禁用，等用户操作。
-- `AGENTX_APPROVAL_MAX_WAIT`（默认 300s）控制单次审批最长等待；`0` = 无限等待。
+- `AGENTX_APPROVAL_MAX_WAIT`（默认 300s）控制单次审批最长等待；`0` = 上限 3600s（bug 已修复）。
 - SSE handler 每轮检查 `_abort_flags[thread_id]`，用户中止立即退出循环。
-- 审批类型 `kind`：`dangerous_tool`（写/编辑/shell）| `directory_extension`
+- 审批类型 `kind`：`dangerous_tool`（写/编辑/cli_execute）| `directory_extension`
   （路径越界扩展授权，含 `requestedPath` + `writable`）。
+- `full_trust` 模式跳过 `directory_extension` 预检查；`cli_execute` 始终需审批（workspace 授权仅放行 fs 工具）。
 
 ### 14.5 路径导入循环（已消除）
 
@@ -622,6 +640,8 @@ ErrorBoundary 渲染错误恢复。
 | 新增 Tauri command | [src-tauri/src/commands/](file:///d:/java/agentprojects/agentx/src-tauri/src/commands/) + [lib.rs](file:///d:/java/agentprojects/agentx/src-tauri/src/lib.rs) `invoke_handler!` 注册 + [shared/api-types.ts](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts) 类型同步 |
 | 调整路径实现 | [openspec/2026-07-06-paths-refactor](file:///d:/java/agentprojects/agentx/openspec/changes/2026-07-06-paths-refactor/proposal.md) + §14.5（不要重新引入 paths/ 包） |
 | 调整 AgentTeam | [team/orchestrator.py](file:///d:/java/agentprojects/agentx/backend/app/team/orchestrator.py) + [openspec/2026-07-06-agent-team](file:///d:/java/agentprojects/agentx/openspec/changes/2026-07-06-agent-team/proposal.md) |
+| 调整沙箱/授权 | [backend/app/sandbox/](file:///d:/java/agentprojects/agentx/backend/app/sandbox/) + §14.3 |
+| 调整审批/安全策略 | [backend/app/security/](file:///d:/java/agentprojects/agentx/backend/app/security/) + §14.3 + §14.4 |
 | 写 ADR / 提案 | [openspec/changes/archive/](file:///d:/java/agentprojects/agentx/openspec/changes/archive/) 历史格式参考 |
 | 重启前后端 | §14.7（清理两棵树 → `npm run dev` → 健康验证脚本） |
 
@@ -630,7 +650,7 @@ ErrorBoundary 渲染错误恢复。
 ## 18. 安全红线（违反必拒）
 
 - ❌ **不要**在 `.env` / 代码 / 日志里出现明文 API key / Milvus password。
-- ❌ **不要**把 `write_file` / `edit_file` / `shell_exec` 暴露给路径 B（subagent）或自定义子代理。
+- ❌ **不要**把 `write_file` / `edit_file` / `cli_execute` 暴露给路径 B（subagent）或自定义子代理。
 - ❌ **不要**绕过 `interrupt_before` 审批流让 DeepAgent 直接执行危险工具。
 - ❌ **不要**改 `Settings.env_file=None`（会从 `.env` 读凭证 → 部署 / 打包泄漏）。
 - ❌ **不要**改 SSE 事件契约而不更新 lib/api/chat.ts + useChatStream。
