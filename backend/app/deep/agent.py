@@ -2,39 +2,25 @@
 
 - 用 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建 DeepAgent
 - 工具集: filesystem 全部 + rag_retrieve + web_search
-- ``interrupt_on``：仅危险工具（``DANGEROUS_TOOLS``）触发中断，只读工具自动放行
-- 审批恢复: ``_await_approval`` 轮询 ``app.security.approval``，通过后以
-  ``agent.astream_events(None, config)`` 续跑（LangGraph ``interrupt_on`` 的标准恢复方式）
-- 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer，支持跨轮次历史 + interrupt/resume
-- deepagents 0.6+ ``PatchToolCallsMiddleware`` 在中间件层自动修复悬空 tool_calls，
-  无需自研 ``_inject_tool_error_messages`` / ``_sanitize_message_history``
-- 权限模式：
-  - ``standard``（默认）：危险工具走审批；只读 fs 工具访问未授权目录时弹扩展授权弹窗
-  - ``full_trust``：会话内全量放行，不弹任何审批弹窗（系统关键目录仍拒绝）
-
-模块拆分:
-- ``app.deep.tools``：``DANGEROUS_TOOLS`` / ``_TOOL_NAME_MAP`` / ``_make_deep_tools`` / ``_load_mcp_tools``
-- ``app.deep.streaming``：``_stream_agent_events``
-- ``app.deep.harness``：``create_agent`` / ``build_interrupt_config`` / ``ensure_harness_profile``
-- ``app.security.approval_flow``：``_await_approval`` / ``_make_approval_event`` /
-  ``_handle_directory_extension`` / ``run_approval_loop`` 及辅助函数
-- ``app.deep.recovery``：``_collect_unpaired_tool_call_ids`` / ``_to_serializable``
-  （``_inject_tool_error_messages`` / ``_sanitize_message_history`` 已删除，由
-  ``PatchToolCallsMiddleware`` 替代）
-
-本模块仅保留编排层：``_DEEP_SYSTEM_PROMPT`` / ``build_deep_agent`` / ``run_deep_path`` /
-``_extract_tasks`` / ``_get_pending_tool_calls`` / ``_is_interrupted``。
+- ``interrupt_on``：仅危险工具触发中断，只读工具自动放行
+- 审批恢复统一交给 ``app.deep.execution.run_agent_with_approval``
+- 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer
+- deepagents 0.6+ ``PatchToolCallsMiddleware`` 在中间件层自动修复悬空 tool_calls
 """
 
 from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, AsyncIterator
-from uuid import uuid4
 
 from app.config import get_settings
+from app.deep.execution import (
+    run_agent_with_approval,
+    _get_pending_tool_calls as _get_pending_tool_calls,
+    _is_interrupted as _is_interrupted,
+)
 from app.deep.harness import create_agent
-from app.deep.streaming import _stream_agent_events
+from app.deep.streaming import _stream_agent_events as _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
@@ -45,22 +31,14 @@ from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.security.approval import get_pause_event, is_paused
 from app.security.approval_flow import (
-    _ABSOLUTE_MAX_WAIT,
-    _APPROVAL_POLL_INTERVAL,
-    _await_approval,
-    _extract_paths_from_tool_call,
-    _handle_directory_extension,
-    _make_approval_event,
+    _await_approval as _await_approval,
+    _handle_directory_extension as _handle_directory_extension,
+    _make_approval_event as _make_approval_event,
 )
 from app.utils.prompts import resolve_system_prompt
-from app.utils.sse_events import make_sse_event
 
 if TYPE_CHECKING:
-    # RouterState 仅用于类型注解（``from __future__ import annotations`` 使注解
-    # 在运行时为字符串），延迟到 TYPE_CHECKING 避免运行时循环导入。
-    # 场景化架构下 graph.py 不再 import run_deep_path，但 team/scheduler.py 仍调用。
     from langchain_core.language_models import BaseChatModel
 
     from app.router.state import RouterState
@@ -74,7 +52,7 @@ _DEEP_SYSTEM_PROMPT = (
     "每完成一步更新对应 todo 的状态为 completed。"
 )
 
-# T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
+# T10：异步画像抽取任务引用集合，防止被 GC 回收
 _extract_tasks: set[asyncio.Task] = set()
 
 
@@ -86,7 +64,7 @@ __all__ = [
 
 
 def _workspace_prompt_suffix(workspace_path: str | None) -> str:
-    """根据工作区路径生成 system prompt 后缀，提示 LLM 使用当前工作目录。"""
+    """根据工作区路径生成 system prompt 后缀。"""
     if not workspace_path:
         return ""
     return (
@@ -106,27 +84,10 @@ async def build_deep_agent(
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    rubric: str | None = None,
+    subagents: list | None = None,
 ) -> Any:
-    """构造真实 DeepAgent 图。
-
-    用 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent``，
-    通过 ``interrupt_on`` 配置仅危险工具中断（只读工具自动放行）。使用共享的
-    ``AsyncSqliteSaver`` 作为 checkpointer，支持跨轮次历史恢复与 interrupt/resume 循环。
-
-    Args:
-        thread_id: 会话 ID（用于工具的沙箱授权绑定）。
-        tools: 可选，已构建的工具列表。若未传则内部调用 ``_make_deep_tools(thread_id)``。
-            ``run_deep_path`` 可先构建工具集，复用于 dangerous 判断。
-        profile_prompt: 可选，用户画像前缀，拼到 ``_DEEP_SYSTEM_PROMPT`` 前。
-        checkpointer: 可选，共享的 LangGraph checkpointer。若未传则用
-            ``await get_async_checkpointer()`` 获取全局 ``AsyncSqliteSaver`` 单例。
-        scene_prompt: 可选场景 prompt，非空时覆盖 ``_DEEP_SYSTEM_PROMPT``。
-        workspace_path: 可选当前工作区绝对路径，注入到 system prompt 并作为 cli_execute 默认 cwd。
-        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；None 时调用 ``get_chat_model()`` 获取真实 LLM。
-
-    Returns:
-        编译后的 CompiledStateGraph 实例。
-    """
+    """构造真实 DeepAgent 图。"""
     if chat_model is not None:
         model = chat_model
     else:
@@ -134,10 +95,7 @@ async def build_deep_agent(
     if tools is None:
         tools = _make_deep_tools(thread_id)
     if checkpointer is None:
-        # MUST await：get_async_checkpointer 是 async def，不 await 会传入 coroutine
-        # 导致 create_agent 报 "Invalid checkpointer ... Received coroutine"
         checkpointer = await get_async_checkpointer()
-    # T9：画像前缀拼到最前；scene_prompt 覆盖 _DEEP_SYSTEM_PROMPT（场景切换器注入）
     base_prompt = resolve_system_prompt(
         default=_DEEP_SYSTEM_PROMPT,
         scene_prompt=scene_prompt,
@@ -151,64 +109,9 @@ async def build_deep_agent(
         checkpointer=checkpointer,
         thread_id=thread_id,
         workspace_path=workspace_path,
+        rubric=rubric,
+        subagents=subagents,
     )
-
-
-async def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
-    """从 agent 状态中提取待执行的工具调用列表。
-
-    当图在 ``interrupt_on`` 处暂停时，最后一条消息是 AIMessage，
-    其 ``tool_calls`` 属性包含待执行的工具调用。
-
-    MUST 使用 ``aget_state``（异步接口）：agent 的 checkpointer 是
-    ``AsyncSqliteSaver``，在主线程同步调用 ``get_state`` 会抛
-    "Synchronous calls to AsyncSqliteSaver are only allowed from a different thread"
-    （截图 bug 根因）。同步 ``get_state`` 在主线程会阻塞事件循环；切换到
-    ``aget_state`` 走 aiosqlite 异步通道，避免该异常并与其他 SSE 异步逻辑一致。
-    """
-    state = await agent.aget_state(config)
-    if not state or not state.values:
-        return []
-    messages = state.values.get("messages", [])
-    if not messages:
-        return []
-    last_msg = messages[-1]
-    tool_calls = getattr(last_msg, "tool_calls", None) or []
-    return list(tool_calls)
-
-
-async def _is_interrupted(agent: Any, config: dict) -> bool:
-    """检查 agent 是否在 interrupt 处暂停（next 含 "tools"）。
-
-    MUST 使用 ``aget_state``（异步接口）——见 ``_get_pending_tool_calls`` 注释。
-    """
-    state = await agent.aget_state(config)
-    if not state or not state.next:
-        return False
-    return "tools" in state.next
-
-
-async def _inject_tool_error_for_call(
-    agent: Any, config: dict, tool_call: dict, error_text: str
-) -> None:
-    """为单个 tool_call 注入 ToolMessage 错误。
-
-    用于危险工具审批被拒绝时，避免 checkpoint 中残留未配对的 tool_call
-    导致后续 ``INVALID_CHAT_HISTORY`` 校验失败。
-    """
-    from langchain_core.messages import ToolMessage
-
-    tc_id = tool_call.get("id") or str(uuid4())
-    tool_msg = ToolMessage(content=error_text, tool_call_id=tc_id)
-    try:
-        await agent.aupdate_state(config, {"messages": [tool_msg]})
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "inject_tool_error_for_call failed",
-            thread_id=config.get("configurable", {}).get("thread_id", ""),
-            tool=tool_call.get("name"),
-            error=str(exc),
-        )
 
 
 async def run_deep_path(
@@ -222,57 +125,21 @@ async def run_deep_path(
     parent_thread_id: str | None = None,
     chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict]:
-    """DeepAgent 路径 SSE 生成器（真实实现）。
-
-    流程:
-    1. 构建 DeepAgent（含 ``interrupt_on`` 危险工具中断）
-    2. 若 ``permission_mode == "full_trust"``：``sandbox.set_full_trust(thread_id, True)``
-    3. ``astream_events`` 驱动图执行，流式产出 token / todo_update 事件
-    4. 流结束后检查是否在 tools 前中断
-    5. 若中断：按权限模式处理待执行工具
-       - full_trust：直接放行所有工具（包括危险工具）
-       - standard：
-         - 危险工具 → yield approval_request(kind=dangerous_tool) → 等待审批
-         - 只读 fs 工具访问未授权目录 → yield approval_request(kind=directory_extension)
-           → 等待决策（once/session/deny）
-         - 其他 → 自动放行
-    6. 恢复后继续流式，循环直至图完成（``state.next`` 为空）
-    7. 清理：``sandbox.set_full_trust(thread_id, False)`` + ``sandbox.clear_temp(thread_id)``
-    8. T10：若 ``profile_auto_extract`` 开启，异步调 LLM 抽取画像并写入 profile.json
-
-    Args:
-        state: Router 状态（含 thread_id）。
-        message: 用户消息。
-        profile_prompt: 用户画像前缀，拼到 DeepAgent system prompt 前。
-        history: 历史 messages 列表（已截断），拼到 inputs 前。
-        permission_mode: 权限模式，"workspace"（默认，仅当前工作区）或 "full_trust"。
-        scene_prompt: 可选场景 prompt，透传给 build_deep_agent。
-        workspace_path: 可选当前工作区绝对路径，注入 system prompt 并作为 cli_execute 默认 cwd。
-        chat_model: 可选注入的 ChatModel，透传到 ``build_deep_agent``。None 时使用真实 LLM。
-
-    Yields:
-        SSE 事件 dict: {event: str, data: str}
-    """
+    """DeepAgent 路径 SSE 生成器。"""
     thread_id = state.get("thread_id", "")
     config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
     sandbox = get_sandbox()
     is_full_trust = permission_mode == "full_trust"
 
-    # full_trust 模式：设置 sandbox 标志，fs 工具自动放行
     if is_full_trust:
         await sandbox.set_full_trust(thread_id, True)
         logger.info("deep agent full_trust mode enabled", thread_id=thread_id)
 
-    # 构建完整 inputs：history + 当前消息
-    # history 已是 BaseMessage 列表，create_deep_agent 的 messages channel 接受 BaseMessage
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
 
-    # 1. 构建 agent（先构建工具集，便于计算运行时 dangerous 集合）
     try:
         agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-        # 异步加载 MCP 工具并合并到 DeepAgent 工具集
-        # MCP 工具仅暴露给 DeepAgent（路径 C），subagent 不暴露（安全红线）
         mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
         if mcp_tools:
             agent_tools.extend(mcp_tools)
@@ -291,243 +158,53 @@ async def run_deep_path(
             chat_model=chat_model,
         )
     except ValueError as exc:
-        yield make_sse_event("error", f"LLM 不可用: {exc}")
+        yield {"event": "error", "data": f"LLM 不可用: {exc}"}
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("build_deep_agent failed", thread_id=thread_id)
-        yield make_sse_event("error", f"DeepAgent 初始化失败: {exc}")
+        yield {"event": "error", "data": f"DeepAgent 初始化失败: {exc}"}
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
         return
 
-    # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集
-    # 安全关键：若 edit_file 被禁用，此处不含 edit_file，审批流不会误触发
-    # MCP 工具：来自 trusted=False server 的工具也加入危险集合，触发审批
-    enabled_tool_names = {
-        _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
-    }
+    enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-    # deepagents 0.6+ PatchToolCallsMiddleware 在中间件层自动修复悬空 tool_calls
-    # （checkpoint 残留未配对 tool_call / inputs 含未配对 AIMessage），无需自研
-    # _inject_tool_error_messages / _sanitize_message_history 预清理。
-
-    # 2. 初始流式运行（可能中断在危险工具前）
     try:
-        async for sse in _stream_agent_events(agent, inputs, config):
+        async for sse in run_agent_with_approval(
+            agent,
+            config,
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            permission_mode=permission_mode,
+            runtime_dangerous=runtime_dangerous,
+            source="deep",
+            inputs=inputs,
+            sandbox=sandbox,
+            parent_thread_id=parent_thread_id,
+            readonly_streak_threshold=10,
+        ):
             yield sse
-    except Exception as exc:  # noqa: BLE001 — SSE 兜底
-        logger.exception("deep agent stream failed", thread_id=thread_id)
-        yield make_sse_event("error", f"DeepAgent 执行失败: {exc}")
+    finally:
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
-        return
 
-    # 只读工具集合（用于循环保护检测）
-    _READONLY_TOOLS = {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
-
-    # 3. 中断/恢复循环
-    max_iterations = 100  # 安全上限，防止无限循环
-    iteration = 0
-    # 连续只读工具调用计数（用于防过度探索保护）
-    readonly_streak = 0
-    # 只读工具调用阈值：超过此值认为 LLM 在过度探索，强制终止
-    readonly_streak_threshold = 10
-
-    while iteration < max_iterations:
-        iteration += 1
-
-        # 5b. 暂停/恢复检查：pause 时 yield paused 事件并阻塞，resume 后 yield resumed
-        # 注意：不清理 pending_approvals 或 abort_flags，只暂停 LLM 流。
-        if await is_paused(thread_id):
-            yield make_sse_event("paused", {})
-            pause_event = await get_pause_event(thread_id)
-            if await is_paused(thread_id):
-                await pause_event.wait()
-            yield make_sse_event("resumed", {})
-
-        if not await _is_interrupted(agent, config):
-            # 图已完成，退出循环
-            break
-
-        # 获取待执行的工具调用
-        pending_calls = await _get_pending_tool_calls(agent, config)
-        if not pending_calls:
-            # 无待执行工具调用，不应发生但安全退出
-            logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
-            break
-
-        # ---- 循环保护：检测连续只读工具过度探索 ----
-        pending_names = {tc.get("name", "") for tc in pending_calls}
-        has_dangerous = bool(pending_names & runtime_dangerous)
-        all_readonly = pending_names.issubset(_READONLY_TOOLS)
-        if all_readonly and not has_dangerous:
-            readonly_streak += 1
-        else:
-            readonly_streak = 0
-
-        if readonly_streak >= readonly_streak_threshold:
-            logger.warning(
-                "deep agent readonly streak exceeded, forcing stop",
-                thread_id=thread_id,
-                readonly_streak=readonly_streak,
-                pending_tools=list(pending_names),
-            )
-            # 强制注入错误消息，让 LLM 停止探索并直接回答
-            for tc in pending_calls:
-                await _inject_tool_error_for_call(
-                    agent, config, tc,
-                    "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。"
-                )
-            yield make_sse_event(
-                "error",
-                "工具调用次数过多，已强制停止。请简化您的请求或明确指定目标路径。"
-            )
-            await sandbox.set_full_trust(thread_id, False)
-            return
-
-        # full_trust 模式：所有工具直接放行，不弹审批
-        if is_full_trust:
-            # 清理 once 临时授权（防御性，full_trust 模式理论上不用 temp）
-            await sandbox.clear_temp(thread_id)
-            try:
-                async for sse in _stream_agent_events(agent, None, config):
-                    yield sse
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("deep agent resume failed", thread_id=thread_id)
-                yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
-                await sandbox.set_full_trust(thread_id, False)
-                return
-            continue
-
-        # standard 模式：按工具类型处理
-        # 检查是否有危险工具（运行时集合 = DANGEROUS_TOOLS ∩ 已启用工具）
-        # 优化：若危险工具的目标路径已授权写入，则跳过审批（工作区内免审批）
-        dangerous_calls = []
-        for tc in pending_calls:
-            name = tc.get("name", "")
-            if name not in runtime_dangerous:
-                continue
-            # 提取路径并检查是否已授权写入
-            # cli_execute 未指定 cwd 时，用 workspace_path 兜底，避免已选工作区仍弹审批
-            paths = _extract_paths_from_tool_call(tc, workspace_path)
-            # 无路径参数的工具（如 shell_exec）：若已选工作区则自动放行
-            if not paths:
-                if workspace_path and await sandbox.is_path_authorized(
-                    thread_id, workspace_path, writable=True, base=workspace_path,
-                    parent_thread_id=parent_thread_id,
-                ):
-                    continue
-                dangerous_calls.append(tc)
-                continue
-            # 所有路径均已授权写入 → 跳过审批
-            # 注意：不能用 `all(await ... for ...)`，改用 asyncio.gather
-            path_checks = await asyncio.gather(
-                *[
-                    sandbox.is_path_authorized(
-                        thread_id, p, writable=True, base=workspace_path,
-                        parent_thread_id=parent_thread_id,
-                    )
-                    for p in paths
-                ]
-            )
-            if not all(path_checks):
-                dangerous_calls.append(tc)
-
-        if dangerous_calls:
-            # 4a. 危险工具 → 一次性 yield 所有危险工具的 approval_request，等待统一审批
-            for tc in dangerous_calls:
-                yield _make_approval_event(tc, thread_id, kind="dangerous_tool")
-
-            configured_max_wait = get_settings().approval_max_wait
-            max_wait = _ABSOLUTE_MAX_WAIT if configured_max_wait == 0 else min(
-                float(configured_max_wait), _ABSOLUTE_MAX_WAIT
-            )
-            decision = await _await_approval(
-                thread_id,
-                poll_interval=_APPROVAL_POLL_INTERVAL,
-                max_wait=max_wait,
-            )
-
-            if decision is None or not decision.approved:
-                # 拒绝/超时/中止：为每个待审批的危险 tool_call 注入 ToolMessage 错误，
-                # 避免 checkpoint 中残留未配对的 tool_calls 导致后续 INVALID_CHAT_HISTORY。
-                for tc in dangerous_calls:
-                    await _inject_tool_error_for_call(
-                        agent, config, tc, "用户拒绝执行危险操作"
-                    )
-                yield make_sse_event("error", "用户拒绝执行危险操作")
-                await sandbox.set_full_trust(thread_id, False)
-                return
-
-            # 审批通过，继续恢复执行
-            logger.info(
-                "deep agent approval granted",
-                thread_id=thread_id,
-                tool_count=len(dangerous_calls),
-                tools=[tc.get("name") for tc in dangerous_calls],
-            )
-        else:
-            # 4b. 非危险工具：检查只读 fs 工具是否越界（directory_extension）
-            extension_handled = await _handle_directory_extension(
-                pending_calls,
-                thread_id,
-                sandbox,
-                workspace_path=workspace_path,
-                parent_thread_id=parent_thread_id,
-            )
-            for evt in extension_handled.events:
-                yield evt
-            if extension_handled.denied:
-                yield make_sse_event("error", "用户拒绝访问该目录")
-                await sandbox.set_full_trust(thread_id, False)
-                return
-            if extension_handled.timed_out:
-                yield make_sse_event("error", "目录授权等待被中断，操作未执行")
-                await sandbox.set_full_trust(thread_id, False)
-                return
-
-        # 5. 恢复执行：用 None 输入续跑（LangGraph interrupt_on 标准恢复方式）
-        try:
-            async for sse in _stream_agent_events(agent, None, config):
-                yield sse
-        except Exception as exc:  # noqa: BLE001 — SSE 兜底
-            logger.exception("deep agent resume failed", thread_id=thread_id)
-            yield make_sse_event("error", f"DeepAgent 恢复失败: {exc}")
-            await sandbox.set_full_trust(thread_id, False)
-            return
-
-        # 6. 清理 once 临时授权（每次工具调用恢复后清理）
-        await sandbox.clear_temp(thread_id)
-
-    if iteration >= max_iterations:
-        logger.warning("deep agent hit max iterations", thread_id=thread_id)
-        yield make_sse_event("error", "DeepAgent 达到最大迭代上限")
-        await sandbox.set_full_trust(thread_id, False)
-        return
-
-    # 7. 清理 full_trust 标志（防御性）
-    if is_full_trust:
-        await sandbox.set_full_trust(thread_id, False)
-
-    # T10：路径 C 流式结束后，若开关开启则异步触发画像抽取（失败仅 warning，不报错）
-    # 不阻塞 done 事件：fire-and-forget（spec memory-management R10）
     if get_settings().profile_auto_extract:
         from app.memory.profile_extractor import extract_last_assistant_reply, extract_profile_via_llm
+        from app.memory.profile_store import upsert_from_llm
+
         async def _do_extract() -> None:
             try:
                 assistant_reply = await extract_last_assistant_reply(agent, config)
                 if assistant_reply:
-                    from app.memory.profile_store import upsert_from_llm
                     entries = await extract_profile_via_llm(message, assistant_reply)
                     upsert_from_llm(entries)
                     logger.info("profile auto extracted", count=len(entries))
-            except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("profile auto extract failed", error=str(exc))
+
         task = asyncio.create_task(_do_extract())
         _extract_tasks.add(task)
         task.add_done_callback(_extract_tasks.discard)
-
-    # done 事件由 run_router 统一 yield，此处不再重复

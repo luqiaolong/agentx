@@ -3,30 +3,32 @@
 基于 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建，
 与 DeepAgent 共享 streaming/approval 基础设施，但有以下区别：
 1. 使用 Supervisor 专用 system prompt（``_DEFAULT_SUPERVISOR_SYSTEM_PROMPT``）
-2. 额外注入 ``delegate_to_expert`` / ``delegate_to_subagent`` 委派工具
-3. 支持 @mention 语法强制委派
-4. SSE 事件 source 标识为 ``"work"``
+2. 通过 deepagents ``SubAgentMiddleware`` 注入 ``task`` 委派工具，暴露
+   rag / web / custom 子代理
+3. 保留轻量级 ``delegate_to_expert`` 工具用于 coding Expert 委派
+   （coding Expert 包含危险工具，其审批流仍在 Expert 内部闭环，不适合直接作为
+   无中断的 compiled subagent）
+4. 支持 @mention 语法强制委派
+5. SSE 事件 source 标识为 ``"work"``
 
 流程:
 1. 解析 @mention：若命中 Expert 则直接运行 Expert；若命中子代理则运行后回注 Supervisor
-2. 构建 Supervisor agent（含委派工具 + 完整工具集 + interrupt_on 危险工具审批）
+2. 构建 Supervisor agent（含标准工具 + delegate_to_expert + task 子代理 + interrupt_on 危险工具审批）
 3. ``astream_events`` 驱动图执行，流式产出 token / tool_call / tool_result 事件
-4. 危险工具中断 → yield approval_request → 等待审批 → 恢复执行
+4. 危险工具中断 → 公共审批执行层 ``app.deep.execution.run_agent_with_approval`` 处理
 5. 循环直至图完成
-
-deepagents 0.6+ ``PatchToolCallsMiddleware`` 在中间件层自动修复悬空 tool_calls，
-无需自研 ``_inject_tool_error_messages`` / ``_sanitize_message_history``。
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from app.agents.supervisor.delegation import make_delegation_tools
+from deepagents import CompiledSubAgent
+
 from app.agents.supervisor.mention import parse_mention
 from app.config import get_settings
+from app.deep.execution import run_agent_with_approval
 from app.deep.harness import create_agent
-from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
@@ -37,7 +39,6 @@ from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.security.approval_flow import run_approval_loop
 from app.utils.prompts import resolve_system_prompt
 from app.utils.sse_events import make_sse_event
 
@@ -63,9 +64,149 @@ def _workspace_prompt_suffix(workspace_path: str | None) -> str:
     )
 
 
+def _build_subagent_runnables(
+    thread_id: str,
+    workspace_path: str | None = None,
+) -> list[CompiledSubAgent]:
+    """构建 Supervisor 的 compiled subagent 列表，透传给 ``SubAgentMiddleware``。
+
+    包含 rag / web 内置子代理以及所有启用的自定义子代理。
+    coding Expert 不放在此处：它包含危险工具且需要独立的审批流，仍通过
+    ``delegate_to_expert`` 工具委派。
+
+    Args:
+        thread_id: 会话 ID（传给子代理用于沙箱授权 / 线程隔离）。
+        workspace_path: 当前工作区路径（传给自定义子代理用于相对路径解析）。
+
+    Returns:
+        ``CompiledSubAgent`` 列表，可直接作为 ``create_deep_agent(subagents=...)`` 参数。
+    """
+    settings = get_settings()
+    subagents: list[CompiledSubAgent] = []
+    subagents_cfg = settings.subagents
+
+    # rag 子代理
+    rag_cfg = subagents_cfg.get("rag")
+    if rag_cfg and rag_cfg.enabled:
+        from app.subagents.rag_agent import build_rag_agent
+
+        subagents.append(
+            {
+                "name": "rag",
+                "description": rag_cfg.trigger_description or "检索内部知识库并回答",
+                "runnable": build_rag_agent(thread_id),
+            }
+        )
+
+    # web 子代理
+    web_cfg = subagents_cfg.get("web")
+    if web_cfg and web_cfg.enabled:
+        from app.subagents.web_agent import build_web_agent
+
+        subagents.append(
+            {
+                "name": "web",
+                "description": web_cfg.trigger_description or "联网搜索最新信息",
+                "runnable": build_web_agent(thread_id),
+            }
+        )
+
+    # 自定义子代理
+    for key in sorted(settings.custom_subagents.keys()):
+        cfg = settings.custom_subagents[key]
+        if not cfg.enabled:
+            continue
+        from app.subagents.custom_agent import build_custom_agent
+
+        subagents.append(
+            {
+                "name": key,
+                "description": cfg.trigger_description or key,
+                "runnable": build_custom_agent(
+                    key,
+                    thread_id=thread_id,
+                    workspace_path=workspace_path,
+                ),
+            }
+        )
+
+    return subagents
+
+
+def make_expert_delegation_tool(
+    thread_id: str,
+    workspace_path: str | None = None,
+) -> Any:
+    """构建 coding Expert 委派工具 ``delegate_to_expert``。
+
+    coding Expert 通过项目原有的 ``run_coding_expert`` 异步生成器运行，
+    其内部仍保留自己的 interrupt/审批闭环，因此不适合直接作为 compiled subagent
+    嵌入 ``SubAgentMiddleware``。这里保留一个专用工具，供 Supervisor LLM
+    在需要代码专家能力时调用。
+    """
+    from langchain_core.tools import tool
+
+    settings = get_settings()
+    experts = settings.agents.experts
+
+    description = (
+        "委派任务给 coding Expert（代码专家）。\n\n"
+        "何时使用：\n"
+        "- 代码重构、项目分析、复杂编程任务\n"
+        "- 需要代码级专家处理能力的任务\n"
+        "- 通用闲聊、简单文件操作不需要委派\n\n"
+        "Args:\n"
+        "    expert_name: Expert 名称（目前仅支持 \"coding\"）\n"
+        "    task: 要委派的任务描述\n"
+        "    context: 可选的上下文信息\n\n"
+        "Returns:\n"
+        "    Expert 的最终输出文本。"
+    )
+
+    @tool(description=description)
+    async def delegate_to_expert(expert_name: str, task: str, context: str = "") -> str:
+        """委派任务给 coding Expert。"""
+        if expert_name not in experts:
+            return f"错误：未知的 Expert '{expert_name}'"
+
+        cfg = experts[expert_name]
+        if not cfg.enabled:
+            return f"错误：Expert '{expert_name}' 已禁用"
+
+        if expert_name != "coding":
+            return f"错误：Expert '{expert_name}' 尚未实现"
+
+        logger.info(
+            "supervisor.delegate_to_expert",
+            thread_id=thread_id,
+            expert=expert_name,
+            task_len=len(task),
+        )
+
+        from app.agents.expert.coding import run_coding_expert
+
+        parts: list[str] = []
+        async for event in run_coding_expert(
+            task,
+            thread_id,
+            history=None,
+            workspace_path=workspace_path,
+        ):
+            # 收集 Expert 最终输出 token；工具调用/审批请求等事件对 Supervisor 不可见
+            if event.get("event") == "token":
+                content = event.get("data", "")
+                if content:
+                    parts.append(content)
+
+        return "".join(parts).strip() or f"Expert '{expert_name}' 未返回结果"
+
+    return delegate_to_expert
+
+
 async def build_work_supervisor(
     thread_id: str,
     tools: list | None = None,
+    subagents: list | None = None,
     profile_prompt: str = "",
     checkpointer: Any = None,
     workspace_path: str | None = None,
@@ -78,11 +219,14 @@ async def build_work_supervisor(
 
     Args:
         thread_id: 会话 ID（用于工具沙箱授权绑定）。
-        tools: 可选，已构建的工具列表（含委派工具）。若未传则内部构建。
+        tools: 可选，已构建的工具列表。若未传则内部构建标准工具集 + delegate_to_expert。
+        subagents: 可选，compiled subagent 列表，透传给 ``create_deep_agent(subagents=...)``。
+            非空时 ``SubAgentMiddleware`` 会自动注入 ``task`` 工具。
         profile_prompt: 可选，用户画像前缀，拼到 system prompt 前。
         checkpointer: 可选，共享的 LangGraph checkpointer。
         workspace_path: 可选当前工作区绝对路径。
-        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；None 时调用 ``get_chat_model()`` 获取真实 LLM。
+        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
+            None 时调用 ``get_chat_model()`` 获取真实 LLM。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -98,11 +242,10 @@ async def build_work_supervisor(
         model = get_chat_model(temperature=supervisor_cfg.temperature, streaming=True)
 
     if tools is None:
-        # 标准工具集（fs + cli + git + rag + web）
+        # 标准工具集（fs + cli + git + rag + web）+ coding Expert 委派
         standard_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-        # 委派工具
-        delegation_tools = make_delegation_tools(thread_id, workspace_path)
-        tools = [*standard_tools, *delegation_tools]
+        expert_tool = make_expert_delegation_tool(thread_id, workspace_path)
+        tools = [*standard_tools, expert_tool]
 
     if checkpointer is None:
         checkpointer = await get_async_checkpointer()
@@ -123,19 +266,8 @@ async def build_work_supervisor(
         thread_id=thread_id,
         workspace_path=workspace_path,
         name="work_supervisor",
+        subagents=subagents,
     )
-
-
-async def _is_interrupted(agent: Any, config: dict) -> bool:
-    """检查 agent 是否在 interrupt 处暂停。
-
-    保留为模块级函数以兼容测试 patch（``patch("app.agents.supervisor.work_supervisor._is_interrupted")``）。
-    实际审批循环逻辑由 ``app.security.approval_flow.run_approval_loop`` 提供。
-    """
-    state = await agent.aget_state(config)
-    if not state or not state.next:
-        return False
-    return "tools" in state.next
 
 
 async def run_work_supervisor(
@@ -151,7 +283,7 @@ async def run_work_supervisor(
 
     流程:
     1. 解析 @mention：若命中 Expert 直接运行 Expert；命中子代理运行后回注 Supervisor
-    2. 构建 Supervisor agent（含委派工具 + interrupt_on 危险工具审批）
+    2. 构建 Supervisor agent（含标准工具 + delegate_to_expert + task 子代理 + interrupt_on 危险工具审批）
     3. 流式执行，危险工具中断 → 审批 → 恢复，循环直至完成
 
     Args:
@@ -228,7 +360,7 @@ async def run_work_supervisor(
             f"请基于以上结果为用户综合回复。原始用户消息：{cleaned_message}"
         )
 
-    # ---- 2. 构建 Supervisor agent + 运行审批循环 ----
+    # ---- 2. 构建 Supervisor agent + 运行审批执行层 ----
     try:
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, True)
@@ -248,12 +380,15 @@ async def run_work_supervisor(
                     count=len(mcp_tools),
                     untrusted=len(mcp_untrusted_names),
                 )
-            delegation_tools = make_delegation_tools(thread_id, workspace_path)
-            all_tools = [*agent_tools, *delegation_tools]
+            expert_tool = make_expert_delegation_tool(thread_id, workspace_path)
+            all_tools = [*agent_tools, expert_tool]
+
+            subagents = _build_subagent_runnables(thread_id, workspace_path)
 
             agent = await build_work_supervisor(
                 thread_id,
                 tools=all_tools,
+                subagents=subagents,
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
                 chat_model=chat_model,
@@ -272,28 +407,20 @@ async def run_work_supervisor(
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-        # deepagents 0.6+ PatchToolCallsMiddleware 自动修复悬空 tool_calls，
-        # 无需 _inject_tool_error_messages / _sanitize_message_history 预清理。
-
-        # ---- 3. 公共审批循环（security.approval_flow.run_approval_loop）----
-        # stream_fn / is_interrupted_fn 传入模块级引用，以便测试通过
-        # patch("app.agents.supervisor.work_supervisor._xxx") 替换。
-        # inject_tool_error_messages_fn 使用 run_approval_loop 默认实现。
-        async for sse in run_approval_loop(
+        # ---- 3. 公共审批执行层（app.deep.execution.run_agent_with_approval）----
+        # 由统一执行层负责 _is_interrupted、中断循环、危险工具判定等逻辑，
+        # work_supervisor 不再重复实现。
+        async for sse in run_agent_with_approval(
             agent,
             config,
-            thread_id,
-            workspace_path,
-            permission_mode,
-            runtime_dangerous,
-            agent_tools,
-            yield_event=None,
-            sandbox=sandbox,
-            parent_thread_id=None,
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            permission_mode=permission_mode,
+            runtime_dangerous=runtime_dangerous,
             source="work",
             inputs=inputs,
-            stream_fn=_stream_agent_events,
-            is_interrupted_fn=_is_interrupted,
+            sandbox=sandbox,
+            readonly_streak_threshold=10,
         ):
             yield sse
     finally:

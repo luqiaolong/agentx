@@ -1,27 +1,27 @@
 """coding 场景 Expert（代码专家 agent）实现。
 
-基于 ``build_deep_agent`` 框架构建，与 DeepAgent 共享 streaming/approval 基础设施，
-但有以下区别：
+基于 ``app.deep.harness.create_agent`` / ``build_deep_agent`` 框架构建，与 DeepAgent
+共享 streaming/approval 基础设施，但有以下区别：
 1. 使用 coding Expert 专用 system prompt（``_DEFAULT_CODING_EXPERT_SYSTEM_PROMPT``）
-2. 额外注入 ``delegate_to_subagent`` 委派工具（不可委派其他 Expert）
-3. 不包含 ``invoke_agent_team`` 工具（Expert 不可触发 AgentTeam）
-4. SSE 事件 source 标识为 ``"coding"``
+2. 通过 deepagents ``SubAgentMiddleware`` 声明式注入 rag/web/custom 子代理
+   （不可委派其他 Expert，也无 invoke_agent_team）
+3. SSE 事件 source 标识为 ``"coding"``
 
 流程:
-1. 构建 coding Expert agent（含 delegate_to_subagent + 完整代码工具集 + interrupt_before 审批）
-2. ``astream_events`` 驱动图执行，流式产出 token / tool_call / tool_result 事件
-3. 危险工具中断 → yield approval_request → 等待审批 → 恢复执行
-4. 循环直至图完成
+1. 构建 coding Expert agent（含标准工具集 + subagents + interrupt_on 审批）
+2. ``run_agent_with_approval`` 统一驱动：流式执行 → 危险工具中断 → 审批 → 恢复
+3. 循环直至图完成
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from langchain_core.tools import tool
+from deepagents import SubAgent
 
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
 from app.deep.agent import build_deep_agent
+from app.deep.execution import run_agent_with_approval
 from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
@@ -31,7 +31,7 @@ from app.deep.tools import (
 )
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.security.approval_flow import run_approval_loop
+from app.subagents.base import THINK_PROMPT_SUFFIX, make_rag_tools, make_web_tools
 from app.utils.sse_events import make_sse_event
 
 if TYPE_CHECKING:
@@ -43,117 +43,73 @@ __all__ = [
 ]
 
 
-def _build_subagent_list_description() -> str:
-    """构建可用子代理列表描述（用于 delegate_to_subagent 工具描述）。"""
-    settings = get_settings()
-    lines: list[str] = []
-    for name in sorted(BUILTIN_SUBAGENT_KEYS):
-        cfg = settings.subagents.get(name)
-        if cfg and cfg.enabled:
-            lines.append(f"  - {name}: {cfg.trigger_description or name}")
-    for key in sorted(settings.custom_subagents.keys()):
-        cfg = settings.custom_subagents[key]
-        if cfg.enabled:
-            lines.append(f"  - {key}: {cfg.trigger_description or key}")
-    if not lines:
-        return "  (当前无可用子代理)"
-    return "\n".join(lines)
-
-
-def make_expert_delegation_tools(
+def _build_subagents(
     thread_id: str,
     workspace_path: str | None = None,
-) -> list:
-    """构建 Expert 的委派工具列表（仅 delegate_to_subagent）。
+) -> list[SubAgent]:
+    """构建 coding Expert 可用的子代理声明列表。
 
-    Expert 不可委派其他 Expert（无 delegate_to_expert），也不可触发 AgentTeam
-    （无 invoke_agent_team）。Expert 仅可调用 rag/web 子代理辅助任务。
+    只包含 rag / web / 自定义子代理，不包含其他 Expert。
+    工具集经过安全过滤：不包含 ``FORBIDDEN_SUBAGENT_TOOLS`` 中的写/编辑/git 工具。
 
     Args:
-        thread_id: 会话 ID（传给子代理用于沙箱授权）。
-        workspace_path: 当前工作区路径（传给子代理用于相对路径解析）。
+        thread_id: 会话 ID（传给子代理工具用于沙箱授权）。
+        workspace_path: 当前工作区路径（用于 fs 工具相对路径解析）。
 
     Returns:
-        [delegate_to_subagent] 工具列表（仅一个元素）。
+        ``SubAgent`` 声明列表，可直接透传给 ``create_agent(subagents=...)``。
     """
-    subagent_desc = (
-        "委派任务给子代理（Subagent）。\n\n"
-        f"可用子代理列表：\n{_build_subagent_list_description()}\n\n"
-        "何时使用：\n"
-        "- 知识库检索 → rag 子代理\n"
-        "- 网页搜索 → web 子代理\n"
-        "- 自定义子代理按需使用\n\n"
-        "Args:\n"
-        "    agent_name: 子代理名称（如 \"rag\" / \"web\"）\n"
-        "    task: 要委派的任务描述\n\n"
-        "Returns:\n"
-        "    子代理的最终输出文本。"
-    )
+    from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
 
-    @tool(description=subagent_desc)
-    async def delegate_to_subagent(agent_name: str, task: str) -> str:
-        """委派任务给子代理（Subagent）。"""
-        settings = get_settings()
-        subagents_cfg = settings.subagents
-        custom_cfg = settings.custom_subagents
+    settings = get_settings()
+    subagents: list[SubAgent] = []
 
-        # 内置子代理
-        if agent_name in BUILTIN_SUBAGENT_KEYS:
-            cfg = subagents_cfg.get(agent_name)
-            if not cfg or not cfg.enabled:
-                return f"错误：子代理 '{agent_name}' 已禁用"
+    # 内置子代理：rag / web
+    for name in sorted(BUILTIN_SUBAGENT_KEYS):
+        cfg = settings.subagents.get(name)
+        if not cfg or not cfg.enabled:
+            continue
 
-            logger.info(
-                "coding_expert.delegate_to_subagent",
-                thread_id=thread_id,
-                agent=agent_name,
-                task_len=len(task),
+        if name == "rag":
+            tools = make_rag_tools(thread_id)
+        elif name == "web":
+            tools = make_web_tools(thread_id)
+        else:
+            continue
+
+        subagents.append(
+            SubAgent(
+                name=name,
+                description=cfg.trigger_description or name,
+                system_prompt=(cfg.system_prompt or "") + THINK_PROMPT_SUFFIX,
+                tools=tools,
             )
+        )
 
-            parts: list[str] = []
-            if agent_name == "rag":
-                from app.subagents.rag_agent import run_rag_agent
+    # 自定义子代理：按配置逐个声明，工具集防御性过滤危险工具
+    for key, cfg in sorted(settings.custom_subagents.items()):
+        if not cfg.enabled:
+            continue
 
-                async for event in run_rag_agent(thread_id, task, history=None):
-                    if event.get("type") == "token":
-                        parts.append(event.get("content", ""))
-            elif agent_name == "web":
-                from app.subagents.web_agent import run_web_agent
+        # 安全过滤：移除 FORBIDDEN_SUBAGENT_TOOLS 中的工具
+        safe_tool_names = [
+            t for t in cfg.tools if t not in FORBIDDEN_SUBAGENT_TOOLS
+        ]
 
-                async for event in run_web_agent(thread_id, task, history=None):
-                    if event.get("type") == "token":
-                        parts.append(event.get("content", ""))
-            else:
-                return f"错误：内置子代理 '{agent_name}' 尚未实现"
+        # 延迟导入，避免与 custom_agent 构造路径产生循环引用
+        from app.subagents.custom_agent import _make_custom_tools
 
-            return "".join(parts).strip() or f"子代理 '{agent_name}' 未返回结果"
-
-        # 自定义子代理
-        if agent_name in custom_cfg:
-            cfg = custom_cfg[agent_name]
-            if not cfg.enabled:
-                return f"错误：自定义子代理 '{agent_name}' 已禁用"
-
-            logger.info(
-                "coding_expert.delegate_to_custom_subagent",
-                thread_id=thread_id,
-                agent=agent_name,
-                task_len=len(task),
+        tools = _make_custom_tools(thread_id or "", safe_tool_names, workspace_path)
+        subagents.append(
+            SubAgent(
+                name=key,
+                description=cfg.trigger_description or cfg.name or key,
+                system_prompt=(cfg.system_prompt or "") + THINK_PROMPT_SUFFIX,
+                tools=tools,
             )
+        )
 
-            from app.subagents.custom_agent import run_custom_agent
-
-            parts2: list[str] = []
-            async for event in run_custom_agent(
-                agent_name, thread_id, task, history=None, workspace_path=workspace_path
-            ):
-                if event.get("type") == "token":
-                    parts2.append(event.get("content", ""))
-            return "".join(parts2).strip() or f"自定义子代理 '{agent_name}' 未返回结果"
-
-        return f"错误：未知的子代理 '{agent_name}'。可用: rag, web, {', '.join(sorted(custom_cfg.keys()))}"
-
-    return [delegate_to_subagent]
+    return subagents
 
 
 async def build_coding_expert(
@@ -166,19 +122,23 @@ async def build_coding_expert(
 ) -> Any:
     """构造 coding 场景 Expert agent。
 
-    基于 ``build_deep_agent`` 框架，使用 coding Expert 专用 system prompt。
+    基于 ``build_deep_agent`` 框架，使用 coding Expert 专用 system prompt，
+    并通过 ``subagents`` 参数注入 rag/web/custom 子代理。
+
     与 Supervisor 的区别：
-    - 仅含 ``delegate_to_subagent`` 委派工具（不可委派其他 Expert）
+    - 仅含子代理（rag/web/custom），不含其他 Expert
     - 无 ``invoke_agent_team`` 工具（不可触发 AgentTeam）
     - source 标识为 ``"coding"``
 
     Args:
         thread_id: 会话 ID（用于工具沙箱授权绑定）。
-        tools: 可选，已构建的工具列表。若未传则内部构建（标准工具集 + 委派工具）。
+        tools: 可选，已构建的工具列表。若未传则内部构建（标准工具集）。
+            子代理声明由本函数独立构建，不依赖该参数。
         profile_prompt: 可选，用户画像前缀，拼到 system prompt 前。
         checkpointer: 可选，共享的 LangGraph checkpointer。
-        workspace_path: 可选当前工作区绝对路径。
-        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；None 时调用 ``get_chat_model()`` 获取真实 LLM。
+        workspace_path: 可选当前工作区路径。
+        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
+            None 时调用 ``get_chat_model()`` 获取真实 LLM。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -197,12 +157,12 @@ async def build_coding_expert(
         )
 
     if tools is None:
-        standard_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-        delegation_tools = make_expert_delegation_tools(thread_id, workspace_path)
-        tools = [*standard_tools, *delegation_tools]
+        tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
 
     # scene_prompt 透传给 build_deep_agent，覆盖默认 _DEEP_SYSTEM_PROMPT
     scene_prompt = expert_cfg.system_prompt or _DEFAULT_CODING_EXPERT_SYSTEM_PROMPT
+
+    subagents = _build_subagents(thread_id, workspace_path)
 
     return await build_deep_agent(
         thread_id,
@@ -212,6 +172,7 @@ async def build_coding_expert(
         scene_prompt=scene_prompt,
         workspace_path=workspace_path,
         chat_model=chat_model,
+        subagents=subagents,
     )
 
 
@@ -219,7 +180,7 @@ async def _is_interrupted(agent: Any, config: dict) -> bool:
     """检查 agent 是否在 interrupt 处暂停。
 
     保留为模块级函数以兼容测试 patch（``patch("app.agents.expert.coding._is_interrupted")``）。
-    实际审批循环逻辑由 ``app.security.approval_flow.run_approval_loop`` 提供。
+    实际审批循环逻辑由 ``app.deep.execution.run_agent_with_approval`` 提供。
     """
     state = await agent.aget_state(config)
     if not state or not state.next:
@@ -240,7 +201,7 @@ async def run_coding_expert(
     """运行 coding 场景 Expert，yield SSE 事件。
 
     流程:
-    1. 构建 coding Expert agent（含 delegate_to_subagent + interrupt_before 审批）
+    1. 构建 coding Expert agent（含标准工具集 + subagents + interrupt_on 审批）
     2. 流式执行，危险工具中断 → 审批 → 恢复，循环直至完成
 
     Args:
@@ -268,7 +229,7 @@ async def run_coding_expert(
         history_msgs = list(history) if history else []
         inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
 
-        # 构建 agent
+        # 构建 agent 工具集（标准工具 + MCP）并构造 agent
         try:
             agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
             mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
@@ -280,12 +241,10 @@ async def run_coding_expert(
                     count=len(mcp_tools),
                     untrusted=len(mcp_untrusted_names),
                 )
-            delegation_tools = make_expert_delegation_tools(thread_id, workspace_path)
-            all_tools = [*agent_tools, *delegation_tools]
 
             agent = await build_coding_expert(
                 thread_id,
-                tools=all_tools,
+                tools=agent_tools,
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
                 chat_model=chat_model,
@@ -304,27 +263,20 @@ async def run_coding_expert(
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-        # deepagents 0.6+ PatchToolCallsMiddleware 自动修复悬空 tool_calls，
-        # 无需 _inject_tool_error_messages / _sanitize_message_history 预清理。
-
-        # ---- 公共审批循环（security.approval_flow.run_approval_loop）----
+        # 统一审批执行循环（deep.execution.run_agent_with_approval）
         # stream_fn / is_interrupted_fn 传入模块级引用，以便测试通过
-        # patch("app.agents.expert.coding._xxx") 替换。inject_tool_error_messages_fn
-        # 使用 run_approval_loop 默认实现（_inject_tool_error_messages_default）。
-        # readonly_streak_threshold=10 启用循环保护（防过度探索）。
-        async for sse in run_approval_loop(
+        # patch("app.agents.expert.coding._xxx") 替换。
+        async for sse in run_agent_with_approval(
             agent,
             config,
-            thread_id,
-            workspace_path,
-            permission_mode,
-            runtime_dangerous,
-            agent_tools,
-            yield_event=None,
-            sandbox=sandbox,
-            parent_thread_id=parent_thread_id,
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            permission_mode=permission_mode,
+            runtime_dangerous=runtime_dangerous,
             source="coding",
             inputs=inputs,
+            sandbox=sandbox,
+            parent_thread_id=parent_thread_id,
             stream_fn=_stream_agent_events,
             is_interrupted_fn=_is_interrupted,
             readonly_streak_threshold=10,

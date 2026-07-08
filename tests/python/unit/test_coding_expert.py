@@ -1,10 +1,9 @@
 """coding Expert（coding 场景专家 agent）单元测试。
 
 覆盖 task 3.8：
-1. Expert 委派工具构建（make_expert_delegation_tools）
-   - 仅含 delegate_to_subagent，无 delegate_to_expert / invoke_agent_team
+1. 子代理声明构建（_build_subagents）
 2. build_coding_expert 构建（mock LLM）
-3. run_coding_expert 基本流程（@mention + 审批流）
+3. run_coding_expert 基本流程与审批执行层委托
 """
 
 from __future__ import annotations
@@ -15,50 +14,95 @@ import pytest
 
 
 # ============================================================
-# 1. Expert 委派工具构建
+# 1. 子代理声明构建
 # ============================================================
 
 
-class TestMakeExpertDelegationTools:
-    """make_expert_delegation_tools 委派工具构建。"""
+class TestBuildSubagents:
+    """_build_subagents 子代理声明构建。"""
 
-    def test_returns_only_delegate_to_subagent(self) -> None:
-        """Expert 仅返回 delegate_to_subagent 工具。"""
-        from app.agents.expert.coding import make_expert_delegation_tools
+    def test_returns_subagents_only(self) -> None:
+        """只返回子代理声明，不含其他 Expert 或 invoke_agent_team。"""
+        from app.agents.expert.coding import _build_subagents
 
-        tools = make_expert_delegation_tools("test-thread")
-        assert len(tools) == 1
-        assert tools[0].name == "delegate_to_subagent"
+        with patch("app.agents.expert.coding.make_rag_tools", return_value=[]):
+            with patch("app.agents.expert.coding.make_web_tools", return_value=[]):
+                subagents = _build_subagents("test-thread")
 
-    def test_no_delegate_to_expert(self) -> None:
-        """Expert 无 delegate_to_expert 工具（不可委派其他 Expert）。"""
-        from app.agents.expert.coding import make_expert_delegation_tools
-
-        tools = make_expert_delegation_tools("test-thread")
-        names = {t.name for t in tools}
+        names = {s["name"] for s in subagents}
         assert "delegate_to_expert" not in names
-
-    def test_no_invoke_agent_team(self) -> None:
-        """Expert 无 invoke_agent_team 工具（不可触发 AgentTeam）。"""
-        from app.agents.expert.coding import make_expert_delegation_tools
-
-        tools = make_expert_delegation_tools("test-thread")
-        names = {t.name for t in tools}
         assert "invoke_agent_team" not in names
 
-    @pytest.mark.asyncio
-    async def test_delegate_to_subagent_unknown_returns_error(self) -> None:
-        """delegate_to_subagent 未知子代理返回错误信息。"""
-        from app.agents.expert.coding import make_expert_delegation_tools
+    def test_builtin_rag_web_present(self) -> None:
+        """默认启用 rag / web 子代理声明。"""
+        from app.agents.expert.coding import _build_subagents
 
-        tools = make_expert_delegation_tools("test-thread")
-        delegate_tool = tools[0]
+        with patch("app.agents.expert.coding.make_rag_tools", return_value=[]):
+            with patch("app.agents.expert.coding.make_web_tools", return_value=[]):
+                subagents = _build_subagents("test-thread")
 
-        result = await delegate_tool.ainvoke({
-            "agent_name": "unknown_agent",
-            "task": "test task",
-        })
-        assert "错误" in result or "error" in result.lower()
+        names = {s["name"] for s in subagents}
+        assert "rag" in names
+        assert "web" in names
+
+    def test_custom_subagent_included(self) -> None:
+        """已启用的自定义子代理被包含。"""
+        from app.agents.expert.coding import _build_subagents
+        from app.config import CustomSubagentEntry
+
+        custom = {
+            "my_custom": CustomSubagentEntry(
+                key="my_custom",
+                name="My Custom",
+                enabled=True,
+                tools=["read_file", "rag_retrieve"],
+            )
+        }
+
+        with patch("app.agents.expert.coding.get_settings") as mock_settings:
+            mock_settings.return_value.subagents = {"rag": MagicMock(enabled=True), "web": MagicMock(enabled=True)}
+            mock_settings.return_value.custom_subagents = custom
+            with patch("app.agents.expert.coding.make_rag_tools", return_value=[]):
+                with patch("app.agents.expert.coding.make_web_tools", return_value=[]):
+                    with patch("app.subagents.custom_agent._make_custom_tools", return_value=[]):
+                        subagents = _build_subagents("test-thread")
+
+        names = {s["name"] for s in subagents}
+        assert "my_custom" in names
+
+    def test_forbidden_tools_filtered(self) -> None:
+        """自定义子代理工具集过滤 FORBIDDEN_SUBAGENT_TOOLS 中的工具。"""
+        from app.agents.expert.coding import _build_subagents
+        from app.config import CustomSubagentEntry
+        from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
+
+        forbidden = next(iter(FORBIDDEN_SUBAGENT_TOOLS))
+        custom = {
+            "bad_agent": CustomSubagentEntry(
+                key="bad_agent",
+                name="Bad Agent",
+                enabled=True,
+                tools=["read_file", forbidden],
+            )
+        }
+
+        captured_tool_names: list[list[str]] = []
+
+        def _capture_tools(thread_id: str, tool_names: list[str], workspace_path: str | None) -> list:
+            captured_tool_names.append(tool_names)
+            return []
+
+        with patch("app.agents.expert.coding.get_settings") as mock_settings:
+            mock_settings.return_value.subagents = {"rag": MagicMock(enabled=True), "web": MagicMock(enabled=True)}
+            mock_settings.return_value.custom_subagents = custom
+            with patch("app.agents.expert.coding.make_rag_tools", return_value=[]):
+                with patch("app.agents.expert.coding.make_web_tools", return_value=[]):
+                    with patch("app.subagents.custom_agent._make_custom_tools", side_effect=_capture_tools):
+                        _build_subagents("test-thread")
+
+        assert len(captured_tool_names) == 1
+        assert forbidden not in captured_tool_names[0]
+        assert "read_file" in captured_tool_names[0]
 
 
 # ============================================================
@@ -77,7 +121,7 @@ class TestBuildCodingExpert:
         mock_agent = MagicMock()
         with patch("app.agents.expert.coding.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
             with patch("app.agents.expert.coding._make_deep_tools", return_value=[]):
-                with patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]):
+                with patch("app.agents.expert.coding._build_subagents", return_value=[]):
                     agent = await build_coding_expert("test-thread")
 
                     assert agent is mock_agent
@@ -88,6 +132,21 @@ class TestBuildCodingExpert:
                     assert call_kwargs["scene_prompt"]  # 非空
 
     @pytest.mark.asyncio
+    async def test_build_passes_subagents(self) -> None:
+        """build_coding_expert 将子代理声明透传给 build_deep_agent。"""
+        from app.agents.expert.coding import build_coding_expert
+
+        mock_agent = MagicMock()
+        fake_subagents = [{"name": "rag"}, {"name": "web"}]
+        with patch("app.agents.expert.coding.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
+            with patch("app.agents.expert.coding._make_deep_tools", return_value=[]):
+                with patch("app.agents.expert.coding._build_subagents", return_value=fake_subagents):
+                    await build_coding_expert("test-thread")
+
+                    call_kwargs = mock_build.call_args.kwargs
+                    assert call_kwargs.get("subagents") is fake_subagents
+
+    @pytest.mark.asyncio
     async def test_build_with_custom_tools(self) -> None:
         """build_coding_expert 接受自定义 tools 列表。"""
         from app.agents.expert.coding import build_coding_expert
@@ -96,11 +155,12 @@ class TestBuildCodingExpert:
         custom_tools = [MagicMock(name="tool1")]
 
         with patch("app.agents.expert.coding.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
-            agent = await build_coding_expert("test-thread", tools=custom_tools)
+            with patch("app.agents.expert.coding._build_subagents", return_value=[]):
+                agent = await build_coding_expert("test-thread", tools=custom_tools)
 
-            assert agent is mock_agent
-            call_args = mock_build.call_args.kwargs
-            assert call_args["tools"] == custom_tools
+                assert agent is mock_agent
+                call_args = mock_build.call_args.kwargs
+                assert call_args["tools"] == custom_tools
 
     @pytest.mark.asyncio
     async def test_build_uses_coding_system_prompt(self) -> None:
@@ -110,7 +170,7 @@ class TestBuildCodingExpert:
         mock_agent = MagicMock()
         with patch("app.agents.expert.coding.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
             with patch("app.agents.expert.coding._make_deep_tools", return_value=[]):
-                with patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]):
+                with patch("app.agents.expert.coding._build_subagents", return_value=[]):
                     await build_coding_expert("test-thread")
 
                     call_kwargs = mock_build.call_args.kwargs
@@ -128,31 +188,51 @@ class TestRunCodingExpert:
 
     @pytest.mark.asyncio
     async def test_run_yields_sse_events(self) -> None:
-        """run_coding_expert 流式产出 SSE 事件。"""
+        """run_coding_expert 通过 run_agent_with_approval 流式产出 SSE 事件。"""
         from app.agents.expert.coding import run_coding_expert
 
-        async def mock_stream(*args, **kwargs):
+        async def mock_approval_loop(*args, **kwargs):
             yield {"event": "token", "data": "hello"}
 
         with patch("app.agents.expert.coding._make_deep_tools", return_value=[]):
             with patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
-                with patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]):
-                    with patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock):
-                        with patch("app.agents.expert.coding._stream_agent_events") as mock_sse:
-                            with patch("app.agents.expert.coding._is_interrupted", new_callable=AsyncMock, return_value=False):
+                with patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock):
+                    with patch("app.agents.expert.coding.run_agent_with_approval", side_effect=mock_approval_loop) as mock_run:
+                        events = []
+                        async for sse in run_coding_expert(
+                            "帮我写代码",
+                            "test-thread",
+                        ):
+                            events.append(sse)
 
-                                mock_sse.return_value = mock_stream()
+                        assert len(events) >= 1
+                        assert events[0]["event"] == "token"
+                        assert events[0]["data"] == "hello"
+                        # 验证 source 为 coding
+                        call_kwargs = mock_run.call_args.kwargs
+                        assert call_kwargs["source"] == "coding"
 
-                                events = []
-                                async for sse in run_coding_expert(
-                                    "帮我写代码",
-                                    "test-thread",
-                                ):
-                                    events.append(sse)
+    @pytest.mark.asyncio
+    async def test_run_passes_parent_thread_id(self) -> None:
+        """parent_thread_id 透传给 run_agent_with_approval。"""
+        from app.agents.expert.coding import run_coding_expert
 
-                                assert len(events) >= 1
-                                assert events[0]["event"] == "token"
-                                assert events[0]["data"] == "hello"
+        async def mock_approval_loop(*args, **kwargs):
+            yield {"event": "done", "data": ""}
+
+        with patch("app.agents.expert.coding._make_deep_tools", return_value=[]):
+            with patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
+                with patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock):
+                    with patch("app.agents.expert.coding.run_agent_with_approval", side_effect=mock_approval_loop) as mock_run:
+                        async for _ in run_coding_expert(
+                            "帮我写代码",
+                            "test-thread",
+                            parent_thread_id="parent-123",
+                        ):
+                            pass
+
+                        call_kwargs = mock_run.call_args.kwargs
+                        assert call_kwargs["parent_thread_id"] == "parent-123"
 
     @pytest.mark.asyncio
     async def test_run_llm_unavailable_yields_error(self) -> None:
@@ -161,22 +241,21 @@ class TestRunCodingExpert:
 
         with patch("app.agents.expert.coding._make_deep_tools", return_value=[]):
             with patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
-                with patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]):
-                    with patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock, side_effect=ValueError("LLM 不可用")):
-                        events = []
-                        async for sse in run_coding_expert(
-                            "帮我写代码",
-                            "test-thread",
-                        ):
-                            events.append(sse)
+                with patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock, side_effect=ValueError("LLM 不可用")):
+                    events = []
+                    async for sse in run_coding_expert(
+                        "帮我写代码",
+                        "test-thread",
+                    ):
+                        events.append(sse)
 
-                        assert len(events) == 1
-                        assert events[0]["event"] == "error"
-                        assert "LLM 不可用" in events[0]["data"]
+                    assert len(events) == 1
+                    assert events[0]["event"] == "error"
+                    assert "LLM 不可用" in events[0]["data"]
 
 
 # ============================================================
-# 4. readonly streak 循环保护（run_approval_loop 行为）
+# 4. readonly streak 循环保护（run_agent_with_approval 行为）
 # ============================================================
 
 
@@ -184,11 +263,8 @@ class TestReadonlyStreakProtection:
     """readonly streak 超限循环保护测试。
 
     feature/sandbox-security-refactor 重构后，审批循环逻辑提取到
-    ``app.security.approval_flow.run_approval_loop``。coding Expert 通过
+    ``app.deep.execution.run_agent_with_approval``。coding Expert 通过
     ``readonly_streak_threshold=10`` 参数启用循环保护。
-
-    run_approval_loop 的 streak 保护行为：streak 达到阈值后向所有 pending
-    tool_calls 注入错误消息，yield error 事件并停止循环。
     """
 
     @pytest.mark.asyncio
@@ -217,17 +293,15 @@ class TestReadonlyStreakProtection:
         with ExitStack() as stack:
             stack.enter_context(patch("app.agents.expert.coding._make_deep_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
-            stack.enter_context(patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._stream_agent_events", side_effect=_stream_side_effect))
             stack.enter_context(patch("app.agents.expert.coding._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=AsyncMock()))
-            # approval_flow 内部 helper（coding.py 未传 inject_tool_error_for_call_fn /
-            # get_pending_calls_fn，run_approval_loop 使用 approval_flow 模块默认值）
-            stack.enter_context(patch("app.security.approval_flow._inject_tool_error_for_call", new_callable=AsyncMock))
-            stack.enter_context(patch("app.security.approval_flow._get_pending_tool_calls", new_callable=AsyncMock, side_effect=pending_values))
-            stack.enter_context(patch("app.security.approval_flow.is_paused", new_callable=AsyncMock, return_value=False))
-            stack.enter_context(patch("app.security.approval_flow._handle_directory_extension", new_callable=AsyncMock, return_value=SimpleNamespace(events=[], denied=False, timed_out=False)))
+            # run_agent_with_approval 内部 helper（coding.py 未传自定义实现，使用 execution 默认值）
+            stack.enter_context(patch("app.deep.execution._inject_tool_error_for_call", new_callable=AsyncMock))
+            stack.enter_context(patch("app.deep.execution._get_pending_tool_calls", new_callable=AsyncMock, side_effect=pending_values))
+            stack.enter_context(patch("app.deep.execution.is_paused", new_callable=AsyncMock, return_value=False))
+            stack.enter_context(patch("app.deep.execution._handle_directory_extension", new_callable=AsyncMock, return_value=SimpleNamespace(events=[], denied=False, timed_out=False)))
 
             events = []
             async for sse in run_coding_expert("项目技术栈", "test-streak"):
@@ -269,15 +343,14 @@ class TestReadonlyStreakProtection:
         with ExitStack() as stack:
             stack.enter_context(patch("app.agents.expert.coding._make_deep_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
-            stack.enter_context(patch("app.agents.expert.coding.make_expert_delegation_tools", return_value=[]))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._stream_agent_events", side_effect=_stream_side_effect))
             stack.enter_context(patch("app.agents.expert.coding._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=AsyncMock()))
-            stack.enter_context(patch("app.security.approval_flow._inject_tool_error_for_call", new_callable=AsyncMock))
-            stack.enter_context(patch("app.security.approval_flow._get_pending_tool_calls", new_callable=AsyncMock, side_effect=pending_values))
-            stack.enter_context(patch("app.security.approval_flow.is_paused", new_callable=AsyncMock, return_value=False))
-            stack.enter_context(patch("app.security.approval_flow._handle_directory_extension", new_callable=AsyncMock, return_value=SimpleNamespace(events=[], denied=False, timed_out=False)))
+            stack.enter_context(patch("app.deep.execution._inject_tool_error_for_call", new_callable=AsyncMock))
+            stack.enter_context(patch("app.deep.execution._get_pending_tool_calls", new_callable=AsyncMock, side_effect=pending_values))
+            stack.enter_context(patch("app.deep.execution.is_paused", new_callable=AsyncMock, return_value=False))
+            stack.enter_context(patch("app.deep.execution._handle_directory_extension", new_callable=AsyncMock, return_value=SimpleNamespace(events=[], denied=False, timed_out=False)))
 
             events = []
             async for sse in run_coding_expert("简单问题", "test-normal"):

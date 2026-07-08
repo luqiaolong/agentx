@@ -1,10 +1,11 @@
 """Supervisor（work 场景全能 agent）单元测试。
 
-覆盖 task 2.9：
+覆盖：
 1. @mention 解析（parse_mention / strip_mention）
-2. 委派工具构建（make_delegation_tools）
-3. Supervisor 构建（build_work_supervisor，mock LLM）
-4. @mention 强制委派路由
+2. 子代理 runnable 构建（_build_subagent_runnables）
+3. coding Expert 委派工具（make_expert_delegation_tool）
+4. Supervisor 构建（build_work_supervisor，mock LLM）
+5. @mention 强制委派路由
 """
 
 from __future__ import annotations
@@ -132,63 +133,127 @@ class TestMentionPattern:
 
 
 # ============================================================
-# 2. 委派工具构建
+# 2. 子代理 runnable 构建
 # ============================================================
 
 
-class TestMakeDelegationTools:
-    """make_delegation_tools 委派工具构建。"""
+class TestBuildSubagentRunnables:
+    """_build_subagent_runnables 构建 compiled subagent 列表。"""
 
-    def test_returns_two_tools(self) -> None:
-        """返回 delegate_to_expert 和 delegate_to_subagent 两个工具。"""
-        from app.agents.supervisor.delegation import make_delegation_tools
+    def test_builds_rag_and_web_when_enabled(self) -> None:
+        """rag / web 启用时生成对应的 CompiledSubAgent。"""
+        from app.agents.supervisor.work_supervisor import _build_subagent_runnables
 
-        tools = make_delegation_tools("test-thread")
-        assert len(tools) == 2
-        names = {t.name for t in tools}
-        assert "delegate_to_expert" in names
-        assert "delegate_to_subagent" in names
+        rag_cfg = MagicMock(enabled=True, trigger_description="rag desc")
+        web_cfg = MagicMock(enabled=True, trigger_description="web desc")
+        settings = MagicMock()
+        settings.subagents = {"rag": rag_cfg, "web": web_cfg}
+        settings.custom_subagents = {}
 
-    def test_no_invoke_agent_team_tool(self) -> None:
-        """确保无 invoke_agent_team 工具。"""
-        from app.agents.supervisor.delegation import make_delegation_tools
+        with patch("app.agents.supervisor.work_supervisor.get_settings", return_value=settings):
+            with patch("app.subagents.rag_agent.build_rag_agent") as mock_rag:
+                with patch("app.subagents.web_agent.build_web_agent") as mock_web:
+                    mock_rag.return_value = MagicMock(name="rag_graph")
+                    mock_web.return_value = MagicMock(name="web_graph")
 
-        tools = make_delegation_tools("test-thread")
-        names = {t.name for t in tools}
-        assert "invoke_agent_team" not in names
+                    subagents = _build_subagent_runnables("test-thread")
 
-    @pytest.mark.asyncio
-    async def test_delegate_to_expert_unknown_returns_error(self) -> None:
-        """delegate_to_expert 未知 Expert 返回错误信息。"""
-        from app.agents.supervisor.delegation import make_delegation_tools
+                    names = {s["name"] for s in subagents}
+                    assert names == {"rag", "web"}
+                    assert any(s["runnable"] is mock_rag.return_value for s in subagents)
+                    assert any(s["runnable"] is mock_web.return_value for s in subagents)
+                    mock_rag.assert_called_once_with("test-thread")
+                    mock_web.assert_called_once_with("test-thread")
 
-        tools = make_delegation_tools("test-thread")
-        delegate_tool = next(t for t in tools if t.name == "delegate_to_expert")
+    def test_skips_disabled(self) -> None:
+        """禁用的子代理不会出现在列表中。"""
+        from app.agents.supervisor.work_supervisor import _build_subagent_runnables
 
-        # 调用工具（LangChain @tool 装饰器包装）
-        result = await delegate_tool.ainvoke({
-            "expert_name": "unknown_expert",
-            "task": "test task",
-        })
-        assert "错误" in result or "error" in result.lower()
+        rag_cfg = MagicMock(enabled=False, trigger_description="")
+        web_cfg = MagicMock(enabled=True, trigger_description="")
+        settings = MagicMock()
+        settings.subagents = {"rag": rag_cfg, "web": web_cfg}
+        settings.custom_subagents = {}
 
-    @pytest.mark.asyncio
-    async def test_delegate_to_subagent_unknown_returns_error(self) -> None:
-        """delegate_to_subagent 未知子代理返回错误信息。"""
-        from app.agents.supervisor.delegation import make_delegation_tools
+        with patch("app.agents.supervisor.work_supervisor.get_settings", return_value=settings):
+            with patch("app.subagents.web_agent.build_web_agent") as mock_web:
+                mock_web.return_value = MagicMock()
 
-        tools = make_delegation_tools("test-thread")
-        delegate_tool = next(t for t in tools if t.name == "delegate_to_subagent")
+                subagents = _build_subagent_runnables("test-thread")
 
-        result = await delegate_tool.ainvoke({
-            "agent_name": "unknown_agent",
-            "task": "test task",
-        })
-        assert "错误" in result or "error" in result.lower()
+                assert [s["name"] for s in subagents] == ["web"]
+
+    def test_custom_subagents(self) -> None:
+        """自定义子代理按 key 生成。"""
+        from app.agents.supervisor.work_supervisor import _build_subagent_runnables
+
+        settings = MagicMock()
+        settings.subagents = {}
+        custom_cfg = MagicMock(enabled=True, trigger_description="custom desc")
+        settings.custom_subagents = {"myagent": custom_cfg}
+
+        with patch("app.agents.supervisor.work_supervisor.get_settings", return_value=settings):
+            with patch("app.subagents.custom_agent.build_custom_agent") as mock_custom:
+                mock_custom.return_value = MagicMock()
+
+                subagents = _build_subagent_runnables("test-thread", workspace_path="/ws")
+
+                assert [s["name"] for s in subagents] == ["myagent"]
+                mock_custom.assert_called_once_with(
+                    "myagent", thread_id="test-thread", workspace_path="/ws"
+                )
 
 
 # ============================================================
-# 3. Supervisor 构建（mock LLM）
+# 3. coding Expert 委派工具
+# ============================================================
+
+
+class TestExpertDelegationTool:
+    """make_expert_delegation_tool 构建的 delegate_to_expert 工具。"""
+
+    def _settings_with_coding(self) -> MagicMock:
+        settings = MagicMock()
+        coding_cfg = MagicMock(enabled=True, scenario="coding")
+        settings.agents.experts = {"coding": coding_cfg}
+        return settings
+
+    def test_returns_tool(self) -> None:
+        """返回一个名为 delegate_to_expert 的工具。"""
+        from app.agents.supervisor.work_supervisor import make_expert_delegation_tool
+
+        with patch("app.agents.supervisor.work_supervisor.get_settings", return_value=self._settings_with_coding()):
+            tool = make_expert_delegation_tool("test-thread")
+            assert tool.name == "delegate_to_expert"
+
+    @pytest.mark.asyncio
+    async def test_unknown_expert_returns_error(self) -> None:
+        """未知 Expert 返回错误信息。"""
+        from app.agents.supervisor.work_supervisor import make_expert_delegation_tool
+
+        with patch("app.agents.supervisor.work_supervisor.get_settings", return_value=self._settings_with_coding()):
+            tool = make_expert_delegation_tool("test-thread")
+            result = await tool.ainvoke({"expert_name": "unknown", "task": "test"})
+            assert "错误" in result or "error" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_coding_expert_collects_tokens(self) -> None:
+        """coding Expert 的 token 事件被收集为最终文本。"""
+        from app.agents.supervisor.work_supervisor import make_expert_delegation_tool
+
+        async def mock_expert(*args, **kwargs):
+            yield {"event": "token", "data": "hello "}
+            yield {"event": "token", "data": "world"}
+
+        with patch("app.agents.supervisor.work_supervisor.get_settings", return_value=self._settings_with_coding()):
+            with patch("app.agents.expert.coding.run_coding_expert", mock_expert):
+                tool = make_expert_delegation_tool("test-thread")
+                result = await tool.ainvoke({"expert_name": "coding", "task": "test"})
+                assert result == "hello world"
+
+
+# ============================================================
+# 4. Supervisor 构建（mock LLM）
 # ============================================================
 
 
@@ -200,11 +265,11 @@ class TestBuildWorkSupervisor:
         """build_work_supervisor 返回编译后的图。"""
         from app.agents.supervisor.work_supervisor import build_work_supervisor
 
-        # mock LLM
         mock_model = MagicMock()
         with patch("app.agents.supervisor.work_supervisor.get_chat_model", return_value=mock_model):
             with patch("app.agents.supervisor.work_supervisor._make_deep_tools", return_value=[]):
-                with patch("app.agents.supervisor.work_supervisor.make_delegation_tools", return_value=[]):
+                with patch("app.agents.supervisor.work_supervisor.make_expert_delegation_tool") as mock_expert_tool:
+                    mock_expert_tool.return_value = MagicMock(name="delegate_to_expert")
                     with patch("app.agents.supervisor.work_supervisor.get_async_checkpointer", new_callable=AsyncMock):
                         with patch("app.agents.supervisor.work_supervisor.create_agent") as mock_create:
                             mock_agent = MagicMock()
@@ -214,9 +279,9 @@ class TestBuildWorkSupervisor:
 
                             assert agent is mock_agent
                             mock_create.assert_called_once()
-                            # 验证 name="work_supervisor"
                             call_kwargs = mock_create.call_args.kwargs
                             assert call_kwargs["name"] == "work_supervisor"
+                            assert "subagents" in call_kwargs
 
     @pytest.mark.asyncio
     async def test_build_with_custom_tools(self) -> None:
@@ -225,19 +290,25 @@ class TestBuildWorkSupervisor:
 
         mock_model = MagicMock()
         custom_tools = [MagicMock(name="tool1")]
+        custom_subagents = [MagicMock(name="sub1")]
 
         with patch("app.agents.supervisor.work_supervisor.get_chat_model", return_value=mock_model):
             with patch("app.agents.supervisor.work_supervisor.get_async_checkpointer", new_callable=AsyncMock):
                 with patch("app.agents.supervisor.work_supervisor.create_agent") as mock_create:
                     mock_create.return_value = MagicMock()
-                    await build_work_supervisor("test-thread", tools=custom_tools)
+                    await build_work_supervisor(
+                        "test-thread",
+                        tools=custom_tools,
+                        subagents=custom_subagents,
+                    )
 
                     call_args = mock_create.call_args.args
                     assert call_args[1] == custom_tools  # tools 参数（位置参数）
+                    assert mock_create.call_args.kwargs["subagents"] == custom_subagents
 
 
 # ============================================================
-# 4. @mention 强制委派路由
+# 5. @mention 强制委派路由
 # ============================================================
 
 
@@ -249,7 +320,6 @@ class TestMentionRouting:
         """@coding 直接运行 coding Expert，bypass Supervisor。"""
         from app.agents.supervisor.work_supervisor import run_work_supervisor
 
-        # mock run_coding_expert
         async def mock_expert_stream(*args, **kwargs):
             yield {"event": "token", "data": "expert result"}
 
@@ -275,24 +345,35 @@ class TestMentionRouting:
         """@rag 运行子代理后回注 Supervisor 合成。"""
         from app.agents.supervisor.work_supervisor import run_work_supervisor
 
-        # mock run_rag_agent
         async def mock_rag_stream(*args, **kwargs):
             yield {"type": "token", "content": "RAG 检索结果"}
 
-        # mock Supervisor 构建和执行（避免真正调 LLM）
+        async def mock_supervisor_stream(*args, **kwargs):
+            yield {"event": "token", "data": "supervisor synthesis"}
+
         with patch("app.subagents.rag_agent.run_rag_agent", mock_rag_stream):
             with patch("app.agents.supervisor.work_supervisor._make_deep_tools", return_value=[]):
-                with patch("app.agents.supervisor.work_supervisor.make_delegation_tools", return_value=[]):
-                    with patch("app.agents.supervisor.work_supervisor._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
-                        with patch("app.agents.supervisor.work_supervisor.build_work_supervisor", new_callable=AsyncMock):
-                            with patch("app.agents.supervisor.work_supervisor._stream_agent_events") as mock_stream:
-                                with patch("app.agents.supervisor.work_supervisor._is_interrupted", new_callable=AsyncMock, return_value=False):
-
-                                    async def mock_supervisor_stream(*args, **kwargs):
-                                        yield {"event": "token", "data": "supervisor synthesis"}
-
-                                    mock_stream.return_value = mock_supervisor_stream()
-
+                with patch(
+                    "app.agents.supervisor.work_supervisor.make_expert_delegation_tool"
+                ) as mock_expert_tool:
+                    mock_expert_tool.return_value = MagicMock(name="delegate_to_expert")
+                    with patch(
+                        "app.agents.supervisor.work_supervisor._load_mcp_tools",
+                        new_callable=AsyncMock,
+                        return_value=([], set()),
+                    ):
+                        with patch(
+                            "app.agents.supervisor.work_supervisor._build_subagent_runnables",
+                            return_value=[],
+                        ):
+                            with patch(
+                                "app.agents.supervisor.work_supervisor.build_work_supervisor",
+                                new_callable=AsyncMock,
+                            ):
+                                with patch(
+                                    "app.agents.supervisor.work_supervisor.run_agent_with_approval",
+                                    mock_supervisor_stream,
+                                ):
                                     events = []
                                     async for sse in run_work_supervisor(
                                         "@rag 查询文档",
@@ -301,5 +382,12 @@ class TestMentionRouting:
                                         events.append(sse)
 
                                     # 应该有 delegation 事件（到 rag）
-                                    delegation_events = [e for e in events if e.get("event") == "delegation"]
+                                    delegation_events = [
+                                        e for e in events if e.get("event") == "delegation"
+                                    ]
                                     assert len(delegation_events) >= 1
+                                    assert "rag" in delegation_events[0].get("data", "")
+
+                                    # 应该有 Supervisor 合成 token
+                                    token_events = [e for e in events if e.get("event") == "token"]
+                                    assert len(token_events) >= 1

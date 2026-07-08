@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any, AsyncIterator
 
 from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
 
 from app.config import FORBIDDEN_SUBAGENT_TOOLS, get_settings
 from app.llm import get_chat_model
@@ -175,6 +174,8 @@ def build_custom_agent(
 
     # 模式 2：显式参数（用于 team 角色等动态构建）
     if system_prompt is not None or tools is not None or temperature is not None:
+        from app.deep.harness import create_agent
+
         if not tools:
             logger.warning(
                 "custom agent has no tools bound, agent will be unreachable",
@@ -183,15 +184,20 @@ def build_custom_agent(
         _temp = temperature if temperature is not None else 0.2
         model = get_chat_model(temperature=_temp, streaming=True)
         _tools = _make_custom_tools(thread_id or "", tools or [], workspace_path)
-        kwargs: dict[str, Any] = {"name": f"custom_{key}"}
-        prompt = system_prompt or ""
-        prompt = prompt + THINK_PROMPT_SUFFIX
-        kwargs["prompt"] = prompt
-        if checkpointer is not None:
-            kwargs["checkpointer"] = checkpointer
-        return create_react_agent(model, _tools, **kwargs)
+        prompt = (system_prompt or "") + THINK_PROMPT_SUFFIX
+        return create_agent(
+            model,
+            _tools,
+            system_prompt=prompt,
+            checkpointer=checkpointer,
+            thread_id=thread_id or "",
+            workspace_path=workspace_path,
+            name=f"custom_{key}",
+        )
 
     # 模式 1：从配置加载
+    from app.deep.harness import create_agent
+
     custom = settings.custom_subagents
     if key not in custom:
         raise KeyError(f"custom subagent not found: {key}")
@@ -203,13 +209,16 @@ def build_custom_agent(
         )
     model = get_chat_model(temperature=cfg.temperature, streaming=True)
     _tools = _make_custom_tools(thread_id or "", cfg.tools, workspace_path)
-    kwargs = {"name": f"custom_{key}"}
-    prompt = cfg.system_prompt or ""
-    prompt = prompt + THINK_PROMPT_SUFFIX
-    kwargs["prompt"] = prompt
-    if checkpointer is not None:
-        kwargs["checkpointer"] = checkpointer
-    return create_react_agent(model, _tools, **kwargs)
+    prompt = (cfg.system_prompt or "") + THINK_PROMPT_SUFFIX
+    return create_agent(
+        model,
+        _tools,
+        system_prompt=prompt,
+        checkpointer=checkpointer,
+        thread_id=thread_id or "",
+        workspace_path=workspace_path,
+        name=f"custom_{key}",
+    )
 
 
 async def run_custom_agent(

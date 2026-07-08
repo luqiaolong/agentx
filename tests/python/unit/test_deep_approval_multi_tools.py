@@ -29,10 +29,22 @@ def _fake_tool(name: str) -> MagicMock:
     return t
 
 
+async def _empty_stream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+    yield {"event": "token", "data": "ok"}
+
+
 @pytest.fixture
 def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """打桩 run_deep_path 依赖，隔离 LLM / 沙箱 / 工具加载。"""
+    """打桩 run_deep_path 依赖，隔离 LLM / 沙箱 / 工具加载。
+
+    注意：``run_agent_with_approval`` 实际位于 ``app.deep.execution``，
+    因此所有可注入函数（_is_interrupted / _get_pending_tool_calls /
+    _stream_default / _await_approval / _handle_directory_extension）
+    都必须 patch 在 ``app.deep.execution`` 而非 ``app.deep.agent`` 的
+    re-export 上。
+    """
     import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
 
     # 工具加载：包含测试中会用到的所有危险工具，确保 runtime_dangerous 命中
     monkeypatch.setattr(
@@ -71,21 +83,14 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         lambda: fake_sandbox,
     )
 
-    # 流式事件：第一次产出 token 后结束；中断循环依赖 _is_interrupted 控制
-    monkeypatch.setattr(
-        agent_module,
-        "_stream_agent_events",
-        lambda *args, **kwargs: _empty_stream(),
-    )
+    # 流式事件：直接 patch ``app.deep.execution._stream_default``，避免
+    # 对 ``_stream_agent_events`` 局部 import 的间接寻址
+    monkeypatch.setattr(exec_module, "_stream_default", _empty_stream)
 
     return {
         "agent": fake_agent,
         "sandbox": fake_sandbox,
     }
-
-
-async def _empty_stream() -> AsyncIterator[dict[str, str]]:
-    yield {"event": "token", "data": "ok"}
 
 
 @pytest.mark.asyncio
@@ -95,7 +100,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
 ) -> None:
     """两个危险工具调用时，应 yield 两个 approval_request，然后一个 decision 批准。"""
     from app.deep.agent import run_deep_path
-    import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
@@ -103,22 +108,22 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
     ]
 
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_is_interrupted",
         AsyncMock(side_effect=[True, False]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_get_pending_tool_calls",
         AsyncMock(return_value=pending_calls),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_await_approval",
         AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_handle_directory_extension",
         AsyncMock(return_value=MagicMock(events=[], denied=False, timed_out=False)),
     )
@@ -149,7 +154,7 @@ async def test_deny_multiple_dangerous_tools_injects_errors(
 ) -> None:
     """用户拒绝时，为每个危险 tool_call 注入 ToolMessage 错误并 yield error。"""
     from app.deep.agent import run_deep_path
-    import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
@@ -157,17 +162,17 @@ async def test_deny_multiple_dangerous_tools_injects_errors(
     ]
 
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_is_interrupted",
         AsyncMock(side_effect=[True, False]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_get_pending_tool_calls",
         AsyncMock(return_value=pending_calls),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_await_approval",
         AsyncMock(return_value=_FakeApprovalDecision(approved=False)),
     )
@@ -209,24 +214,24 @@ async def test_timeout_dangerous_tools_injects_errors(
 ) -> None:
     """审批超时视为未批准，同样注入错误。"""
     from app.deep.agent import run_deep_path
-    import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
     ]
 
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_is_interrupted",
         AsyncMock(side_effect=[True, False]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_get_pending_tool_calls",
         AsyncMock(return_value=pending_calls),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_await_approval",
         AsyncMock(return_value=None),
     )
