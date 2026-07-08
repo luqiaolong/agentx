@@ -224,14 +224,15 @@ class TestAsyncCommands:
         checkpointer = MagicMock()
         checkpointer.adelete_thread = AsyncMock()
         ctx = _make_ctx(thread_id="t1", checkpointer=checkpointer)
-        # _cmd_reset 内部 from app.utils.security import get_sandbox，patch 真实路径
-        with patch("app.utils.security.get_sandbox") as mock_get_sandbox:
+        # _cmd_reset 内部 from app.sandbox import get_sandbox，patch 真实路径
+        with patch("app.sandbox.get_sandbox") as mock_get_sandbox:
             sandbox = MagicMock()
+            sandbox.clear = AsyncMock()
             mock_get_sandbox.return_value = sandbox
             result = await handle_command("/reset", ctx)
         assert result.action == CommandAction.CONTINUE
         checkpointer.adelete_thread.assert_awaited_once_with("t1")
-        sandbox.clear.assert_called_once_with("t1")
+        sandbox.clear.assert_awaited_once_with("t1")
 
     @pytest.mark.asyncio
     async def test_reset_without_checkpointer(self, capsys):
@@ -245,8 +246,8 @@ class TestAsyncCommands:
     @pytest.mark.asyncio
     async def test_abort_calls_set_abort(self, capsys):
         ctx = _make_ctx(thread_id="t1")
-        # _cmd_abort 内部 from app.approval.state import set_abort，patch 真实路径
-        with patch("app.approval.state.set_abort", new_callable=AsyncMock) as mock_abort:
+        # _cmd_abort 内部 from app.security.approval import set_abort，patch 真实路径
+        with patch("app.security.approval.set_abort", new_callable=AsyncMock) as mock_abort:
             result = await handle_command("/abort", ctx)
         assert result.action == CommandAction.CONTINUE
         mock_abort.assert_awaited_once_with("t1")
@@ -256,7 +257,7 @@ class TestAsyncCommands:
     @pytest.mark.asyncio
     async def test_pause_calls_set_pause(self, capsys):
         ctx = _make_ctx(thread_id="t1")
-        with patch("app.approval.state.set_pause", new_callable=AsyncMock) as mock_pause:
+        with patch("app.security.approval.set_pause", new_callable=AsyncMock) as mock_pause:
             result = await handle_command("/pause", ctx)
         assert result.action == CommandAction.CONTINUE
         mock_pause.assert_awaited_once_with("t1")
@@ -266,7 +267,7 @@ class TestAsyncCommands:
     @pytest.mark.asyncio
     async def test_resume_calls_clear_pause(self, capsys):
         ctx = _make_ctx(thread_id="t1")
-        with patch("app.approval.state.clear_pause", new_callable=AsyncMock) as mock_clear:
+        with patch("app.security.approval.clear_pause", new_callable=AsyncMock) as mock_clear:
             result = await handle_command("/resume", ctx)
         assert result.action == CommandAction.CONTINUE
         mock_clear.assert_awaited_once_with("t1")
@@ -374,13 +375,14 @@ class TestSyncCommands:
     @pytest.mark.asyncio
     async def test_init_calls_authorize(self, capsys):
         ctx = _make_ctx(workspace_path="/tmp/project")
-        # _cmd_init 内部 from app.utils.security import get_sandbox，patch 真实路径
-        with patch("app.utils.security.get_sandbox") as mock_get_sandbox:
+        # _cmd_init 内部 from app.sandbox import get_sandbox，patch 真实路径
+        with patch("app.sandbox.get_sandbox") as mock_get_sandbox:
             sandbox = MagicMock()
+            sandbox.authorize = AsyncMock()
             mock_get_sandbox.return_value = sandbox
             result = await handle_command("/init", ctx)
         assert result.action == CommandAction.CONTINUE
-        sandbox.authorize.assert_called_once()
+        sandbox.authorize.assert_awaited_once_with("t1", "/tmp/project")
         out = capsys.readouterr().out
         assert "已授权" in out
 

@@ -139,7 +139,7 @@ async def run_repl(
                 )
                 await consume_events(event_gen, renderer, thread_id, is_repl=True)
             except KeyboardInterrupt:
-                from app.approval.state import set_pause
+                from app.security.approval import set_pause
                 await set_pause(thread_id)
                 print("\n[已暂停，再次 Ctrl+C 退出]")
             except Exception as exc:

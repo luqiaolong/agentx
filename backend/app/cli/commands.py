@@ -80,7 +80,7 @@ async def handle_command(cmd: str, ctx: CommandContext) -> CommandResult:
         return _cmd_mode(parts, ctx.current_mode)
 
     if command == "/init":
-        _cmd_init(ctx.workspace_path, ctx.thread_id)
+        await _cmd_init(ctx.workspace_path, ctx.thread_id)
         return CommandResult.continue_()
 
     if command == "/model":
@@ -165,12 +165,12 @@ def print_help() -> None:
 
 async def _cmd_reset(thread_id: str, checkpointer: object | None) -> None:
     """清空会话状态。"""
-    from app.utils.security import get_sandbox
+    from app.sandbox import get_sandbox
 
     if checkpointer and hasattr(checkpointer, "adelete_thread"):
         try:
             await checkpointer.adelete_thread(thread_id)
-            get_sandbox().clear(thread_id)
+            await get_sandbox().clear(thread_id)
             print("[会话已重置]")
         except Exception as exc:
             print(f"[重置失败] {exc}")
@@ -193,15 +193,15 @@ def _cmd_mode(parts: list[str], current_mode: str) -> CommandResult:
         return CommandResult.continue_()
 
 
-def _cmd_init(workspace_path: str | None, thread_id: str) -> None:
+async def _cmd_init(workspace_path: str | None, thread_id: str) -> None:
     """授权当前目录为 workspace。"""
-    from app.utils.security import get_sandbox
+    from app.sandbox import get_sandbox
 
     if not workspace_path:
         print("[未指定 workspace 路径]")
         return
     try:
-        get_sandbox().authorize(workspace_path, thread_id)
+        await get_sandbox().authorize(thread_id, workspace_path)
         print(f"[已授权] {workspace_path} → thread {thread_id}")
     except Exception as exc:
         print(f"[授权失败] {exc}")
@@ -309,7 +309,7 @@ async def _cmd_compact(thread_id: str, checkpointer: object | None) -> None:
 
 async def _cmd_abort(thread_id: str) -> None:
     """中止当前生成。"""
-    from app.approval.state import set_abort
+    from app.security.approval import set_abort
 
     try:
         await set_abort(thread_id)
@@ -320,7 +320,7 @@ async def _cmd_abort(thread_id: str) -> None:
 
 async def _cmd_pause(thread_id: str) -> None:
     """暂停生成。"""
-    from app.approval.state import set_pause
+    from app.security.approval import set_pause
 
     try:
         await set_pause(thread_id)
@@ -331,7 +331,7 @@ async def _cmd_pause(thread_id: str) -> None:
 
 async def _cmd_resume(thread_id: str) -> None:
     """恢复生成。"""
-    from app.approval.state import clear_pause
+    from app.security.approval import clear_pause
 
     try:
         await clear_pause(thread_id)
