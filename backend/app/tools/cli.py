@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 from app.config import PROJECT_ROOT, get_settings
+from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox import PathNotAuthorized, get_sandbox, is_critical
 from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args
@@ -177,11 +178,25 @@ async def cli_execute(
         except OSError as exc:
             return -1, "", f"命令启动失败: {exc}"
 
-    exit_code, stdout, stderr = await asyncio.to_thread(_run)
-    logger.info(
-        "cli_execute.done",
+    # trace_span 包 subprocess.run：单独记录子进程执行耗时（不包含前置检查）。
+    # 进入 span 时把关键 metadata 注入，span dict 可在 with 块内被修改（追加
+    # exit_code / output_len）。loguru patcher 会自动从 ContextVar 注入 trace_id
+    # 到 logger，stderr / 文件 sink 日志行尾带 ``| trace=xxxxxxxxxxxxxxxx``。
+    with trace_span(
+        "cli_execute.run",
         thread_id=thread_id,
         command=command,
-        exit_code=exit_code,
-    )
+        cwd=str(resolved_cwd),
+        timeout=effective_timeout,
+    ) as span:
+        exit_code, stdout, stderr = await asyncio.to_thread(_run)
+        span["exit_code"] = exit_code
+        span["stdout_len"] = len(stdout)
+        span["stderr_len"] = len(stderr)
+        logger.info(
+            "cli_execute.done",
+            thread_id=thread_id,
+            command=command,
+            exit_code=exit_code,
+        )
     return _format_output(exit_code, stdout, stderr, max_output)

@@ -1,23 +1,66 @@
 """通用 SSE 事件构造工具。
 
-统一前后端 SSE 事件格式，自动处理 JSON 序列化。
-"""
+统一前后端 SSE 事件格式，自动处理 JSON 序列化，并支持在 ``data`` 顶层注入
+``trace_id`` 字段，便于前端订阅并在 UI 展示（用户报错时复制）。
 
+设计：
+- ``make_sse_event(event, data, trace_id=None)``：当 event 属于 JSON 事件白名单
+  且 data 为 dict 时，自动把 ``trace_id`` 注入到 data 顶层。
+- 显式 ``trace_id=None`` 时，自动从 ``app.observability.trace.current_trace_id``
+  读取；调用方显式传入优先（便于 chat 入口覆盖工具内部，避免子任务错位）。
+- ``make_tool_call_event`` / ``make_tool_result_event`` / ``make_todo_event`` /
+  ``make_approval_event`` 均接受可选 ``trace_id`` 参数并透传。
+"""
 from __future__ import annotations
 
 import json
 from typing import Any
 
+# 延迟导入避免循环依赖（trace.py 不依赖本模块）
+from app.observability.trace import current_trace_id
 
-def make_sse_event(event: str, data: Any) -> dict[str, str]:
+
+def _resolve_trace_id(trace_id: str | None) -> str | None:
+    """解析 trace_id：调用方显式传入优先，否则从 ContextVar 读取。"""
+    if trace_id:
+        return trace_id
+    return current_trace_id()
+
+
+def _inject_trace(data: Any, trace_id: str | None) -> Any:
+    """若 data 为 dict 且 trace_id 非空，把 trace_id 注入到顶层。
+
+    对 str 类型 data 不做处理（避免重复序列化破坏 token 事件的纯字符串约定）。
+    对 list 类型也不处理（目前事件数据无 list 顶层）。
+    """
+    resolved = _resolve_trace_id(trace_id)
+    if resolved and isinstance(data, dict):
+        # 已存在 trace_id 字段时，调用方显式传入优先（保证 chat 入口覆盖工具内部）
+        if "trace_id" not in data:
+            data = {**data, "trace_id": resolved}
+    return data
+
+
+def make_sse_event(
+    event: str, data: Any, trace_id: str | None = None
+) -> dict[str, str]:
     """构造标准 SSE 事件 dict。
 
-    - token: data 为纯字符串（前端直接拼接，不做 JSON.parse）
+    - token: data 为纯字符串（前端直接拼接，不做 JSON.parse），trace_id 不注入
+      （保持 token 事件 payload 为纯字符串，避免前端解析器额外处理）。
     - todo_update / approval_request / reasoning / tool_call / tool_result /
-      delegation / team_plan / team_progress / team_result / team_done / error /
-      _subtask_done（内部哨兵）:
-      data 为 JSON 字符串（dict 会被 json 序列化）
-    - done: data 为 "{}"
+      delegation / classification / team_* / plan / error / _subtask_done:
+      data 为 JSON 字符串（dict 会被 json 序列化）；若传 trace_id 则注入 data 顶层。
+    - done: data 为 "{}"；不注入 trace_id（前端在事件流最开始就拿到 trace_id，
+      显式注入 done 事件无意义）。
+
+    Args:
+        event: 事件类型。
+        data: 事件 payload（dict / str）。
+        trace_id: 可选 trace_id，注入到 JSON 事件 data 顶层。
+
+    Returns:
+        ``{"event": str, "data": str}`` 形式的 SSE 事件 dict。
     """
     if event in (
         "todo_update",
@@ -37,14 +80,32 @@ def make_sse_event(event: str, data: Any) -> dict[str, str]:
         "_subtask_done",
     ):
         if isinstance(data, str):
+            # 调用方已自行序列化（罕见）；仅当显式传 trace_id 时尝试注入
+            resolved = _resolve_trace_id(trace_id)
+            if resolved:
+                try:
+                    parsed = json.loads(data)
+                    if isinstance(parsed, dict) and "trace_id" not in parsed:
+                        parsed["trace_id"] = resolved
+                        data = json.dumps(parsed, ensure_ascii=False, default=str)
+                except json.JSONDecodeError:
+                    # 非 JSON 字符串不处理
+                    pass
             return {"event": event, "data": data}
+        data = _inject_trace(data, trace_id)
         return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
     if event == "done":
         return {"event": "done", "data": "{}"}
+    # token / 未知事件：data 直接 str()，不注入 trace_id
     return {"event": event, "data": str(data)}
 
 
-def make_todo_event(text: str, done: bool = False, task_id: str | None = None) -> dict[str, str]:
+def make_todo_event(
+    text: str,
+    done: bool = False,
+    task_id: str | None = None,
+    trace_id: str | None = None,
+) -> dict[str, str]:
     """构造 todo_update SSE 事件。"""
     todo: dict[str, Any] = {"text": text, "done": done}
     if task_id is not None:
@@ -52,11 +113,12 @@ def make_todo_event(text: str, done: bool = False, task_id: str | None = None) -
     return make_sse_event(
         "todo_update",
         {"todos": [todo]},
+        trace_id=trace_id,
     )
 
 
 def make_tool_call_event(
-    tc_id: str, name: str, args: Any, source: str = "deep"
+    tc_id: str, name: str, args: Any, source: str = "deep", trace_id: str | None = None
 ) -> dict[str, str]:
     """构造 tool_call SSE 事件。"""
     return make_sse_event(
@@ -67,11 +129,16 @@ def make_tool_call_event(
             "args": args if args is not None else {},
             "source": source,
         },
+        trace_id=trace_id,
     )
 
 
 def make_tool_result_event(
-    tc_id: str, name: str, result: Any, source: str = "deep"
+    tc_id: str,
+    name: str,
+    result: Any,
+    source: str = "deep",
+    trace_id: str | None = None,
 ) -> dict[str, str]:
     """构造 tool_result SSE 事件。"""
     return make_sse_event(
@@ -82,25 +149,28 @@ def make_tool_result_event(
             "result": result,
             "source": source,
         },
+        trace_id=trace_id,
     )
 
 
-def make_team_event(event: str, data: Any) -> dict[str, str]:
+def make_team_event(event: str, data: Any, trace_id: str | None = None) -> dict[str, str]:
     """构造 team 相关 SSE 事件。
 
     合并到 ``make_sse_event``（统一事件白名单已含 ``_subtask_done`` 哨兵），
     此处保留为向后兼容别名。
     """
-    return make_sse_event(event, data)
+    return make_sse_event(event, data, trace_id=trace_id)
 
 
-def make_approval_event(data: dict) -> dict[str, str]:
+def make_approval_event(
+    data: dict, trace_id: str | None = None
+) -> dict[str, str]:
     """构造 approval_request SSE 事件（仅做 JSON 封装）。
 
     redaction 和 preview 生成逻辑由调用方（deep/approval.py）处理，
     本函数只负责将 data dict 序列化为 SSE 事件格式。
     """
-    return make_sse_event("approval_request", data)
+    return make_sse_event("approval_request", data, trace_id=trace_id)
 
 
 __all__ = [

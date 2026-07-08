@@ -7,6 +7,12 @@
  * 事件契约：AGENTS.md §13 三处同步（backend main.py + 此文件 + useChatStream.ts）。
  * - token 事件 data 是纯字符串
  * - reasoning / tool_call / tool_result / delegation / team_* / approval_request 事件 payload 是 JSON
+ *
+ * trace_id 处理：
+ * - 后端 SSE 入口生成 16 字符 hex，注入到每个 JSON 事件 data 顶层。
+ * - 本文件解析 SSE 时把 trace_id 提到 ChatEvent 顶层字段（payload 展开时自动带入）。
+ * - token 事件 data 是纯字符串，单独从 token 之前的 JSON 事件读 trace_id。
+ * - 模块级 currentTraceId 变量持有"最近一次"trace_id，供 token 事件补充。
  */
 import type {
   ChatEvent,
@@ -19,6 +25,29 @@ import { API_BASE } from "../api-constants";
 
 const eventHandlers = new Set<(e: ChatEvent) => void>();
 const approvalHandlers = new Set<(req: ApprovalRequest) => void>();
+
+/**
+ * 当前 SSE 流的 trace_id（在 send() 开始时由前端生成，POST body 携带；
+ * 后端若沿用则所有 SSE 事件的 trace_id 一致，若后端自己生成则以第一个
+ * 事件为准）。useChatStream 通过 ``getCurrentTraceId`` 读取。
+ *
+ * 选前端生成的理由：用户点发送的瞬间就能拿到 trace_id（无需等服务端响应），
+ * UI 可以立即展示，审批弹窗和错误提示也能立刻拿到 ID 拼到消息里。
+ */
+let currentTraceId: string | null = null;
+
+/** 生成 16 字符 hex trace_id（与后端 new_trace_id() 格式对齐）。 */
+function generateTraceId(): string {
+  // crypto.randomUUID() 返回 36 字符（含 4 个连字符），取前 16 个 hex 字符
+  // （去掉连字符后取前 16 位），与后端 uuid.uuid4().hex[:16] 等价长度。
+  const hex = crypto.randomUUID().replace(/-/g, "");
+  return hex.slice(0, 16);
+}
+
+/** 暴露给 useChatStream 读取当前 turn 的 trace_id。 */
+export function getCurrentTraceId(): string | null {
+  return currentTraceId;
+}
 
 interface SendMessageOpts {
   threadId?: string;
@@ -40,6 +69,11 @@ interface SendMessageOpts {
  * 流式事件以空行分隔（`\r\n\r\n` 或 `\n\n` 均兼容）。
  */
 async function send(msg: { role: string; content: string }, opts?: SendMessageOpts): Promise<void> {
+  // 入口生成 trace_id：放在 POST body 给后端沿用，并在模块级变量里存一份
+  // 供 useChatStream 读取（无需等服务端响应）。
+  const traceId = generateTraceId();
+  currentTraceId = traceId;
+
   let res: Response;
   try {
     res = await fetch(`${API_BASE}/api/chat`, {
@@ -54,6 +88,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         workspace_path: opts?.workspacePath ?? null,
         revoked_paths: opts?.revokedPaths ?? null,
         mention_targets: opts?.mentionTargets ?? null,
+        trace_id: traceId,
       }),
     });
   } catch (err) {
@@ -145,6 +180,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
             kind: obj.kind === "directory_extension" ? "directory_extension" : "dangerous_tool",
             requestedPath: typeof obj.requestedPath === "string" ? obj.requestedPath : undefined,
             writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
+            traceId: typeof obj.trace_id === "string" ? obj.trace_id : undefined,
           };
           approvalHandlers.forEach((h) => h(req));
         }

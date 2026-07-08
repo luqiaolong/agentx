@@ -26,6 +26,7 @@ from app.security.approval import (
 from app.config import get_settings
 from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
+from app.observability.trace import bind_trace, current_trace_id, new_trace_id
 
 
 async def _clear_thread_state(thread_id: str) -> None:
@@ -67,54 +68,80 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
     - ``team_done``     — AgentTeam 整体结束（data 为 JSON ``{"status": "done"|"error"}``）。
     - ``done``          — 流结束。
     - ``error``         — 错误（含消息）。
+
+    trace_id 贯穿：
+    - 入口生成 16 字符 hex（``new_trace_id``），通过 ``bind_trace`` ContextVar
+      注入到下游所有 ``logger.info`` 与 ``make_sse_event`` 调用。
+    - 当前活跃 trace_id 也会被 loguru patcher 自动注入到 stderr/file sink，
+      日志行尾 ``| trace=xxxxxxxxxxxxxxxx`` 即可在 backend.log grep 出整条链路。
+    - 第一个事件（reasoning / tool_call / error / done）即附带 trace_id，
+      前端可立即订阅并展示给用户（用户报问题时复制）。
     """
     # 延迟 import：测试通过 monkeypatch app.main.* 注入 fake
     from app.main import get_async_checkpointer, get_sandbox, run_router
 
     settings = get_settings()
-    logger.info(
-        "chat request",
-        thread_id=req.thread_id,
-        message_len=len(req.message),
-    )
+    # trace_id 生成：优先沿用前端传入（chat.ts::send() 生成），缺失或异常时
+    # 由后端自行生成。bind_trace 设置 ContextVar，下游所有 logger.info /
+    # make_sse_event 自动通过 patcher / _resolve_trace_id 拿到。
+    frontend_trace_id = (req.trace_id or "").strip()
+    if frontend_trace_id and len(frontend_trace_id) <= 32:
+        trace_id = frontend_trace_id
+    else:
+        trace_id = new_trace_id()
+    with bind_trace(trace_id):
+        logger.info(
+            "chat request",
+            thread_id=req.thread_id,
+            trace_id=trace_id,
+            message_len=len(req.message),
+            agent_mode=req.agent_mode,
+        )
 
-    try:
-        # /reset：清空 checkpointer + 沙箱（当不持久化时）
-        if req.message.startswith("/reset"):
-            await _clear_thread_state(req.thread_id)
-            if not settings.persist_authorized_dirs:
-                await get_sandbox().clear(req.thread_id)
-                yield {"event": "token", "data": "已清空会话状态与授权目录"}
-            else:
-                yield {"event": "token", "data": "已清空会话状态（授权目录已持久化，未清空）"}
-            yield {"event": "done", "data": "{}"}
-            return
-
-        # 其他消息：走 Router 场景分发（传入 checkpointer 加载历史）
-        checkpointer = await get_async_checkpointer()
-        # coding_team 模式受 agents.teams.coding.enabled 开关控制
-        effective_agent_mode = req.agent_mode
-        if req.agent_mode == "coding_team" and not settings.agents.coding_team_enabled:
-            effective_agent_mode = "coding"
-        async for event in run_router(
-            req.message,
-            req.thread_id,
-            checkpointer=checkpointer,
-            permission_mode=req.permission_mode,
-            agent_mode=effective_agent_mode,
-            workspace_path=req.workspace_path,
-            revoked_paths=req.revoked_paths,
-        ):
-            # 检查中止标志
-            if await is_aborted(req.thread_id):
-                yield {"event": "error", "data": "用户已中止"}
-                await clear_abort(req.thread_id)
+        try:
+            # /reset：清空 checkpointer + 沙箱（当不持久化时）
+            if req.message.startswith("/reset"):
+                await _clear_thread_state(req.thread_id)
+                if not settings.persist_authorized_dirs:
+                    await get_sandbox().clear(req.thread_id)
+                    yield {"event": "token", "data": "已清空会话状态与授权目录"}
+                else:
+                    yield {"event": "token", "data": "已清空会话状态（授权目录已持久化，未清空）"}
+                yield {"event": "done", "data": "{}"}
                 return
-            yield event
 
-    except Exception as exc:  # noqa: BLE001 — SSE 兜底，避免连接挂起
-        logger.exception("SSE chat error", thread_id=req.thread_id)
-        yield {"event": "error", "data": f"内部错误: {exc}"}
+            # 其他消息：走 Router 场景分发（传入 checkpointer 加载历史）
+            checkpointer = await get_async_checkpointer()
+            # coding_team 模式受 agents.teams.coding.enabled 开关控制
+            effective_agent_mode = req.agent_mode
+            if req.agent_mode == "coding_team" and not settings.agents.coding_team_enabled:
+                effective_agent_mode = "coding"
+            async for event in run_router(
+                req.message,
+                req.thread_id,
+                checkpointer=checkpointer,
+                permission_mode=req.permission_mode,
+                agent_mode=effective_agent_mode,
+                workspace_path=req.workspace_path,
+                revoked_paths=req.revoked_paths,
+            ):
+                # 检查中止标志
+                if await is_aborted(req.thread_id):
+                    # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
+                    yield {
+                        "event": "error",
+                        "data": f"用户已中止 | trace={trace_id}",
+                    }
+                    await clear_abort(req.thread_id)
+                    return
+                yield event
+
+        except Exception as exc:  # noqa: BLE001 — SSE 兜底，避免连接挂起
+            logger.exception("SSE chat error", thread_id=req.thread_id)
+            yield {
+                "event": "error",
+                "data": f"内部错误: {exc} | trace={trace_id}",
+            }
 
 
 def register_chat_routes(app: FastAPI) -> None:

@@ -4,7 +4,7 @@ import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { TeamAgentState } from "@/stores/chat";
 import type { ChatEvent } from "@/lib/utils";
-import { chat } from "@/lib/api/chat";
+import { chat, getCurrentTraceId } from "@/lib/api/chat";
 
 export interface TodoItem {
   text: string;
@@ -102,6 +102,11 @@ export function useChatStream(args: UseChatStreamArgs) {
   useEffect(() => {
     threadIdRef.current = threadId;
   }, [threadId]);
+
+  const currentIdRef = useRef<string | null>(currentId);
+  useEffect(() => {
+    currentIdRef.current = currentId;
+  }, [currentId]);
 
   const callbacksRef = useRef({ setTodos, setErrorMsg, setPaused });
   useEffect(() => {
@@ -210,7 +215,9 @@ export function useChatStream(args: UseChatStreamArgs) {
           // 首条有效对话（任一 agent 模式）完成后异步收敛 .agentx/ 生成（fire-and-forget）。
           // generatedAgentx 标记 + getProjectConfig 真实存在性构成双层防护；
           // 详见 stores/chat/index.ts::ensureAgentxGenerated 注释。
-          const activeTid = targetThreadId();
+          // 强制使用 activeThreadIdRef（发送时固定），避免用户在 done 期间切到
+          // 新会话时把 .agentx 触发错配到非流式所在会话。
+          const activeTid = activeThreadIdRef?.current ?? currentIdRef.current;
           if (activeTid) {
             void useChatStore.getState().ensureAgentxGenerated(activeTid);
           }
@@ -226,7 +233,13 @@ export function useChatStream(args: UseChatStreamArgs) {
             pendingIdRef.current = null;
           }
           const errData = e.data ?? e.error;
-          callbacksRef.current.setErrorMsg(typeof errData === "string" ? errData : "请求出错");
+          const baseMsg = typeof errData === "string" ? errData : "请求出错";
+          // 错误消息附 trace_id：方便用户报告"任务卡死/中断"问题时直接复制
+          // 提交给开发者，开发者即可 grep data/logs/backend.log 定位整条链路。
+          // 优先用事件自身的 trace_id（后端注入），缺失时回退到 chat.ts 模块级变量。
+          const traceId = e.trace_id ?? getCurrentTraceId() ?? null;
+          const msgWithTrace = traceId ? `${baseMsg}（trace=${traceId}）` : baseMsg;
+          callbacksRef.current.setErrorMsg(msgWithTrace);
           // 标记当前任务失败
           const tid = currentTaskIdRef.current;
           if (tid) {
@@ -269,8 +282,10 @@ export function useChatStream(args: UseChatStreamArgs) {
               .replace(/<file>.*?<\/file>\s?/g, "")
               .trim();
             const title = rawQuery.slice(0, 40) || "深度任务";
-            // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离
-            const sessionId = activeThreadIdRef?.current ?? currentId ?? "";
+            // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离。
+            // 走 currentIdRef 而非闭包 currentId —— 否则 SSE handler 永远拿到首次渲染的
+            // 会话 ID,流结束后到达的延迟 todo_update 会落到 stale 闭包或 ""。
+            const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
             addTask({
               id: newId,
               title,

@@ -11,14 +11,23 @@
  *
  * 注意：useChatStream 构造 ChatEvent 时 eventType 是动态 string，对象字面量无法
  * 直接赋值给 union，需用 `as unknown as ChatEvent` 断言。
+ *
+ * trace_id 字段：
+ * - 后端 SSE 入口（`_event_generator`）生成 16 字符 hex trace_id，注入到
+ *   每个 JSON 事件 data 顶层（参见 backend/app/utils/sse_events.py）。
+ * - 前端从事件顶层读出 trace_id（chat.ts 解析时统一提取），存入 message
+ *   metadata，错误提示和审批弹窗展示给用户，用户报问题时复制即可让开发
+ *   grep 后端 backend.log 整条链路。
+ * - token 事件 data 是纯字符串，不携带 trace_id；前端从 token 事件之前的
+ *   第一个 JSON 事件（如 tool_call / approval_request）中拿 trace_id。
  */
 export type ChatEvent =
   // token 事件：data 是纯字符串（不变）
-  | { type: "token"; data: string }
+  | { type: "token"; data: string; trace_id?: string }
   // reasoning 事件：thinking 流式 chunk
-  | { type: "reasoning"; content: string; source: string }
+  | { type: "reasoning"; content: string; source: string; trace_id?: string }
   // tool_call 事件：子代理/主 agent 调用工具
-  | { type: "tool_call"; id: string; name: string; args: unknown; source: string }
+  | { type: "tool_call"; id: string; name: string; args: unknown; source: string; trace_id?: string }
   // tool_result 事件：工具返回结果（error 时带 error 字段）
   | {
       type: "tool_result";
@@ -27,24 +36,26 @@ export type ChatEvent =
       result: unknown;
       source: string;
       error?: string;
+      trace_id?: string;
     }
   // delegation 事件：Router 静态分类或 DeepAgent 动态委派
-  | { type: "delegation"; target: string; source: string; message: string }
+  | { type: "delegation"; target: string; source: string; message: string; trace_id?: string }
   // classification 事件：Router 分类决策展示
-  | { type: "classification"; label: string; reason: string }
+  | { type: "classification"; label: string; reason: string; trace_id?: string }
   // todo_update 事件：DeepAgent 任务级 todo 列表
   // 后端可能携带 task_id，用于多任务场景下按任务分组展示
-  | { type: "todo_update"; todos: unknown; task_id?: string }
+  | { type: "todo_update"; todos: unknown; task_id?: string; trace_id?: string }
   // plan / plan_update 事件：Agent 规划阶段输出的任务计划
-  | { type: "plan"; plan: PlanTask[] }
-  | { type: "plan_update"; plan: PlanTask[] }
+  | { type: "plan"; plan: PlanTask[]; trace_id?: string }
+  | { type: "plan_update"; plan: PlanTask[]; trace_id?: string }
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
-  | { type: "approval_request"; [k: string]: unknown }
+  | { type: "approval_request"; [k: string]: unknown; trace_id?: string }
   // team_plan 事件：AgentTeam 的 Orchestrator 生成的子任务计划
   | {
       type: "team_plan";
       plan: { agent: string; input: string; purpose: string }[];
       reasoning: string;
+      trace_id?: string;
     }
   // team_progress 事件：某个子任务状态变化
   | {
@@ -52,17 +63,18 @@ export type ChatEvent =
       agent: string;
       status: "running" | "done" | "error";
       message?: string;
+      trace_id?: string;
     }
   // team_result 事件：某个子任务完成后写入黑板的结果摘要
-  | { type: "team_result"; agent: string; summary: string }
+  | { type: "team_result"; agent: string; summary: string; trace_id?: string }
   // team_done 事件：AgentTeam 整体执行结束
-  | { type: "team_done"; status?: "error" | "done" }
+  | { type: "team_done"; status?: "error" | "done"; trace_id?: string }
   // paused 事件：后端流被用户暂停
-  | { type: "paused"; data?: unknown }
+  | { type: "paused"; data?: unknown; trace_id?: string }
   // done 事件：流式结束
-  | { type: "done"; data?: unknown }
+  | { type: "done"; data?: unknown; trace_id?: string }
   // error 事件：流式出错（data 和 error 字段均可能携带信息）
-  | { type: "error"; data?: unknown; error?: string };
+  | { type: "error"; data?: unknown; error?: string; trace_id?: string };
 
 export type ApprovalKind = "dangerous_tool" | "directory_extension";
 
@@ -74,6 +86,7 @@ export interface ApprovalRequest {
   kind?: ApprovalKind;          // 缺省 = dangerous_tool（向后兼容）
   requestedPath?: string;       // directory_extension 时必填
   writable?: boolean;           // directory_extension 时必填
+  traceId?: string;             // 后端 SSE 事件顶层 trace_id（用户报问题时复制）
 }
 
 export type PermissionMode = "standard" | "full_trust";
@@ -101,6 +114,8 @@ export interface SkillSummary {
   trigger: string;
   tools: string[];
   content_preview: string;
+  /** SKILL.md 真实绝对路径（DATA_DIR/skills/<name>/SKILL.md） */
+  path: string;
 }
 
 export interface WorkspaceEntry {
@@ -256,6 +271,8 @@ export interface SkillFileInfo {
   size: number;
   mtime: string;
   content_preview: string;
+  /** SKILL.md 真实绝对路径（DATA_DIR/skills/<name>/SKILL.md） */
+  path: string;
 }
 
 export interface ThreadInfo {

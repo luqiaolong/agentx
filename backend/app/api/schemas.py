@@ -64,6 +64,11 @@ class ChatRequest(BaseModel):
         default_factory=list,
         description="用户手动撤销过的路径列表；router 收到后跳过对这些路径的 chip 自动授权",
     )
+    trace_id: str | None = Field(
+        default=None,
+        max_length=32,
+        description="前端生成的 16 字符 hex trace_id；为空时由后端 _event_generator 自行生成",
+    )
 
 
 class SkillSaveRequest(BaseModel):

@@ -20,6 +20,8 @@ import asyncio
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
+from loguru import logger
+
 from app.security.approval import get_abort_event
 from app.utils.sse_events import (
     make_sse_event,
@@ -75,6 +77,12 @@ async def _stream_agent_events(
     thread_id = config.get("configurable", {}).get("thread_id", "")
     abort_event = await get_abort_event(thread_id)
 
+    logger.info(
+        "stream_agent_events: start streaming",
+        thread_id=thread_id,
+        inputs_type=type(inputs).__name__,
+        source=source,
+    )
     async for state in agent.astream(inputs, config=config, stream_mode="values"):
         if abort_event.is_set():
             raise asyncio.CancelledError("aborted")
@@ -112,8 +120,23 @@ async def _stream_agent_events(
                 )
             yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
             yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
+            logger.info(
+                "stream_agent_events: yielded tool_result",
+                thread_id=thread_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                source=source,
+            )
 
         elif isinstance(last_msg, AIMessage):
+            tc_count = len(getattr(last_msg, "tool_calls", []) or [])
+            content_preview = str(last_msg.content)[:100] if last_msg.content else ""
+            logger.debug(
+                "stream_agent_events: AIMessage tc_count={tc_count} content_preview={content_preview} source={source}",
+                tc_count=tc_count,
+                content_preview=content_preview,
+                source=source,
+            )
             if getattr(last_msg, "tool_calls", None):
                 # AIMessage with tool_calls → 先展示思考计划，再 yield tool_call
                 # LLM 的 content 通常包含 💧... 计划 ...</think> 或纯文本计划

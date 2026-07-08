@@ -495,6 +495,12 @@ async def run_approval_loop(
     readonly_streak = 0
 
     # ---- 1. 初始流式执行 ----
+    logger.info(
+        "approval_loop: initial stream start",
+        thread_id=thread_id,
+        inputs_type=type(inputs).__name__,
+        source=source,
+    )
     try:
         async for sse in _stream(graph, inputs, config, source):
             if yield_event is not None:
@@ -506,9 +512,16 @@ async def run_approval_loop(
         yield make_sse_event("error", f"执行失败: {exc}")
         return
 
+    logger.info("approval_loop: initial stream done", thread_id=thread_id)
+
     # ---- 2. 中断/恢复循环 ----
     while iteration < max_iterations:
         iteration += 1
+        logger.info(
+            "approval_loop: iteration start",
+            thread_id=thread_id,
+            iteration=iteration,
+        )
 
         # 暂停/恢复检查
         if await is_paused(thread_id):
@@ -519,9 +532,16 @@ async def run_approval_loop(
             yield make_sse_event("resumed", {})
 
         if not await _is_int(graph, config):
+            logger.info("approval_loop: not interrupted, breaking", thread_id=thread_id)
             break
 
         pending_calls = await _get_calls(graph, config)
+        logger.info(
+            "approval_loop: interrupted, pending_calls",
+            thread_id=thread_id,
+            pending_count=len(pending_calls),
+            pending_tools=[tc.get("name", "") for tc in pending_calls],
+        )
         if not pending_calls:
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
@@ -558,6 +578,7 @@ async def run_approval_loop(
 
         # ---- bug #5: full_trust 模式跳过所有审批（含 directory_extension 预检查）----
         if is_full_trust:
+            logger.info("approval_loop: full_trust resume", thread_id=thread_id)
             await sandbox.clear_temp(thread_id)
             try:
                 async for sse in _stream(graph, None, config, source):
@@ -569,6 +590,7 @@ async def run_approval_loop(
                 await _inject_msgs(graph, config, f"恢复失败: {exc}")
                 yield make_sse_event("error", f"恢复失败: {exc}")
                 return
+            logger.info("approval_loop: full_trust resume done", thread_id=thread_id)
             continue
 
         # ---- standard 模式：检查危险工具 ----
@@ -615,34 +637,45 @@ async def run_approval_loop(
                 dangerous_calls.append(tc)
 
         if dangerous_calls:
+            logger.info(
+                "approval_loop: dangerous tools found",
+                thread_id=thread_id,
+                tools=[tc.get("name", "") for tc in dangerous_calls],
+            )
             for tc in dangerous_calls:
                 evt = _make_approval_event(tc, thread_id, kind="dangerous_tool")
                 if yield_event is not None:
                     await yield_event(evt)
                 yield evt
-
+        
             # bug #6: max_wait 不再为 float("inf")，0 → 3600s
             decision = await _await_approval(
                 thread_id,
                 poll_interval=_APPROVAL_POLL_INTERVAL,
                 max_wait=_resolve_max_wait(),
             )
-
+        
             if decision is None or not decision.approved:
+                logger.info(
+                    "approval_loop: approval denied or timeout",
+                    thread_id=thread_id,
+                    decision=str(decision),
+                )
                 for tc in dangerous_calls:
                     await _inject_call(
                         graph, config, tc, "用户拒绝执行危险操作"
                     )
                 yield make_sse_event("error", "用户拒绝执行危险操作")
                 return
-
+        
             logger.info(
-                "approval_loop approval granted",
+                "approval_loop: approval granted",
                 thread_id=thread_id,
                 tool_count=len(dangerous_calls),
                 tools=[tc.get("name") for tc in dangerous_calls],
             )
         else:
+            logger.info("approval_loop: no dangerous tools, checking directory_extension", thread_id=thread_id)
             # 非危险工具：检查只读 fs 工具是否越界
             # bug #1 #2 #4: 传 workspace_path + parent_thread_id
             extension_handled = await _handle_directory_extension(
@@ -651,6 +684,13 @@ async def run_approval_loop(
                 sandbox,
                 workspace_path=workspace_path,
                 parent_thread_id=parent_thread_id,
+            )
+            logger.info(
+                "approval_loop: directory_extension result",
+                thread_id=thread_id,
+                denied=extension_handled.denied,
+                timed_out=extension_handled.timed_out,
+                event_count=len(extension_handled.events),
             )
             for evt in extension_handled.events:
                 if yield_event is not None:
@@ -664,8 +704,13 @@ async def run_approval_loop(
                 yield make_sse_event("error", "目录授权等待被中断，操作未执行")
                 await _inject_msgs(graph, config, "目录授权等待被中断，操作未执行")
                 return
-
+        
         # ---- 恢复执行 ----
+        logger.info(
+            "approval_loop: resuming execution",
+            thread_id=thread_id,
+            pending_tools=[tc.get("name", "") for tc in pending_calls],
+        )
         try:
             async for sse in _stream(graph, None, config, source):
                 if yield_event is not None:
@@ -676,7 +721,8 @@ async def run_approval_loop(
             await _inject_msgs(graph, config, f"恢复失败: {exc}")
             yield make_sse_event("error", f"恢复失败: {exc}")
             return
-
+        logger.info("approval_loop: resume done", thread_id=thread_id)
+        
         await sandbox.clear_temp(thread_id)
 
     if iteration >= max_iterations:
