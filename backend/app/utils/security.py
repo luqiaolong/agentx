@@ -101,37 +101,20 @@ class SessionSandbox:
     # ---- internal helpers ----
 
     def _get_authorized_set(self, thread_id: str, source: str = "authorized_dirs") -> set[tuple[Path, bool]]:
-        """安全获取授权集合，防御非 set 类型（如 list）导致迭代错误。"""
+        """安全获取授权集合。防御非 set 类型（如 list）导致迭代错误。"""
         container = self.authorized_dirs if source == "authorized_dirs" else self._temp_authorized
         raw = container.get(thread_id, set())
         if isinstance(raw, set):
             return raw
-        if isinstance(raw, (list, tuple)):
-            logger.warning(
-                "{} type mismatch for thread_id={}, expected set got {}. Converting to set.",
-                source,
-                thread_id,
-                type(raw).__name__,
-            )
-            try:
-                return set(raw)
-            except TypeError as exc:
-                logger.error(
-                    "{} conversion failed for thread_id={}: {}. Value: {}. Falling back to empty set.",
-                    source,
-                    thread_id,
-                    exc,
-                    raw,
-                )
-                return set()
-        logger.error(
-            "{} type error for thread_id={}, expected set got {}. Value: {}. Falling back to empty set.",
-            source,
-            thread_id,
-            type(raw).__name__,
-            raw,
+        # 非预期类型（list/tuple/None）：尝试转换，失败则回退空集合
+        logger.warning(
+            "{} type mismatch for thread_id={}, got {}. Converting.",
+            source, thread_id, type(raw).__name__,
         )
-        return set()
+        try:
+            return set(raw)  # type: ignore[arg-type]
+        except TypeError:
+            return set()
 
     @staticmethod
     def _normalize(path: str | Path, base: str | Path | None = None) -> Path:
@@ -186,8 +169,8 @@ class SessionSandbox:
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
         if self.is_full_trust(thread_id):
             return
-        for base in _DEFAULT_WHITELIST:
-            if _is_under(resolved, base):
+        for whitelist_path in _DEFAULT_WHITELIST:
+            if _is_under(resolved, whitelist_path):
                 return
         for auth_path, _writable in self._get_authorized_set(thread_id, "authorized_dirs"):
             if _is_under(resolved, auth_path):
@@ -214,8 +197,8 @@ class SessionSandbox:
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
         if self.is_full_trust(thread_id):
             return
-        for base in _DEFAULT_WHITELIST:
-            if _is_under(resolved, base):
+        for whitelist_path in _DEFAULT_WHITELIST:
+            if _is_under(resolved, whitelist_path):
                 return
         matched = False
         for auth_path, writable in self._get_authorized_set(thread_id, "authorized_dirs"):
@@ -287,7 +270,11 @@ class SessionSandbox:
         self._persist_delete_thread(thread_id)
 
     def bootstrap_from_store(self) -> None:
-        """启动时从 DB 全量加载授权到内存。失败仅 log error，不阻塞启动。"""
+        """启动时从 DB 全量加载授权到内存。失败仅 log error，不阻塞启动。
+
+        注意：``full_trust_threads`` 不持久化——重启后自动降级为 workspace 模式，
+        这是设计意图（full_trust 是临时调试手段，不应跨重启保留）。
+        """
         try:
             loaded = self._store.bootstrap_all()
             for thread_id, entries in loaded.items():
@@ -373,8 +360,8 @@ class SessionSandbox:
             return False
         if self.is_full_trust(thread_id):
             return True
-        for base in _DEFAULT_WHITELIST:
-            if _is_under(resolved, base):
+        for whitelist_path in _DEFAULT_WHITELIST:
+            if _is_under(resolved, whitelist_path):
                 return True
         for auth_path, w in self._get_authorized_set(thread_id, "authorized_dirs"):
             if _is_under(resolved, auth_path) and (not writable or w):

@@ -45,6 +45,9 @@ class SandboxStore:
 
     def __init__(self, db_path: Path | None = None) -> None:
         self._db_path = db_path or _db_path()
+        # 建表在初始化时一次性完成，避免每次操作都跑 DDL
+        with sqlite3.connect(str(self._db_path)) as conn:
+            self._ensure_table(conn)
 
     def _ensure_table(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
@@ -68,7 +71,6 @@ class SandboxStore:
         """UPSERT 一条授权记录。manual source 不被 chip 覆盖。"""
         now = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(str(self._db_path)) as conn:
-            self._ensure_table(conn)
             conn.execute(
                 """
                 INSERT INTO sandbox_authorize (thread_id, resolved_path, writable, source, created_at)
@@ -87,7 +89,6 @@ class SandboxStore:
     def delete_by_path(self, thread_id: str, resolved_path: str) -> bool:
         """删除单条授权记录。返回是否曾存在。"""
         with sqlite3.connect(str(self._db_path)) as conn:
-            self._ensure_table(conn)
             cur = conn.execute(
                 "DELETE FROM sandbox_authorize WHERE thread_id=? AND resolved_path=?",
                 (thread_id, str(resolved_path)),
@@ -98,7 +99,6 @@ class SandboxStore:
     def delete_by_thread(self, thread_id: str) -> int:
         """删除 thread 下所有授权记录。返回删除行数。"""
         with sqlite3.connect(str(self._db_path)) as conn:
-            self._ensure_table(conn)
             cur = conn.execute(
                 "DELETE FROM sandbox_authorize WHERE thread_id=?",
                 (thread_id,),
@@ -109,7 +109,6 @@ class SandboxStore:
     def list_by_thread(self, thread_id: str) -> list[SandboxEntry]:
         """列出 thread 的所有授权记录。"""
         with sqlite3.connect(str(self._db_path)) as conn:
-            self._ensure_table(conn)
             cur = conn.execute(
                 "SELECT thread_id, resolved_path, writable, source FROM sandbox_authorize WHERE thread_id=?",
                 (thread_id,),
@@ -128,7 +127,6 @@ class SandboxStore:
         """全量加载，按 thread_id 分组返回 {(path, writable), ...}。"""
         result: dict[str, set[tuple[Path, bool]]] = {}
         with sqlite3.connect(str(self._db_path)) as conn:
-            self._ensure_table(conn)
             cur = conn.execute(
                 "SELECT thread_id, resolved_path, writable FROM sandbox_authorize"
             )

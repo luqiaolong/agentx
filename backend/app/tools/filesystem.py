@@ -17,6 +17,7 @@ from typing import Any
 
 from app.config import PROJECT_ROOT, UPLOADS_DIR, WORKSPACE_DIR
 from app.observability.logger import logger
+from app.utils.paths import normalize_path
 from app.utils.security import PathNotAuthorized, get_sandbox
 
 # 读权限缺失时的统一错误信息（与 SessionSandbox.check_read 一致）
@@ -27,17 +28,6 @@ _UNAUTHORIZED_WRITE_READONLY = (
 )
 # 写权限缺失：路径完全未授权时的提示
 _UNAUTHORIZED_WRITE = "路径 {path} 未授权，请通过 dialog 选择目录后重试"
-
-
-def _resolve(path: str | Path, base: str | Path | None = None) -> Path:
-    """规范化路径，相对路径基于 ``base`` 或 PROJECT_ROOT 解析。
-
-    委托给 ``app.utils.paths.normalize_path``。``base`` 用于将相对路径基于
-    workspace 解析，避免 fs 工具用相对路径时被解到 PROJECT_ROOT。
-    """
-    from app.utils.paths import normalize_path
-
-    return normalize_path(path, base=base)
 
 
 def _deny_read(path: str | Path) -> str:
@@ -62,7 +52,7 @@ async def read_file(thread_id: str, path: str, base: str | Path | None = None) -
         logger.warning("fs.read_file denied", thread_id=thread_id, path=str(path))
         return _deny_read(path)
     try:
-        return _resolve(path, base=base).read_text(encoding="utf-8")
+        return normalize_path(path, base=base).read_text(encoding="utf-8")
     except FileNotFoundError:
         return f"文件不存在: {path}"
     except OSError as exc:
@@ -80,7 +70,7 @@ async def list_dir(thread_id: str, path: str, base: str | Path | None = None) ->
     except PathNotAuthorized:
         logger.warning("fs.list_dir denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
-    p = _resolve(path, base=base)
+    p = normalize_path(path, base=base)
     if not p.is_dir():
         return [f"不是目录: {path}"]
     try:
@@ -111,9 +101,9 @@ async def glob(thread_id: str, pattern: str, base: str | Path | None = None) -> 
         p = Path(pattern)
         if p.is_absolute():
             rel = pattern[len(str(base_dir)):].lstrip("\\/")
-            matched = sorted(str(x) for x in _resolve(base_dir, base=base).glob(rel))
+            matched = sorted(str(x) for x in normalize_path(base_dir, base=base).glob(rel))
         else:
-            matched = sorted(str(x) for x in _resolve(base_dir, base=base).glob(pattern))
+            matched = sorted(str(x) for x in normalize_path(base_dir, base=base).glob(pattern))
         return matched
     except (OSError, ValueError) as exc:
         return [f"glob 失败: {pattern} ({exc})"]
@@ -132,7 +122,7 @@ async def grep(thread_id: str, pattern: str, path: str, base: str | Path | None 
     except PathNotAuthorized:
         logger.warning("fs.grep denied", thread_id=thread_id, path=str(path))
         return [_deny_read(path)]
-    p = _resolve(path, base=base)
+    p = normalize_path(path, base=base)
     if not p.exists():
         return [f"路径不存在: {path}"]
     try:
@@ -167,11 +157,22 @@ async def grep(thread_id: str, pattern: str, path: str, base: str | Path | None 
 _recent_writes: dict[str, tuple[str, int, str, float]] = {}
 """thread_id → (path, content_len, content_hash, timestamp) 最近成功写入记录"""
 
+# 幂等缓存 TTL（秒）：超过此时间的条目在下次写入时被淘汰
+_RECENT_WRITES_TTL = 120
+
 
 def _content_hash(content: str) -> str:
     """计算内容短哈希，用于幂等性比对。"""
     import hashlib
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
+def _gc_recent_writes(now: float) -> None:
+    """淘汰过期的幂等缓存条目（TTL = _RECENT_WRITES_TTL 秒）。"""
+    expired = [tid for tid, (_, _, _, ts) in _recent_writes.items()
+               if now - ts > _RECENT_WRITES_TTL]
+    for tid in expired:
+        _recent_writes.pop(tid, None)
 
 
 async def write_file(thread_id: str, path: str, content: str, base: str | Path | None = None) -> str:
@@ -187,12 +188,13 @@ async def write_file(thread_id: str, path: str, content: str, base: str | Path |
     from time import time
 
     sandbox = get_sandbox()
-    resolved = _resolve(path, base=base)
+    resolved = normalize_path(path, base=base)
     content_len = len(content)
     content_h = _content_hash(content)
 
     # ---- 1. 幂等性检查：同一 thread 近期是否已写入相同内容 ----
     now = time()
+    _gc_recent_writes(now)  # 顺便淘汰过期条目，防止内存泄漏
     recent = _recent_writes.get(thread_id)
     if recent is not None:
         recent_path, recent_len, recent_hash, recent_ts = recent
@@ -278,7 +280,7 @@ async def edit_file(thread_id: str, path: str, old_text: str, new_text: str, bas
         logger.warning("fs.edit_file denied", thread_id=thread_id, path=str(path))
         return _deny_write(path, matched_readonly)
     try:
-        p = _resolve(path, base=base)
+        p = normalize_path(path, base=base)
         if not p.exists():
             return f"文件不存在: {path}"
         text = p.read_text(encoding="utf-8")
@@ -296,7 +298,7 @@ async def list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
 
     允许 ``data/workspace`` 和 ``data/uploads``（白名单），以及通过
     ``SessionSandbox`` 授权给指定 ``thread_id`` 的目录。
-    ``path`` 相对路径基于 ``PROJECT_ROOT`` 解析（与 ``_resolve`` 一致）；
+    ``path`` 相对路径基于 ``PROJECT_ROOT`` 解析（与 ``normalize_path`` 一致）；
     空或 ``"."`` 表示 ``WORKSPACE_DIR`` 根。
 
     Returns:
@@ -321,43 +323,12 @@ async def list_workspace(path: str, thread_id: str | None = None) -> list[dict]:
                 p = WORKSPACE_DIR / p
         target = p.resolve()
 
-    # 白名单校验
-    whitelist = [WORKSPACE_DIR.resolve(), UPLOADS_DIR.resolve()]
-    in_whitelist = any(target == w or w in target.parents for w in whitelist)
-
-    # 若不在白名单，检查是否在当前 thread_id 的授权目录内
-    if not in_whitelist:
-        if thread_id is None:
-            raise ValueError(f"路径不在白名单内: {path}")
-        sandbox = get_sandbox()
-        # 检查目标是否位于该 thread_id 的任一授权目录之下
-        raw_authorized = sandbox.authorized_dirs.get(thread_id, set())
-        # 防御性：确保 authorized 是可迭代的集合类型（set/list/tuple）
-        if isinstance(raw_authorized, (list, tuple)):
-            logger.warning(
-                "authorized_dirs type mismatch for thread_id={}, expected set got {}. "
-                "Converting to set to avoid iteration errors.",
-                thread_id,
-                type(raw_authorized).__name__,
-            )
-            authorized = set(raw_authorized)
-        elif not isinstance(raw_authorized, set):
-            logger.error(
-                "authorized_dirs type error for thread_id={}, expected set got {}. "
-                "Value: {}. Falling back to empty set.",
-                thread_id,
-                type(raw_authorized).__name__,
-                raw_authorized,
-            )
-            authorized = set()
-        else:
-            authorized = raw_authorized
-        in_authorized = any(
-            target == auth_path or auth_path in target.parents
-            for (auth_path, _writable) in authorized
-        )
-        if not in_authorized:
-            raise ValueError(f"路径不在白名单内且未授权: {path}")
+    # 白名单 + 授权校验：复用 sandbox.check_read（统一入口，含 _temp_authorized）
+    sandbox = get_sandbox()
+    try:
+        sandbox.check_read(thread_id or "", target)
+    except PathNotAuthorized:
+        raise ValueError(f"路径不在白名单内且未授权: {path}") from None
 
     if not target.exists():
         raise FileNotFoundError(f"路径不存在: {path}")
@@ -431,7 +402,7 @@ async def read_workspace_file(path: str, thread_id: str | None = None) -> dict[s
     sandbox.check_read(thread_id or "", path)
 
     # 2. 解析为实际目标路径
-    target = _resolve(path)
+    target = normalize_path(path)
 
     if not target.exists():
         raise FileNotFoundError(f"文件不存在: {path}")
