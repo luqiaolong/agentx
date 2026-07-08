@@ -42,9 +42,10 @@ lifespan / 中间件 / app 实例 / ``__main__`` 入口。
   保证 monkeypatch 在调用时生效。
 - ``ChatRequest`` / ``_event_generator`` 等 schemas 与辅助函数 —— 直接 re-export。
 
-跨进程状态（已迁移至 ``app.approval`` 模块）：
-- 审批决策 dict — 见 ``app.approval.state.submit_approval`` / ``pop_approval``。
-- 中止标志 dict — 见 ``app.approval.state.set_abort`` / ``is_aborted``。
+跨进程状态（已迁移至 ``app.security.approval`` 模块）：
+- 审批决策 dict — 见 ``app.security.approval.state.submit_approval`` / ``pop_approval``。
+- 中止标志 dict — 见 ``app.security.approval.state.set_abort`` / ``is_aborted``。
+- TTL reaper — 见 ``app.security.approval.state.start_reaper``（lifespan 启动）。
 """
 
 from __future__ import annotations

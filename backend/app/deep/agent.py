@@ -216,6 +216,7 @@ async def run_deep_path(
     permission_mode: str = "standard",
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
+    parent_thread_id: str | None = None,
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器（真实实现）。
 
@@ -423,7 +424,8 @@ async def run_deep_path(
             # 无路径参数的工具（如 shell_exec）：若已选工作区则自动放行
             if not paths:
                 if workspace_path and await sandbox.is_path_authorized(
-                    thread_id, workspace_path, writable=True, base=workspace_path
+                    thread_id, workspace_path, writable=True, base=workspace_path,
+                    parent_thread_id=parent_thread_id,
                 ):
                     continue
                 dangerous_calls.append(tc)
@@ -433,7 +435,8 @@ async def run_deep_path(
             path_checks = await asyncio.gather(
                 *[
                     sandbox.is_path_authorized(
-                        thread_id, p, writable=True, base=workspace_path
+                        thread_id, p, writable=True, base=workspace_path,
+                        parent_thread_id=parent_thread_id,
                     )
                     for p in paths
                 ]
@@ -481,6 +484,7 @@ async def run_deep_path(
                 thread_id,
                 sandbox,
                 workspace_path=workspace_path,
+                parent_thread_id=parent_thread_id,
             )
             for evt in extension_handled.events:
                 yield evt

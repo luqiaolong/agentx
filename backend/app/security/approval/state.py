@@ -94,7 +94,7 @@ def _last_activity(thread_id: str) -> float:
 
 
 def _cleanup_thread(thread_id: str) -> None:
-    """从所有 dict 中移除 thread_id（不持有锁时调用）。"""
+    """从所有 dict 中移除 thread_id（在 ``_state_lock`` 持有时调用）。"""
     _pending_approvals.pop(thread_id, None)
     _abort_flags.pop(thread_id, None)
     _abort_events.pop(thread_id, None)

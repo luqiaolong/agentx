@@ -252,7 +252,9 @@ async def _handle_directory_extension(
     使审批层与执行层路径基准一致。
     bug #2 修复：传 ``parent_thread_id``，Team 模式子任务继承父 thread 授权。
     bug #4 修复：``all_under_workspace`` 用 ``writable=False`` 检查（只读工具
-    仅需读权限），且传 ``base=workspace_path``。
+    仅需读权限），且传 ``base=workspace_path``。收集越界路径后进行第二轮
+    复核：若所有越界路径在并发期间已被授权（如其他协程已 authorize），
+    自动放行，避免不必要的审批弹窗。
 
     Args:
         pending_calls: 待执行的工具调用列表。
@@ -291,27 +293,27 @@ async def _handle_directory_extension(
     if not unauthorized_paths:
         return _ExtensionResult(events=[])
 
-    # bug #4 修复：all_under_workspace 用 writable=False（只读工具仅需读权限）
-    # + 传 base=workspace_path + parent_thread_id
-    # 若所有越界路径均位于已授权目录下（含父 thread），则自动放行。
-    # 注意：不能用 `all(await ... for ...)` —— async 函数内含 await 的 generator
-    # expression 会被解析为 async generator，all() 无法消费。改用 asyncio.gather
-    # 并行 await 后再 all()。
-    checks = await asyncio.gather(
-        *[
-            sandbox.is_path_authorized(
-                thread_id,
-                path,
-                writable=False,
-                base=workspace_path,
-                parent_thread_id=parent_thread_id,
-            )
-            for path in unauthorized_paths
-        ]
-    )
-    all_under_workspace = all(checks)
-    if all_under_workspace:
+    # bug #4 修复：第二轮复核（all_under_workspace 自动放行）
+    # 并发授权场景：在收集越界路径与弹出审批框之间，可能有其他协程已授权
+    # 这些路径。用 writable=False（只读工具仅需读权限）重新检查所有越界路径，
+    # 若全部已授权则自动放行，避免不必要的审批弹窗。
+    still_unauthorized: list[str] = []
+    for path in unauthorized_paths:
+        if await sandbox.is_path_authorized(
+            thread_id,
+            path,
+            writable=False,
+            base=workspace_path,
+            parent_thread_id=parent_thread_id,
+        ):
+            continue
+        still_unauthorized.append(path)
+
+    if not still_unauthorized:
+        # 所有越界路径已在并发期间被授权 → 自动放行
         return _ExtensionResult(events=[])
+
+    unauthorized_paths = still_unauthorized
 
     # 第二步：批量 yield 所有越界审批请求（前端可展示为批量审批对话框）
     events: list[dict[str, str]] = []

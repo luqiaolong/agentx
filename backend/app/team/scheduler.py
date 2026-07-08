@@ -109,6 +109,7 @@ async def _run_subtask(
                 permission_mode=permission_mode,
                 scene_prompt=scene_prompt,
                 workspace_path=workspace_path,
+                parent_thread_id=thread_id,
             ):
                 if abort_event.is_set():
                     yield _done(False, "用户中止")

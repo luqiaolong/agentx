@@ -40,7 +40,7 @@
 |---|---|---|
 | 严重 | Linux 下 `Path("/")` 导致所有绝对路径被判关键目录 | `path_guard.py` 对 `/` 仅拒绝本身，不拒绝后代 |
 | 严重 | `SessionSandbox` 无锁并发不安全 | `session_sandbox.py` 加 `asyncio.Lock` 保护所有数据结构 |
-| 严重 | `/api/sandbox/*` 端点无鉴权 | `api.py` 加 `X-Internal-Token` 校验 + 审计日志 |
+| 严重 | `/api/sandbox/*` 端点无审计日志 | `api.py` 加审计日志（本地桌面应用 localhost only，无需 token 鉴权） |
 | 严重 | `approval/state.py` 模块级 dict 多进程失效 | 保留单进程实现 + 文档标注单 worker 部署约束；加 TTL reaper 防泄漏 |
 | 严重 | `directory_extension` 工作区免审批死代码 | `approval_flow.py` 修复 `is_path_authorized` 逻辑 |
 | 高 | Team 模式子任务 thread_id 不继承 workspace 授权 | `approval_flow.py` 加 parent_thread_id 映射，子任务继承父授权 |
