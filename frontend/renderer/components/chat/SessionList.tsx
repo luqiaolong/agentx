@@ -15,6 +15,7 @@ import { useChatStore } from "@/stores/chat";
 import type { Session } from "@/stores/chat";
 import { useSettingsStore } from "@/stores/settings";
 import { getDevMode, setDevMode, restartBackend } from "@/lib/api/app";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 /**
  * 左侧栏会话列表。
@@ -57,6 +58,9 @@ export function SessionList() {
       mounted = false;
     };
   }, []);
+
+  // 待确认的删除项；非 null 时打开 ConfirmDialog
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
 
   const handleToggleDevMode = async () => {
     if (devModeBusy) return;
@@ -126,14 +130,21 @@ export function SessionList() {
     // 与 ChatComposer useEffect 里的 textareaRef.current?.focus() 产生竞争，
     // 导致输入框无法获得焦点（切换应用后恢复）。
     (document.activeElement as HTMLElement | null)?.blur();
-    if (window.confirm(`确认删除会话「${title}」？`)) {
-      deleteSession(id);
-      // confirm 关闭后延迟让 ChatComposer 的 focus 生效，避免竞争
-      window.setTimeout(() => {
-        const composer = document.querySelector('textarea[aria-label="消息输入框"]') as HTMLTextAreaElement | null;
-        composer?.focus();
-      }, 50);
-    }
+    setPendingDelete({ id, title });
+  };
+
+  const confirmDelete = () => {
+    const pending = pendingDelete;
+    setPendingDelete(null);
+    if (!pending) return;
+    deleteSession(pending.id);
+    // 与原 window.confirm 关闭后延迟让 ChatComposer 的 focus 生效逻辑一致。
+    // ConfirmDialog 内部 useModalDialog 会尝试恢复焦点到删除按钮（trigger），
+    // 但删除按钮即将随 SessionItem 卸载，所以这里手动延迟 focus。
+    window.setTimeout(() => {
+      const composer = document.querySelector('textarea[aria-label="消息输入框"]') as HTMLTextAreaElement | null;
+      composer?.focus();
+    }, 50);
   };
 
   const handleRename = (id: string, currentTitle: string) => {
@@ -274,6 +285,22 @@ export function SessionList() {
           </span>
         </button>
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="删除会话"
+        message={
+          pendingDelete ? (
+            <>
+              确认删除会话「<b>{pendingDelete.title}</b>」？删除后无法恢复。
+            </>
+          ) : null
+        }
+        variant="danger"
+        confirmLabel="删除"
+        onConfirm={confirmDelete}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
