@@ -100,6 +100,17 @@ export const useTasksStore = create<TasksState>()(
         storage: createJSONStorage(() => localStorage),
         version: 3,
         migrate: migrateTasksState,
+        // 一次性清理：老版本升级后被赋 sessionId="" 的任务无法匹配任何会话，
+        // 渲染时永远不可见；与其持久留存,直接在持久化恢复时一次性清除。
+        onRehydrateStorage: () => (state) => {
+          if (!state) return;
+          const valid = state.tasks.filter(
+            (t) => typeof t.sessionId === "string" && t.sessionId !== "",
+          );
+          if (valid.length !== state.tasks.length) {
+            state.tasks = valid;
+          }
+        },
       },
     ),
     { name: "tasks-store" },

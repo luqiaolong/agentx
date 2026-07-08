@@ -45,11 +45,15 @@ const chatMock = vi.hoisted(() => {
       pause: vi.fn().mockResolvedValue(undefined),
       resume: vi.fn().mockResolvedValue(undefined),
       compact: vi.fn().mockResolvedValue(undefined),
+      getCurrentTraceId: vi.fn().mockReturnValue(null),
     },
   };
 });
 
-vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
+vi.mock("@/lib/api/chat", () => ({
+  chat: chatMock.chat,
+  getCurrentTraceId: chatMock.chat.getCurrentTraceId,
+}));
 
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useChatStore } from "@/stores/chat";

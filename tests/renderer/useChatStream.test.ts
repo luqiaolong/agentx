@@ -47,11 +47,15 @@ const chatMock = vi.hoisted(() => {
       pause: vi.fn().mockResolvedValue(undefined),
       resume: vi.fn().mockResolvedValue(undefined),
       compact: vi.fn().mockResolvedValue(undefined),
+      getCurrentTraceId: vi.fn().mockReturnValue(null),
     },
   };
 });
 
-vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
+vi.mock("@/lib/api/chat", () => ({
+  chat: chatMock.chat,
+  getCurrentTraceId: chatMock.chat.getCurrentTraceId,
+}));
 
 // Mock projectConfig API：useChatStream 的 done 事件分支会调 ensureAgentxGenerated，
 // 后者会触发 getProjectConfig / initProjectConfig。默认短路（exists=true），
@@ -186,6 +190,55 @@ describe("useChatStream hook", () => {
 
     // getProjectConfig 必被调用（证明 ensureAgentxGenerated 进入第二层防护）
     expect(projectConfigMock.getProjectConfig).toHaveBeenCalledWith("/ws/proj", id);
+  });
+
+  it("regression: 切换会话后到达的 todo_update 用当前会话 ID（不是首次渲染闭包）", async () => {
+    // 1) 首次渲染时无当前会话（currentId=null）
+    const activeThreadIdRef: { current: string | null } = { current: null };
+    const currentTaskIdRef: { current: string | null } = { current: null };
+
+    renderHook(() =>
+      useChatStream({
+        activeThreadIdRef,
+        pendingIdRef: { current: null },
+        currentTaskIdRef,
+        lastUserQueryRef: { current: "" },
+        setTodos: () => {},
+        setErrorMsg: () => {},
+      }),
+    );
+
+    // 2) 用户新建会话 B，currentId 变为 B，store 触发重渲染
+    const idB = await useChatStore
+      .getState()
+      .createSession("/ws/proj-b");
+    // 重渲染以让 currentIdRef 同步到 idB
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // 3) 流已进入"已完成"阶段,activeThreadIdRef 被 ChatView useEffect 置 null,
+    // 但用户已经切到会话 B。模拟延迟到达的 todo_update。
+    activeThreadIdRef.current = null;
+
+    await act(async () => {
+      emitEvent({
+        type: "todo_update",
+        todos: [{ text: "延迟到的 todo", done: false }],
+        task_id: undefined,
+      });
+      await Promise.resolve();
+    });
+
+    // 4) 新建的 task 应该被归属到会话 B（currentIdRef.current），而不是首次渲染的 null 或 ""
+    // lastUserQueryRef.current=""，title 走 fallback "深度任务"
+    const tasks = useTasksStore.getState().tasks;
+    const newTask = tasks.find((t) => t.title === "深度任务");
+    expect(newTask).toBeDefined();
+    expect(newTask?.sessionId).toBe(idB);
+    // 进一步兜底：sessionId 不应是 "" 或 undefined
+    expect(newTask?.sessionId).not.toBe("");
+    expect(newTask?.sessionId).not.toBeNull();
   });
 
   it("error 事件写入 errorMsg + 标记任务失败", async () => {
