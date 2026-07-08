@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-__all__ = ["load_tauri_store_config", "decrypt_credential"]
+__all__ = ["load_tauri_store_config", "decrypt_credential", "apply_config_to_env", "read_config_json"]
 
 
 # ============================================================
@@ -216,7 +216,7 @@ def _bcrypt_aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext_with_tag: bytes
                     ("pbMacContext", ctypes.c_void_p),
                     ("cbMacContext", wt.ULONG),
                     ("cbAAD", wt.ULONG),
-                    ("cbData", ctypes.c_ulonglong),
+                    ("cbData", wt.ulonglong),
                     ("dwFlags", wt.ULONG),
                 ]
 
@@ -284,13 +284,24 @@ def _dpapi_unprotect(blob: bytes) -> bytes | None:
 # 配置解析
 # ============================================================
 
+def read_config_json() -> dict[str, Any] | None:
+    """读取并解析 config.json。"""
+    for path in _candidate_config_paths():
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+    return None
+
+
 def load_tauri_store_config() -> dict[str, str]:
     """读取 Tauri store 配置并映射为 ``AGENTX_*`` 环境变量。
 
     Returns:
         ``AGENTX_*`` → value 映射 dict。若 config.json 不存在或解析失败，返回空 dict。
     """
-    config = _read_config_json()
+    config = read_config_json()
     if config is None:
         return {}
 
@@ -419,17 +430,6 @@ def load_tauri_store_config() -> dict[str, str]:
         env["AGENTX_AGENTS_CONFIG"] = json.dumps(agents_config, ensure_ascii=False)
 
     return env
-
-
-def _read_config_json() -> dict[str, Any] | None:
-    """读取并解析 config.json。"""
-    for path in _candidate_config_paths():
-        if path.exists():
-            try:
-                return json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-    return None
 
 
 def apply_config_to_env(overrides: dict[str, str] | None = None) -> dict[str, str]:

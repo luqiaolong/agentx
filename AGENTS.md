@@ -313,6 +313,15 @@ agentx/
 │   │   ├── scheduler.py        ← _run_subtask + 队列驱动
 │   │   ├── blackboard.py       ← Blackboard + TeamPlanTask + TeamSubtaskResult
 │   │   └── aggregator.py       ← _run_aggregator + _quality_gate + _should_downgrade_to_single
+│   ├── cli/                    ← CLI 终端交互（REPL + One-shot + config 子命令）
+│   │   ├── __init__.py        ← 包导出 main
+│   │   ├── app.py             ← main() + argparse + 模式分发 + config 子命令
+│   │   ├── repl.py            ← run_repl + consume_events
+│   │   ├── one_shot.py        ← run_one_shot
+│   │   ├── approval.py        ← handle_approval 终端审批交互
+│   │   ├── commands.py        ← CommandResult + handle_command + _cmd_*（全部 await）
+│   │   ├── renderer.py        ← EventRenderer SSE 事件终端渲染
+│   │   └── store.py           ← Tauri store 配置读取 + 凭证解密（DPAPI/AES-GCM）
 │   ├── subagents/              ← code / rag / web 子代理 + 路径 B 分发
 │   │   ├── base.py             ← make_fs_tools / make_rag_tools / make_web_tools + extract_text
 │   │   ├── code_agent.py       ← code 子代理（ReAct）

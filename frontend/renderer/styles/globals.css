@@ -133,15 +133,15 @@
 
   /* Light theme (soft gray) */
   :root {
-    --bg-app: #c9cacc;
-    --bg-surface: #d5d6d8;
-    --bg-subtle: #c0c1c3;
-    --bg-hover: #cbccce;
-    --border-default: #a8a9ab;
-    --border-strong: #8e8f91;
-    --text-primary: #222222;
-    --text-secondary: #5a5a5a;
-    --text-muted: #7a7a7a;
+    --bg-app: #e4e5e7;
+    --bg-surface: #eeeff1;
+    --bg-subtle: #d8d9db;
+    --bg-hover: #dfe0e2;
+    --border-default: #c5c6c8;
+    --border-strong: #a8a9ab;
+    --text-primary: #1a1a1a;
+    --text-secondary: #4a4a4a;
+    --text-muted: #6e6e6e;
   }
 
   .dark {

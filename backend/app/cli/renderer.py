@@ -81,7 +81,7 @@ class EventRenderer:
             return
         try:
             parsed = json.loads(data)
-            text = parsed.get("text", data) if isinstance(parsed, dict) else str(parsed)
+            text = parsed.get("content", parsed.get("text", data)) if isinstance(parsed, dict) else str(parsed)
         except (json.JSONDecodeError, TypeError):
             text = data
         print(f"{Fore.LIGHTBLACK_EX}{text}{Style.RESET_ALL}", end="", flush=True)
@@ -133,7 +133,7 @@ class EventRenderer:
 
         tool_name = parsed.get("tool_name", parsed.get("name", "unknown"))
         args = parsed.get("args", parsed.get("args_preview", {}))
-        path = parsed.get("path", "")
+        path = parsed.get("requestedPath", parsed.get("path", ""))
         preview = parsed.get("preview", "")
 
         print(f"\n{Fore.YELLOW}{'='*50}{Style.RESET_ALL}", flush=True)
@@ -171,7 +171,7 @@ class EventRenderer:
         try:
             parsed = json.loads(data)
             target = parsed.get("target", parsed.get("agent", "unknown"))
-            task = parsed.get("task", "")
+            task = parsed.get("message", parsed.get("task", ""))
         except (json.JSONDecodeError, TypeError):
             target = "unknown"
             task = data
@@ -261,6 +261,10 @@ class EventRenderer:
     # ============================================================
     # 辅助
     # ============================================================
+
+    def add_error(self, message: str) -> None:
+        """添加 error 事件到 JSON 输出缓冲（供外部异常处理使用）。"""
+        self._json_events.append({"event": "error", "data": message})
 
     def reset(self) -> None:
         """重置渲染器状态（新的一轮对话）。"""
