@@ -22,6 +22,7 @@ def register_routes(app: FastAPI) -> None:
     from app.api.mcp import register_mcp_routes
     from app.api.memory import register_memory_routes
     from app.api.models_test import register_models_test_routes
+    from app.api.project_config import register_project_config_routes
     from app.api.sandbox import register_sandbox_routes
     from app.api.skills import register_skills_routes
     from app.api.workspace import register_workspace_routes
@@ -36,3 +37,4 @@ def register_routes(app: FastAPI) -> None:
     register_mcp_routes(app)
     register_config_reload_routes(app)
     register_models_test_routes(app)
+    register_project_config_routes(app)
