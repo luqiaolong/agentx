@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.cli_store import (
+from app.cli.store import (
     apply_config_to_env,
     decrypt_credential,
     load_tauri_store_config,
@@ -39,7 +39,7 @@ class TestDecryptCredential:
         assert decrypt_credential("plain:plain:nested") == "plain:nested"
 
     def test_enc_non_windows_returns_none(self):
-        with patch("app.cli_store.sys.platform", "linux"):
+        with patch("app.cli.store.sys.platform", "linux"):
             assert decrypt_credential("enc:QkFPqkbi1C0+b3pX0g==") is None
 
 
@@ -51,7 +51,7 @@ class TestLoadTauriStoreConfig:
     """Tauri store 配置加载测试。"""
 
     def test_no_config_file_returns_empty(self, tmp_path):
-        with patch("app.cli_store._candidate_config_paths", return_value=[tmp_path / "nonexistent.json"]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[tmp_path / "nonexistent.json"]):
             assert load_tauri_store_config() == {}
 
     def test_full_config_parse(self, tmp_path):
@@ -102,7 +102,7 @@ class TestLoadTauriStoreConfig:
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
 
-        with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
             env = load_tauri_store_config()
 
         # LLM 基础配置
@@ -163,7 +163,7 @@ class TestLoadTauriStoreConfig:
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
-        with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
             env = load_tauri_store_config()
 
         assert env["AGENTX_DEFAULT_MODEL"] == "gpt-4o"
@@ -176,7 +176,7 @@ class TestLoadTauriStoreConfig:
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
-        with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
             env = load_tauri_store_config()
 
         assert env["AGENTX_OPENAI_API_KEY"] == "sk-bare-no-prefix"
@@ -190,7 +190,7 @@ class TestLoadTauriStoreConfig:
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
-        with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
             env = load_tauri_store_config()
 
         assert env["AGENTX_MILVUS_USER"] == "milvus_user"
@@ -201,7 +201,7 @@ class TestLoadTauriStoreConfig:
         config_path = tmp_path / "config.json"
         config_path.write_text("{invalid json", encoding="utf-8")
 
-        with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
             assert load_tauri_store_config() == {}
 
 
@@ -221,7 +221,7 @@ class TestApplyConfigToEnv:
         # 先设置环境变量
         os.environ["AGENTX_DEFAULT_MODEL"] = "from-env"
         try:
-            with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+            with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
                 applied = apply_config_to_env()
 
             # 已存在的 env var 不应被覆盖
@@ -236,7 +236,7 @@ class TestApplyConfigToEnv:
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
 
-        with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+        with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
             applied = apply_config_to_env(overrides={"AGENTX_DEFAULT_MODEL": "from-override"})
 
         assert os.environ["AGENTX_DEFAULT_MODEL"] == "from-override"
@@ -253,7 +253,7 @@ class TestApplyConfigToEnv:
 
         # 确保环境变量不存在
         with patch.dict(os.environ, {}, clear=True):
-            with patch("app.cli_store._candidate_config_paths", return_value=[config_path]):
+            with patch("app.cli.store._candidate_config_paths", return_value=[config_path]):
                 applied = apply_config_to_env()
 
             assert os.environ.get("AGENTX_DEFAULT_MODEL") == "test-model"
