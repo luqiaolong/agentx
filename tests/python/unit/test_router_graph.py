@@ -66,6 +66,7 @@ async def test_router_work_mode_dispatches_to_supervisor(
         history: list | None = None,
         permission_mode: str = "standard",
         workspace_path: str | None = None,
+        chat_model=None,
     ) -> AsyncIterator[dict]:
         captured["message"] = message
         captured["thread_id"] = thread_id
@@ -126,6 +127,7 @@ async def test_router_coding_mode_dispatches_to_expert(
         history: list | None = None,
         permission_mode: str = "standard",
         workspace_path: str | None = None,
+        chat_model=None,
     ) -> AsyncIterator[dict]:
         captured["message"] = message
         captured["thread_id"] = thread_id
@@ -177,6 +179,7 @@ async def test_router_coding_team_mode_dispatches_to_team(
         history: list | None = None,
         permission_mode: str = "standard",
         workspace_path: str | None = None,
+        chat_model=None,
     ) -> AsyncIterator[dict]:
         captured["message"] = message
         captured["thread_id"] = thread_id

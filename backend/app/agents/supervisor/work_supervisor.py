@@ -1,7 +1,7 @@
 """work 场景 Supervisor（全能 agent）实现。
 
-基于 ``create_react_agent`` 构建，与 DeepAgent 共享 streaming/approval 基础设施，
-但有以下区别：
+基于 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建，
+与 DeepAgent 共享 streaming/approval 基础设施，但有以下区别：
 1. 使用 Supervisor 专用 system prompt（``_DEFAULT_SUPERVISOR_SYSTEM_PROMPT``）
 2. 额外注入 ``delegate_to_expert`` / ``delegate_to_subagent`` 委派工具
 3. 支持 @mention 语法强制委派
@@ -9,25 +9,23 @@
 
 流程:
 1. 解析 @mention：若命中 Expert 则直接运行 Expert；若命中子代理则运行后回注 Supervisor
-2. 构建 Supervisor agent（含委派工具 + 完整工具集 + interrupt_before 审批）
+2. 构建 Supervisor agent（含委派工具 + 完整工具集 + interrupt_on 危险工具审批）
 3. ``astream_events`` 驱动图执行，流式产出 token / tool_call / tool_result 事件
 4. 危险工具中断 → yield approval_request → 等待审批 → 恢复执行
 5. 循环直至图完成
+
+deepagents 0.6+ ``PatchToolCallsMiddleware`` 在中间件层自动修复悬空 tool_calls，
+无需自研 ``_inject_tool_error_messages`` / ``_sanitize_message_history``。
 """
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
-
-from langgraph.prebuilt import create_react_agent
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.agents.supervisor.delegation import make_delegation_tools
 from app.agents.supervisor.mention import parse_mention
 from app.config import get_settings
-from app.deep.recovery import (
-    _inject_tool_error_messages,
-    _sanitize_message_history,
-)
+from app.deep.harness import create_agent
 from app.deep.streaming import _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
@@ -42,6 +40,9 @@ from app.sandbox import get_sandbox
 from app.security.approval_flow import run_approval_loop
 from app.utils.prompts import resolve_system_prompt
 from app.utils.sse_events import make_sse_event
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 __all__ = [
     "build_work_supervisor",
@@ -68,12 +69,12 @@ async def build_work_supervisor(
     profile_prompt: str = "",
     checkpointer: Any = None,
     workspace_path: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> Any:
     """构造 work 场景 Supervisor agent。
 
-    用 ``create_react_agent`` 构建 ReAct 图，``interrupt_before=["tools"]`` 使图在
-    执行任何工具前暂停，由外层 ``run_work_supervisor`` 检查是否为危险工具并
-    触发审批流。
+    用 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent``，
+    通过 ``interrupt_on`` 配置仅危险工具中断（只读工具自动放行）。
 
     Args:
         thread_id: 会话 ID（用于工具沙箱授权绑定）。
@@ -81,6 +82,7 @@ async def build_work_supervisor(
         profile_prompt: 可选，用户画像前缀，拼到 system prompt 前。
         checkpointer: 可选，共享的 LangGraph checkpointer。
         workspace_path: 可选当前工作区绝对路径。
+        chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；None 时调用 ``get_chat_model()`` 获取真实 LLM。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -90,7 +92,10 @@ async def build_work_supervisor(
     settings = get_settings()
     supervisor_cfg = settings.agents.supervisor
 
-    model = get_chat_model(temperature=supervisor_cfg.temperature, streaming=True)
+    if chat_model is not None:
+        model = chat_model
+    else:
+        model = get_chat_model(temperature=supervisor_cfg.temperature, streaming=True)
 
     if tools is None:
         # 标准工具集（fs + cli + git + rag + web）
@@ -110,13 +115,14 @@ async def build_work_supervisor(
     )
     system_prompt = base_prompt + _workspace_prompt_suffix(workspace_path)
 
-    return create_react_agent(
+    return create_agent(
         model,
         tools,
-        name="work_supervisor",
-        prompt=system_prompt,
-        interrupt_before=["tools"],
+        system_prompt=system_prompt,
         checkpointer=checkpointer,
+        thread_id=thread_id,
+        workspace_path=workspace_path,
+        name="work_supervisor",
     )
 
 
@@ -139,12 +145,13 @@ async def run_work_supervisor(
     history: list | None = None,
     permission_mode: str = "standard",
     workspace_path: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict]:
     """运行 work 场景 Supervisor，yield SSE 事件。
 
     流程:
     1. 解析 @mention：若命中 Expert 直接运行 Expert；命中子代理运行后回注 Supervisor
-    2. 构建 Supervisor agent（含委派工具 + interrupt_before 审批）
+    2. 构建 Supervisor agent（含委派工具 + interrupt_on 危险工具审批）
     3. 流式执行，危险工具中断 → 审批 → 恢复，循环直至完成
 
     Args:
@@ -154,6 +161,7 @@ async def run_work_supervisor(
         history: 历史 messages 列表（已截断）。
         permission_mode: 权限模式，"standard" 或 "full_trust"。
         workspace_path: 可选当前工作区绝对路径。
+        chat_model: 可选注入的 ChatModel，透传到 ``build_work_supervisor`` 与 @mention 强制委派时的 ``run_coding_expert``。None 时使用真实 LLM。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -188,6 +196,7 @@ async def run_work_supervisor(
                 history=history,
                 workspace_path=workspace_path,
                 permission_mode=permission_mode,
+                chat_model=chat_model,
             ),
             source=expert_name,
         ):
@@ -247,6 +256,7 @@ async def run_work_supervisor(
                 tools=all_tools,
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
+                chat_model=chat_model,
             )
         except ValueError as exc:
             yield make_sse_event("error", f"LLM 不可用: {exc}")
@@ -262,17 +272,13 @@ async def run_work_supervisor(
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
 
-        # 防御性清理：修复 checkpoint 中残留的未配对 tool_calls
-        await _inject_tool_error_messages(
-            agent, config, "上次操作未正常完成，已自动清理状态"
-        )
-        inputs["messages"] = _sanitize_message_history(
-            inputs["messages"], "上次操作未正常完成，已自动清理状态"
-        )
+        # deepagents 0.6+ PatchToolCallsMiddleware 自动修复悬空 tool_calls，
+        # 无需 _inject_tool_error_messages / _sanitize_message_history 预清理。
 
         # ---- 3. 公共审批循环（security.approval_flow.run_approval_loop）----
-        # stream_fn / is_interrupted_fn / inject_tool_error_messages_fn 传入模块级
-        # 引用，以便测试通过 patch("app.agents.supervisor.work_supervisor._xxx") 替换。
+        # stream_fn / is_interrupted_fn 传入模块级引用，以便测试通过
+        # patch("app.agents.supervisor.work_supervisor._xxx") 替换。
+        # inject_tool_error_messages_fn 使用 run_approval_loop 默认实现。
         async for sse in run_approval_loop(
             agent,
             config,
@@ -288,7 +294,6 @@ async def run_work_supervisor(
             inputs=inputs,
             stream_fn=_stream_agent_events,
             is_interrupted_fn=_is_interrupted,
-            inject_tool_error_messages_fn=_inject_tool_error_messages,
         ):
             yield sse
     finally:

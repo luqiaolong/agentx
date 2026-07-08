@@ -1,0 +1,35 @@
+- match: "读取"
+  response: "我需要读取文件内容。"
+  tool_calls:
+    - name: "read_file"
+      args: {"path": "pyproject.toml"}
+
+- match: "README"
+  response: "我来读取 README 文件。"
+  tool_calls:
+    - name: "read_file"
+      args: {"path": "README.md"}
+
+- match: "目录"
+  response: "我来列出当前目录的内容。"
+  tool_calls:
+    - name: "list_dir"
+      args: {"path": "."}
+
+- match: "搜索"
+  response: "正在联网搜索相关资料。"
+  tool_calls:
+    - name: "web_search"
+      args: {"query": "agentx 评测框架"}
+
+- match: "代码"
+  response: "好的，我来帮你写代码。请告诉我具体需求。"
+  tool_calls: []
+
+- match: "分析"
+  response: "我来分析一下这个项目的结构。"
+  tool_calls: []
+
+- match: "架构"
+  response: "这个项目的架构设计如下。"
+  tool_calls: []

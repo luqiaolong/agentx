@@ -1,0 +1,101 @@
+id: smoke
+name: 冒烟评测集
+description: P0 核心路径快速验证（mock 模式，离线可跑）
+cases:
+  - id: smoke-work-greeting
+    user_message: "你好"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+          count_max: 1
+      assertions:
+        - "any(e['event'] == 'token' for e in events)"
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: smoke-work-intro
+    user_message: "请介绍你自己"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'token' for e in events)"
+
+  - id: smoke-coding-read
+    user_message: "读取 pyproject.toml"
+    agent_mode: coding
+    workspace_path: "."
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      # 工具调用断言放宽（mock 模式下工具可能失败，但应至少产出 done）
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: smoke-coding-list
+    user_message: "列出当前目录"
+    agent_mode: coding
+    workspace_path: "."
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: smoke-invalid-mode
+    user_message: "测试"
+    agent_mode: invalid_mode
+    expect:
+      events:
+        - type: error
+          count_min: 1
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'error' for e in events)"
+
+  - id: smoke-team-simple
+    user_message: "团队协作分析项目"
+    agent_mode: coding_team
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: smoke-work-with-rubric
+    user_message: "你好"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+      rubric: "回复必须包含问候语，且语言与用户一致（中文）"
+
+  - id: smoke-self-correct
+    user_message: "分析并修复代码问题"
+    agent_mode: coding
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      rubric: |
+        1. 必须识别出至少一个问题
+        2. 必须提供修复后的代码
+        3. 修复后的代码必须保持原有功能
+      self_correct: true
+      self_correct_max_iterations: 2
+    timeout: 120
+    tags: [p0, self-correction]

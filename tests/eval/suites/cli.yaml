@@ -1,0 +1,49 @@
+id: cli
+name: CLI 闭环评测集
+description: 验证 CLI 入口的端到端流程
+cases:
+  - id: cli-one-shot
+    user_message: "你好"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'token' for e in events)"
+
+  - id: cli-coding-task
+    user_message: "读取 README"
+    agent_mode: coding
+    workspace_path: "."
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: cli-team-task
+    user_message: "团队分析架构"
+    agent_mode: coding_team
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: cli-with-rubric
+    user_message: "介绍 AgentX 的核心功能"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+      rubric: |
+        回复必须包含 AgentX 的至少 3 个核心功能，
+        且描述准确、无幻觉。

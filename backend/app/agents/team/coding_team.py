@@ -12,10 +12,13 @@ AgentTeam 是统称（类型），当前唯一实例是 coding team。
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 from app.observability.logger import logger
 from app.team.orchestrator import run_team_path
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 __all__ = [
     "run_coding_team",
@@ -29,6 +32,7 @@ async def run_coding_team(
     history: list | None = None,
     permission_mode: str = "standard",
     workspace_path: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict]:
     """运行 coding_team 场景级 AgentTeam，yield SSE 事件。
 
@@ -44,6 +48,7 @@ async def run_coding_team(
         history: 历史 messages 列表（已截断）。
         permission_mode: 权限模式，"standard" 或 "full_trust"。
         workspace_path: 可选当前工作区绝对路径。
+        chat_model: 可选注入的 ChatModel，透传到 ``run_team_path``。None 时使用真实 LLM。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -68,5 +73,6 @@ async def run_coding_team(
         history=history,
         permission_mode=permission_mode,
         workspace_path=workspace_path,
+        chat_model=chat_model,
     ):
         yield sse

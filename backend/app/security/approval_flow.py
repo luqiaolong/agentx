@@ -704,7 +704,13 @@ async def _stream_default(
 async def _inject_tool_error_messages_default(
     agent: Any, config: dict, error_text: str
 ) -> None:
-    """默认 inject_tool_error_messages_fn：委托到 ``app.deep.recovery``。"""
-    from app.deep.recovery import _inject_tool_error_messages
+    """默认 inject_tool_error_messages_fn：为所有待执行 tool_call 注入错误。
 
-    await _inject_tool_error_messages(agent, config, error_text)
+    deepagents 0.6+ 的 ``PatchToolCallsMiddleware`` 在中间件层自动修复悬空
+    tool_calls，此函数仅用于主动告知 LLM 操作被拒绝/失败（语义反馈）。
+    逐个调用 ``_inject_tool_error_for_call`` 为 pending tool_calls 注入
+    ToolMessage 错误。
+    """
+    pending = await _get_pending_tool_calls(agent, config)
+    for tc in pending:
+        await _inject_tool_error_for_call(agent, config, tc, error_text)

@@ -13,6 +13,8 @@ import pytest
 
 from app.config import DATA_DIR, Settings, get_settings
 
+pytest_plugins = ("pytester",)
+
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(

@@ -77,6 +77,8 @@ from app.team.aggregator import (  # noqa: F401
 )
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+
     from app.router.state import RouterState
 
 
@@ -89,6 +91,7 @@ async def run_team_path(
     permission_mode: str = "workspace",
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
+    chat_model: BaseChatModel | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """AgentTeam 路径入口。
 
@@ -99,6 +102,8 @@ async def run_team_path(
     Args:
         workspace_path: 当前会话绑定的 workspace 路径，透传到子代理 fs 工具，
             用于解析相对路径（避免被解到 PROJECT_ROOT）。
+        chat_model: 可选注入的 ChatModel，透传到 ``_run_subtask`` 与 ``_run_aggregator``。
+            None 时使用真实 LLM。
     """
     settings = get_settings()
 
@@ -123,7 +128,7 @@ async def run_team_path(
     with trace_span("team.run", thread_id=thread_id, message_len=len(message)):
         # ---- 1. Orchestrator 拆任务 ----
         try:
-            llm = get_chat_model(temperature=0.3, streaming=False)
+            llm = chat_model if chat_model is not None else get_chat_model(temperature=0.3, streaming=False)
         except ValueError as exc:
             yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
             return
@@ -198,7 +203,7 @@ async def run_team_path(
                 try:
                     async for ev in _run_subtask(
                         t, thread_id, history, permission_mode, scene_prompt, state, profile_prompt,
-                        task_index=idx, workspace_path=workspace_path,
+                        task_index=idx, workspace_path=workspace_path, chat_model=chat_model,
                     ):
                         await queue.put(ev)
                 except Exception as exc:  # noqa: BLE001
@@ -294,7 +299,7 @@ async def run_team_path(
             return
 
         # ---- 3. Aggregator 汇总 ----
-        async for sse in _run_aggregator(message, blackboard):
+        async for sse in _run_aggregator(message, blackboard, chat_model=chat_model):
             yield sse
 
         # team 整体结束

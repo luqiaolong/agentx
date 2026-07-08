@@ -43,6 +43,9 @@ def _build_parser() -> argparse.ArgumentParser:
   agentx --coding-team "重构模块"  # 使用 coding_team 模式
   git diff | agentx "写 commit"   # 管道输入
   agentx "分析数据" --json         # JSON 结构化输出
+  agentx eval run --suite=smoke   # 运行评测套件
+  agentx eval list                # 列出所有评测套件
+  agentx eval show smoke          # 显示套件详情
   agentx config show               # 显示当前配置
 """,
     )
@@ -232,8 +235,56 @@ def _config_set(key: str, value: str) -> int:
 # 主入口
 # ============================================================
 
+def _build_eval_parser() -> argparse.ArgumentParser:
+    """构建 ``agentx eval`` 子命令 parser。
+
+    注意：不与 ``_build_parser`` 合并以保持向后兼容。argparse 的 subparsers 会
+    把第一个位置参数当作子命令名验证 choices，导致 ``agentx "你好"`` 报
+    ``invalid choice`` 错误。因此 eval 子命令用独立 parser，在 ``main`` 中
+    通过早期检测 ``sys.argv[1] == "eval"`` 分发。
+    """
+    parser = argparse.ArgumentParser(
+        prog="agentx eval",
+        description="评测框架：运行/列出/查看评测套件",
+    )
+    sub = parser.add_subparsers(dest="eval_command")
+    # eval run
+    run_parser = sub.add_parser("run", help="运行评测")
+    run_parser.add_argument(
+        "--suite", default="smoke", help="suite 名称（默认 smoke，all 跑所有）"
+    )
+    run_parser.add_argument(
+        "--live", action="store_true", help="使用真实 LLM（默认用 Mock）"
+    )
+    run_parser.add_argument(
+        "--format",
+        default="console",
+        help="输出格式：console|md|json，逗号分隔多格式",
+    )
+    run_parser.add_argument(
+        "--no-rubric",
+        dest="no_rubric",
+        action="store_true",
+        help="跳过 L2 RubricJudge 和 L3 自纠分支",
+    )
+    # eval list
+    sub.add_parser("list", help="列出所有 suite")
+    # eval show
+    show_parser = sub.add_parser("show", help="显示 suite 详情")
+    show_parser.add_argument("suite_name", help="suite 名称")
+    return parser
+
+
 def main() -> None:
     """CLI 主入口。"""
+    # eval 子命令早期分发：避免 argparse subparsers 与 positional message 冲突
+    if len(sys.argv) > 1 and sys.argv[1] == "eval":
+        eval_parser = _build_eval_parser()
+        eval_args = eval_parser.parse_args(sys.argv[2:])  # 跳过 "eval"
+        from app.eval.cli import run_eval_command
+
+        sys.exit(run_eval_command(eval_args))
+
     # config 子命令：在 argparse 之前拦截
     if len(sys.argv) > 1 and sys.argv[1] == "config":
         exit_code = _handle_config_subcommand(sys.argv[1:])

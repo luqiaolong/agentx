@@ -177,8 +177,9 @@ async def test_todo_update_includes_task_id() -> None:
 
 
 def test_system_prompt_includes_plan_instructions() -> None:
-    """DeepAgent 系统提示包含结构化计划指令。"""
+    """DeepAgent 系统提示包含结构化计划指令（由 write_todos 工具承担）。"""
     from app.deep.agent import _DEEP_SYSTEM_PROMPT
 
-    assert "plan" in _DEEP_SYSTEM_PROMPT
-    assert "plan_update" in _DEEP_SYSTEM_PROMPT
+    # write_todos 工具由 deepagents 自动注册，prompt 中提及该工具引导 LLM 使用
+    assert "write_todos" in _DEEP_SYSTEM_PROMPT
+    assert "规划" in _DEEP_SYSTEM_PROMPT

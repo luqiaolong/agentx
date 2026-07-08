@@ -1,0 +1,59 @@
+id: tools
+name: 工具调用评测集
+description: 验证工具调用事件正确产出
+cases:
+  - id: tools-read-file
+    user_message: "读取 pyproject.toml 并告诉我项目名"
+    agent_mode: coding
+    workspace_path: "."
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: tools-list-dir
+    user_message: "列出当前目录的内容"
+    agent_mode: coding
+    workspace_path: "."
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: tools-web-search
+    user_message: "搜索 agentx 评测框架相关资料"
+    agent_mode: coding
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      assertions:
+        - "any(e['event'] == 'done' for e in events)"
+
+  - id: tools-work-mode-no-tools
+    user_message: "你好"
+    agent_mode: work
+    expect:
+      events:
+        - type: token
+          count_min: 1
+        - type: done
+          count_min: 1
+      tools_not_called: ["read_file", "list_dir"]
+      assertions:
+        - "any(e['event'] == 'token' for e in events)"
+
+  - id: tools-read-file-with-rubric
+    user_message: "读取 pyproject.toml 并告诉我项目名"
+    agent_mode: coding
+    workspace_path: "."
+    expect:
+      events:
+        - type: done
+          count_min: 1
+      tools_called: ["read_file"]
+      rubric: "回复必须包含项目名称，且来源自 pyproject.toml 文件"
