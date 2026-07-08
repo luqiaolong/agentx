@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from app.config.settings import Settings
 from app.config.subagents import SubagentSettings
 from app.observability.logger import logger
-from app.project_config.loader import ProjectConfig
+from app.workspace.config.loader import ProjectConfig
 
 __all__ = ["MergedConfig", "merge_configs"]
 
@@ -168,7 +168,7 @@ class MergedConfig:
                 except ValidationError as exc:
                     # 项目配置含非法字段时降级为保留全局配置 + warning
                     logger.warning(
-                        "project_config.subagent_merge_failed",
+                        "workspace.config.subagent_merge_failed",
                         name=name,
                         error=str(exc),
                     )

@@ -32,7 +32,7 @@ from app.memory.skills_loader import SkillDef, _parse_frontmatter, _tools_from_m
 from app.memory.skills_store import get_skill_file
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
-from app.project_config import load_project_config, merge_configs
+from app.workspace.config import load_project_config, merge_configs
 from app.utils.sse_events import make_sse_event
 
 if TYPE_CHECKING:
@@ -251,14 +251,14 @@ async def run_router(
                     project_system_prompt = merged.default_system_prompt
                     if project_system_prompt:
                         logger.info(
-                            "router.project_config_loaded",
+                            "router.workspace_config_loaded",
                             thread_id=thread_id,
                             workspace=effective_workspace,
                             has_system_prompt=True,
                         )
             except Exception as exc:  # noqa: BLE001 — 项目配置加载兜底
                 logger.warning(
-                    "router.project_config_load_failed",
+                    "router.workspace_config_load_failed",
                     thread_id=thread_id,
                     workspace=effective_workspace,
                     error=str(exc),

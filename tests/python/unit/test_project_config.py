@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from app.project_config.generator import generate_agentx_dir
-from app.project_config.loader import ProjectConfig, load_project_config
-from app.project_config.merger import MergedConfig, merge_configs
-from app.project_config.templates import TEMPLATES
+from app.workspace.config.generator import generate_agentx_dir
+from app.workspace.config.loader import ProjectConfig, load_project_config
+from app.workspace.config.merger import MergedConfig, merge_configs
+from app.workspace.config.templates import TEMPLATES
 
 
 # ============================================================

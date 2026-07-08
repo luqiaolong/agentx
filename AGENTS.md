@@ -266,10 +266,8 @@ agentx/
 │   │   ├── memory.py           ← skills/profile/checkpointer CRUD
 │   │   ├── mcp.py              ← MCP servers/tools/test/refresh
 │   │   ├── skills.py           ← skills list/reload
-│   │   ├── workspace.py        ← workspace list
 │   │   ├── config_reload.py    ← 配置热重载
 │   │   ├── models_test.py      ← 模型连通性测试
-│   │   ├── project_config.py   ← /api/project-config/init + /api/project-config（.agentx/ 项目级配置）
 │   │   └── __init__.py         ← register_routes(app) 聚合
 │   ├── sandbox/                ← 沙箱路径授权（与 security/ 平行，独立包）
 │   │   ├── path_guard.py       ← 路径归一化 + 关键目录保护（Linux Path('/') bug 已修复）
@@ -293,6 +291,8 @@ agentx/
 │   │   └── prompts/            ← 内置 system prompt + trigger 描述 + tools 常量
 │   │       ├── builtin.py      ← code/rag/web 子代理默认值
 │   │       └── team.py         ← 7 个团队专家默认值
+│   │                           ⚠️ 与 ``app.workspace.config``（workspace 内的 .agentx/ 目录配置）含义不同，
+│   │                              ``app.config`` 管 pydantic Settings + 子代理 + 专家 prompt。两者职责独立。
 │   ├── router/                 ← 消息分类 + StateGraph（仅编排，不嵌路径实现）
 │   │   ├── classifier.py       ← 规则前置 + LLM 分类
 │   │   ├── graph.py            ← Router 图 + run_router（主入口）+ _parse_skill_tag
@@ -337,12 +337,15 @@ agentx/
 │   │   ├── skills_store.py     ← 技能存储
 │   │   ├── checkpointer.py     ← LangGraph checkpointer
 │   │   └── context.py          ← 消息截断（trim_messages_with_budget）
-│   ├── project_config/         ← .agentx/ 项目级配置（generator/loader/merger/templates）
-│   │   ├── __init__.py         ← 包导出
-│   │   ├── templates.py        ← 6 个文件模板（AGENTS.md/mcp.json/subagents.json/tools.json/system_prompt.md/rules/README.md）
-│   │   ├── generator.py        ← generate_agentx_dir 幂等生成
-│   │   ├── loader.py           ← load_project_config 容错加载
-│   │   └── merger.py           ← merge_configs 合并到 Settings 之上
+│   ├── workspace/              ← workspace 业务包（与 deep/team/subagents 平行；config 子包 + api 路由）
+│   │   ├── __init__.py         ← register_routes 聚合
+│   │   ├── api.py              ← /api/workspace/* + /api/project-config/* 路由（合并自原 api/workspace.py + api/project_config.py）
+│   │   └── config/             ← .agentx/ 项目级配置（generator/loader/merger/templates）
+│   │       ├── __init__.py     ← 包导出
+│   │       ├── templates.py    ← 6 个文件模板（AGENTS.md/mcp.json/subagents.json/tools.json/system_prompt.md/rules/README.md）
+│   │       ├── generator.py    ← generate_agentx_dir 幂等生成
+│   │       ├── loader.py       ← load_project_config 容错加载
+│   │       └── merger.py       ← merge_configs 合并到 Settings 之上
 │   ├── vectorstore/            ← Milvus 客户端
 │   ├── embedding/              ← TEI 客户端
 │   ├── mcp/                    ← MCP 客户端 + 配置
@@ -693,7 +696,7 @@ ErrorBoundary 渲染错误恢复。
 文件保持不动，保护用户编辑）。读取配置状态走
 `GET /api/project-config?path=<ws>&thread_id=<tid>`。
 
-目录结构（由 [backend/app/project_config/templates.py](file:///d:/java/agentprojects/agentx/backend/app/project_config/templates.py) 生成）：
+目录结构（由 [backend/app/workspace/config/templates.py](file:///d:/java/agentprojects/agentx/backend/app/workspace/config/templates.py) 生成）：
 
 | 文件 | 作用 |
 |---|---|
@@ -704,7 +707,7 @@ ErrorBoundary 渲染错误恢复。
 | `.agentx/system_prompt.md` | 项目级系统提示词（前置到默认提示词之前） |
 | `.agentx/rules/*.md` | 项目级规则文件（最多 10 个，每个最大 4KB，注入到 profile_prompt） |
 
-合并策略（[backend/app/project_config/merger.py](file:///d:/java/agentprojects/agentx/backend/app/project_config/merger.py) `merge_configs`，在全局 `Settings` 之上叠加）：
+合并策略（[backend/app/workspace/config/merger.py](file:///d:/java/agentprojects/agentx/backend/app/workspace/config/merger.py) `merge_configs`，在全局 `Settings` 之上叠加）：
 
 - **MCP servers**：追加去重（项目优先，按 name 去重）
 - **subagents**：深合并（项目字段覆盖全局同名字代理）
@@ -738,7 +741,7 @@ ErrorBoundary 渲染错误恢复。
 | 调整审批/安全策略 | [backend/app/security/](file:///d:/java/agentprojects/agentx/backend/app/security/) + §14.3 + §14.4 |
 | 写 ADR / 提案 | [openspec/changes/archive/](file:///d:/java/agentprojects/agentx/openspec/changes/archive/) 历史格式参考 |
 | 重启前后端 | §14.7（清理两棵树 → `npm run dev` → 健康验证脚本） |
-| 修改项目配置 | [backend/app/project_config/](file:///d:/java/agentprojects/agentx/backend/app/project_config/) + §16.1 `.agentx/` 项目级配置 |
+| 修改项目配置 | [backend/app/workspace/](file:///d:/java/agentprojects/agentx/backend/app/workspace/) + §16.1 `.agentx/` 项目级配置 |
 
 ---
 

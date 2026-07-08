@@ -1,13 +1,23 @@
-"""项目级配置目录（``.agentx/``）路由。
+"""Workspace 包路由：所有 workspace 相关 REST 端点。
 
-提供两个端点：
-- ``POST /api/project-config/init`` — 幂等生成 ``.agentx/``
-- ``GET /api/project-config?path=<workspace>&thread_id=<tid>`` — 读取配置状态
+合并自：
+- 原 ``app/api/workspace.py`` —— ``/api/workspace/list`` + ``/api/workspace/read``
+- 原 ``app/api/project_config.py`` —— ``/api/project-config/init`` + ``/api/project-config``
 
-安全约束：
+URL 路径**保持不变**（前端契约）：
+- ``GET  /api/workspace/list``        列沙箱白名单/已授权目录条目
+- ``GET  /api/workspace/read``        读取白名单/已授权目录内的文本文件
+- ``POST /api/project-config/init``   幂等生成 ``.agentx/``
+- ``GET  /api/project-config``        读取工作区 ``.agentx/`` 状态
+
+安全约束（project-config 端点）：
 - 路径校验：拒绝空 / ``.`` / ``..`` / 系统关键目录（双向：祖先+后代）
 - 沙箱授权：必须先通过 ``POST /api/sandbox/authorize`` 授权该路径，
   否则 init/get 端点返回 400（防止未授权目录被读写）
+
+> 延迟 import 约定：``list_workspace`` / ``read_workspace_file`` 通过
+> ``from app.main import ...`` 引用，保留为 monkeypatch 测试锚点
+> （测试通过 ``monkeypatch app.main.<name>`` 注入 fake）。
 """
 
 from __future__ import annotations
@@ -19,8 +29,13 @@ from pathlib import Path
 
 from app.api.schemas import ProjectConfigInitRequest
 from app.observability.logger import logger
-from app.project_config.generator import generate_agentx_dir
-from app.project_config.loader import load_project_config
+from app.workspace.config.generator import generate_agentx_dir
+from app.workspace.config.loader import load_project_config
+
+
+# ============================================================
+# 私有辅助函数（来自原 project_config.py）
+# ============================================================
 
 
 def _is_critical_path(resolved: Path) -> bool:
@@ -98,8 +113,62 @@ async def _validate_workspace_path(path_str: str, thread_id: str) -> Path:
     return path
 
 
-def register_project_config_routes(app: FastAPI) -> None:
-    """注册项目级配置路由（``/api/project-config/*``）。"""
+# ============================================================
+# 统一路由注册
+# ============================================================
+
+
+def register_routes(app: FastAPI) -> None:
+    """注册所有 workspace 路由（``/api/workspace/*`` + ``/api/project-config/*``）。"""
+
+    # ---- /api/workspace/*（原 api/workspace.py）----
+
+    @app.get("/api/workspace/list")
+    async def workspace_list(
+        path: str = "data/workspace",
+        thread_id: str = "",
+    ) -> dict[str, Any]:
+        """列出沙箱白名单内或已授权目录的条目（含 type/size/mtime）。
+
+        允许 ``data/workspace`` 和 ``data/uploads``（始终可读），
+        以及通过 ``POST /api/sandbox/authorize`` 授权给 ``thread_id`` 的目录。
+        其他路径 → 400。
+        """
+        # 延迟 import：测试通过 monkeypatch app.main.list_workspace 注入 fake
+        from app.main import list_workspace
+
+        try:
+            entries = await list_workspace(path, thread_id or None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"entries": entries}
+
+    @app.get("/api/workspace/read")
+    async def workspace_read(
+        path: str,
+        thread_id: str = "",
+    ) -> dict[str, Any]:
+        """读取沙箱白名单 / 已授权目录内的文本文件内容（供 CodeViewer 使用）。
+
+        - 文本文件：返回 ``{"content": str, "size": int, "encoding": "utf-8"}``
+        - 二进制文件：返回 ``{"binary": True, "size": int}``
+        - 路径不在白名单或未授权 → 400
+        - 文件不存在 → 404
+        - 路径是目录或超过 2 MiB → 400
+        """
+        # 延迟 import：测试通过 monkeypatch app.main.read_workspace_file 注入 fake
+        from app.main import read_workspace_file
+
+        try:
+            return await read_workspace_file(path, thread_id or None)
+        except (ValueError, PathNotAuthorized) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    # ---- /api/project-config/*（原 api/project_config.py）----
 
     @app.post("/api/project-config/init")
     async def project_config_init(req: ProjectConfigInitRequest) -> dict[str, Any]:
@@ -114,7 +183,7 @@ def register_project_config_routes(app: FastAPI) -> None:
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except OSError as exc:
-            logger.error("project_config.init_failed", path=str(path), error=str(exc))
+            logger.error("workspace.config.init_failed", path=str(path), error=str(exc))
             raise HTTPException(status_code=500, detail=f"生成失败: {exc}")
 
         return {

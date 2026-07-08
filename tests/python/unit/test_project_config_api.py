@@ -9,12 +9,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.project_config import register_project_config_routes
+from app.workspace import register_routes as register_project_config_routes
 
 
 @pytest.fixture()
 def app() -> FastAPI:
-    """创建注册了 project_config 路由的 FastAPI 测试实例。"""
+    """创建注册了 workspace 路由的 FastAPI 测试实例（合并自原 workspace.py + project_config.py）。"""
     app = FastAPI()
     register_project_config_routes(app)
     return app

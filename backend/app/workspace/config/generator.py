@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.observability.logger import logger
-from app.project_config.templates import TEMPLATES
+from app.workspace.config.templates import TEMPLATES
 
 __all__ = ["GenerationResult", "generate_agentx_dir"]
 
@@ -64,7 +64,7 @@ def generate_agentx_dir(workspace_path: Path) -> GenerationResult:
             created.append(rel_path)
 
     logger.info(
-        "project_config.generated",
+        "workspace.config.generated",
         workspace=str(workspace_path),
         created_count=len(created),
         skipped_count=len(skipped),

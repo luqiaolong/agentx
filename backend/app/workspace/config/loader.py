@@ -96,7 +96,7 @@ def _read_text_safe(path: Path, max_size: int | None = None) -> str | None:
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        logger.warning("project_config.read_failed", file=str(path), error=str(exc))
+        logger.warning("workspace.config.read_failed", file=str(path), error=str(exc))
         return None
     if max_size is not None and len(content) > max_size:
         content = content[:max_size] + "\n[truncated]"
@@ -112,14 +112,14 @@ def _parse_json_safe(path: Path, default: dict | list) -> dict | list:
         parsed = json.loads(raw)
         # 类型校验：dict 字段期望 dict，list 字段期望 list
         if isinstance(default, dict) and not isinstance(parsed, dict):
-            logger.warning("project_config.json_type_mismatch", file=str(path), expected="dict")
+            logger.warning("workspace.config.json_type_mismatch", file=str(path), expected="dict")
             return default
         if isinstance(default, list) and not isinstance(parsed, list):
-            logger.warning("project_config.json_type_mismatch", file=str(path), expected="list")
+            logger.warning("workspace.config.json_type_mismatch", file=str(path), expected="list")
             return default
         return parsed
     except json.JSONDecodeError as exc:
-        logger.warning("project_config.json_parse_failed", file=str(path), error=str(exc))
+        logger.warning("workspace.config.json_parse_failed", file=str(path), error=str(exc))
         return default
 
 
@@ -145,7 +145,7 @@ def _load_rules(rules_dir: Path) -> list[RuleFile]:
         # 拒绝符号链接（安全：防止 rules/ 下放置指向敏感文件的 symlink）
         if md_file.is_symlink():
             logger.warning(
-                "project_config.rule_symlink_skipped",
+                "workspace.config.rule_symlink_skipped",
                 file=str(md_file),
             )
             continue
@@ -169,7 +169,7 @@ def _read_agentx_text(path: Path, max_size: int) -> str | None:
         return None
     if path.is_symlink():
         logger.warning(
-            "project_config.symlink_skipped",
+            "workspace.config.symlink_skipped",
             file=str(path),
         )
         return None
@@ -210,7 +210,7 @@ def load_project_config(workspace_path: Path) -> ProjectConfig:
     rules = _load_rules(agentx_dir / "rules")
 
     logger.info(
-        "project_config.loaded",
+        "workspace.config.loaded",
         workspace=str(workspace_path),
         has_agents_md=agents_md is not None,
         rules_count=len(rules),
