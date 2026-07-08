@@ -45,8 +45,15 @@ def _clear_pause_state() -> None:
 
 @pytest.fixture
 def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """打桩 run_deep_path 依赖。"""
+    """打桩 run_deep_path 依赖。
+
+    注意：``run_agent_with_approval`` 实际位于 ``app.deep.execution``，
+    因此可注入函数（_is_interrupted / _get_pending_tool_calls /
+    _handle_directory_extension）必须 patch 在 ``app.deep.execution``
+    而非 ``app.deep.agent`` 的 re-export 上。
+    """
     import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
 
     monkeypatch.setattr(
         agent_module,
@@ -73,6 +80,11 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     fake_sandbox.is_path_authorized = AsyncMock(return_value=False)
     monkeypatch.setattr(agent_module, "get_sandbox", lambda: fake_sandbox)
 
+    # 默认空流；具体测试 case 会覆盖
+    async def _default_stream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+        yield {"event": "token", "data": "ok"}
+    monkeypatch.setattr(exec_module, "_stream_default", _default_stream)
+
     return {"agent": fake_agent, "sandbox": fake_sandbox}
 
 
@@ -83,22 +95,22 @@ async def test_deep_path_pause_resume(
 ) -> None:
     """pause 后阻塞并 yield paused，resume 后 yield resumed 并继续。"""
     from app.deep.agent import run_deep_path
-    import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
     from app.security.approval import set_pause, clear_pause, is_aborted, set_abort
 
     # 迭代 1 有非危险待执行工具，迭代 2 检测到 pause，resume 后图完成
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_is_interrupted",
         AsyncMock(side_effect=[True, False]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_get_pending_tool_calls",
         AsyncMock(return_value=[{"id": "tc-1", "name": "read_file", "args": {"path": "/tmp/a.txt"}}]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_handle_directory_extension",
         AsyncMock(return_value=MagicMock(events=[], denied=False, timed_out=False)),
     )
@@ -116,7 +128,7 @@ async def test_deep_path_pause_resume(
         else:
             yield {"event": "token", "data": "step3"}
 
-    monkeypatch.setattr(agent_module, "_stream_agent_events", _fake_stream)
+    monkeypatch.setattr(exec_module, "_stream_default", _fake_stream)
 
     # 预置 abort 标志，验证 pause 不会清理它
     await set_abort("t-pause")
@@ -148,21 +160,21 @@ async def test_clear_pause_before_wait_does_not_block(
 ) -> None:
     """若 clear_pause 在 wait 前已调用，不应永久阻塞。"""
     from app.deep.agent import run_deep_path
-    import app.deep.agent as agent_module
+    import app.deep.execution as exec_module
     from app.security.approval import set_pause, clear_pause
 
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_is_interrupted",
         AsyncMock(side_effect=[True, False]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_get_pending_tool_calls",
         AsyncMock(return_value=[{"id": "tc-1", "name": "read_file", "args": {"path": "/tmp/a.txt"}}]),
     )
     monkeypatch.setattr(
-        agent_module,
+        exec_module,
         "_handle_directory_extension",
         AsyncMock(return_value=MagicMock(events=[], denied=False, timed_out=False)),
     )
@@ -170,7 +182,7 @@ async def test_clear_pause_before_wait_does_not_block(
     async def _fake_stream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "ok"}
 
-    monkeypatch.setattr(agent_module, "_stream_agent_events", _fake_stream)
+    monkeypatch.setattr(exec_module, "_stream_default", _fake_stream)
 
     # 先设置再立即清除 pause，模拟 race：run_deep_path 检查时可能仍为 True
     await set_pause("t-race")

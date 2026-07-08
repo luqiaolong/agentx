@@ -18,6 +18,7 @@ from typing import Any
 from deepagents import (
     GeneralPurposeSubagentProfile,
     HarnessProfile,
+    RubricMiddleware,
     create_deep_agent,
     register_harness_profile,
 )
@@ -25,6 +26,7 @@ from deepagents.backends import FilesystemBackend
 
 from app.config import DATA_DIR
 from app.deep.tools import DANGEROUS_TOOLS
+from app.llm import get_chat_model
 from app.observability.logger import logger
 
 __all__ = [
@@ -138,10 +140,13 @@ def create_agent(
     thread_id: str | None = None,
     workspace_path: str | None = None,
     name: str | None = None,
+    subagents: list | None = None,
+    rubric: str | None = None,
+    grader_model: Any | None = None,
 ) -> Any:
     """主入口：封装 create_deep_agent。
 
-    组装 HarnessProfile、interrupt_on、memory、skills、backend 等配置，
+    组装 HarnessProfile、interrupt_on、memory、skills、backend、subagents 等配置，
     调用 ``deepagents.create_deep_agent`` 构建编译后的图。
 
     Args:
@@ -152,6 +157,9 @@ def create_agent(
         thread_id: 会话 ID（保留参数，deepagents 通过 config 注入）。
         workspace_path: 工作区路径，用于解析 memory 路径和 FilesystemBackend。
         name: 图名称，默认 ``"deep_agent"``。
+        subagents: 可选声明式子代理列表，透传给 create_deep_agent(subagents=...)。
+        rubric: 可选 rubric 文本；非空时注入 RubricMiddleware 启用运行时自纠。
+        grader_model: 可选 grader 模型；为空时调用 get_chat_model(temperature=0)。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -162,6 +170,11 @@ def create_agent(
     skills_dir = resolve_skills_dir()
     backend = resolve_backend(workspace_path)
 
+    middleware: list = []
+    if rubric:
+        _grader = grader_model if grader_model is not None else get_chat_model(temperature=0)
+        middleware.append(RubricMiddleware(model=_grader, max_iterations=3))
+
     return create_deep_agent(
         model=model,
         tools=tools,
@@ -170,6 +183,8 @@ def create_agent(
         memory=memory_paths or None,
         skills=[skills_dir] if skills_dir else None,
         backend=backend,
+        subagents=subagents,
+        middleware=middleware,
         checkpointer=checkpointer,
         name=name or "deep_agent",
     )
