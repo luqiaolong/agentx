@@ -237,6 +237,108 @@ class SessionSandbox:
             )
         raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
 
+    # ---- 同步版本（供 AuthorizedLocalShellBackend 在同步 fs 方法中调用）----
+
+    def check_read_sync(
+        self,
+        thread_id: str,
+        path: str | Path,
+        base: str | Path | None = None,
+        parent_thread_id: str | None = None,
+    ) -> None:
+        """同步版 ``check_read``。复用核心检查逻辑，不加 ``asyncio.Lock``。
+
+        授权目录变更不频繁，dict 读操作 GIL 保护，无需 async 锁。
+
+        Raises:
+            PathNotAuthorized: 路径未授权或为系统关键目录。
+        """
+        resolved = normalize_path(path, base=base)
+        if is_critical(resolved):
+            self._deny(thread_id, path, "deny_critical")
+            raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
+        if thread_id in self._full_trust_threads:
+            return
+        for whitelist_path in DEFAULT_WHITELIST:
+            if is_under(resolved, whitelist_path):
+                return
+        for auth_path, _writable in self._get_authorized_set(thread_id, "_authorized_dirs"):
+            if is_under(resolved, auth_path):
+                return
+        for auth_path, _writable in self._get_authorized_set(thread_id, "_temp_authorized"):
+            if is_under(resolved, auth_path):
+                return
+        # 查父 thread 授权
+        parent_tid = self._resolve_parent(thread_id, parent_thread_id)
+        if parent_tid is not None and parent_tid != thread_id:
+            for auth_path, _writable in self._get_authorized_set(parent_tid, "_authorized_dirs"):
+                if is_under(resolved, auth_path):
+                    return
+            for auth_path, _writable in self._get_authorized_set(parent_tid, "_temp_authorized"):
+                if is_under(resolved, auth_path):
+                    return
+        self._deny(thread_id, path, "deny_read")
+        raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
+
+    def check_write_sync(
+        self,
+        thread_id: str,
+        path: str | Path,
+        base: str | Path | None = None,
+        parent_thread_id: str | None = None,
+    ) -> None:
+        """同步版 ``check_write``。语义同 ``check_read_sync``，但检查 writable 标志。
+
+        命中但不可写时抛出与 ``check_write`` 一致的错误消息。不加 ``asyncio.Lock``。
+
+        Raises:
+            PathNotAuthorized: 路径未授权、只读授权或为系统关键目录。
+        """
+        resolved = normalize_path(path, base=base)
+        if is_critical(resolved):
+            self._deny(thread_id, path, "deny_critical")
+            raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
+        matched = False
+        if thread_id in self._full_trust_threads:
+            return
+        for whitelist_path in DEFAULT_WHITELIST:
+            if is_under(resolved, whitelist_path):
+                return
+        for auth_path, writable in self._get_authorized_set(thread_id, "_authorized_dirs"):
+            if is_under(resolved, auth_path):
+                matched = True
+                if writable:
+                    return  # 命中 writable 后立即返回（break 修复）
+        if not matched:
+            for auth_path, writable in self._get_authorized_set(thread_id, "_temp_authorized"):
+                if is_under(resolved, auth_path):
+                    matched = True
+                    if writable:
+                        return  # 命中 writable 后立即返回
+        # 查父 thread 授权
+        if not matched:
+            parent_tid = self._resolve_parent(thread_id, parent_thread_id)
+            if parent_tid is not None and parent_tid != thread_id:
+                for auth_path, writable in self._get_authorized_set(parent_tid, "_authorized_dirs"):
+                    if is_under(resolved, auth_path):
+                        matched = True
+                        if writable:
+                            return  # 命中 writable 后立即返回
+                        break
+                if not matched:
+                    for auth_path, writable in self._get_authorized_set(parent_tid, "_temp_authorized"):
+                        if is_under(resolved, auth_path):
+                            matched = True
+                            if writable:
+                                return
+                            break
+        self._deny(thread_id, path, "deny_write")
+        if matched:
+            raise PathNotAuthorized(
+                f"路径 {path} 仅授权读取，写入请使用 data/workspace 或在授权时勾选允许写入"
+            )
+        raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
+
     async def authorize(
         self, thread_id: str, path: str | Path, writable: bool = False, source: str = "manual"
     ) -> Path:
