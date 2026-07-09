@@ -35,6 +35,14 @@ class ApproveRequest(BaseModel):
     )
     path: str | None = Field(default=None, description="directory_extension 目标路径")
     writable: bool = Field(default=False, description="directory_extension 是否允许写入")
+    run_id: str | None = Field(
+        default=None,
+        description="观测中心 run_id（=trace_id），用于回填 observation_tool_call.approval_decision",
+    )
+    tool_call_id: str | None = Field(
+        default=None,
+        description="可选 tool_call_id，直接定位 observation_tool_call 行；缺失时按 run_id 查最近 pending 行",
+    )
 
 
 class AbortRequest(BaseModel):

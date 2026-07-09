@@ -481,6 +481,20 @@ class SqliteObservationSink:
             )
             return [dict(r) for r in cur.fetchall()]
 
+    def find_pending_approval_tool_call_sync(
+        self, run_id: str
+    ) -> str | None:
+        """查 run 内最近一条 ``approval_decision IS NULL`` 的 tool_call_id（供审批回填）。"""
+        with self._connect_read() as conn:
+            cur = conn.execute(
+                """SELECT tool_call_id FROM observation_tool_call
+                   WHERE run_id=? AND approval_decision IS NULL
+                   ORDER BY started_at DESC LIMIT 1""",
+                (run_id,),
+            )
+            row = cur.fetchone()
+            return str(row[0]) if row else None
+
     def list_thumb_down_feedback_sync(
         self, days: int = 30
     ) -> list[dict[str, Any]]:

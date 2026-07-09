@@ -32,6 +32,8 @@ from app.memory.skills_loader import SkillDef, _parse_frontmatter, _tools_from_m
 from app.memory.skills_store import get_skill_file
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
+from app.observability.observation import get_observation_sink
+from app.observability.trace import current_trace_id
 from app.workspace.config import load_project_config, merge_configs
 from app.utils.sse_events import make_sse_event
 
@@ -298,6 +300,31 @@ async def run_router(
             history_count=len(history),
         )
 
+        # ---- 5.5 观测中心：record_prompt + start state snapshot ----
+        run_id = current_trace_id() or ""
+        if run_id:
+            history_preview = "\n".join(
+                f"{getattr(m, 'type', '?')}: {str(getattr(m, 'content', ''))[:200]}"
+                for m in history[-4:]
+            )
+            try:
+                sink = get_observation_sink()
+                await sink.record_prompt(
+                    run_id=run_id,
+                    system_prompt=profile_prompt,
+                    user_message=cleaned_message,
+                    history_preview=history_preview,
+                )
+                # start snapshot：从 checkpointer 读 channel_values
+                if checkpointer is not None and hasattr(checkpointer, "aget"):
+                    cp_config = {"configurable": {"thread_id": thread_id}}
+                    checkpoint = await checkpointer.aget(cp_config)
+                    if checkpoint and isinstance(checkpoint, dict):
+                        channel_values = checkpoint.get("channel_values", {}) or {}
+                        await sink.record_state_snapshot(run_id, "start", channel_values)
+            except Exception as exc:  # noqa: BLE001 — 观测失败不阻塞 router
+                logger.warning("observation record_prompt/start failed", error=str(exc))
+
         # ---- 6. 场景分发 ----
         # 收集本次对话的 user + assistant 消息并写回 checkpointer
         assistant_content_parts: list[str] = []
@@ -358,6 +385,18 @@ async def run_router(
                 AIMessage(content=assistant_content),
             ]
             await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
+
+        # ---- 7.5 观测中心：end state snapshot ----
+        if run_id:
+            try:
+                if checkpointer is not None and hasattr(checkpointer, "aget"):
+                    cp_config = {"configurable": {"thread_id": thread_id}}
+                    checkpoint = await checkpointer.aget(cp_config)
+                    if checkpoint and isinstance(checkpoint, dict):
+                        channel_values = checkpoint.get("channel_values", {}) or {}
+                        await sink.record_state_snapshot(run_id, "end", channel_values)
+            except Exception as exc:  # noqa: BLE001 — 观测失败不阻塞 router
+                logger.warning("observation end snapshot failed", error=str(exc))
 
         # ---- 8. 统一 yield done ----
         yield make_sse_event("done", "{}")

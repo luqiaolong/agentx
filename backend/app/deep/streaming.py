@@ -22,6 +22,8 @@ from uuid import uuid4
 
 from loguru import logger
 
+from app.observability.observation import get_observation_sink
+from app.observability.trace import current_trace_id
 from app.security.approval import get_abort_event
 from app.utils.sse_events import (
     make_sse_event,
@@ -77,6 +79,23 @@ async def _stream_agent_events(
     thread_id = config.get("configurable", {}).get("thread_id", "")
     abort_event = await get_abort_event(thread_id)
 
+    # FR-5.1: 观测中心 event append — run_id 从 ContextVar 读取（由 chat.py bind_trace 设置）
+    run_id = current_trace_id() or ""
+    _seq_counter = 0
+
+    async def _obs(event_type: str, payload: dict[str, Any]) -> None:
+        """写 observation_event，失败不阻塞 SSE 流（FR-2.3 隔离）。"""
+        nonlocal _seq_counter
+        if not run_id:
+            return
+        _seq_counter += 1
+        try:
+            await get_observation_sink().append_event(
+                run_id, _seq_counter, event_type, payload
+            )
+        except Exception:  # noqa: BLE001 — 观测失败不阻塞 agent
+            pass
+
     logger.info(
         "stream_agent_events: start streaming",
         thread_id=thread_id,
@@ -118,7 +137,9 @@ async def _stream_agent_events(
                     else ""
                     for block in content
                 )
+            await _obs("tool_result", {"id": tool_call_id, "name": tool_name, "result": content, "source": source})
             yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
+            await _obs("todo_update", {"todos": [{"text": f"工具 {tool_name} 完成", "done": True, "task_id": thread_id}]})
             yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
             logger.info(
                 "stream_agent_events: yielded tool_result",
@@ -159,6 +180,7 @@ async def _stream_agent_events(
                 display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
                 if display_plan:
                     # yield reasoning 事件供前端展示思考过程
+                    await _obs("reasoning", {"content": display_plan, "source": source})
                     yield make_sse_event(
                         "reasoning",
                         {"content": display_plan, "source": source},
@@ -173,7 +195,9 @@ async def _stream_agent_events(
                         tc_name = getattr(tc, "name", "unknown")
                         tc_args = getattr(tc, "args", {}) or {}
                         tc_id = getattr(tc, "id", None) or str(uuid4())
+                    await _obs("tool_call", {"id": tc_id, "name": tc_name, "args": tc_args, "source": source})
                     yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
+                    await _obs("todo_update", {"todos": [{"text": f"调用工具: {tc_name}", "done": False, "task_id": thread_id}]})
                     yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
             elif getattr(last_msg, "content", ""):
                 # AIMessage without tool_calls → 最终回复
@@ -195,6 +219,8 @@ async def _stream_agent_events(
                     plan_info = _extract_plan_or_update(text)
                     if plan_info is not None:
                         kind, plan_data = plan_info
+                        await _obs(kind, plan_data if isinstance(plan_data, dict) else {"data": plan_data})
                         yield make_sse_event(kind, plan_data)
                     else:
+                        await _obs("token", {"content": text})
                         yield make_sse_event("token", text)
