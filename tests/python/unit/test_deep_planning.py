@@ -68,13 +68,13 @@ class _FakeAgent:
 
 def test_extract_plan_or_update_raw_json() -> None:
     """纯 JSON plan 被正确识别。"""
-    from app.deep.streaming import _extract_plan_or_update
+    from app.utils.plan_extraction import extract_plan_or_update
 
     text = json.dumps(
         {"plan": [{"id": "1", "title": "读取文件", "status": "pending"}]},
         ensure_ascii=False,
     )
-    result = _extract_plan_or_update(text)
+    result = extract_plan_or_update(text)
     assert result is not None
     kind, data = result
     assert kind == "plan"
@@ -83,14 +83,14 @@ def test_extract_plan_or_update_raw_json() -> None:
 
 def test_extract_plan_or_update_codeblock() -> None:
     """markdown 代码块中的 plan 被正确识别。"""
-    from app.deep.streaming import _extract_plan_or_update
+    from app.utils.plan_extraction import extract_plan_or_update
 
     inner = json.dumps(
         {"plan": [{"id": "2", "title": "搜索", "status": "pending"}]},
         ensure_ascii=False,
     )
     text = f"这是计划：\n```json\n{inner}\n```\n请确认"
-    result = _extract_plan_or_update(text)
+    result = extract_plan_or_update(text)
     assert result is not None
     kind, data = result
     assert kind == "plan"
@@ -99,13 +99,13 @@ def test_extract_plan_or_update_codeblock() -> None:
 
 def test_extract_plan_update() -> None:
     """plan_update JSON 被正确识别。"""
-    from app.deep.streaming import _extract_plan_or_update
+    from app.utils.plan_extraction import extract_plan_or_update
 
     text = json.dumps(
         {"plan_update": {"id": "1", "status": "done"}},
         ensure_ascii=False,
     )
-    result = _extract_plan_or_update(text)
+    result = extract_plan_or_update(text)
     assert result is not None
     kind, data = result
     assert kind == "plan_update"
@@ -115,11 +115,11 @@ def test_extract_plan_update() -> None:
 
 def test_extract_plan_or_update_normal_text() -> None:
     """普通文本返回 None。"""
-    from app.deep.streaming import _extract_plan_or_update
+    from app.utils.plan_extraction import extract_plan_or_update
 
-    assert _extract_plan_or_update("你好，这是普通回复") is None
+    assert extract_plan_or_update("你好，这是普通回复") is None
     # 大括号但不是合法 JSON/plan
-    assert _extract_plan_or_update("{foo: bar}") is None
+    assert extract_plan_or_update("{foo: bar}") is None
 
 
 @pytest.mark.asyncio

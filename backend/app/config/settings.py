@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     llm_temperature_extraction: float = Field(default=0.0, ge=0.0, le=2.0)
     # Orchestrator/DeepAgent 主模型默认温度
     llm_temperature_orchestrator: float = Field(default=0.3, ge=0.0, le=2.0)
+    # AgentTeam Aggregator/Orchestrator 汇总 LLM 默认温度（T-P4-1 外置）
+    llm_temperature_aggregator: float = Field(default=0.5, ge=0.0, le=2.0)
 
     # ---- Embedding (BGE-M3 service on myserver:8093) ----
     embedding_url: str = "http://192.168.1.4:8093/v1/embeddings"
@@ -102,6 +104,11 @@ class Settings(BaseSettings):
     milvus_db: str = "agentx"  # MUST 用户手动预创建
     milvus_collection: str = "agentx_knowledge"
     milvus_auth_enabled: bool = True  # False 时跳过凭证校验（myserver Milvus auth disabled）
+    # HNSW 索引参数（T-P4-1 外置）
+    milvus_hnsw_index_type: str = "HNSW"
+    milvus_hnsw_m: int = Field(default=16, ge=4, le=64)
+    milvus_hnsw_ef_construction: int = Field(default=200, ge=16, le=1024)
+    milvus_hnsw_ef_search: int = Field(default=64, ge=16, le=1024)
 
     # ---- 危险操作审批 ----
     # 0=禁用（无限期暂停等用户操作）；>0 时倒计时归零自动批准
@@ -186,6 +193,12 @@ class Settings(BaseSettings):
     cli_tool_blocklist: list[str] = Field(default_factory=list)
     cli_tool_timeout: int = Field(default=300, ge=1, le=3600)
     cli_tool_max_output_chars: int = Field(default=50000, ge=500, le=500000)
+
+    # ---- 智能体运行时调优（T-P4-1 外置）----
+    # 连续只读工具调用阈值，超过则主动暂停询问用户意图（防止 LLM 死循环只读探测）
+    readonly_streak_threshold: int = Field(default=10, ge=1, le=100)
+    # RubricMiddleware 判官自纠最大迭代次数
+    rubric_max_iterations: int = Field(default=3, ge=1, le=10)
 
     @field_validator(
         "subagents_config",

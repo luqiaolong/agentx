@@ -227,9 +227,12 @@ class MilvusClient:
                     self._collection.create_index,
                     field_name="vector",
                     index_params={
-                        "index_type": "HNSW",
+                        "index_type": settings.milvus_hnsw_index_type,
                         "metric_type": "COSINE",
-                        "params": {"M": 16, "efConstruction": 200},
+                        "params": {
+                            "M": settings.milvus_hnsw_m,
+                            "efConstruction": settings.milvus_hnsw_ef_construction,
+                        },
                     },
                 )
                 for partition_name in _VALID_SOURCE_TYPES:

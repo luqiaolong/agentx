@@ -25,6 +25,7 @@ from loguru import logger
 from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.security.approval import get_abort_event
+from app.utils.plan_extraction import extract_plan_or_update
 from app.utils.sse_events import (
     make_sse_event,
     make_todo_event,
@@ -33,17 +34,6 @@ from app.utils.sse_events import (
 )
 
 __all__ = ["_stream_agent_events"]
-
-
-def _extract_plan_or_update(text: str) -> tuple[str, Any] | None:
-    """从 LLM 输出中提取结构化计划或计划更新。
-
-    委托给共享工具 ``app.utils.plan_extraction.extract_plan_or_update``，
-    行为详见该函数 docstring。
-    """
-    from app.utils.plan_extraction import extract_plan_or_update as _shared
-
-    return _shared(text)
 
 
 async def _stream_agent_events(
@@ -216,7 +206,7 @@ async def _stream_agent_events(
                 text = strip_tool_call_xml(text)
                 if text:
                     # 检测结构化任务计划/更新
-                    plan_info = _extract_plan_or_update(text)
+                    plan_info = extract_plan_or_update(text)
                     if plan_info is not None:
                         kind, plan_data = plan_info
                         await _obs(kind, plan_data if isinstance(plan_data, dict) else {"data": plan_data})

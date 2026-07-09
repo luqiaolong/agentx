@@ -114,7 +114,9 @@ async def _run_aggregator(
         return
 
     try:
-        llm = chat_model if chat_model is not None else orchestrator.get_chat_model(temperature=0.5, streaming=True)
+        llm = chat_model if chat_model is not None else orchestrator.get_chat_model(
+            temperature=settings.llm_temperature_aggregator, streaming=True
+        )
     except ValueError as exc:
         yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
         return

@@ -169,7 +169,7 @@ async def run_deep_path(
             inputs=inputs,
             sandbox=sandbox,
             parent_thread_id=parent_thread_id,
-            readonly_streak_threshold=10,
+            readonly_streak_threshold=settings.readonly_streak_threshold,
         ):
             yield sse
     finally:

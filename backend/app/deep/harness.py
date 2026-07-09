@@ -186,7 +186,10 @@ def create_agent(
         _grader = grader_model if grader_model is not None else get_chat_model(
             temperature=get_settings().llm_temperature_extraction
         )
-        middleware.append(RubricMiddleware(model=_grader, max_iterations=3))
+        middleware.append(RubricMiddleware(
+            model=_grader,
+            max_iterations=get_settings().rubric_max_iterations,
+        ))
 
     return create_deep_agent(
         model=model,

@@ -274,7 +274,7 @@ async def run_coding_expert(
             sandbox=sandbox,
             parent_thread_id=parent_thread_id,
             stream_fn=_stream_agent_events,
-            readonly_streak_threshold=10,
+            readonly_streak_threshold=settings.readonly_streak_threshold,
         ):
             yield sse
     finally:
