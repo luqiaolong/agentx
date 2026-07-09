@@ -1,0 +1,7 @@
+schema: spec-driven
+change_id: 2026-07-09-backend-code-quality-optimization
+title: 后端代码质量优化（消除死代码/框架对齐/bug 修复/重复消除）
+status: draft
+created_at: 2026-07-09
+spec_dirs:
+  - backend-quality

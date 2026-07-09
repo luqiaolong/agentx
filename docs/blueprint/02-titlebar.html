@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.02 Title Bar 详细设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.tb-demo {
+  height: 40px;
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  margin: 8px 0;
+}
+.tb-left, .tb-right { display: flex; align-items: center; gap: 8px; }
+.bm-brand { width: 24px; height: 24px; background: var(--brand-500); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+.bn { font-weight: 600; font-size: 13px; color: var(--t1); }
+.vb { padding: 1px 6px; border-radius: 999px; background: var(--bg-subtle); font-size: 10px; font-weight: 600; color: var(--t3); margin-left: 4px; }
+.st { display: inline-flex; align-items: center; border: 1px solid var(--border); background: var(--bg-surface); border-radius: 6px; margin-left: 6px; }
+.st button { height: 20px; padding: 0 8px; border: none; background: transparent; font-size: 11px; font-weight: 500; color: var(--t3); cursor: pointer; font-family: inherit; }
+.st button.act { background: var(--brand-700); color: var(--brand-200); }
+.tib { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: transparent; border: none; color: var(--t3); cursor: pointer; }
+.tib.close:hover { background: var(--rose); color: #fff; }
+.twc { display: inline-flex; align-items: center; margin-left: 4px; }
+
+.scene-state-demo { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.state-row { display: flex; align-items: center; gap: 16px; padding: 12px; background: var(--bg-app); border-radius: 8px; border: 1px solid var(--border); }
+.state-label { font-size: 12px; font-weight: 600; color: var(--t2); min-width: 120px; }
+
+.flow-diagram {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin: 12px 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: var(--t2);
+  overflow-x: auto;
+}
+.flow-diagram b { color: var(--brand-500); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.02 Title Bar</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html" class="active">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.02</div>
+  <h1>Title Bar 详细设计</h1>
+  <div class="sub">顶部自定义标题栏 · 4 个拆解卡片（A.1 - A.4）</div>
+  <div class="meta">
+    <span>📐 区域：A. 顶部 title bar (h=40px)</span>
+    <span>🔧 关键技术：app-drag-region 双击 maximize</span>
+    <span>📦 关联代码：App.tsx:175-275</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>整体预览</h2>
+  <p class="lede">Tauri 2.x 无边框窗口下的自定义 title bar，取代原生标题栏。左半区：品牌 + 场景 Tab；右半区：折叠 / 主题 / 窗口控制。</p>
+
+  <div class="demo-title">完整 Title Bar</div>
+  <div class="tb-demo">
+    <div class="tb-left">
+      <div class="bm-brand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></div>
+      <span class="bn">AgentX</span>
+      <span class="vb">v0.1</span>
+      <div class="st"><button class="act">Work</button><button>Coding</button></div>
+    </div>
+    <div class="tb-right">
+      <button class="tib"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></button>
+      <button class="tib"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/></svg></button>
+      <div class="twc">
+        <button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+        <button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+        <button class="tib close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>拆解卡片（4 项）</h2>
+
+  <div class="parts-grid">
+    <!-- A.1 -->
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">A.1</span></div>
+      <div class="part-preview">
+        <div style="display:inline-flex;align-items:center;gap:8px;padding:4px 8px;background:var(--bg-surface);border:1px solid var(--border);border-radius:6px">
+          <div class="bm-brand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></div>
+          <span class="bn">AgentX</span>
+          <span class="vb">v0.1</span>
+        </div>
+      </div>
+      <h4>品牌标识 · Brand Mark</h4>
+      <div class="en">Brand Logo + Product Name + Version Badge</div>
+      <div class="desc">Bot icon + 产品名 "AgentX" + 版本徽章 v0.1。Bot 图标为 indigo 实心背景 + 白图标。</div>
+      <div class="tags">
+        <span class="tag brand">位置</span>
+        <span class="tag">App.tsx:180-191</span>
+      </div>
+    </div>
+
+    <!-- A.2 场景 Tab -->
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">A.2</span><span class="tag brand">核心交互</span></div>
+      <div class="part-preview">
+        <div class="st"><button class="act">Work</button><button>Coding</button></div>
+      </div>
+      <h4>场景 Tab · Scene Tab</h4>
+      <div class="en">Scene Tab (Work / Coding)</div>
+      <div class="desc">
+        UI 第一层维度。<br>
+        取值 <code>work</code> / <code>coding</code>。<br>
+        <b>联动</b>：scene=work → mode=work；scene=coding → 保留 mode（work 升级为 coding）。
+      </div>
+      <div class="tags">
+        <span class="tag brand">stores/scene.ts</span>
+        <span class="tag">App.tsx:192-216</span>
+      </div>
+    </div>
+
+    <!-- A.3 工具按钮 -->
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">A.3</span></div>
+      <div class="part-preview">
+        <div style="display:inline-flex;gap:2px;padding:2px">
+          <button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></button>
+          <button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/></svg></button>
+        </div>
+      </div>
+      <h4>工具按钮组 · Title Tool Buttons</h4>
+      <div class="en">Workspace Toggle + Theme Toggle</div>
+      <div class="desc">
+        <b>工作区折叠</b>（PanelRightOpen / PanelRightClose）：点击控制右侧工作区面板的可见性。<br>
+        <b>主题切换</b>（Sun / Moon）：切换 light / dark theme，影响整个应用。
+      </div>
+      <div class="tags">
+        <span class="tag">App.tsx:218-244</span>
+        <span class="tag">stores/settings.theme</span>
+      </div>
+    </div>
+
+    <!-- A.4 窗口控制 -->
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">A.4</span></div>
+      <div class="part-preview">
+        <div class="twc">
+          <button class="tib"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+          <button class="tib"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+          <button class="tib close" style="width:24px;height:24px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        </div>
+      </div>
+      <h4>窗口控制 · Window Controls</h4>
+      <div class="en">Minimize · Maximize · Close</div>
+      <div class="desc">
+        Tauri 窗口三按钮。<br>
+        <b>关闭按钮 hover 变红</b>（hover:bg-rose-700 hover:text-brand-200）。<br>
+        <b>双击 title bar 任意位置触发 maximize</b>。
+      </div>
+      <div class="tags">
+        <span class="tag">lib/api/window.ts</span>
+        <span class="tag">onDoubleClick</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>场景 Tab 状态展示</h2>
+  <p class="lede">场景 Tab 切换会联动修改 <code>agent_mode</code>，不同的 mode 对应不同的 agent 类型选项（详见 <a href="04-chatview.html">M.04 输入区</a>）。</p>
+
+  <div class="scene-state-demo">
+    <div class="state-row">
+      <div class="state-label">Work 场景</div>
+      <div class="st"><button class="act">Work</button><button>Coding</button></div>
+      <div style="font-size:11px;color:var(--t3)">→ agent_mode = <code>work</code></div>
+    </div>
+    <div class="state-row">
+      <div class="state-label">Coding 场景</div>
+      <div class="st"><button>Work</button><button class="act">Coding</button></div>
+      <div style="font-size:11px;color:var(--t3)">→ agent_mode ∈ {<code>coding</code>, <code>coding_team</code>}</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">4</span>交互逻辑（场景 Tab）</h2>
+  <div class="flow-diagram"><pre>用户点击 Scene Tab
+       │
+       ▼
+<b>applySceneChange</b>(targetScene, currentMode)  ← stores/scene.ts
+       │
+       ├── targetScene === "work"
+       │      └── return "work"           (强制)
+       │
+       └── targetScene === "coding"
+              ├── currentMode === "work"  → return "coding"     (work → coding 升级)
+              └── currentMode ∈ {coding, coding_team} → return currentMode (保持)
+
+       ▼
+<b>setAgentMode</b>(newMode)  ← stores/agentMode.ts (zustand)
+       │
+       ▼
+组件订阅变化 → 触发 UI 重渲染
+       │
+       ▼
+ModeToggle 显示对应场景的 agent 类型列表</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">5</span>设计规范</h2>
+  <table>
+    <thead><tr><th style="width:160px">属性</th><th>规范</th></tr></thead>
+    <tbody>
+      <tr><td>高度</td><td>h-10 = 40px</td></tr>
+      <tr><td>背景</td><td><code>rgba(255,255,255,0.85)</code> + backdrop-filter: blur(12px) (glass-card)</td></tr>
+      <tr><td>下边框</td><td>1px solid var(--border)</td></tr>
+      <tr><td>拖拽</td><td>整个 title bar 是 <code>app-drag-region</code>（按钮内部 <code>app-no-drag</code> 排除）</td></tr>
+      <tr><td>双击行为</td><td><code>onDoubleClick={() => void maximize()}</code></td></tr>
+      <tr><td>场景 Tab 圆角</td><td>rounded-md (8px)</td></tr>
+      <tr><td>场景 Tab 选中色</td><td>bg-brand-700 / text-brand-200</td></tr>
+      <tr><td>关闭按钮 hover</td><td>hover:bg-rose-700 hover:text-brand-200</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="01-master.html">← M.01 主图</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <a href="03-sessionlist.html" class="all">M.03 会话列表 →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.02 Title Bar · 详细设计</p>
+</footer>
+
+</div>
+</body>
+</html>

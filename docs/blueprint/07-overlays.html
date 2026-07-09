@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.07 弹窗与遮罩 详细设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.ovl-demo {
+  background: rgba(0,0,0,0.4);
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  margin: 8px 0;
+}
+
+.approval-card {
+  width: 380px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--sh-pop);
+}
+.ap-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.ap-ico { width: 28px; height: 28px; border-radius: 6px; background: rgba(217,119,6,0.15); color: var(--amber); display: inline-flex; align-items: center; justify-content: center; }
+.ap-ttl { font-size: 13px; font-weight: 600; }
+.ap-sub { font-size: 11px; color: var(--t3); }
+.ap-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: rgba(217,119,6,0.15); color: var(--amber); font-size: 11px; font-weight: 500; }
+.ap-prev { max-height: 120px; overflow: auto; background: rgba(0,0,0,0.03); padding: 10px; font-family: ui-monospace, monospace; font-size: 11px; color: var(--t2); white-space: pre-wrap; }
+.ap-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); }
+.ap-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 6px; border: none; font-size: 12px; font-weight: 500; cursor: pointer; }
+.ap-btn.secondary { background: var(--bg-subtle); color: var(--t2); }
+.ap-btn.danger { background: var(--rose); color: #fff; }
+.ap-btn.success { background: var(--emerald); color: #fff; }
+
+.settings-demo {
+  width: 100%;
+  max-width: 500px;
+  height: 300px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  box-shadow: var(--sh-pop);
+}
+.set-nav {
+  width: 140px;
+  background: rgba(244,244,245,0.4);
+  border-right: 1px solid var(--border);
+  padding: 8px 6px;
+}
+.set-nav-head { padding: 4px 8px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.set-nav-head .h { font-size: 12px; font-weight: 600; }
+.set-nav-head .s { font-size: 10px; color: var(--t3); margin-top: 2px; }
+.set-nav-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 500; cursor: pointer; color: var(--t2); margin-bottom: 2px; position: relative; }
+.set-nav-item.act { background: rgba(79,70,229,0.08); color: var(--brand-500); }
+.set-nav-item.act::before { content: ""; position: absolute; left: -1px; top: 50%; transform: translateY(-50%); width: 2px; height: 14px; background: var(--brand-500); border-radius: 1px; }
+.set-content { flex: 1; padding: 12px; }
+.set-content-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.set-content-head .h { font-size: 13px; font-weight: 600; }
+
+.code-viewer-demo {
+  width: 100%;
+  max-width: 420px;
+  background: #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+  font-family: ui-monospace, monospace;
+}
+.cv-head { display: flex; align-items: center; justify-content: space-between; background: rgba(244,244,245,0.06); padding: 6px 10px; font-size: 10px; color: #a5b4fc; }
+.cv-body { padding: 8px 12px; font-size: 11px; color: #e0e7ff; line-height: 1.6; }
+.cv-key { color: #a5b4fc; }
+.cv-str { color: #86efac; }
+.cv-fn { color: #fbbf24; }
+
+.startup-mask-demo {
+  background: rgba(0,0,0,0.5);
+  border-radius: 8px;
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+}
+.startup-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  box-shadow: var(--sh-pop);
+}
+.startup-card .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand-500); animation: pls 1.4s infinite; }
+@keyframes pls { 0%,100%{opacity:.4} 50%{opacity:1} }
+
+.giving-up-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  width: 240px;
+  box-shadow: var(--sh-pop);
+}
+.gu-ico { width: 32px; height: 32px; border-radius: 50%; background: rgba(225,29,72,0.15); color: var(--rose); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+.gu-ttl { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.gu-desc { font-size: 11px; color: var(--t3); margin-bottom: 10px; }
+.gu-btn { width: 100%; padding: 6px; background: var(--brand-500); color: #fff; border: none; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.07 弹窗与遮罩</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html" class="active">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.07</div>
+  <h1>弹窗与遮罩 详细设计</h1>
+  <div class="sub">全局浮层组件 · 4 个拆解卡片（E.1 / E.2 / E.3 / F.1）</div>
+  <div class="meta">
+    <span>📐 层级：fixed inset-0 · z-50（弹窗）/ z-40（遮罩）</span>
+    <span>🔒 焦点管理：useModalDialog hook</span>
+    <span>📦 关联代码：App.tsx + settings/SettingsModal + chat/ApprovalDialog</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>弹窗层级关系</h2>
+  <div class="diagram"><pre>┌────────────────────────────────────────────────────────────┐
+│  z-50  ApprovalDialog / SettingsModal / CodeViewerModal    │
+│         ↑ 最顶层，关键操作需要用户立即响应                    │
+├────────────────────────────────────────────────────────────┤
+│  z-40  Starting Mask / Giving Up Mask                      │
+│         ↑ 后端状态遮罩，阻塞所有交互                         │
+├────────────────────────────────────────────────────────────┤
+│  z-30  ChatNavigation · 滚动到顶部按钮                       │
+│         ↑ 消息流内的悬浮导航                                 │
+├────────────────────────────────────────────────────────────┤
+│  z-20  Tooltip / HoverCard                                  │
+├────────────────────────────────────────────────────────────┤
+│  z-10  ChatNavigation                                       │
+└────────────────────────────────────────────────────────────┘</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>拆解卡片（4 项）</h2>
+
+  <div class="parts-grid">
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">E.1</span><span class="tag amber">核心</span></div>
+      <div class="ovl-demo">
+        <div class="approval-card">
+          <div class="ap-head">
+            <div class="ap-ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+            <div style="flex:1">
+              <div class="ap-ttl">操作审批</div>
+              <div class="ap-sub">工具：<code>cli_execute</code></div>
+            </div>
+            <div class="ap-badge"><span style="width:6px;height:6px;border-radius:50%;background:var(--amber)"></span>8s</div>
+          </div>
+          <div class="ap-prev">ls -la /home/user/agentx</div>
+          <div class="ap-actions">
+            <button class="ap-btn secondary">拒绝</button>
+            <button class="ap-btn success">批准</button>
+          </div>
+        </div>
+      </div>
+      <h4>审批弹窗 · Approval Dialog</h4>
+      <div class="en">Approval Dialog (dangerous_tool / directory_extension)</div>
+      <div class="desc">
+        <b>两种形态</b>：<br>
+        • <b>dangerous_tool</b>：两按钮（拒绝/批准）+ 可选倒计时自动批准<br>
+        • <b>directory_extension</b>：三按钮（拒绝/本次允许/会话内允许），<b>不自动批准</b>
+      </div>
+      <div class="tags"><span class="tag amber">安全</span><span class="tag">ApprovalDialog.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">E.2</span></div>
+      <div class="ovl-demo" style="padding:16px">
+        <div class="settings-demo">
+          <div class="set-nav">
+            <div class="set-nav-head"><div class="h">设置</div><div class="s">配置应用与后端</div></div>
+            <div class="set-nav-item act">⚙ 系统提示词</div>
+            <div class="set-nav-item">⚙ 模型</div>
+            <div class="set-nav-item">⚙ 记忆</div>
+            <div class="set-nav-item">⚙ 技能</div>
+            <div class="set-nav-item">⚙ MCP</div>
+            <div class="set-nav-item">⚙ 子代理</div>
+            <div class="set-nav-item">⚙ 工具</div>
+            <div class="set-nav-item">⚙ 知识库</div>
+            <div class="set-nav-item">⚙ 审批与安全</div>
+            <div class="set-nav-item">⚙ 沙箱目录</div>
+          </div>
+          <div class="set-content">
+            <div class="set-content-head"><div class="h">系统提示词</div><button style="background:transparent;border:none;color:var(--t3);cursor:pointer">×</button></div>
+            <div style="font-size:11px;color:var(--t3)">agent 的全局系统提示</div>
+          </div>
+        </div>
+      </div>
+      <h4>设置弹窗 · Settings Modal</h4>
+      <div class="en">Settings Modal (10 Tabs)</div>
+      <div class="desc">
+        左侧 tab 导航（10 个）+ 右侧配置面板。<br>
+        90vh × 90vw 居中模态。<br>
+        ESC 关闭 · 焦点陷阱 · 焦点恢复由 <code>useModalDialog</code> 统一处理。
+      </div>
+      <div class="tags"><span class="tag">SettingsModal.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">E.3</span></div>
+      <div class="ovl-demo" style="background:rgba(0,0,0,0.6);padding:16px">
+        <div class="code-viewer-demo">
+          <div class="cv-head"><span>PYTHON</span><span style="color:#86efac">复制</span></div>
+          <div class="cv-body"><span class="cv-key">def</span> <span class="cv-fn">greet</span>(name):<br>&nbsp;&nbsp;<span class="cv-key">return</span> <span class="cv-str">f"hi {name}"</span></div>
+        </div>
+      </div>
+      <h4>代码查看弹窗 · Code Viewer Modal</h4>
+      <div class="en">Code Viewer (shiki highlighted)</div>
+      <div class="desc">
+        从工作区文件点击唤起，使用 shiki 双主题（github-light / github-dark）渲染代码，支持复制。
+      </div>
+      <div class="tags"><span class="tag">CodeViewerModal.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">F.1</span><span class="tag rose">遮罩</span></div>
+      <div class="demo-title">两种状态</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div class="startup-mask-demo">
+            <div class="startup-card">
+              <span class="dot"></span>
+              <span>后端启动中…</span>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--t3);text-align:center;margin-top:4px">starting 状态</div>
+        </div>
+        <div>
+          <div class="startup-mask-demo">
+            <div class="giving-up-card">
+              <div class="gu-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4"/><path d="M12 16h.01"/><path d="M12 2a10 10 0 1 0 10 10"/></svg></div>
+              <div class="gu-ttl">后端启动失败</div>
+              <div class="gu-desc">请查看日志以排查问题</div>
+              <button class="gu-btn">重启后端</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--t3);text-align:center;margin-top:4px">giving_up 状态</div>
+        </div>
+      </div>
+      <h4>启动遮罩 · Startup Mask</h4>
+      <div class="en">Startup Mask (starting / giving_up)</div>
+      <div class="desc">
+        <b>starting</b>：后端启动时显示，30s 兜底（超时则 unmask）。<br>
+        <b>giving_up</b>：多次启动失败后显示，提供"重启后端"按钮。
+      </div>
+      <div class="tags"><span class="tag">App.tsx:323-350</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>弹窗通用规范</h2>
+  <table>
+    <thead><tr><th style="width:180px">属性</th><th>规范</th></tr></thead>
+    <tbody>
+      <tr><td>背景遮罩</td><td><code>fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm</code></td></tr>
+      <tr><td>卡片样式</td><td><code>glass-card</code> · rounded-xl · shadow-pop · border-default</td></tr>
+      <tr><td>宽度</td><td>ApprovalDialog: 420px · SettingsModal: 90vw · CodeViewerModal: 自适应</td></tr>
+      <tr><td>动画</td><td>framer-motion scale 0.95→1 + y 8→0, spring stiffness=300 damping=24</td></tr>
+      <tr><td>关闭</td><td>ESC 键 / 点击背景遮罩 / 右上 × 按钮</td></tr>
+      <tr><td>焦点管理</td><td><code>useModalDialog</code> hook：焦点陷阱 + 焦点恢复 + body 锁滚动</td></tr>
+      <tr><td>aria 属性</td><td><code>role="dialog"</code> · <code>aria-modal="true"</code> · <code>aria-labelledby</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">4</span>审批决策状态机</h2>
+  <div class="diagram"><pre>approvalQueue: ApprovalRequest[]
+       │
+       ▼ approvalQueue[0] (FIFO)
+       │
+       ├── dangerous_tool
+       │     ├── 拒绝 (deny)
+       │     ├── 批准 (approve)
+       │     └── autoApproveAfterSeconds > 0 → 倒计时归零自动 approve
+       │
+       └── directory_extension
+             ├── 拒绝 (deny)
+             ├── 本次允许 (once) - 调用结束后失效
+             └── 会话内允许 (session) - 整个会话允许访问该路径
+
+       ▼
+approval.submit(threadId, approved, decision, path?, writable?)
+       │
+       ▼
+dequeueApprovalRequest() → 渲染下一个</pre></div>
+</section>
+
+<div class="bottom-nav">
+  <a href="06-workspace.html">← M.06 工作区面板</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <a href="08-naming.html" class="all">M.08 命名表 →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.07 弹窗与遮罩 · 详细设计</p>
+</footer>
+
+</div>
+</body>
+</html>

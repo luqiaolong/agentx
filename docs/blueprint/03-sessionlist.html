@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.03 会话列表 详细设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.sl-demo {
+  width: 240px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 4px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.sl-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; margin-bottom: 2px; }
+.sl-tt { font-size: 10px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.8px; }
+.sl-ib { width: 22px; height: 22px; border-radius: 6px; background: transparent; border: none; color: var(--t3); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.sl-grp { margin-bottom: 8px; }
+.sl-gh { display: flex; align-items: center; gap: 4px; padding: 0 2px; font-size: 11px; font-weight: 600; color: var(--t2); height: 20px; }
+.sl-item { display: flex; align-items: center; gap: 4px; padding: 1px 4px 1px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; height: 20px; }
+.sl-item.act { background: var(--bg-subtle); }
+.sl-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--t3); flex-shrink: 0; }
+.sl-item.act .dot { background: var(--brand-500); }
+.sl-item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t1); font-weight: 500; }
+.sl-item .nm.muted { color: var(--t3); }
+.sl-item .act-btns { display: none; gap: 2px; }
+.sl-item:hover .act-btns { display: inline-flex; }
+.sl-bottom { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 6px; display: flex; align-items: center; gap: 4px; }
+.sl-sa { flex: 1; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 6px; background: transparent; border: none; color: var(--t2); font-size: 11px; font-weight: 500; cursor: pointer; font-family: inherit; }
+
+.demo-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.state-row { display: flex; align-items: center; gap: 16px; padding: 12px; background: var(--bg-app); border-radius: 8px; border: 1px solid var(--border); margin-top: 8px; }
+.state-label { font-size: 12px; font-weight: 600; color: var(--t2); min-width: 120px; }
+
+.dot-running { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--brand-500); border-top-color: transparent; animation: sp 1s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+.dot-new { width: 6px; height: 6px; border-radius: 50%; background: var(--brand-500); opacity: 0.5; }
+.dot-static { width: 6px; height: 6px; border-radius: 50%; background: var(--t3); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.03 会话列表</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html" class="active">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.03</div>
+  <h1>会话列表 详细设计</h1>
+  <div class="sub">左侧 SessionList · 4 个拆解卡片（B.1 - B.4）</div>
+  <div class="meta">
+    <span>📐 区域：B. 左侧会话列表 (w=240px)</span>
+    <span>📦 关联代码：components/chat/SessionList.tsx</span>
+    <span>🗂 数据：stores/chat (zustand)</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>整体预览</h2>
+  <p class="lede">左侧 SessionList 自上而下：分组头 → Home 分组 → Workspace 分组 → 底部操作栏（设置 + 开发模式）。</p>
+
+  <div class="demo-row">
+    <div class="sl-demo">
+      <div class="sl-head"><span class="sl-tt">会话</span><button class="sl-ib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+      <div class="sl-grp">
+        <div class="sl-gh"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg><span class="sl-tt">Home</span></div>
+        <div class="sl-item"><span class="dot-static"></span><span class="nm muted">点击 + 新建会话</span></div>
+      </div>
+      <div class="sl-grp">
+        <div class="sl-gh"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><span class="sl-tt">agentx</span></div>
+        <div class="sl-item act"><span class="dot"></span><span class="nm">实现 UI 设计文档</span><span class="act-btns"><button class="sl-ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/></svg></button><button class="sl-ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/></svg></button></span></div>
+      </div>
+      <div class="sl-bottom">
+        <button class="sl-sa"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>设置</button>
+        <button class="sl-sa"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/></svg>开发模式</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>拆解卡片（4 项）</h2>
+
+  <div class="parts-grid">
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">B.1</span></div>
+      <div class="part-preview">
+        <div class="sl-head" style="padding:4px 8px"><span class="sl-tt">会话</span><button class="sl-ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+      </div>
+      <h4>分组头 · Session List Header</h4>
+      <div class="en">Section Title + New Session Button</div>
+      <div class="desc">标题"会话"（大写小字） + 右侧 + 按钮（点击在 Home 新建会话）。</div>
+      <div class="tags"><span class="tag">SessionList.tsx:192-207</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">B.2</span><span class="tag brand">数据结构</span></div>
+      <div class="part-preview">
+        <div class="sl-gh" style="padding:2px 6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><span class="sl-tt">agentx</span><button class="sl-ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+      </div>
+      <h4>会话分组 · Session Group</h4>
+      <div class="en">Home + Workspace Group (collapsible)</div>
+      <div class="desc">
+        按 workspace 分组：Home（虚拟）固定最前；其余 workspace 按最新会话 createdAt 倒序。<br>
+        <b>折叠</b>：每组 useState 维持 open/closed；分组 key 变化时整体重挂载。
+      </div>
+      <div class="tags"><span class="tag">SessionList.tsx:411-487</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">B.3</span><span class="tag brand">交互</span></div>
+      <div class="part-preview">
+        <div class="sl-item act" style="width:200px">
+          <span class="dot"></span>
+          <span class="nm">实现 UI 设计文档</span>
+          <span style="display:inline-flex;gap:2px;opacity:.6">
+            <button class="sl-ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/></svg></button>
+            <button class="sl-ib" style="color:var(--rose)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/></svg></button>
+          </span>
+        </div>
+      </div>
+      <h4>会话项 · Session Item</h4>
+      <div class="en">Session Item (single chat entry)</div>
+      <div class="desc">
+        <b>主标题</b>：用户首条消息；UUID 短码弱化展示。<br>
+        <b>状态点</b>：运行中（旋转）/ 新结果（弱化）/ 静态（muted）。<br>
+        <b>hover</b>：显示重命名 / 删除按钮。
+      </div>
+      <div class="tags"><span class="tag">SessionList.tsx:317-395</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">B.4</span></div>
+      <div class="part-preview">
+        <div class="sl-bottom" style="margin:0;border:none;padding:4px"><button class="sl-sa"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>设置</button><button class="sl-sa"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/></svg>开发模式</button></div>
+      </div>
+      <h4>底部操作栏 · Sidebar Bottom</h4>
+      <div class="en">Settings Entry + Dev Mode Toggle</div>
+      <div class="desc">
+        <b>设置</b>（常驻入口）：打开设置弹窗。<br>
+        <b>开发模式</b>（toggle）：开启后 Rust 用 PowerShell 启动 Python 后端保留控制台窗口，持久化到 tauri-plugin-store。
+      </div>
+      <div class="tags"><span class="tag">lib/api/app</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>状态点语义</h2>
+  <p class="lede">会话项左边的状态点指示会话当前状态，对应三种视觉表现。</p>
+
+  <table>
+    <thead><tr><th style="width:160px">状态</th><th style="width:120px">视觉</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>运行中 isRunning</td><td><span class="dot-running"></span></td><td>该会话正在流式输出，brand 色旋转环</td></tr>
+      <tr><td>新结果 hasNewResult</td><td><span class="dot-new"></span></td><td>会话有未读新结果，brand 色弱化圆点</td></tr>
+      <tr><td>当前激活 active</td><td><span class="dot" style="background:var(--brand-500)"></span></td><td>用户当前正在查看的会话</td></tr>
+      <tr><td>静态</td><td><span class="dot-static"></span></td><td>其他历史会话，muted 色小圆点</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">4</span>分组数据流</h2>
+  <div class="diagram"><pre>stores/chat.sessions: Record&lt;sid, Session&gt;
+       │
+       ▼  useMemo
+groups = { homeItems, workspaces[] }
+       │
+       ├── homeItems    = sessions.filter(s => s.workspacePath == null)
+       │                       .sort(by createdAt desc)
+       │
+       └── workspaces[] = Map&lt;workspacePath, Session[]&gt;
+                                .sort(by latestAt desc)
+
+       ▼ 渲染
+SessionGroup (Home) ──── 默认展开
+SessionGroup (workspace1)
+SessionGroup (workspace2)
+   ...
+       │
+       └── 每个分组内：SessionItem 列表，按 createdAt 倒序</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">5</span>关键交互</h2>
+  <table>
+    <thead><tr><th style="width:200px">交互</th><th>行为</th></tr></thead>
+    <tbody>
+      <tr><td>点击会话项</td><td>切换到该会话（流式中禁用切换，需 alert）</td></tr>
+      <tr><td>+ 按钮（分组头）</td><td>在该 workspace 下新建会话</td></tr>
+      <tr><td>+ 按钮（顶部）</td><td>在 Home（虚拟 workspace）下新建会话</td></tr>
+      <tr><td>✏ 重命名</td><td>window.prompt 重命名 session.title</td></tr>
+      <tr><td>🗑 删除</td><td>ConfirmDialog 二次确认</td></tr>
+      <tr><td>开发模式 toggle</td><td>持久化到 store + 重启后端</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="02-titlebar.html">← M.02 Title Bar</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <a href="04-chatview.html" class="all">M.04 聊天工作区 →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.03 会话列表 · 详细设计</p>
+</footer>
+
+</div>
+</body>
+</html>

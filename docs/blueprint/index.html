@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AgentX 前端 UI 蓝图 · 模块导航</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page">
+
+<!-- Top Nav -->
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <span class="sep">/</span>
+      <span class="current">模块导航</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html" class="active">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<!-- Cover -->
+<div class="cover">
+  <div class="badge">UI BLUEPRINT</div>
+  <h1>AgentX 前端 UI 蓝图 · 模块导航</h1>
+  <div class="sub">主图与拆解图 · 按模块拆分 · 每个模块独立详细设计</div>
+  <div class="meta">
+    <span>📐 工程视图：主图 + 拆解图 + 命名表</span>
+    <span>🎨 设计语言：Tailwind v4 + lucide 图标</span>
+    <span>🧩 技术栈：React 18 + TypeScript + zustand</span>
+    <span>📦 关联代码：frontend/renderer/</span>
+  </div>
+</div>
+
+<!-- §0 项目总览 -->
+<section>
+  <h2><span class="num">0</span>项目总览</h2>
+  <p class="lede">AgentX 桌面应用 Tauri 2.x + React 18 的整体 UI 结构。本蓝图把 UI 按空间位置拆分为 4 个主区域（A 顶部 title bar / B 左侧会话列表 / C 中央聊天工作区 / D 右侧工作区面板），共 9 个模块详细设计文档。</p>
+
+  <div class="info-grid">
+    <div class="info-card">
+      <div class="lb">应用形态</div>
+      <div class="vl">桌面应用 · 单窗口会话模式<br>Tauri 2.x 无边框窗口 + 自定义 title bar</div>
+    </div>
+    <div class="info-card">
+      <div class="lb">布局结构</div>
+      <div class="vl">三栏布局<br>左侧会话列表 · 中央工作区 · 右侧工作区面板</div>
+    </div>
+    <div class="info-card">
+      <div class="lb">设计语言</div>
+      <div class="vl">紫蓝主色 #4f46e5<br>浅/深主题 + 玻璃拟态 glass-card</div>
+    </div>
+    <div class="info-card">
+      <div class="lb">字号体系</div>
+      <div class="vl">CSS 变量集中管理<br>--fs-* 由 globals.css 统一规范</div>
+    </div>
+  </div>
+</section>
+
+<!-- 空间位置索引 -->
+<section>
+  <h2><span class="num">1</span>空间位置索引</h2>
+  <p class="lede">按 AgentX 主窗口的空间位置组织所有模块，点击进入对应详细设计。</p>
+
+  <h3>A. 顶部 Title Bar</h3>
+  <div class="module-grid">
+    <a href="02-titlebar.html" class="module-card">
+      <span class="num">M.02</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/></svg></div>
+      <h4>Title Bar 详细设计</h4>
+      <div class="en">Top Window Title Bar Module</div>
+      <div class="desc">品牌标识、场景 Tab、工具按钮、窗口控制共 4 个拆解卡片。</div>
+      <div class="tags">
+        <span class="tg">A.1 品牌区</span>
+        <span class="tg">A.2 场景 Tab</span>
+        <span class="tg">A.3 工具按钮</span>
+      </div>
+    </a>
+  </div>
+
+  <h3>B. 左侧会话列表</h3>
+  <div class="module-grid">
+    <a href="03-sessionlist.html" class="module-card">
+      <span class="num">M.03</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+      <h4>会话列表 详细设计</h4>
+      <div class="en">Session List Module (Left Sidebar)</div>
+      <div class="desc">分组头、会话分组、会话项、底部操作栏共 4 个拆解卡片。</div>
+      <div class="tags">
+        <span class="tg">B.1 分组头</span>
+        <span class="tg">B.2 会话分组</span>
+        <span class="tg">B.3 会话项</span>
+      </div>
+    </a>
+  </div>
+
+  <h3>C. 中央聊天工作区</h3>
+  <div class="module-grid">
+    <a href="01-master.html" class="module-card">
+      <span class="num">M.01</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg></div>
+      <h4>主界面设计 · Master Drawing</h4>
+      <div class="en">Main Interface Master Drawing</div>
+      <div class="desc">完整主图：title bar + 三栏布局 + ①~⑪ 标注线，俯视全局。</div>
+      <div class="tags">
+        <span class="tg">机械主图</span>
+        <span class="tg">带标注</span>
+      </div>
+    </a>
+    <a href="04-chatview.html" class="module-card">
+      <span class="num">M.04</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+      <h4>聊天工作区 详细设计</h4>
+      <div class="en">Chat Workspace Module</div>
+      <div class="desc">空状态、用户气泡、消息流、分段导航、输入区共 5 个拆解卡片。</div>
+      <div class="tags">
+        <span class="tg">C.1 空状态</span>
+        <span class="tg">C.2 用户气泡</span>
+        <span class="tg">C.5 输入区</span>
+      </div>
+    </a>
+    <a href="05-tracecards.html" class="module-card">
+      <span class="num">M.05</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="14 2 14 8 20 8"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></div>
+      <h4>执行轨迹卡片族 详细设计</h4>
+      <div class="en">Trace Cards Family Module</div>
+      <div class="desc">Classification / Reasoning / Delegation / ToolCall / Team 等 8 种卡片的视觉规范。</div>
+      <div class="tags">
+        <span class="tg brand">核心组件</span>
+        <span class="tg">8 种卡片</span>
+      </div>
+    </a>
+  </div>
+
+  <h3>D. 右侧工作区面板</h3>
+  <div class="module-grid">
+    <a href="06-workspace.html" class="module-card">
+      <span class="num">M.06</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg></div>
+      <h4>工作区面板 详细设计</h4>
+      <div class="en">Workspace Panel Module (Right Sidebar)</div>
+      <div class="desc">头部、任务列表、上下文 Tab、文件树、Git 面板共 5 个拆解卡片。</div>
+      <div class="tags">
+        <span class="tg">D.1 头部</span>
+        <span class="tg">D.2 任务列表</span>
+        <span class="tg">D.3 上下文 Tab</span>
+      </div>
+    </a>
+  </div>
+
+  <h3>E. 弹窗与遮罩</h3>
+  <div class="module-grid">
+    <a href="07-overlays.html" class="module-card">
+      <span class="num">M.07</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg></div>
+      <h4>弹窗与遮罩 详细设计</h4>
+      <div class="en">Overlays & Modals Module</div>
+      <div class="desc">设置弹窗、审批弹窗、代码查看、启动遮罩共 4 个浮层。</div>
+      <div class="tags">
+        <span class="tg amber">E.1 审批</span>
+        <span class="tg">E.2 设置</span>
+        <span class="tg rose">F.1 启动失败</span>
+      </div>
+    </a>
+  </div>
+</section>
+
+<!-- 跨模块参考 -->
+<section>
+  <h2><span class="num">2</span>跨模块参考</h2>
+  <p class="lede">不绑定具体空间位置的全局参考文档。</p>
+
+  <div class="module-grid">
+    <a href="08-naming.html" class="module-card">
+      <span class="num">M.08</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/></svg></div>
+      <h4>区块命名表 · Naming Reference</h4>
+      <div class="en">Component Naming Reference</div>
+      <div class="desc">38 项规范的中英文对照表 + 组件路径 + 说明。讨论 UI 时引用术语的标准。</div>
+      <div class="tags">
+        <span class="tg brand">术语参考</span>
+        <span class="tg">38 项</span>
+      </div>
+    </a>
+    <a href="09-derivation.html" class="module-card">
+      <span class="num">M.09</span>
+      <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6"/><path d="M12 17v6"/><path d="M4.22 4.22l4.24 4.24"/><path d="M15.54 15.54l4.24 4.24"/><path d="M1 12h6"/><path d="M17 12h6"/><path d="M4.22 19.78l4.24-4.24"/><path d="M15.54 8.46l4.24-4.24"/></svg></div>
+      <h4>派生关系与交互规范</h4>
+      <div class="en">Derivation & Interaction Spec</div>
+      <div class="desc">场景 / agent 类型 / mode 三层 UI 概念派生图 + 11 项关键交互规范。</div>
+      <div class="tags">
+        <span class="tg brand">核心规范</span>
+        <span class="tg">派生关系</span>
+      </div>
+    </a>
+  </div>
+</section>
+
+<!-- 命名术语提示 -->
+<section>
+  <h2><span class="num">3</span>术语约定（必读）</h2>
+  <p class="lede">所有模块详细设计都使用以下统一术语，避免"左边""右边"等模糊描述。</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:200px">术语</th>
+        <th style="width:200px">英文</th>
+        <th>定义</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><b>场景 Tab</b>（Scene Tab）</td><td>Scene Tab</td><td>顶部 title bar 的 work / coding 切换</td></tr>
+      <tr><td><b>agent 类型选择器</b></td><td>Mode Toggle</td><td>输入框旁的 popover，按场景过滤</td></tr>
+      <tr><td><b>会话列表 / 会话项</b></td><td>Session List / Item</td><td>左侧栏的历史会话</td></tr>
+      <tr><td><b>工作区</b></td><td>Workspace</td><td>右侧面板统称</td></tr>
+      <tr><td><b>执行轨迹</b></td><td>Execution Trace</td><td>消息中展示模型推理 + 工具调用的卡片组</td></tr>
+      <tr><td><b>路由决策</b></td><td>Router Decision</td><td>分类卡 (ClassificationCard)</td></tr>
+      <tr><td><b>子代理委派</b></td><td>Sub-agent Delegation</td><td>DelegationCard，标记"由 XX 子代理执行"</td></tr>
+      <tr><td><b>工具调用</b></td><td>Tool Call</td><td>模型调用工具的执行轨迹卡片</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · 模块导航 · 基于 frontend/renderer/ 当前实现 + AGENTS.md 术语规范</p>
+<p style="margin-top:6px;font-size:11px">9 个独立 HTML 文件 · 共享 shared.css · 可分别迭代</p>
+</footer>
+
+</div>
+</body>
+</html>

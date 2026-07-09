@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AgentX 前端 UI 设计图纸</title>
+<style>
+:root{--brand-500:#4f46e5;--brand-600:#4338ca;--brand-700:#3730a3;--brand-200:#c7d2fe;--bg-app:#fafafa;--bg-surface:#fff;--bg-subtle:#f4f4f5;--border:rgba(0,0,0,0.08);--t1:#18181b;--t2:#3f3f46;--t3:#71717a;--t-accent:#4f46e5;--emerald:#059669;--amber:#d97706;--rose:#e11d48;--sky:#0284c7;--violet:#7c3aed;--r-sm:6px;--r-md:8px;--r-lg:10px;--r-xl:12px;--sh-soft:0 1px 2px rgba(0,0,0,0.04);--sh-pop:0 8px 24px rgba(0,0,0,0.08)}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f5f5f7;color:var(--t1);font-size:13px;line-height:1.6}
+.page{max-width:1400px;margin:0 auto;padding:32px 24px 64px}
+.cover{background:linear-gradient(135deg,#312e81 0%,#4f46e5 50%,#6366f1 100%);color:#fff;border-radius:var(--r-xl);padding:48px 40px;margin-bottom:32px;box-shadow:var(--sh-pop);position:relative;overflow:hidden}
+.cover::before{content:"";position:absolute;top:-50%;right:-20%;width:600px;height:600px;background:radial-gradient(circle,rgba(255,255,255,0.08) 0%,transparent 70%);border-radius:50%}
+.cover h1{font-size:32px;margin:0 0 12px;font-weight:700;letter-spacing:-0.5px;position:relative}
+.cover .sub{font-size:16px;opacity:.9;margin-bottom:24px;position:relative}
+.cover .meta{display:flex;gap:24px;font-size:13px;opacity:.85;position:relative;flex-wrap:wrap}
+.cover .meta span{display:inline-flex;align-items:center;gap:6px}
+.cover .badge{display:inline-block;padding:3px 10px;border-radius:999px;background:rgba(255,255,255,0.2);font-size:11px;font-weight:600;margin-right:8px}
+section{background:#fff;border-radius:var(--r-xl);padding:32px;margin-bottom:24px;box-shadow:var(--sh-soft);border:1px solid var(--border)}
+section h2{font-size:22px;margin:0 0 8px;font-weight:700;color:var(--t1);display:flex;align-items:center;gap:12px}
+section h2 .num{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--brand-500);color:#fff;border-radius:var(--r-md);font-size:16px;font-weight:700}
+section h3{font-size:16px;margin:24px 0 12px;font-weight:600;color:var(--t1);border-left:3px solid var(--brand-500);padding-left:10px}
+section p{margin:0 0 12px;color:var(--t2)}
+section .lede{font-size:14px;color:var(--t3);margin-bottom:24px;padding-bottom:16px;border-bottom:1px dashed var(--border)}
+section code{padding:1px 6px;border-radius:4px;background:var(--bg-subtle);color:var(--t-accent);font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:12px}
+.mf{background:var(--bg-app);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--sh-pop);position:relative}
+.tb{height:40px;background:rgba(255,255,255,0.85);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 12px}
+.tbl,.tbr{display:flex;align-items:center;gap:8px}
+.bm{width:24px;height:24px;background:var(--brand-500);border-radius:var(--r-sm);display:inline-flex;align-items:center;justify-content:center;color:#fff}
+.bn{font-weight:600;font-size:13px;color:var(--t1);letter-spacing:-0.2px}
+.vb{padding:1px 6px;border-radius:999px;background:var(--bg-subtle);font-size:10px;font-weight:600;color:var(--t3);margin-left:4px}
+.st{display:inline-flex;align-items:center;border:1px solid var(--border);background:var(--bg-surface);border-radius:var(--r-sm);margin-left:6px}
+.st button{height:20px;padding:0 8px;border:none;background:transparent;font-size:11px;font-weight:500;color:var(--t3);cursor:pointer;font-family:inherit}
+.st button.act{background:var(--brand-700);color:var(--brand-200)}
+.tib{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-sm);background:transparent;border:none;color:var(--t3);cursor:pointer}
+.twc{display:inline-flex;align-items:center;margin-left:4px}
+.mb{display:flex;height:540px}
+.sl{width:240px;flex-shrink:0;background:var(--bg-surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:6px 4px}
+.sh{display:flex;align-items:center;justify-content:space-between;padding:0 4px;margin-bottom:2px}
+.stt{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.8px}
+.ib{width:22px;height:22px;border-radius:var(--r-sm);background:transparent;border:none;color:var(--t3);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.sg{margin-bottom:8px}
+.sgh{display:flex;align-items:center;gap:4px;padding:0 2px;font-size:11px;font-weight:600;color:var(--t2);height:20px}
+.si{display:flex;align-items:center;gap:4px;padding:1px 4px 1px 16px;border-radius:var(--r-sm);cursor:pointer;font-size:12px;height:20px}
+.si.act{background:var(--bg-subtle)}
+.si .dot{width:6px;height:6px;border-radius:50%;background:var(--t3);flex-shrink:0}
+.si.act .dot{background:var(--brand-500)}
+.si .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1);font-weight:500}
+.si .name.muted{color:var(--t3)}
+.sb{margin-top:auto;border-top:1px solid var(--border);padding-top:6px;display:flex;align-items:center;gap:4px}
+.sa{flex:1;display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border-radius:var(--r-sm);background:transparent;border:none;color:var(--t2);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
+.cv{flex:1;background:var(--bg-app);display:flex;flex-direction:column;overflow:hidden;position:relative}
+.ms{flex:1;overflow-y:auto;padding:16px 32px;position:relative}
+.msi{max-width:768px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+.es{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center}
+.ei{width:56px;height:56px;border-radius:16px;background:rgba(79,70,229,0.08);color:var(--brand-500);display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px}
+.es h2{font-size:16px;margin:0 0 6px;color:var(--t1);font-weight:600;border:none;padding:0}
+.es p{font-size:13px;color:var(--t3);max-width:360px;margin:0 0 20px}
+.es code{padding:1px 6px;border-radius:4px;background:var(--bg-subtle);color:var(--t-accent);font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:12px;margin:0 2px}
+.eg{display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:left}
+.ec{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;cursor:pointer}
+.ec .t{font-size:12px;font-weight:600;color:var(--t1);margin-bottom:2px}
+.ec .d{font-size:11px;color:var(--t3)}
+.msg{display:flex;align-items:flex-start;gap:4px;margin-bottom:4px}
+.msg.user{justify-content:flex-end}
+.ub{max-width:80%;background:var(--brand-700);color:var(--brand-200);padding:8px 12px;border-radius:var(--r-lg);border-bottom-right-radius:6px;font-size:13px;line-height:1.5;box-shadow:var(--sh-soft)}
+.tc{width:100%;background:var(--bg-surface);border-radius:var(--r-md);border-bottom-left-radius:6px;padding:8px 12px;box-shadow:var(--sh-soft);font-size:12px}
+.tch{display:flex;align-items:center;gap:6px;color:rgba(0,0,0,0.5);cursor:pointer}
+.tch .ic{color:rgba(0,0,0,0.5);flex-shrink:0}
+.tch .ttl{font-weight:500}
+.tch .sub{color:rgba(0,0,0,0.35)}
+.tch .cv2{margin-left:auto;color:rgba(0,0,0,0.4)}
+.tch .ttl.brand{color:var(--brand-500)}
+.tch .ttl.brand6{color:var(--brand-600)}
+.tc.team{background:rgba(238,242,255,0.5);border:1px solid rgba(199,210,254,0.6)}
+.schip{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;font-family:-apple-system,sans-serif}
+.schip.code{background:rgba(2,132,199,0.1);color:var(--sky)}
+.schip.rag{background:rgba(124,58,237,0.1);color:var(--violet)}
+.schip.web{background:rgba(5,150,105,0.1);color:var(--emerald)}
+.schip.deep{background:rgba(217,119,6,0.1);color:var(--amber)}
+.targs{color:rgba(0,0,0,0.35);font-family:ui-monospace,monospace;font-size:11px}
+.tstat{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px}
+.tstat.r{color:rgba(217,119,6,0.7)}
+.tstat.c{color:rgba(5,150,105,0.7)}
+.tstat.e{color:rgba(225,29,72,0.7)}
+.atxt{width:95%;font-size:13px;line-height:1.65;color:var(--t1)}
+.cn{position:absolute;right:12px;top:24px;bottom:96px;width:16px;display:flex;flex-direction:column;gap:2px;z-index:10}
+.cs{flex:1;width:100%;border-radius:2px;background:rgba(0,0,0,0.06)}
+.cs.act{background:rgba(0,0,0,0.4)}
+.sbtn{position:absolute;right:12px;bottom:16px;width:28px;height:28px;border-radius:50%;background:var(--bg-surface);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;color:var(--t2);box-shadow:var(--sh-soft);z-index:10}
+.cp{border-top:1px solid var(--border);background:var(--bg-surface);padding:8px 12px}
+.cpi{max-width:768px;margin:0 auto}
+.cbox{border:1px solid var(--border);border-radius:var(--r-lg);padding:8px 12px 6px;background:var(--bg-surface)}
+.ci{width:100%;min-height:40px;border:none;outline:none;resize:none;font-family:inherit;font-size:13px;color:var(--t1);background:transparent;line-height:1.5}
+.ci::placeholder{color:var(--t3)}
+.ctb{margin-top:4px;padding-top:6px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ctl,.ctr{display:flex;align-items:center;gap:4px}
+.tbtn{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 6px;border-radius:var(--r-sm);background:transparent;border:none;color:var(--t2);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
+.tbtn.accent{color:var(--brand-500)}
+.sndb{width:26px;height:26px;border-radius:var(--r-sm);background:var(--brand-500);color:#fff;border:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.wschip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;background:rgba(79,70,229,0.08);color:var(--brand-500);border-radius:var(--r-sm);font-size:11px;font-weight:500;border:1px solid rgba(79,70,229,0.18)}
+.wp{width:288px;flex-shrink:0;background:var(--bg-surface);border-left:1px solid var(--border);display:flex;flex-direction:column}
+.wh{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--border)}
+.wt{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.8px}
+.wts{display:inline-flex;align-items:center;gap:2px}
+.wtb{width:24px;height:24px;border-radius:var(--r-sm);background:transparent;border:none;color:var(--t3);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;position:relative}
+.wtb:hover{background:var(--bg-subtle);color:var(--t2)}
+.wtb.act{background:rgba(79,70,229,0.08);color:var(--brand-500)}
+.wtbdg{position:absolute;top:1px;right:1px;width:8px;height:8px;background:var(--amber);border-radius:50%}
+.wc{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:8px}
+.tsb{display:flex;align-items:center;justify-content:space-between;background:rgba(244,244,245,0.5);border-bottom:1px solid var(--border);padding:4px 10px;font-size:11px}
+.tsb .c{display:inline-flex;align-items:center;gap:4px}
+.tsb .r{color:var(--brand-500)}
+.tsb .d{color:var(--emerald)}
+.pls{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pls 1.4s infinite}
+@keyframes pls{0%,100%{opacity:.4}50%{opacity:1}}
+.tls{height:38%;overflow-y:auto;border-bottom:1px solid var(--border)}
+.tr{display:grid;grid-template-columns:auto 1fr auto auto auto;align-items:center;gap:4px;padding:4px 8px;font-size:11.5px}
+.tr:hover{background:var(--bg-subtle)}
+.tr .t{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr .sl{font-size:11px;color:var(--t3);width:32px;text-align:right;background:transparent;padding:0;border:none;height:auto}
+.tr .sl.r{color:var(--brand-500)}
+.tr .sl.d{color:var(--emerald)}
+.tr .sl.f{color:var(--rose)}
+.tr .tm{font-size:11px;color:var(--t3);width:32px;text-align:right}
+.cp2{height:62%;display:flex;flex-direction:column}
+.cst{display:flex;align-items:center;gap:2px;padding:0 8px 4px;border-bottom:1px solid var(--border)}
+.cstb{display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:var(--r-sm);background:transparent;border:none;color:var(--t3);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
+.cstb.act{background:rgba(79,70,229,0.08);color:var(--brand-500)}
+.cct{flex:1;overflow-y:auto;padding:8px}
+.cfr{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:var(--r-sm);cursor:pointer;font-size:11.5px;color:var(--t2)}
+.cfr:hover{background:var(--bg-subtle)}
+.cfr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cfr .mt{color:var(--t3);font-size:11px;padding:0 4px;background:var(--bg-subtle);border-radius:3px}
+.an{position:absolute;background:var(--brand-500);color:#fff;font-size:11px;font-weight:600;padding:3px 8px;border-radius:4px;z-index:20;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.2);font-family:inherit}
+.an::after{content:"";position:absolute;background:var(--brand-500)}
+.an.tl::after{width:2px;height:24px;bottom:-24px;left:50%;transform:translateX(-50%)}
+.an.tr2::after{width:2px;height:24px;bottom:-24px;right:12px}
+.an.bl::after{width:2px;height:24px;top:-24px;left:12px}
+.an.br2::after{width:2px;height:24px;top:-24px;right:12px}
+.an.l::after{width:24px;height:2px;right:-24px;top:50%;transform:translateY(-50%)}
+.an.r::after{width:24px;height:2px;left:-24px;top:50%;transform:translateY(-50%)}
+.an .nm{display:inline-block;width:18px;height:18px;background:rgba(255,255,255,0.25);border-radius:50%;text-align:center;line-height:18px;margin-right:6px;font-weight:700}
+.expl{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:16px}
+.pc{background:var(--bg-app);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;transition:transform .2s,box-shadow .2s}
+.pc:hover{transform:translateY(-2px);box-shadow:var(--sh-pop)}
+.pch{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.pci{font-family:ui-monospace,monospace;font-size:11px;color:var(--brand-500);font-weight:600;background:rgba(79,70,229,0.08);padding:2px 8px;border-radius:4px}
+.pct{font-size:14px;font-weight:600;color:var(--t1);margin:0 0 4px}
+.pce{font-size:11px;color:var(--t3);margin-bottom:8px}
+.pcd{font-size:12px;color:var(--t2);line-height:1.5;margin-bottom:8px}
+.pcg{display:flex;flex-wrap:wrap;gap:4px}
+.tg{display:inline-block;padding:1px 6px;border-radius:999px;background:var(--bg-subtle);font-size:10px;color:var(--t3);font-weight:500}
+.tg.brand{background:rgba(79,70,229,0.08);color:var(--brand-500)}
+.ppv{background:var(--bg-surface);border:1px dashed var(--border);border-radius:var(--r-sm);padding:8px;margin-bottom:10px;min-height:60px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+table.nt{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:12px}
+table.nt th{text-align:left;padding:10px 12px;background:var(--bg-subtle);color:var(--t2);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+table.nt td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+table.nt tr:last-child td{border-bottom:none}
+table.nt tr:hover td{background:rgba(79,70,229,0.03)}
+table.nt code{font-family:ui-monospace,"SF Mono",monospace;font-size:11.5px;padding:1px 5px;background:var(--bg-subtle);border-radius:3px;color:var(--t-accent)}
+table.nt .id{font-family:ui-monospace,monospace;color:var(--brand-500);font-weight:600}
+.igr{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:12px}
+.ic{padding:12px 14px;background:var(--bg-app);border-radius:var(--r-md);border-left:3px solid var(--brand-500)}
+.ic .lb{font-size:10px;text-transform:uppercase;color:var(--t3);letter-spacing:.6px;margin-bottom:4px;font-weight:600}
+.ic .vl{font-size:13px;color:var(--t1);font-weight:500;line-height:1.5}
+.dia{background:#fafafa;border:1px solid var(--border);border-radius:var(--r-md);padding:20px;margin:12px 0;overflow-x:auto}
+.dia pre{margin:0;font-family:ui-monospace,monospace;font-size:11.5px;color:var(--t2);line-height:1.7}
+footer{text-align:center;color:var(--t3);font-size:12px;margin-top:32px;padding:16px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- COVER -->
+<div class="cover">
+<span class="badge">UI BLUEPRINT</span>
+<h1>AgentX 前端 UI 设计图纸</h1>
+<div class="sub">主图与拆解图 · 全局区块命名与设计规范</div>
+<div class="meta">
+<span>📐 工程视图：主图 + 拆解图 + 命名表</span>
+<span>🎨 设计语言：Tailwind v4 + lucide 图标</span>
+<span>🧩 技术栈：React 18 + TypeScript + zustand</span>
+<span>📦 关联代码：frontend/renderer/</span>
+</div>
+</div>
+
+<!-- §0 OVERVIEW -->
+<section>
+<h2><span class="num">0</span>文档说明</h2>
+<p class="lede">本文档以"机械制图"方式呈现 AgentX 桌面应用（Tauri 2.x + React 18）的整体 UI 结构。<b>§1 主图</b>给出完整界面与全部区块标注线；<b>§2 拆解图</b>逐区块拆出；<b>§3 命名表</b>给出规范的中英文对照与命名约定；<b>§4 派生关系</b>解释场景 / agent 类型 / mode 的三层 UI 概念如何对应单一后端契约。</p>
+<div class="igr">
+<div class="ic"><div class="lb">应用形态</div><div class="vl">桌面应用 · 单窗口会话模式<br>Tauri 2.x 无边框窗口 + 自定义 title bar</div></div>
+<div class="ic"><div class="lb">布局结构</div><div class="vl">三栏布局<br>左侧会话列表 · 中央工作区 · 右侧工作区面板</div></div>
+<div class="ic"><div class="lb">设计语言</div><div class="vl">紫蓝主色 #4f46e5<br>浅/深主题 + 玻璃拟态 glass-card</div></div>
+<div class="ic"><div class="lb">字号体系</div><div class="vl">CSS 变量集中管理<br>--fs-* 由 globals.css 统一规范</div></div>
+</div>
+</section>
+
+<!-- §1 MASTER DRAWING -->
+<section>
+<h2><span class="num">1</span>主图 · Master Drawing</h2>
+<p class="lede">下图是 AgentX 主窗口的完整视图，自上而下分为：自定义 title bar、主区域三栏布局。标注线 ①~⑪ 指向具体区块，详见 §2 拆解图。</p>
+
+<div class="mf">
+
+<!-- Title Bar -->
+<div class="tb">
+<div class="tbl">
+<div class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></div>
+<span class="bn">AgentX</span>
+<span class="vb">v0.1</span>
+<div class="st"><button class="act">Work</button><button>Coding</button></div>
+</div>
+<div class="tbr">
+<button class="tib"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/><path d="m10 15-3-3 3-3"/></svg></button>
+<button class="tib"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/></svg></button>
+<div class="twc">
+<button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+<button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="16" x="4" y="4" rx="2"/></svg></button>
+<button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+</div>
+</div>
+</div>
+
+<!-- Main Body -->
+<div class="mb">
+
+<!-- SessionList -->
+<div class="sl">
+<div class="sh"><span class="stt">会话</span><button class="ib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+<div class="sg">
+<div class="sgh"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg><span class="stt">Home</span></div>
+<div class="si"><span class="dot"></span><span class="name muted">点击 + 新建会话</span></div>
+</div>
+<div class="sg">
+<div class="sgh"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><span class="stt">agentx</span></div>
+<div class="si act"><span class="dot"></span><span class="name">实现 UI 设计文档生成功能</span></div>
+<div class="si"><span class="dot"></span><span class="name">DeepAgent 集成调试</span></div>
+<div class="si"><span class="dot"></span><span class="name muted">分析 commit msg 解析逻辑</span></div>
+</div>
+<div class="sb">
+<button class="sa"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>设置</button>
+<button class="sa"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>开发模式</button>
+</div>
+</div>
+
+<!-- ChatView -->
+<div class="cv">
+<div class="ms">
+<div class="msi">
+<div class="es">
+<div class="ei"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/></svg></div>
+<h2>开始与 Agent 对话</h2>
+<p>输入 <code>/</code> 调命令与技能，<code>@</code> 附文件，输入 <code>/help</code> 查看所有命令。</p>
+<div class="eg">
+<div class="ec"><div class="t">问答对话</div><div class="d">解释 LangGraph 的 checkpointer 机制</div></div>
+<div class="ec"><div class="t">工具调用</div><div class="d">列出工作区中的所有 Python 文件</div></div>
+<div class="ec"><div class="t">深度任务</div><div class="d">读取并总结 workspace 下的代码结构</div></div>
+<div class="ec"><div class="t">技能调用</div><div class="d">输入 / 选择可用技能</div></div>
+</div>
+</div>
+</div>
+<div class="cn"><div class="cs act"></div><div class="cs"></div><div class="cs"></div><div class="cs"></div><div class="cs"></div><div class="cs"></div><div class="cs"></div></div>
+<button class="sbtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></button>
+</div>
+<div class="cp">
+<div class="cpi">
+<div class="cbox">
+<textarea class="ci" rows="2" placeholder="输入消息，/ 调命令与技能，@ 委派 agent（work 模式），拖拽附文件" readonly></textarea>
+<div class="ctb">
+<div class="ctl">
+<button class="tbtn accent"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Work <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+<button class="tbtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M2 10h20"/></svg></button>
+</div>
+<div class="ctr">
+<button class="tbtn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v5h5"/></svg>67%</button>
+<button class="tbtn">模型</button>
+<button class="tbtn">标准</button>
+<button class="sndb"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- WorkspacePanel -->
+<div class="wp">
+<div class="wh">
+<span class="wt">工作区</span>
+<div class="wts">
+<button class="wtb act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg></button>
+<button class="wtb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
+<button class="wtb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span class="wtbdg"></span></button>
+</div>
+</div>
+<div class="wc">
+<div class="tsb">
+<div style="display:flex;gap:10px"><span class="c r"><span class="pls"></span>2 进行中</span><span class="c d">5 已完成</span></div>
+<button class="ib"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+</div>
+<div class="tls">
+<div class="tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--brand-500)" stroke-width="2" style="animation:spin 2s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span class="t">解析 router graph 模块依赖</span><span class="sl r">进行中</span><span class="tm">14:23</span><button class="ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+<div class="tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--brand-500)" stroke-width="2" style="animation:spin 2s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span class="t">生成 HTML 拆解图文档</span><span class="sl r">进行中</span><span class="tm">14:24</span><button class="ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+<div class="tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--emerald)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="t">调研 ChatComposer props</span><span class="sl d">已完成</span><span class="tm">14:22</span><button class="ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+<div class="tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--emerald)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="t">读取 WorkspacePanel 源码</span><span class="sl d">已完成</span><span class="tm">14:21</span><button class="ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+</div>
+<div class="cp2">
+<div class="cst">
+<button class="cstb act"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>工具</button>
+<button class="cstb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/></svg>技能</button>
+<button class="cstb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>摘要</button>
+<button class="cstb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/></svg>记忆</button>
+</div>
+<div class="cct">
+<div class="cfr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg><span class="nm">App.tsx</span><span class="mt">2.4 KB</span><span style="font-size:10px;color:var(--t3)">14:23</span></div>
+<div class="cfr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg><span class="nm">scene.ts</span><span class="mt">1.6 KB</span><span style="font-size:10px;color:var(--t3)">14:22</span></div>
+<div class="cfr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg><span class="nm">ChatComposer.tsx</span><span class="mt">18 KB</span><span style="font-size:10px;color:var(--t3)">14:21</span></div>
+</div>
+</div>
+</div>
+</div>
+
+</div><!-- /mb -->
+
+<!-- Annotations -->
+<div class="an tl" style="left:32px;top:-16px"><span class="nm">1</span>品牌区</div>
+<div class="an tl" style="left:160px;top:-16px"><span class="nm">2</span>场景 Tab</div>
+<div class="an tr2" style="right:110px;top:-16px"><span class="nm">3</span>窗口控制</div>
+<div class="an l" style="left:-92px;top:80px"><span class="nm">4</span>会话列表</div>
+<div class="an l" style="left:-92px;top:480px"><span class="nm">5</span>设置入口</div>
+<div class="an tl" style="left:260px;top:48px"><span class="nm">6</span>消息流</div>
+<div class="an r" style="right:308px;top:90px"><span class="nm">7</span>分段导航</div>
+<div class="an bl" style="left:260px;bottom:60px"><span class="nm">8</span>输入区</div>
+<div class="an r" style="right:296px;top:60px"><span class="nm">9</span>工作区 Tab</div>
+<div class="an r" style="right:-72px;top:200px"><span class="nm">10</span>任务列表</div>
+<div class="an r" style="right:-72px;top:380px"><span class="nm">11</span>上下文 Tab</div>
+</div><!-- /mf -->
+
+<p style="margin-top:14px;color:var(--t3);font-size:12px"><b>标注说明</b>：①~③ 顶部 title bar；④~⑤ 左侧会话列表；⑥~⑧ 中央工作区；⑨~⑪ 右侧工作区面板。</p>
+</section>
+
+<!-- §2 EXPLODED VIEW -->
+<section>
+<h2><span class="num">2</span>拆解图 · Exploded View</h2>
+<p class="lede">把主图中的每个区块单独拆出，给出名称、英文命名、用途、关联组件和视觉规范。</p>
+
+<h3>2.1 顶部 title bar</h3>
+<div class="expl">
+<div class="pc">
+<div class="pch"><span class="pci">A.1</span></div>
+<div class="ppv"><div style="display:inline-flex;align-items:center;gap:8px;padding:4px 10px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px"><div class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></div><span class="bn">AgentX</span><span class="vb">v0.1</span></div></div>
+<h4 class="pct">品牌标识 · Brand Mark</h4>
+<div class="pce">Brand Logo + Product Name + Version Badge</div>
+<div class="pcd">Tauri 无边框窗口左上角的品牌标识，包含 Bot 图标、产品名 "AgentX" 与版本徽章。</div>
+<div class="pcg"><span class="tg brand">组件位置</span><span class="tg">App.tsx:180-191</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">A.2</span></div>
+<div class="ppv"><div class="st"><button class="act">Work</button><button>Coding</button></div></div>
+<h4 class="pct">场景 Tab · Scene Tab</h4>
+<div class="pce">Scene Tab (Work / Coding)</div>
+<div class="pcd">UI 第一层维度，位于 Bot icon 旁、v0.1 badge 之后。取值 <code>work</code> / <code>coding</code>，联动修改 <code>agent_mode</code>。<br><b>联动规则</b>：scene=work → 强制 mode=work；scene=coding → 保留 mode（work→coding 升级为 coding）。</div>
+<div class="pcg"><span class="tg brand">核心交互</span><span class="tg">stores/scene.ts</span><span class="tg">App.tsx:192-216</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">A.3</span></div>
+<div class="ppv"><div style="display:inline-flex;gap:2px"><button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg></button><button class="tib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/></svg></button></div></div>
+<h4 class="pct">工具按钮组 · Title Tool Buttons</h4>
+<div class="pce">Workspace Toggle + Theme Toggle</div>
+<div class="pcd">工作区折叠按钮 + 主题切换（Sun / Moon）。</div>
+<div class="pcg"><span class="tg">App.tsx:218-244</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">A.4</span></div>
+<div class="ppv"><div class="twc"><button class="tib"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button><button class="tib"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="16" height="16" x="4" y="4" rx="2"/></svg></button><button class="tib" style="color:var(--rose)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div></div>
+<h4 class="pct">窗口控制 · Window Controls</h4>
+<div class="pce">Minimize · Maximize · Close</div>
+<div class="pcd">Tauri 窗口三按钮（最右 hover 红色为关闭）。双击 title bar 触发 maximize。</div>
+<div class="pcg"><span class="tg">lib/api/window.ts</span></div>
+</div>
+</div>
+
+<h3>2.2 左侧会话列表</h3>
+<div class="expl">
+<div class="pc">
+<div class="pch"><span class="pci">B.1</span></div>
+<div class="ppv"><div class="sh" style="padding:4px 8px"><span class="stt">会话</span><button class="ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div></div>
+<h4 class="pct">会话分组头 · Session Group Header</h4>
+<div class="pce">Session List Header + 新建按钮</div>
+<div class="pcd">标题 "会话" + 右侧 + 按钮（点击在 Home 新建会话）。</div>
+<div class="pcg"><span class="tg">SessionList.tsx:192-207</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">B.2</span></div>
+<div class="ppv"><div class="sgh" style="padding:2px 6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><span class="stt">agentx</span><button class="ib"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div></div>
+<h4 class="pct">会话分组 · Session Group</h4>
+<div class="pce">Home + Workspace Group (collapsible)</div>
+<div class="pcd">按 workspace 分组：Home（虚拟）固定最前，其余按最新会话 createdAt 倒序。分组可折叠。</div>
+<div class="pcg"><span class="tg brand">数据结构</span><span class="tg">stores/chat</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">B.3</span></div>
+<div class="ppv"><div class="si act" style="display:flex;width:180px"><span class="dot"></span><span class="name">实现 UI 设计文档生成功能</span><button class="ib" style="opacity:.6"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/></svg></button></div></div>
+<h4 class="pct">会话项 · Session Item</h4>
+<div class="pce">Session Item (single chat entry)</div>
+<div class="pcd">以用户首条消息作为主标题，UUID 短码弱化展示。状态点：●运行中（动画）/●新结果（弱化）/●静态（muted）。hover 出现重命名/删除按钮。</div>
+<div class="pcg"><span class="tg brand">交互</span><span class="tg">SessionList.tsx:317-395</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">B.4</span></div>
+<div class="ppv"><div class="sb" style="margin:0;border:none;padding:4px"><button class="sa"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>设置</button><button class="sa"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/></svg>开发模式</button></div></div>
+<h4 class="pct">底部操作栏 · Sidebar Bottom</h4>
+<div class="pce">Settings Entry + Dev Mode Toggle</div>
+<div class="pcd">常驻设置入口 + 开发模式开关（开启后 Rust 用 PowerShell 启动 Python 后端保留控制台窗口）。</div>
+<div class="pcg"><span class="tg">lib/api/app</span></div>
+</div>
+</div>
+
+<h3>2.3 中央工作区（Chat）</h3>
+<div class="expl">
+<div class="pc">
+<div class="pch"><span class="pci">C.1</span></div>
+<div class="ppv"><div class="es" style="padding:12px"><div class="ei" style="width:32px;height:32px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/></svg></div><h2 style="font-size:11px">开始与 Agent 对话</h2></div></div>
+<h4 class="pct">空状态 · Empty State</h4>
+<div class="pce">Empty State (No Messages Yet)</div>
+<div class="pcd">无消息时中央展示区，包含 4 张引导卡片（问答对话 / 工具调用 / 深度任务 / 技能调用）。</div>
+<div class="pcg"><span class="tg">EmptyState.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">C.2</span></div>
+<div class="ppv"><div class="msg user"><div class="ub">帮我写一个 Python 函数</div></div></div>
+<h4 class="pct">用户消息气泡 · User Message Bubble</h4>
+<div class="pce">User Message Bubble (editable)</div>
+<div class="pcd">右对齐气泡，紫色背景。hover 出现编辑按钮（pencil icon），点击进入就地编辑模式（textarea + 模型选择 + 发送）。</div>
+<div class="pcg"><span class="tg brand">交互</span><span class="tg">UserMessageBubble.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">C.3</span></div>
+<div class="ppv"><div style="display:flex;flex-direction:column;gap:6px;width:100%"><div class="tc"><div class="tch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 0-7.07 17.07"/><path d="M12 2v10"/></svg><span class="ttl">路由决策</span><span class="sub">深度任务 · 多步规划</span><svg class="cv2" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div><div class="tc"><div class="tch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg><span class="ttl">已思考 5 秒</span><svg class="cv2" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div><div class="tc"><div class="tch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg><span class="ttl brand6">由 DeepAgent 执行</span><svg class="cv2" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div></div><div class="tc"><div class="tch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4"/></svg><span class="ttl" style="font-family:monospace">read_file</span><span class="schip code">code</span><span class="targs">(main.py)</span><span class="tstat c"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>完成 · 0.3s</span></div></div></div></div>
+<h4 class="pct">执行轨迹卡片族 · Trace Card Family</h4>
+<div class="pce">Trace Cards (Classification / Reasoning / Delegation / ToolCall / Team)</div>
+<div class="pcd">统一通过 <code>TraceCardHeader</code> 渲染标题行（图标 + 标题 + 副标题 + chevron）。所有卡片默认折叠，点击展开查看细节。三态：running / complete / error。</div>
+<div class="pcg"><span class="tg brand">复用</span><span class="tg">parts/TraceCardHeader.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">C.4</span></div>
+<div class="ppv"><div class="cn" style="position:relative;height:80px;width:32px;right:0;top:0"><div class="cs act"></div><div class="cs"></div><div class="cs"></div><div class="cs"></div><div class="cs"></div></div></div>
+<h4 class="pct">分段导航 · Chat Navigation</h4>
+<div class="pce">Segment Navigator + Scroll-To-Bottom</div>
+<div class="pcd">消息流右侧的细分段导航条（每条消息一段，点击跳转）+ 滚动距离 > 100px 时浮现的 ↓ 按钮（点击回到底部）。</div>
+<div class="pcg"><span class="tg">ChatNavigation.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">C.5</span></div>
+<div class="ppv"><div class="cbox" style="max-width:200px"><textarea class="ci" rows="2" placeholder="输入消息…" readonly style="min-height:30px;font-size:11px"></textarea><div class="ctb"><button class="tbtn accent" style="height:20px;padding:0 4px;font-size:10px">Work</button><button class="sndb" style="width:20px;height:20px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div></div></div>
+<h4 class="pct">输入区 · Chat Composer</h4>
+<div class="pce">Input Box + CommandPicker / MentionPicker</div>
+<div class="pcd">textarea + 左下 mode toggle / workspace chip + 右下 context / model / permission / send。支持 <code>/</code> 触发命令面板、<code>@</code> 触发 mention 面板（仅 work 模式）、拖拽文件。</div>
+<div class="pcg"><span class="tg brand">核心交互</span><span class="tg">ChatComposer.tsx</span></div>
+</div>
+</div>
+
+<h3>2.4 右侧工作区面板</h3>
+<div class="expl">
+<div class="pc">
+<div class="pch"><span class="pci">D.1</span></div>
+<div class="ppv"><div class="wh"><span class="wt">工作区</span><div class="wts"><button class="wtb act"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/></svg></button><button class="wtb"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8"/></svg></button><button class="wtb"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/></svg><span class="wtbdg"></span></button></div></div></div>
+<h4 class="pct">工作区头部 · Workspace Header</h4>
+<div class="pce">Workspace Header + Tab Switcher</div>
+<div class="pcd">标题"工作区" + 右上 3 个图标 Tab：任务 / 文件 / Git。Git Tab 在仓库不 clean 时显示 amber 圆点。</div>
+<div class="pcg"><span class="tg">WorkspacePanel.tsx:88-104</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">D.2</span></div>
+<div class="ppv"><div class="tsb" style="margin-bottom:4px"><div style="display:flex;gap:6px"><span class="c r"><span class="pls"></span>2</span><span class="c d">5</span></div></div><div class="tr" style="padding:2px 4px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--brand-500)" stroke-width="2" style="animation:spin 2s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span class="t" style="font-size:11px">生成 HTML 拆解图</span><span class="sl r">进行中</span></div></div>
+<h4 class="pct">任务列表 · Task List</h4>
+<div class="pce">Task Status Bar + Compact Task List</div>
+<div class="pcd">顶部状态条（运行中数 / 已完成数 / 清理按钮）+ 任务列表（行式：状态图标 + 标题 + 状态标签 + 时间 + 删除）。占 2/5 高度。</div>
+<div class="pcg"><span class="tg brand">stores/tasks</span><span class="tg">CompactTaskList.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">D.3</span></div>
+<div class="ppv"><div class="cp2" style="height:140px"><div class="cst"><button class="cstb act"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3"/></svg>工具</button><button class="cstb">技能</button><button class="cstb">摘要</button><button class="cstb">记忆</button></div><div class="cct" style="padding:4px"><div class="cfr" style="padding:2px 4px;font-size:10px"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6"/></svg><span class="nm">App.tsx</span><span class="mt">2.4KB</span></div></div></div></div>
+<h4 class="pct">上下文横向 Tab · Context Tabs</h4>
+<div class="pce">Tool / Skill / Summary / Memory</div>
+<div class="pcd">横向 4 个 Tab：工具 / 技能 / 摘要 / 记忆。下方面板展示对应文件列表（点击唤起 CodeViewerModal）。占 3/5 高度。</div>
+<div class="pcg"><span class="tg brand">横向 Tab</span><span class="tg">ContextTabPanel.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">D.4</span></div>
+<div class="ppv"><div style="font-family:monospace;font-size:10px;line-height:1.6;color:var(--t2)"><div>📂 agentx/</div><div style="padding-left:12px">📂 docs/</div><div style="padding-left:24px">📄 agentx-ui-blueprint.html</div><div style="padding-left:12px">📂 backend/</div><div style="padding-left:24px">📂 app/</div></div></div>
+<h4 class="pct">文件树 · File Tree</h4>
+<div class="pce">Workspace File Tree (Files Tab)</div>
+<div class="pcd">递归展开的目录树，每层缩进 14px。点击文件唤起 CodeViewerModal；点击文件夹展开/折叠；右键调用 revealInFolder 唤起资源管理器。</div>
+<div class="pcg"><span class="tg">FileTree.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">D.5</span></div>
+<div class="ppv"><div style="font-size:11px;line-height:1.6"><div style="display:flex;align-items:center;gap:4px;color:var(--t3)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/></svg>main</div><div style="display:flex;align-items:center;gap:4px;padding:2px 4px;background:var(--bg-subtle);border-radius:4px"><span style="color:var(--emerald)">+</span><span>新文件.md</span></div></div></div>
+<h4 class="pct">Git 面板 · Git Panel</h4>
+<div class="pce">Git Panel (Git Tab)</div>
+<div class="pcd">IDEA Git 风格：分支选择器 + 暂存/取消暂存 + 提交历史（可展开查看 author / date / hash）。</div>
+<div class="pcg"><span class="tg">GitPanel.tsx</span></div>
+</div>
+</div>
+</section>
+
+<!-- §3 NAMING TABLE -->
+<section>
+<h2><span class="num">3</span>区块命名表 · Naming Table</h2>
+<p class="lede">规范的中英文对照表。代码层面使用 PascalCase（组件名）+ camelCase（store / field），UI 文档使用中文名词。</p>
+<table class="nt">
+<thead>
+<tr><th style="width:60px">ID</th><th style="width:140px">中文名</th><th style="width:180px">English Name</th><th style="width:200px">组件 / 路径</th><th>说明</th></tr>
+</thead>
+<tbody>
+<tr><td class="id">A.1</td><td>品牌标识</td><td>Brand Mark</td><td>App.tsx (header)</td><td>Bot 图标 + "AgentX" + v0.1 徽章</td></tr>
+<tr><td class="id">A.2</td><td>场景 Tab</td><td>Scene Tab</td><td>App.tsx + stores/scene.ts</td><td>UI 第一层维度 work / coding，联动 agent_mode</td></tr>
+<tr><td class="id">A.3</td><td>标题栏按钮组</td><td>Title Tool Buttons</td><td>App.tsx:218-244</td><td>工作区折叠 + 主题切换</td></tr>
+<tr><td class="id">A.4</td><td>窗口控制</td><td>Window Controls</td><td>lib/api/window.ts</td><td>最小化 / 最大化 / 关闭</td></tr>
+<tr><td class="id">B.1</td><td>会话分组头</td><td>Session Group Header</td><td>SessionList.tsx:192-207</td><td>标题"会话" + 新建按钮</td></tr>
+<tr><td class="id">B.2</td><td>会话分组</td><td>Session Group</td><td>SessionList.tsx:411-487</td><td>按 workspace 分组，可折叠</td></tr>
+<tr><td class="id">B.3</td><td>会话项</td><td>Session Item</td><td>SessionList.tsx:317-395</td><td>单条会话，状态点 + 标题 + hover 操作</td></tr>
+<tr><td class="id">B.4</td><td>底部操作栏</td><td>Sidebar Bottom</td><td>SessionList.tsx:252-287</td><td>设置入口 + 开发模式开关</td></tr>
+<tr><td class="id">C.1</td><td>空状态</td><td>Empty State</td><td>EmptyState.tsx</td><td>无消息时的引导卡片网格</td></tr>
+<tr><td class="id">C.2</td><td>用户消息气泡</td><td>User Message Bubble</td><td>UserMessageBubble.tsx</td><td>右对齐气泡，支持就地编辑</td></tr>
+<tr><td class="id">C.3.1</td><td>路由决策卡</td><td>Classification Card</td><td>parts/ClassificationCard.tsx</td><td>CHAT / SINGLE_TOOL / DEEP_TASK 分类可视化</td></tr>
+<tr><td class="id">C.3.2</td><td>思考块</td><td>Reasoning Block</td><td>parts/ReasoningBlock.tsx</td><td>流式展示思考文本，完成折叠为"已思考 N 秒"</td></tr>
+<tr><td class="id">C.3.3</td><td>子代理委派卡</td><td>Delegation Card</td><td>parts/DelegationCard.tsx</td><td>"由 Code / RAG / Web / Deep 执行"</td></tr>
+<tr><td class="id">C.3.4</td><td>工具调用卡</td><td>Tool Call Card</td><td>parts/ToolCallCard.tsx</td><td>三态 running / complete / error + source chip + 耗时</td></tr>
+<tr><td class="id">C.3.5</td><td>工具调用组</td><td>Tool Call Group</td><td>parts/ToolCallGroup.tsx</td><td>连续 ≥3 个相同工具合并折叠</td></tr>
+<tr><td class="id">C.3.6</td><td>Agent Team 卡</td><td>Team Node Card</td><td>parts/TeamNodeCard.tsx</td><td>Orchestrator + 并行专家 + 汇总</td></tr>
+<tr><td class="id">C.3.7</td><td>代码块</td><td>Code Block</td><td>CodeBlock.tsx</td><td>shiki 高亮，支持折叠 / 复制</td></tr>
+<tr><td class="id">C.3.8</td><td>消息反馈</td><td>Message Feedback</td><td>MessageFeedback.tsx</td><td>观测中心：消息 hover 的 👍 / 👎</td></tr>
+<tr><td class="id">C.4</td><td>分段导航</td><td>Chat Navigation</td><td>ChatNavigation.tsx</td><td>右侧分段条 + ↓ 回到底部按钮</td></tr>
+<tr><td class="id">C.5.1</td><td>输入区</td><td>Chat Composer</td><td>ChatComposer.tsx</td><td>textarea + 拖拽 + 命令 / @mention 面板</td></tr>
+<tr><td class="id">C.5.2</td><td>命令面板</td><td>Command Picker</td><td>CommandPicker.tsx</td><td>输入 / 触发，展示内置命令 + 技能</td></tr>
+<tr><td class="id">C.5.3</td><td>提及面板</td><td>Mention Picker</td><td>MentionPicker.tsx</td><td>输入 @ 触发（仅 work 模式）</td></tr>
+<tr><td class="id">C.5.4</td><td>agent 类型选择器</td><td>Mode Toggle</td><td>ModeToggle.tsx</td><td>输入框旁的 popover，按 scene 过滤</td></tr>
+<tr><td class="id">C.5.5</td><td>工作区芯片</td><td>Workspace Chip</td><td>ChatComposer.tsx:536-582</td><td>当前会话的 workspace 路径，支持移除/切换</td></tr>
+<tr><td class="id">C.5.6</td><td>权限模式切换</td><td>Permission Toggle</td><td>PermissionToggle.tsx</td><td>会话级字段 standard / acceptEdits / bypassPermissions</td></tr>
+<tr><td class="id">C.5.7</td><td>模型切换</td><td>Model Toggle</td><td>ModelToggle.tsx</td><td>切换 LLM 服务商 / 模型</td></tr>
+<tr><td class="id">C.6</td><td>任务进度</td><td>Todo Progress</td><td>TodoProgress.tsx</td><td>在输入区上方显示的后端 todo_update</td></tr>
+<tr><td class="id">D.1</td><td>工作区头部</td><td>Workspace Header</td><td>WorkspacePanel.tsx:88-104</td><td>标题"工作区" + 3 个 Tab 切换</td></tr>
+<tr><td class="id">D.2</td><td>任务列表</td><td>Task List</td><td>CompactTaskList.tsx</td><td>精简行式任务列表，含 status / 时间</td></tr>
+<tr><td class="id">D.3</td><td>上下文横向 Tab</td><td>Context Tabs</td><td>ContextTabPanel.tsx</td><td>工具 / 技能 / 摘要 / 记忆 4 个子 Tab</td></tr>
+<tr><td class="id">D.4</td><td>文件树</td><td>File Tree</td><td>FileTree.tsx</td><td>递归展开的目录树</td></tr>
+<tr><td class="id">D.5</td><td>Git 面板</td><td>Git Panel</td><td>GitPanel.tsx</td><td>分支 + 暂存 + 提交历史</td></tr>
+<tr><td class="id">E.1</td><td>设置弹窗</td><td>Settings Modal</td><td>settings/SettingsModal.tsx</td><td>10 个 Tab：系统提示词 / 模型 / 记忆 / 技能 / MCP / 子代理 / 工具 / 知识库 / 审批与安全 / 沙箱目录</td></tr>
+<tr><td class="id">E.2</td><td>审批弹窗</td><td>Approval Dialog</td><td>chat/ApprovalDialog.tsx</td><td>危险工具 / 目录扩展 两种形态</td></tr>
+<tr><td class="id">E.3</td><td>代码查看弹窗</td><td>Code Viewer Modal</td><td>code/CodeViewerModal.tsx</td><td>从工作区文件唤起，带 shiki 高亮</td></tr>
+<tr><td class="id">F.1</td><td>启动中遮罩</td><td>Starting Mask</td><td>App.tsx:323-330</td><td>Python 后端启动时遮罩，30s 兜底</td></tr>
+<tr><td class="id">F.2</td><td>启动失败遮罩</td><td>Giving Up Mask</td><td>App.tsx:333-350</td><td>后端多次启动失败，提供"重启后端"按钮</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- §4 DERIVATION -->
+<section>
+<h2><span class="num">4</span>场景 / agent 类型 / mode 派生关系</h2>
+<p class="lede">后端契约 <code>agent_mode</code> 是<b>单字段</b>（work / coding / coding_team），前端 UI 用<b>场景 + agent 类型</b>两层展示，关键实现见 <code>frontend/renderer/stores/scene.ts</code>。</p>
+
+<div class="dia"><pre>┌────────────────────────────────────────────────────────────┐
+│  Scene (UI 第 1 层 · 顶部 title bar)                         │
+│  ┌───────────────┐    ┌───────────────┐                      │
+│  │     Work      │    │    Coding     │                      │
+│  └───────────────┘    └───────────────┘                      │
+│         │ derive              │ derive                       │
+│         ▼ mode==='work'      ▼ mode∈{coding, coding_team}   │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │ Agent Type (UI 第 2 层 · 输入框旁 ModeToggle)            │ │
+│  │ Work scene → [Work]                                     │ │
+│  │ Coding scene → [Coding Agent] [Coding Team]            │ │
+│  └────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────┘
+                       │ 写入
+                       ▼
+            stores/agentMode (zustand)
+            field: mode ∈ {work, coding, coding_team}
+                       │ 通过 ChatRequest 发送
+                       ▼
+              后端 router.run_router(mode)</pre>
+</div>
+
+<h3>联动规则（stores/scene.ts）</h3>
+<table class="nt">
+<thead><tr><th style="width:200px">操作</th><th>当前 mode</th><th>触发条件</th><th>新 mode</th></tr></thead>
+<tbody>
+<tr><td>点击 Work Tab</td><td>任意</td><td>用户点击场景 tab → "work"</td><td><code>work</code>（强制）</td></tr>
+<tr><td>点击 Coding Tab</td><td><code>work</code></td><td>work → coding 升级</td><td><code>coding</code>（默认 Expert）</td></tr>
+<tr><td>点击 Coding Tab</td><td><code>coding</code></td><td>保持</td><td><code>coding</code></td></tr>
+<tr><td>点击 Coding Tab</td><td><code>coding_team</code></td><td>保持</td><td><code>coding_team</code></td></tr>
+<tr><td>ModeToggle 选 Coding Team</td><td><code>coding</code></td><td>coding_team_enabled=true</td><td><code>coding_team</code></td></tr>
+<tr><td>设置中关闭 coding_team_enabled</td><td><code>coding_team</code></td><td>fallback</td><td><code>coding</code>（回退）</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- §5 OVERLAY/MODAL -->
+<section>
+<h2><span class="num">5</span>弹窗与遮罩 · Overlays</h2>
+<p class="lede">除主图三栏外，还有以下全局浮层，按触发场景分组。</p>
+
+<div class="expl">
+<div class="pc">
+<div class="pch"><span class="pci">E.1</span></div>
+<div class="ppv"><div style="width:140px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--sh-pop);overflow:hidden"><div style="padding:6px 10px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center"><div style="width:18px;height:18px;background:#fef3c7;color:#d97706;border-radius:4px;display:flex;align-items:center;justify-content:center">⚠</div><span style="font-size:11px;font-weight:600">操作审批</span></div><div style="padding:6px 10px;font-size:10px;color:var(--t3)">cli_execute</div><div style="padding:6px 10px;border-top:1px solid var(--border);display:flex;gap:4px;justify-content:flex-end"><button style="padding:2px 8px;font-size:10px;background:var(--bg-subtle);border:none;border-radius:4px">拒绝</button><button style="padding:2px 8px;font-size:10px;background:var(--emerald);color:#fff;border:none;border-radius:4px">批准</button></div></div></div>
+<h4 class="pct">审批弹窗 · Approval Dialog</h4>
+<div class="pce">Approval Dialog (dangerous_tool / directory_extension)</div>
+<div class="pcd">两种形态：dangerous_tool（两按钮 + 可选倒计时自动批准）/ directory_extension（三按钮：拒绝 / 本次允许 / 会话内允许）。</div>
+<div class="pcg"><span class="tg brand">安全</span><span class="tg">ApprovalDialog.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">E.2</span></div>
+<div class="ppv"><div style="width:160px;height:100px;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;display:flex"><div style="width:48px;background:var(--bg-subtle);padding:6px;font-size:9px;border-right:1px solid var(--border)">⚙ 设置<br><br>🧠 记忆<br>📋 技能<br>🔌 MCP</div><div style="flex:1;padding:6px;font-size:9px;color:var(--t3)">配置区...</div></div></div>
+<h4 class="pct">设置弹窗 · Settings Modal</h4>
+<div class="pce">Settings Modal (10 tabs)</div>
+<div class="pcd">左侧 tab 导航（10 个：系统提示词 / 模型 / 记忆 / 技能 / MCP / 子代理 / 工具 / 知识库 / 审批与安全 / 沙箱目录），右侧对应配置面板。</div>
+<div class="pcg"><span class="tg">SettingsModal.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">E.3</span></div>
+<div class="ppv"><div style="width:140px;background:#1e1e1e;border-radius:6px;padding:6px;font-family:monospace;font-size:9px;color:#e0e7ff"><span style="color:#a5b4fc">function</span> <span style="color:#fbbf24">greet</span>() {<br>&nbsp;&nbsp;<span style="color:#a5b4fc">return</span> "hi"<br>}</div></div>
+<h4 class="pct">代码查看弹窗 · Code Viewer Modal</h4>
+<div class="pce">Code Viewer Modal (shiki highlighted)</div>
+<div class="pcd">从工作区文件点击唤起，使用 shiki 双主题（github-light / github-dark）渲染代码，支持复制。</div>
+<div class="pcg"><span class="tg">CodeViewerModal.tsx</span></div>
+</div>
+
+<div class="pc">
+<div class="pch"><span class="pci">F.1</span></div>
+<div class="ppv"><div style="width:140px;height:50px;background:rgba(0,0,0,0.5);border-radius:6px;display:flex;align-items:center;justify-content:center"><div style="background:var(--bg-surface);padding:6px 10px;border-radius:6px;font-size:10px;display:inline-flex;align-items:center;gap:4px"><span class="pls" style="background:var(--brand-500)"></span>后端启动中…</div></div></div>
+<h4 class="pct">启动遮罩 · Startup Mask</h4>
+<div class="pce">Startup Mask (starting / giving_up)</div>
+<div class="pcd">Python 后端启动时（starting）和多次失败后（giving_up）显示的全局遮罩。giving_up 含"重启后端"按钮。</div>
+<div class="pcg"><span class="tg">App.tsx:323-350</span></div>
+</div>
+</div>
+</section>
+
+<!-- §6 INTERACTION NOTES -->
+<section>
+<h2><span class="num">6</span>关键交互规范</h2>
+<p class="lede">从代码注释和 OpenSpec 中提炼的 UI 行为约束，所有 AI 代理在讨论前端时应遵守。</p>
+
+<table class="nt">
+<thead><tr><th style="width:200px">交互</th><th>规范</th></tr></thead>
+<tbody>
+<tr><td>场景 Tab 切换</td><td>scene=work → 强制 mode=work；scene=coding → 保留 mode（work→coding 升级）。见 <code>stores/scene.ts</code>。</td></tr>
+<tr><td>agent 类型选择器</td><td>位置：输入框旁的 popover，按当前 scene 过滤。Work scene 仅显示 [Work]，Coding scene 显示 [Coding Agent] [Coding Team]。</td></tr>
+<tr><td>命令面板</td><td>输入 <code>/</code> 触发（含行首或紧跟空白后），<code>↑↓</code> 导航，<code>Enter</code> 选中，<code>Esc</code> 关闭。</td></tr>
+<tr><td>@mention 面板</td><td>输入 <code>@</code> 触发，<b>仅 work 模式</b>有效，coding 模式自动剥离标记。</td></tr>
+<tr><td>用户消息编辑</td><td>hover 用户消息 → 显示 ✏ 按钮 → 点击进入就地编辑 → Enter 提交 / Esc 取消（流式期间禁用编辑）。</td></tr>
+<tr><td>执行轨迹卡片</td><td>默认折叠，<b>delegation 容器包裹执行轨迹</b>（reasoning + tool-call / tool-call-group）。连续 ≥3 个相同 tool 合并为 ToolCallGroup。</td></tr>
+<tr><td>路由决策可视化</td><td>路由分类通过 <b>ClassificationCard</b> 独立卡片展示，位于 delegation 之上，包含分类原因。</td></tr>
+<tr><td>危险工具审批</td><td><code>ApprovalDialog</code>，dangerous_tool 二按钮（拒绝 / 批准）+ 可选倒计时自动批准；directory_extension 三按钮（拒绝 / 本次允许 / 会话内允许）。</td></tr>
+<tr><td>workspace 绑定</td><td>会话级字段 <code>workspacePath</code>，未设置时回退 Home（桌面目录）。切换会话自动切换 workspace。</td></tr>
+<tr><td>权限模式</td><td>会话级 <code>permissionMode</code> ∈ {standard, acceptEdits, bypassPermissions}，影响工具调用是否触发审批。</td></tr>
+<tr><td>开发模式</td><td>sidebar 底部开关，开启后 Rust 用 PowerShell 启动 Python 后端保留控制台窗口（方便看日志），重启后端生效。</td></tr>
+</tbody>
+</table>
+</section>
+
+<footer>
+<p>AgentX 前端 UI 设计图纸 · 主图与拆解图 · 基于 frontend/renderer/ 当前实现 + AGENTS.md 术语规范</p>
+<p style="margin-top:6px;font-size:11px">更新于 2026-07-09 · 与代码同源</p>
+</footer>
+
+</div><!-- /page -->
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.08 区块命名表 · Naming Reference</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.08 命名表</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html" class="active">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.08</div>
+  <h1>区块命名表 · Naming Reference</h1>
+  <div class="sub">38 项规范的中英文对照 · 组件路径 · 引用标准</div>
+  <div class="meta">
+    <span>📚 引用：讨论 UI 时使用统一术语</span>
+    <span>🎯 准则：避免"左边""右边"等模糊描述</span>
+    <span>🔗 同源：AGENTS.md §9.5 + frontend/renderer</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>A. 顶部 Title Bar</h2>
+  <table>
+    <thead><tr><th style="width:60px">ID</th><th style="width:140px">中文名</th><th style="width:200px">English</th><th style="width:220px">组件 / 路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="id">A.1</td><td>品牌标识</td><td>Brand Mark</td><td>App.tsx (header)</td><td>Bot icon + "AgentX" + v0.1 徽章</td></tr>
+      <tr><td class="id">A.2</td><td>场景 Tab</td><td>Scene Tab</td><td>App.tsx + stores/scene.ts</td><td>UI 第一层维度 work / coding</td></tr>
+      <tr><td class="id">A.3</td><td>标题栏按钮组</td><td>Title Tool Buttons</td><td>App.tsx:218-244</td><td>工作区折叠 + 主题切换</td></tr>
+      <tr><td class="id">A.4</td><td>窗口控制</td><td>Window Controls</td><td>lib/api/window.ts</td><td>最小化 / 最大化 / 关闭</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">2</span>B. 左侧会话列表</h2>
+  <table>
+    <thead><tr><th style="width:60px">ID</th><th style="width:140px">中文名</th><th style="width:200px">English</th><th style="width:220px">组件 / 路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="id">B.1</td><td>会话分组头</td><td>Session Group Header</td><td>SessionList.tsx:192-207</td><td>标题"会话" + 新建按钮</td></tr>
+      <tr><td class="id">B.2</td><td>会话分组</td><td>Session Group</td><td>SessionList.tsx:411-487</td><td>按 workspace 分组，可折叠</td></tr>
+      <tr><td class="id">B.3</td><td>会话项</td><td>Session Item</td><td>SessionList.tsx:317-395</td><td>单条会话，状态点 + 标题 + hover 操作</td></tr>
+      <tr><td class="id">B.4</td><td>底部操作栏</td><td>Sidebar Bottom</td><td>SessionList.tsx:252-287</td><td>设置入口 + 开发模式开关</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">3</span>C. 中央聊天工作区</h2>
+  <table>
+    <thead><tr><th style="width:60px">ID</th><th style="width:140px">中文名</th><th style="width:200px">English</th><th style="width:220px">组件 / 路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="id">C.1</td><td>空状态</td><td>Empty State</td><td>EmptyState.tsx</td><td>无消息时的引导卡片网格</td></tr>
+      <tr><td class="id">C.2</td><td>用户消息气泡</td><td>User Message Bubble</td><td>UserMessageBubble.tsx</td><td>右对齐气泡，支持就地编辑</td></tr>
+      <tr><td class="id">C.3.1</td><td>路由决策卡</td><td>Classification Card</td><td>parts/ClassificationCard.tsx</td><td>CHAT / SINGLE_TOOL / DEEP_TASK 分类可视化</td></tr>
+      <tr><td class="id">C.3.2</td><td>思考块</td><td>Reasoning Block</td><td>parts/ReasoningBlock.tsx</td><td>流式展示思考文本，完成折叠为"已思考 N 秒"</td></tr>
+      <tr><td class="id">C.3.3</td><td>子代理委派卡</td><td>Delegation Card</td><td>parts/DelegationCard.tsx</td><td>"由 Code / RAG / Web / Deep 执行"</td></tr>
+      <tr><td class="id">C.3.4</td><td>工具调用卡</td><td>Tool Call Card</td><td>parts/ToolCallCard.tsx</td><td>三态 running / complete / error + source chip</td></tr>
+      <tr><td class="id">C.3.5</td><td>工具调用组</td><td>Tool Call Group</td><td>parts/ToolCallGroup.tsx</td><td>连续 ≥3 个相同工具合并折叠</td></tr>
+      <tr><td class="id">C.3.6</td><td>Agent Team 卡</td><td>Team Node Card</td><td>parts/TeamNodeCard.tsx</td><td>Orchestrator + 并行专家 + 汇总</td></tr>
+      <tr><td class="id">C.3.7</td><td>代码块</td><td>Code Block</td><td>CodeBlock.tsx</td><td>shiki 高亮，支持折叠 / 复制</td></tr>
+      <tr><td class="id">C.3.8</td><td>消息反馈</td><td>Message Feedback</td><td>MessageFeedback.tsx</td><td>观测中心：消息 hover 的 👍 / 👎</td></tr>
+      <tr><td class="id">C.4</td><td>分段导航</td><td>Chat Navigation</td><td>ChatNavigation.tsx</td><td>右侧分段条 + ↓ 回到底部按钮</td></tr>
+      <tr><td class="id">C.5.1</td><td>输入区</td><td>Chat Composer</td><td>ChatComposer.tsx</td><td>textarea + 拖拽 + 命令 / @mention 面板</td></tr>
+      <tr><td class="id">C.5.2</td><td>命令面板</td><td>Command Picker</td><td>CommandPicker.tsx</td><td>输入 / 触发，展示内置命令 + 技能</td></tr>
+      <tr><td class="id">C.5.3</td><td>提及面板</td><td>Mention Picker</td><td>MentionPicker.tsx</td><td>输入 @ 触发（仅 work 模式）</td></tr>
+      <tr><td class="id">C.5.4</td><td>agent 类型选择器</td><td>Mode Toggle</td><td>ModeToggle.tsx</td><td>输入框旁的 popover，按 scene 过滤</td></tr>
+      <tr><td class="id">C.5.5</td><td>工作区芯片</td><td>Workspace Chip</td><td>ChatComposer.tsx:536-582</td><td>当前会话的 workspace 路径</td></tr>
+      <tr><td class="id">C.5.6</td><td>权限模式切换</td><td>Permission Toggle</td><td>PermissionToggle.tsx</td><td>standard / acceptEdits / bypassPermissions</td></tr>
+      <tr><td class="id">C.5.7</td><td>模型切换</td><td>Model Toggle</td><td>ModelToggle.tsx</td><td>切换 LLM 服务商 / 模型</td></tr>
+      <tr><td class="id">C.6</td><td>任务进度</td><td>Todo Progress</td><td>TodoProgress.tsx</td><td>在输入区上方显示的后端 todo_update</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">4</span>D. 右侧工作区面板</h2>
+  <table>
+    <thead><tr><th style="width:60px">ID</th><th style="width:140px">中文名</th><th style="width:200px">English</th><th style="width:220px">组件 / 路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="id">D.1</td><td>工作区头部</td><td>Workspace Header</td><td>WorkspacePanel.tsx:88-104</td><td>标题"工作区" + 3 个 Tab 切换</td></tr>
+      <tr><td class="id">D.2</td><td>任务列表</td><td>Task List</td><td>CompactTaskList.tsx</td><td>精简行式任务列表，含 status / 时间</td></tr>
+      <tr><td class="id">D.3</td><td>上下文横向 Tab</td><td>Context Tabs</td><td>ContextTabPanel.tsx</td><td>工具 / 技能 / 摘要 / 记忆 4 个子 Tab</td></tr>
+      <tr><td class="id">D.4</td><td>文件树</td><td>File Tree</td><td>FileTree.tsx</td><td>递归展开的目录树</td></tr>
+      <tr><td class="id">D.5</td><td>Git 面板</td><td>Git Panel</td><td>GitPanel.tsx</td><td>分支 + 暂存 + 提交历史</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">5</span>E + F. 弹窗与遮罩</h2>
+  <table>
+    <thead><tr><th style="width:60px">ID</th><th style="width:140px">中文名</th><th style="width:200px">English</th><th style="width:220px">组件 / 路径</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td class="id">E.1</td><td>审批弹窗</td><td>Approval Dialog</td><td>chat/ApprovalDialog.tsx</td><td>危险工具 / 目录扩展 两种形态</td></tr>
+      <tr><td class="id">E.2</td><td>设置弹窗</td><td>Settings Modal</td><td>settings/SettingsModal.tsx</td><td>10 个 Tab 的配置面板</td></tr>
+      <tr><td class="id">E.3</td><td>代码查看弹窗</td><td>Code Viewer Modal</td><td>code/CodeViewerModal.tsx</td><td>从工作区文件唤起，带 shiki 高亮</td></tr>
+      <tr><td class="id">F.1</td><td>启动遮罩</td><td>Startup Mask</td><td>App.tsx:323-330</td><td>Python 后端启动时遮罩，30s 兜底</td></tr>
+      <tr><td class="id">F.2</td><td>启动失败遮罩</td><td>Giving Up Mask</td><td>App.tsx:333-350</td><td>后端多次启动失败，提供"重启后端"</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">6</span>通用术语（必读）</h2>
+  <p class="lede">所有 AI 代理讨论 UI 时<b>必须</b>使用以下术语，避免"左边""右边"等模糊描述。</p>
+
+  <table>
+    <thead><tr><th style="width:200px">术语</th><th style="width:200px">English</th><th>定义</th></tr></thead>
+    <tbody>
+      <tr><td><b>场景 Tab</b>（Scene Tab）</td><td>Scene Tab</td><td>顶部 title bar 的 work / coding 切换</td></tr>
+      <tr><td><b>agent 类型选择器</b></td><td>Mode Toggle</td><td>输入框旁的 popover，按场景过滤</td></tr>
+      <tr><td><b>会话列表 / 会话项</b></td><td>Session List / Item</td><td>左侧栏的历史会话</td></tr>
+      <tr><td><b>工作区</b></td><td>Workspace</td><td>右侧面板统称</td></tr>
+      <tr><td><b>执行轨迹</b></td><td>Execution Trace</td><td>消息中展示模型推理 + 工具调用的卡片组</td></tr>
+      <tr><td><b>路由决策</b></td><td>Router Decision</td><td>分类卡 (ClassificationCard)</td></tr>
+      <tr><td><b>子代理委派</b></td><td>Sub-agent Delegation</td><td>DelegationCard，标记"由 XX 子代理执行"</td></tr>
+      <tr><td><b>工具调用</b></td><td>Tool Call</td><td>模型调用工具的执行轨迹卡片</td></tr>
+      <tr><td><b>权限模式</b></td><td>Permission Mode</td><td>会话级字段，影响工具调用是否触发审批</td></tr>
+      <tr><td><b>开发模式</b></td><td>Dev Mode</td><td>后端以终端方式启动的开关</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="07-overlays.html">← M.07 弹窗</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <a href="09-derivation.html" class="all">M.09 派生关系 →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.08 命名表 · 38 项规范术语</p>
+</footer>
+
+</div>
+</body>
+</html>

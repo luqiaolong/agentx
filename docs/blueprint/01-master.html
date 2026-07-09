@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.01 主界面 · Master Drawing</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* Master Drawing */
+.mf-stage {
+  position: relative;
+  padding: 70px 60px 90px 130px;
+  background: linear-gradient(180deg, #fafafa 0%, #f0f0f3 100%);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  margin-top: 16px;
+}
+
+.mf {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--sh-pop);
+  position: relative;
+  width: 100%;
+}
+
+/* Title Bar */
+.mf-tb {
+  height: 40px;
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+}
+.mf-tbl, .mf-tbr { display: flex; align-items: center; gap: 8px; }
+.bm-brand { width: 24px; height: 24px; background: var(--brand-500); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+.brand-text { font-weight: 600; font-size: 13px; }
+.vb { padding: 1px 6px; border-radius: 999px; background: var(--bg-subtle); font-size: 10px; font-weight: 600; color: var(--t3); margin-left: 4px; }
+.scene-tab-row { display: inline-flex; align-items: center; border: 1px solid var(--border); background: var(--bg-surface); border-radius: 6px; margin-left: 6px; }
+.scene-tab-row button { height: 20px; padding: 0 8px; border: none; background: transparent; font-size: 11px; font-weight: 500; color: var(--t3); cursor: pointer; font-family: inherit; }
+.scene-tab-row button.act { background: var(--brand-700); color: var(--brand-200); }
+.tb-icon-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: transparent; border: none; color: var(--t3); cursor: pointer; }
+.tb-winctl { display: inline-flex; align-items: center; margin-left: 4px; }
+
+.mf-body { display: flex; height: 540px; }
+
+/* === Module: 会话列表 (Session List) === */
+.mf-sl {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 6px 4px;
+  position: relative;
+}
+.mf-sh { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; margin-bottom: 2px; }
+.mf-stt { font-size: 10px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.8px; }
+.mf-ib { width: 22px; height: 22px; border-radius: 6px; background: transparent; border: none; color: var(--t3); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.mf-sg { margin-bottom: 8px; }
+.mf-sgh { display: flex; align-items: center; gap: 4px; padding: 0 2px; font-size: 11px; font-weight: 600; color: var(--t2); height: 20px; }
+.mf-si { display: flex; align-items: center; gap: 4px; padding: 1px 4px 1px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; height: 20px; }
+.mf-si.act { background: var(--bg-subtle); }
+.mf-si .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--t3); flex-shrink: 0; }
+.mf-si.act .dot { background: var(--brand-500); }
+.mf-si .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t1); font-weight: 500; }
+.mf-si .nm.muted { color: var(--t3); }
+.mf-sb { margin-top: auto; border-top: 1px solid var(--border); padding-top: 6px; display: flex; align-items: center; gap: 4px; }
+.mf-sa { flex: 1; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 6px; background: transparent; border: none; color: var(--t2); font-size: 11px; font-weight: 500; cursor: pointer; font-family: inherit; }
+
+/* === Module: 聊天框 (Chat Frame) === */
+.mf-cv {
+  flex: 1;
+  background: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+}
+.mf-ms {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 32px;
+  position: relative;
+}
+.mf-msi { max-width: 768px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.mf-es { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; text-align: center; }
+.mf-ei { width: 56px; height: 56px; border-radius: 16px; background: rgba(79,70,229,0.08); color: var(--brand-500); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+.mf-es h2 { font-size: 16px; margin: 0 0 6px; color: var(--t1); font-weight: 600; }
+.mf-es p { font-size: 13px; color: var(--t3); max-width: 360px; margin: 0 0 20px; }
+.mf-es code { padding: 1px 6px; border-radius: 4px; background: var(--bg-subtle); color: var(--t-accent); font-family: ui-monospace, monospace; font-size: 12px; margin: 0 2px; }
+.mf-eg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left; max-width: 420px; }
+.mf-ec { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.mf-ec .t { font-size: 12px; font-weight: 600; color: var(--t1); margin-bottom: 2px; }
+.mf-ec .d { font-size: 11px; color: var(--t3); }
+
+/* === Module: 输入框 (Input Area) === */
+.mf-cp { border-top: 1px solid var(--border); background: var(--bg-surface); padding: 8px 12px; position: relative; }
+.mf-cpi { max-width: 768px; margin: 0 auto; }
+.mf-cbox { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px 6px; background: var(--bg-surface); }
+.mf-ci { width: 100%; min-height: 40px; border: none; outline: none; resize: none; font-family: inherit; font-size: 13px; color: var(--t1); background: transparent; line-height: 1.5; }
+.mf-ctb { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mf-ctl, .mf-ctr { display: flex; align-items: center; gap: 4px; }
+.mf-tbtn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px; border-radius: 6px; background: transparent; border: none; color: var(--t2); font-size: 11px; font-weight: 500; cursor: pointer; font-family: inherit; }
+.mf-tbtn.accent { color: var(--brand-500); }
+.mf-sndb { width: 26px; height: 26px; border-radius: 6px; background: var(--brand-500); color: #fff; border: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+
+/* === Module: 工作区 (Workspace Panel) === */
+.mf-wp {
+  width: 288px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.mf-wh { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.mf-wt { font-size: 10px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.8px; }
+.mf-wts { display: inline-flex; align-items: center; gap: 2px; }
+.mf-wtb { width: 24px; height: 24px; border-radius: 6px; background: transparent; border: none; color: var(--t3); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; position: relative; }
+.mf-wtb.act { background: rgba(79,70,229,0.08); color: var(--brand-500); }
+.mf-wtbdg { position: absolute; top: 1px; right: 1px; width: 8px; height: 8px; background: var(--amber); border-radius: 50%; }
+.mf-wc { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 8px; }
+.mf-tsb { display: flex; align-items: center; justify-content: space-between; background: rgba(244,244,245,0.5); border-bottom: 1px solid var(--border); padding: 4px 10px; font-size: 11px; }
+.mf-tsb .c { display: inline-flex; align-items: center; gap: 4px; }
+.mf-tsb .r { color: var(--brand-500); }
+.mf-tsb .d { color: var(--emerald); }
+.pls { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pls 1.4s infinite; }
+@keyframes pls { 0%,100%{opacity:.4} 50%{opacity:1} }
+.mf-tls { height: 38%; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.mf-tr { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 4px; padding: 4px 8px; font-size: 11.5px; }
+.mf-tr .t { color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mf-tr .sl { font-size: 11px; color: var(--t3); width: 32px; text-align: right; }
+.mf-tr .sl.r { color: var(--brand-500); }
+.mf-tr .sl.d { color: var(--emerald); }
+.mf-tr .tm { font-size: 11px; color: var(--t3); width: 32px; text-align: right; }
+.mf-cp2 { height: 62%; display: flex; flex-direction: column; }
+.mf-cst { display: flex; align-items: center; gap: 2px; padding: 0 8px 4px; border-bottom: 1px solid var(--border); }
+.mf-cstb { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px; background: transparent; border: none; color: var(--t3); font-size: 11px; font-weight: 500; cursor: pointer; font-family: inherit; }
+.mf-cstb.act { background: rgba(79,70,229,0.08); color: var(--brand-500); }
+.mf-cct { flex: 1; overflow-y: auto; padding: 8px; }
+.mf-cfr { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 11.5px; color: var(--t2); }
+.mf-cfr .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mf-cfr .mt { color: var(--t3); font-size: 11px; padding: 0 4px; background: var(--bg-subtle); border-radius: 3px; }
+
+/* ==========================================================
+ * Module Name Labels — 直接贴在界面区域上的命名标签
+ * 让用户第一眼就能识别每个区域叫什么名字
+ * ========================================================== */
+.mod-label {
+  position: absolute;
+  z-index: 15;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(79, 70, 229, 0.95);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.mod-label.gray { background: rgba(63, 63, 70, 0.9); }
+.mod-label.teal { background: rgba(13, 148, 136, 0.95); }
+.mod-label.amber { background: rgba(217, 119, 6, 0.95); }
+.mod-label.rose { background: rgba(225, 29, 72, 0.95); }
+
+/* ==========================================================
+ * Annotation Pins — 移到外侧的圆形标号
+ * 用细线连入界面，不遮挡界面内容
+ * ========================================================== */
+.pin {
+  position: absolute;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--t1);
+  font-family: -apple-system, sans-serif;
+  pointer-events: none;
+}
+.pin .num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  background: var(--brand-500);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  box-shadow: 0 2px 6px rgba(79,70,229,0.4);
+  flex-shrink: 0;
+}
+.pin .label {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  font-size: 11px;
+  white-space: nowrap;
+  box-shadow: var(--sh-soft);
+}
+.pin::before {
+  content: "";
+  position: absolute;
+  background: var(--brand-500);
+  opacity: 0.6;
+  z-index: -1;
+}
+
+/* 位置变体 */
+.pin-tl { top: 0; left: 0; }
+.pin-tc { top: 0; left: 50%; transform: translateX(-50%); }
+.pin-tr { top: 0; right: 0; }
+.pin-ml { left: 0; top: 50%; transform: translateY(-50%); }
+.pin-mr { right: 0; top: 50%; transform: translateY(-50%); }
+.pin-bl { bottom: 0; left: 0; }
+.pin-br { bottom: 0; right: 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <span class="current">M.01 主界面</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html" class="active">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.01</div>
+  <h1>主界面 · Master Drawing</h1>
+  <div class="sub">完整应用界面 · 每个区块都有标准化命名 · 11 个标注点指向子模块</div>
+  <div class="meta">
+    <span>📐 工程视图：机械主图（俯视图）</span>
+    <span>🏷 区块命名：界面内嵌标签 + 外侧编号标注</span>
+    <span>🎯 用途：开发前的全局认知、设计评审对照</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>主图</h2>
+  <p class="lede">
+    AgentX 主窗口的完整视图。每个区域都有<b>两套命名</b>：
+    <b>① 界面内嵌标签</b>（黑底白字，直接贴在区块上）—— 用于开发时一眼定位模块；
+    <b>② 外侧编号标注</b>（圆圈+连线，指向更细分的子模块）—— 详见各模块详细设计。
+  </p>
+
+  <div class="mf-stage">
+
+    <!-- 主界面 -->
+    <div class="mf">
+      <!-- Title Bar -->
+      <div class="mf-tb">
+        <div class="mf-tbl">
+          <div class="bm-brand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></div>
+          <span class="brand-text">AgentX</span>
+          <span class="vb">v0.1</span>
+          <div class="scene-tab-row"><button class="act">Work</button><button>Coding</button></div>
+        </div>
+        <div class="mf-tbr">
+          <button class="tb-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></button>
+          <button class="tb-icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/></svg></button>
+          <div class="tb-winctl">
+            <button class="tb-icon-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+            <button class="tb-icon-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+            <button class="tb-icon-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mf-body">
+        <!-- 会话列表 (Session List) -->
+        <div class="mf-sl">
+          <span class="mod-label gray" style="top:-10px;left:8px">📂 会话列表</span>
+          <div class="mf-sh"><span class="mf-stt">会话</span><button class="mf-ib"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
+          <div class="mf-sg">
+            <div class="mf-sgh"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg><span class="mf-stt">Home</span></div>
+            <div class="mf-si"><span class="dot"></span><span class="nm muted">点击 + 新建会话</span></div>
+          </div>
+          <div class="mf-sg">
+            <div class="mf-sgh"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg><span class="mf-stt">agentx</span></div>
+            <div class="mf-si act"><span class="dot"></span><span class="nm">实现 UI 设计文档</span></div>
+            <div class="mf-si"><span class="dot"></span><span class="nm">DeepAgent 集成调试</span></div>
+          </div>
+          <div class="mf-sb">
+            <button class="mf-sa"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>设置</button>
+            <button class="mf-sa"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/></svg>开发模式</button>
+          </div>
+        </div>
+
+        <!-- 聊天框 (Chat Frame) -->
+        <div class="mf-cv">
+          <span class="mod-label" style="top:-10px;left:8px">💬 聊天框</span>
+          <span class="mod-label teal" style="top:-10px;right:8px">📨 消息流</span>
+          <div class="mf-ms">
+            <div class="mf-msi">
+              <div class="mf-es">
+                <div class="mf-ei"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/></svg></div>
+                <h2>开始与 Agent 对话</h2>
+                <p>输入 <code>/</code> 调命令与技能，<code>@</code> 附文件，输入 <code>/help</code> 查看所有命令。</p>
+                <div class="mf-eg">
+                  <div class="mf-ec"><div class="t">问答对话</div><div class="d">解释 LangGraph 的 checkpointer 机制</div></div>
+                  <div class="mf-ec"><div class="t">工具调用</div><div class="d">列出工作区中的所有 Python 文件</div></div>
+                  <div class="mf-ec"><div class="t">深度任务</div><div class="d">读取并总结 workspace 下的代码结构</div></div>
+                  <div class="mf-ec"><div class="t">技能调用</div><div class="d">输入 / 选择可用技能</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 输入框 (Input Area) -->
+          <div class="mf-cp">
+            <span class="mod-label amber" style="top:-10px;left:8px">⌨️ 输入框</span>
+            <div class="mf-cpi">
+              <div class="mf-cbox">
+                <textarea class="mf-ci" rows="2" placeholder="输入消息，/ 调命令与技能，@ 委派 agent（work 模式），拖拽附文件" readonly></textarea>
+                <div class="mf-ctb">
+                  <div class="mf-ctl">
+                    <button class="mf-tbtn accent"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="2"/></svg>Work <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+                    <button class="mf-tbtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8"/></svg></button>
+                  </div>
+                  <div class="mf-ctr">
+                    <button class="mf-tbtn">67%</button>
+                    <button class="mf-tbtn">模型</button>
+                    <button class="mf-tbtn">标准</button>
+                    <button class="mf-sndb"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 工作区 (Workspace Panel) -->
+        <div class="mf-wp">
+          <span class="mod-label gray" style="top:-10px;left:8px">⚙️ 工作区</span>
+          <div class="mf-wh">
+            <span class="mf-wt">工作区</span>
+            <div class="mf-wts">
+              <!-- 三 Tab: 任务 / 文件 / Git (移除上下文) -->
+              <button class="mf-wtb act" title="任务面板"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/></svg></button>
+              <button class="mf-wtb" title="文件面板"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8"/></svg></button>
+              <button class="mf-wtb" title="Git 面板"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/></svg><span class="mf-wtbdg"></span></button>
+            </div>
+          </div>
+          <div class="mf-wc">
+            <!-- 任务面板 (Tasks Panel) -->
+            <div class="mf-tsb">
+              <div style="display:flex;gap:10px"><span class="c r"><span class="pls"></span>2 进行中</span><span class="c d">5 已完成</span></div>
+              <button class="mf-ib"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/></svg></button>
+            </div>
+            <span class="mod-label" style="left:-90px;top:42px">📋 任务面板</span>
+            <div class="mf-tls">
+              <div class="mf-tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--brand-500)" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span class="t">解析 router graph</span><span class="sl r">进行中</span><span class="tm">14:23</span></div>
+              <div class="mf-tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--brand-500)" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span class="t">生成 HTML 文档</span><span class="sl r">进行中</span><span class="tm">14:24</span></div>
+              <div class="mf-tr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--emerald)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="t">调研 ChatComposer</span><span class="sl d">已完成</span><span class="tm">14:22</span></div>
+            </div>
+            <div class="mf-cp2">
+              <span class="mod-label teal" style="left:-90px;top:50%">📑 上下文面板</span>
+              <div class="mf-cst">
+                <button class="mf-cstb act">工具</button>
+                <button class="mf-cstb">技能</button>
+                <button class="mf-cstb">摘要</button>
+                <button class="mf-cstb">记忆</button>
+              </div>
+              <div class="mf-cct">
+                <div class="mf-cfr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6"/></svg><span class="nm">App.tsx</span><span class="mt">2.4 KB</span></div>
+                <div class="mf-cfr"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6"/></svg><span class="nm">scene.ts</span><span class="mt">1.6 KB</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         外侧标注线（移出界面外，不遮挡内容）
+         ============================================================ -->
+
+    <!-- 顶部 title bar 标注 -->
+    <div class="pin pin-tc" style="top:18px"><span class="num">①</span><span class="label">品牌区 + 场景 Tab + 窗口控制</span></div>
+
+    <!-- 左侧会话列表 -->
+    <div class="pin pin-ml" style="left:-122px;top:120px"><span class="num">④</span><span class="label">会话列表</span></div>
+    <div class="pin pin-ml" style="left:-122px;top:520px"><span class="num">⑤</span><span class="label">底部操作栏（设置 / 开发模式）</span></div>
+
+    <!-- 中央聊天框 -->
+    <div class="pin pin-tl" style="top:-30px;left:260px"><span class="num">⑥</span><span class="label">消息流（虚拟化列表）</span></div>
+    <div class="pin pin-tr" style="top:-30px;right:308px"><span class="num">⑦</span><span class="label">分段导航 + 回到底部</span></div>
+    <div class="pin pin-bl" style="bottom:-30px;left:280px"><span class="num">⑧</span><span class="label">输入框（命令面板 + @mention）</span></div>
+
+    <!-- 右侧工作区 -->
+    <div class="pin pin-tr" style="top:-30px;right:-12px"><span class="num">⑨</span><span class="label">工作区顶部 Tab 栏</span></div>
+    <div class="pin pin-mr" style="right:-122px;top:170px"><span class="num">⑩</span><span class="label">任务面板</span></div>
+    <div class="pin pin-mr" style="right:-122px;top:420px"><span class="num">⑪</span><span class="label">上下文面板</span></div>
+
+  </div><!-- /mf-stage -->
+
+  <p style="margin-top:60px;color:var(--t3);font-size:12px"><b>界面内嵌标签</b>（黑底白字）直接标识模块名；<b>外侧编号</b>（圆圈+连线）指向子模块。完整对应关系：</p>
+</section>
+
+<section>
+  <h2><span class="num">2</span>界面内嵌模块命名（6 个）</h2>
+  <p class="lede">每个主要区域都贴有标准命名标签，开发 / 设计评审时一眼即可定位。</p>
+
+  <table>
+    <thead><tr><th style="width:60px">标签</th><th style="width:140px">模块名</th><th style="width:160px">English</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mod-label gray" style="position:static;display:inline-flex">📂 会话列表</span></td><td>会话列表</td><td>Session List</td><td>左侧 240px 宽侧栏，按 workspace 分组</td></tr>
+      <tr><td><span class="mod-label" style="position:static;display:inline-flex">💬 聊天框</span></td><td>聊天框</td><td>Chat Frame</td><td>中央区域总称，含消息流 + 输入框</td></tr>
+      <tr><td><span class="mod-label teal" style="position:static;display:inline-flex">📨 消息流</span></td><td>消息流</td><td>Message Stream</td><td>聊天框内滚动消息列表（虚拟化）</td></tr>
+      <tr><td><span class="mod-label amber" style="position:static;display:inline-flex">⌨️ 输入框</span></td><td>输入框</td><td>Input Area / Chat Composer</td><td>聊天框底部固定，包含 textarea + 工具栏</td></tr>
+      <tr><td><span class="mod-label gray" style="position:static;display:inline-flex">⚙️ 工作区</span></td><td>工作区</td><td>Workspace Panel</td><td>右侧 288px 宽侧栏总称</td></tr>
+      <tr><td><span class="mod-label" style="position:static;display:inline-flex">📋 任务面板</span></td><td>任务面板</td><td>Tasks Panel</td><td>工作区 Tab 1，默认激活</td></tr>
+      <tr><td><span class="mod-label teal" style="position:static;display:inline-flex">📑 上下文面板</span></td><td>上下文面板</td><td>Context Panel</td><td>工作区 Tab 1 内嵌的横向 Tab（工具/技能/摘要/记忆）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">3</span>外侧编号标注（11 个）</h2>
+  <p class="lede">外侧编号指向子模块，详细设计见各模块页面。</p>
+
+  <table>
+    <thead><tr><th style="width:60px">编号</th><th style="width:160px">位置</th><th style="width:160px">指向</th><th>详见</th></tr></thead>
+    <tbody>
+      <tr><td class="id">①</td><td>顶部</td><td>品牌区 / 场景 Tab / 窗口控制</td><td><a href="02-titlebar.html">M.02 Title Bar</a></td></tr>
+      <tr><td class="id">④</td><td>左侧</td><td>会话列表</td><td rowspan="2"><a href="03-sessionlist.html">M.03 会话列表</a></td></tr>
+      <tr><td class="id">⑤</td><td>左下</td><td>底部操作栏</td></tr>
+      <tr><td class="id">⑥</td><td>中央上</td><td>消息流（虚拟化）</td><td rowspan="2"><a href="04-chatview.html">M.04 聊天工作区</a></td></tr>
+      <tr><td class="id">⑦</td><td>中央右上</td><td>分段导航</td></tr>
+      <tr><td class="id">⑧</td><td>中央下</td><td>输入框</td><td><a href="04-chatview.html">M.04 聊天工作区</a></td></tr>
+      <tr><td class="id">⑨</td><td>右上</td><td>工作区顶部 Tab 栏</td><td rowspan="3"><a href="06-workspace.html">M.06 工作区面板</a></td></tr>
+      <tr><td class="id">⑩</td><td>右侧中</td><td>任务面板</td></tr>
+      <tr><td class="id">⑪</td><td>右侧下</td><td>上下文面板</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:12px;color:var(--t3);margin-top:8px">② / ③ 已合并到 ①；执行轨迹卡片族（<a href="05-tracecards.html">M.05</a>）是聊天框内的子组件，不在此图标注。</p>
+</section>
+
+<section>
+  <h2><span class="num">4</span>全局尺寸规范</h2>
+  <table>
+    <thead><tr><th style="width:200px">区域</th><th>尺寸</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>Title Bar</td><td>h = 40px</td><td>自定义拖拽区，双击触发 maximize</td></tr>
+      <tr><td>会话列表</td><td>w = 240px</td><td>固定宽度</td></tr>
+      <tr><td>工作区面板</td><td>w = 288px</td><td>可折叠（标题栏右侧按钮）</td></tr>
+      <tr><td>聊天框</td><td>flex: 1</td><td>占满剩余宽度</td></tr>
+      <tr><td>消息内容最大宽度</td><td>max-w-3xl（768px）</td><td>聚焦阅读</td></tr>
+      <tr><td>输入框最大宽度</td><td>max-w-3xl（768px）</td><td>与消息对齐</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="index.html">← 返回导航</a>
+  <a href="02-titlebar.html" class="all">下一模块：M.02 Title Bar →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.01 主界面 · Master Drawing</p>
+</footer>
+
+</div>
+</body>
+</html>

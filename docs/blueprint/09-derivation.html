@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.09 派生关系与交互规范</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.derivation-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0;
+}
+.derivation-card {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.derivation-card h4 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.derivation-card .demo { display: flex; gap: 6px; align-items: center; padding: 6px; background: var(--bg-surface); border-radius: 6px; }
+
+.flow-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.flow-step .num {
+  width: 22px; height: 22px;
+  background: var(--brand-500);
+  color: #fff;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.flow-step .txt { font-size: 12px; }
+.flow-arrow { text-align: center; color: var(--t3); font-size: 14px; margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.09 派生关系</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html" class="active">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.09</div>
+  <h1>派生关系与交互规范</h1>
+  <div class="sub">场景 / agent 类型 / mode 派生 + 11 项关键交互规范</div>
+  <div class="meta">
+    <span>🔗 同源：AGENTS.md §9.5 + openspec/2026-07-08-restore-scenario-mode-separation</span>
+    <span>🧠 设计原则：UI 维度保持用户感知层次，后端维度按系统最优建模</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>三层 UI 概念</h2>
+  <p class="lede">AgentX 的 UI 把"用哪个 agent"拆分为<b>场景（Scene）+ agent 类型（Agent Type）</b>两层，但后端契约仍是单字段 <code>agent_mode</code>。</p>
+
+  <div class="diagram"><pre>┌──────────────────────────────────────────────────────────────┐
+│  Scene（UI 第 1 层 · 顶部 title bar）                          │
+│  ┌───────────────┐    ┌───────────────┐                      │
+│  │     Work      │    │    Coding     │                      │
+│  └───────────────┘    └───────────────┘                      │
+│         │ derive              │ derive                       │
+│         ▼ mode==='work'      ▼ mode∈{coding, coding_team}    │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ Agent Type（UI 第 2 层 · 输入框旁 ModeToggle）           │  │
+│  │ Work scene  → [Work]                                    │  │
+│  │ Coding scene → [Coding Agent] [Coding Team]             │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+                       │ 写入
+                       ▼
+            stores/agentMode (zustand)
+            field: mode ∈ {work, coding, coding_team}
+                       │ 通过 ChatRequest 发送
+                       ▼
+              后端 router.run_router(mode)</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>派生对照表</h2>
+
+  <div class="derivation-row">
+    <div class="derivation-card">
+      <h4>Work 场景</h4>
+      <div class="demo">
+        <div style="display:inline-flex;border:1px solid var(--border);background:var(--bg-surface);border-radius:6px;overflow:hidden;">
+          <button style="padding:3px 10px;background:var(--brand-700);color:var(--brand-200);font-size:11px;font-weight:500;border:none;cursor:pointer;">Work</button>
+          <button style="padding:3px 10px;background:transparent;color:var(--t3);font-size:11px;font-weight:500;border:none;cursor:pointer;">Coding</button>
+        </div>
+        <span style="font-size:11px;color:var(--t3);">↓ mode =</span>
+        <code>work</code>
+      </div>
+      <div style="font-size:12px;color:var(--t2);margin-top:8px;line-height:1.6">
+        ModeToggle 显示：<b>[Work]</b><br>
+        单个全能 Supervisor agent，可调用全部工具与子代理。
+      </div>
+    </div>
+    <div class="derivation-card">
+      <h4>Coding 场景</h4>
+      <div class="demo">
+        <div style="display:inline-flex;border:1px solid var(--border);background:var(--bg-surface);border-radius:6px;overflow:hidden;">
+          <button style="padding:3px 10px;background:transparent;color:var(--t3);font-size:11px;font-weight:500;border:none;cursor:pointer;">Work</button>
+          <button style="padding:3px 10px;background:var(--brand-700);color:var(--brand-200);font-size:11px;font-weight:500;border:none;cursor:pointer;">Coding</button>
+        </div>
+        <span style="font-size:11px;color:var(--t3);">↓ mode ∈</span>
+        <code>{coding, coding_team}</code>
+      </div>
+      <div style="font-size:12px;color:var(--t2);margin-top:8px;line-height:1.6">
+        ModeToggle 显示：<b>[Coding Agent] [Coding Team]</b><br>
+        Coding 场景不允许 Team 模式被切到 Work 后保留。
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>联动规则（stores/scene.ts）</h2>
+  <table>
+    <thead><tr><th style="width:200px">操作</th><th>当前 mode</th><th>新 mode</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>点击 Work Tab</td><td>任意</td><td><code>work</code></td><td><b>强制</b>切回 work（work 场景无 Team）</td></tr>
+      <tr><td>点击 Coding Tab</td><td><code>work</code></td><td><code>coding</code></td><td>work → coding 升级，默认单 Expert</td></tr>
+      <tr><td>点击 Coding Tab</td><td><code>coding</code></td><td><code>coding</code></td><td>保持</td></tr>
+      <tr><td>点击 Coding Tab</td><td><code>coding_team</code></td><td><code>coding_team</code></td><td>保持</td></tr>
+      <tr><td>ModeToggle 选 Team</td><td><code>coding</code></td><td><code>coding_team</code></td><td>需要 <code>coding_team_enabled=true</code></td></tr>
+      <tr><td>关闭 coding_team_enabled</td><td><code>coding_team</code></td><td><code>coding</code></td><td>回退（fallback）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">4</span>ModeToggle 按 scene 过滤</h2>
+  <div class="diagram"><pre>const OPTIONS_BY_SCENE: Record&lt;Scene, Option[]&gt; = {
+  work:   [WORK_OPTION],
+  coding: [CODING_OPTION, CODING_TEAM_OPTION],
+};
+
+const visibleOptions = OPTIONS_BY_SCENE[scene].filter(o =>
+  o.value === "coding_team" ? codingTeamEnabled : true
+);</pre></div>
+
+  <p class="lede">ModeToggle 显示当前 scene 下的 agent 类型列表。当 <code>coding_team_enabled=false</code> 时，隐藏 Team 选项；如果当前 mode=coding_team，需要回退到 coding。</p>
+</section>
+
+<section>
+  <h2><span class="num">5</span>关键交互规范（11 项）</h2>
+  <p class="lede">从代码注释和 OpenSpec 中提炼的 UI 行为约束，所有 AI 代理在讨论前端时应遵守。</p>
+
+  <div class="flow-step"><span class="num">1</span><span class="txt"><b>场景 Tab 切换</b> · scene=work → 强制 mode=work；scene=coding → 保留 mode（work→coding 升级）。见 <code>stores/scene.ts</code>。</span></div>
+  <div class="flow-step"><span class="num">2</span><span class="txt"><b>agent 类型选择器</b> · 位置：输入框旁的 popover，按当前 scene 过滤。Work scene 仅显示 [Work]，Coding scene 显示 [Coding Agent] [Coding Team]。</span></div>
+  <div class="flow-step"><span class="num">3</span><span class="txt"><b>命令面板</b> · 输入 <code>/</code> 触发（含行首或紧跟空白后），<code>↑↓</code> 导航，<code>Enter</code> 选中，<code>Esc</code> 关闭。</span></div>
+  <div class="flow-step"><span class="num">4</span><span class="txt"><b>@mention 面板</b> · 输入 <code>@</code> 触发，<b>仅 work 模式</b>有效，coding 模式自动剥离标记。</span></div>
+  <div class="flow-step"><span class="num">5</span><span class="txt"><b>用户消息编辑</b> · hover 用户消息 → 显示 ✏ 按钮 → 点击进入就地编辑 → Enter 提交 / Esc 取消（流式期间禁用编辑）。</span></div>
+  <div class="flow-step"><span class="num">6</span><span class="txt"><b>执行轨迹卡片</b> · 默认折叠，<b>delegation 容器包裹执行轨迹</b>（reasoning + tool-call / tool-call-group）。连续 ≥3 个相同 tool 合并为 ToolCallGroup。</span></div>
+  <div class="flow-step"><span class="num">7</span><span class="txt"><b>路由决策可视化</b> · 路由分类通过 <b>ClassificationCard</b> 独立卡片展示，位于 delegation 之上，包含分类原因。</span></div>
+  <div class="flow-step"><span class="num">8</span><span class="txt"><b>危险工具审批</b> · <code>ApprovalDialog</code>，dangerous_tool 二按钮（拒绝 / 批准）+ 可选倒计时自动批准；directory_extension 三按钮（拒绝 / 本次允许 / 会话内允许）。</span></div>
+  <div class="flow-step"><span class="num">9</span><span class="txt"><b>workspace 绑定</b> · 会话级字段 <code>workspacePath</code>，未设置时回退 Home（桌面目录）。切换会话自动切换 workspace。</span></div>
+  <div class="flow-step"><span class="num">10</span><span class="txt"><b>权限模式</b> · 会话级 <code>permissionMode</code> ∈ {standard, acceptEdits, bypassPermissions}，影响工具调用是否触发审批。</span></div>
+  <div class="flow-step"><span class="num">11</span><span class="txt"><b>开发模式</b> · sidebar 底部开关，开启后 Rust 用 PowerShell 启动 Python 后端保留控制台窗口（方便看日志），重启后端生效。</span></div>
+</section>
+
+<section>
+  <h2><span class="num">6</span>字号规范（差异化）</h2>
+  <table>
+    <thead><tr><th style="width:200px">区域</th><th>字号</th><th>CSS 变量</th></tr></thead>
+    <tbody>
+      <tr><td>用户消息气泡</td><td><b>14px</b></td><td>--fs-msg-user</td></tr>
+      <tr><td>系统输出（assistant 主内容）</td><td><b>13px</b></td><td>--fs-msg-assist</td></tr>
+      <tr><td>工具调用 / Reasoning / 卡片标题</td><td><b>12px</b></td><td>--fs-msg-tool</td></tr>
+      <tr><td>代码块</td><td>11px</td><td>--fs-msg-code</td></tr>
+    </tbody>
+  </table>
+  <p class="lede">用户 14px vs 助手 13px 实现视觉层次；执行轨迹 12px + 更低透明度（opacity 0.45-0.6）+ 浅色背景（bg-subtle）实现"黯淡"分离。</p>
+</section>
+
+<section>
+  <h2><span class="num">7</span>对话框样式规范</h2>
+  <table>
+    <thead><tr><th style="width:200px">属性</th><th>规范</th></tr></thead>
+    <tbody>
+      <tr><td>移除系统头像</td><td>assistant 消息<b>无左侧 Sparkles 图标</b></td></tr>
+      <tr><td>圆角</td><td>rounded-xl → <b>rounded-lg</b></td></tr>
+      <tr><td>水平内边距</td><td>px-2.5 → <b>px-2</b></td></tr>
+      <tr><td>垂直内边距</td><td>py-1.5 → <b>py-1</b></td></tr>
+      <tr><td>外层间距</td><td>gap-3 → <b>gap-2</b></td></tr>
+      <tr><td>消息宽度</td><td>w-[85%] → <b>w-[95%]</b>（调宽以容纳更长的内容）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="08-naming.html">← M.08 命名表</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <span style="color:var(--t3);font-size:12px">（已是最后一个模块）</span>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.09 派生关系与交互规范</p>
+</footer>
+
+</div>
+</body>
+</html>

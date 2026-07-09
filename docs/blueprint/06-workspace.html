@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.06 工作区面板 详细设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.wp-demo {
+  width: 288px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.wp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.wp-tt { font-size: 10px; font-weight: 600; color: var(--t3); text-transform: uppercase; letter-spacing: 0.8px; }
+.wp-tabs { display: inline-flex; align-items: center; gap: 2px; }
+.wp-tab { width: 24px; height: 24px; border-radius: 6px; background: transparent; border: none; color: var(--t3); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; position: relative; }
+.wp-tab.act { background: rgba(79,70,229,0.08); color: var(--brand-500); }
+.wp-bdg { position: absolute; top: 1px; right: 1px; width: 8px; height: 8px; background: var(--amber); border-radius: 50%; }
+.wp-body { padding: 8px; }
+.tsb { display: flex; align-items: center; justify-content: space-between; background: rgba(244,244,245,0.5); border-bottom: 1px solid var(--border); padding: 4px 10px; font-size: 11px; }
+.tsb .c { display: inline-flex; align-items: center; gap: 4px; }
+.tsb .r { color: var(--brand-500); }
+.tsb .d { color: var(--emerald); }
+.pls { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pls 1.4s infinite; }
+@keyframes pls { 0%,100%{opacity:.4} 50%{opacity:1} }
+.tls { border-bottom: 1px solid var(--border); }
+.tr { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 4px; padding: 4px 8px; font-size: 11.5px; }
+.tr .t { color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr .sl { font-size: 11px; color: var(--t3); width: 32px; text-align: right; }
+.tr .sl.r { color: var(--brand-500); }
+.tr .sl.d { color: var(--emerald); }
+.tr .tm { font-size: 11px; color: var(--t3); width: 32px; text-align: right; }
+
+.cst { display: flex; align-items: center; gap: 2px; padding: 0 8px 4px; border-bottom: 1px solid var(--border); }
+.cstb { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 6px; background: transparent; border: none; color: var(--t3); font-size: 11px; font-weight: 500; cursor: pointer; font-family: inherit; }
+.cstb.act { background: rgba(79,70,229,0.08); color: var(--brand-500); }
+.cct { padding: 8px; }
+.cfr { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 11.5px; color: var(--t2); }
+.cfr .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfr .mt { color: var(--t3); font-size: 11px; padding: 0 4px; background: var(--bg-subtle); border-radius: 3px; }
+
+.file-tree-demo {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--t2);
+  background: var(--bg-app);
+  padding: 8px;
+  border-radius: 6px;
+}
+.file-tree-demo .indent { padding-left: 14px; }
+
+.git-demo { font-size: 11px; line-height: 1.6; }
+.git-row { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+.git-row:hover { background: var(--bg-subtle); }
+.git-status-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.06 工作区面板</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html" class="active">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.06</div>
+  <h1>工作区面板 详细设计</h1>
+  <div class="sub">右侧 WorkspacePanel · 5 个拆解卡片（D.1 - D.5）</div>
+  <div class="meta">
+    <span>📐 区域：D. 右侧工作区面板 (w=288px)</span>
+    <span>📦 关联代码：components/workspace/WorkspacePanel.tsx</span>
+    <span>📊 高度比：Tasks 列表 2/5 + 上下文 Tab 3/5</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>整体预览</h2>
+  <p class="lede">默认 Tab = Tasks（按会话隔离）。Tasks Tab 内部上下分割：精简任务列表（2/5）+ 上下文横向 Tab（3/5）。</p>
+
+  <div class="wp-demo">
+    <div class="wp-head">
+      <span class="wp-tt">工作区</span>
+      <div class="wp-tabs">
+        <button class="wp-tab act"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/></svg></button>
+        <button class="wp-tab"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8"/></svg></button>
+        <button class="wp-tab"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/></svg><span class="wp-bdg"></span></button>
+      </div>
+    </div>
+    <div class="wp-body" style="padding:0">
+      <div class="tsb">
+        <div style="display:flex;gap:10px"><span class="c r"><span class="pls"></span>2 进行中</span><span class="c d">5 已完成</span></div>
+        <button style="background:transparent;border:none;color:var(--t3);cursor:pointer;font-size:11px">× 清理</button>
+      </div>
+      <div class="tls">
+        <div class="tr"><span style="color:var(--brand-500)">●</span><span class="t">解析 router graph</span><span class="sl r">进行中</span><span class="tm">14:23</span></div>
+        <div class="tr"><span style="color:var(--brand-500)">●</span><span class="t">生成 HTML 文档</span><span class="sl r">进行中</span><span class="tm">14:24</span></div>
+        <div class="tr"><span style="color:var(--emerald)">✓</span><span class="t">调研 ChatComposer</span><span class="sl d">已完成</span><span class="tm">14:22</span></div>
+      </div>
+      <div>
+        <div class="cst">
+          <button class="cstb act">工具</button>
+          <button class="cstb">技能</button>
+          <button class="cstb">摘要</button>
+          <button class="cstb">记忆</button>
+        </div>
+        <div class="cct">
+          <div class="cfr"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6"/></svg><span class="nm">App.tsx</span><span class="mt">2.4KB</span></div>
+          <div class="cfr"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2H6"/></svg><span class="nm">scene.ts</span><span class="mt">1.6KB</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>高度分割（Tasks Tab）</h2>
+  <div class="diagram"><pre>┌──────────────────────────────────────┐
+│ Workspace Header (固定)               │
+├──────────────────────────────────────┤
+│ Tasks Status Bar                      │
+├──────────────────────────────────────┤
+│                                      │
+│ CompactTaskList (h-2/5)              │
+│                                      │
+├──────────────────────────────────────┤
+│ Context Tab Panel (h-3/5)             │
+│ ┌──────────────────────────────────┐ │
+│ │ [工具] [技能] [摘要] [记忆]        │ │
+│ ├──────────────────────────────────┤ │
+│ │ 文件列表（点击唤起 CodeViewer）    │ │
+│ └──────────────────────────────────┘ │
+└──────────────────────────────────────┘</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>拆解卡片（5 项）</h2>
+
+  <div class="parts-grid">
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">D.1</span></div>
+      <div class="part-preview">
+        <div class="wp-head"><span class="wp-tt">工作区</span><div class="wp-tabs"><button class="wp-tab act"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 17 2 2 4-4"/></svg></button><button class="wp-tab"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8"/></svg></button><button class="wp-tab"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/></svg><span class="wp-bdg"></span></button></div></div>
+      </div>
+      <h4>工作区头部 · Workspace Header</h4>
+      <div class="en">Workspace Header + 3 Tabs</div>
+      <div class="desc">
+        标题"工作区" + 右上 3 个图标 Tab：<b>任务 / 文件 / Git</b>。<br>
+        Git Tab 在仓库不 clean 时显示 amber 圆点徽章。
+      </div>
+      <div class="tags"><span class="tag">WorkspacePanel.tsx:88-104</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">D.2</span><span class="tag brand">stores/tasks</span></div>
+      <div class="part-preview">
+        <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <div class="tsb" style="padding:3px 8px;font-size:10px"><div style="display:flex;gap:6px"><span class="c r"><span class="pls"></span>2</span><span class="c d">5</span></div></div>
+          <div class="tr" style="padding:2px 6px;font-size:11px"><span style="color:var(--brand-500)">●</span><span class="t">解析 router</span><span class="sl r">进行中</span></div>
+          <div class="tr" style="padding:2px 6px;font-size:11px"><span style="color:var(--emerald)">✓</span><span class="t">调研 props</span><span class="sl d">已完成</span></div>
+        </div>
+      </div>
+      <h4>任务列表 · Task List</h4>
+      <div class="en">Task Status Bar + Compact Task List</div>
+      <div class="desc">
+        顶部状态条（运行中数 / 已完成数 / 清理按钮）+ 任务列表。<br>
+        行式：状态图标 + 标题 + 状态标签 + 时间 + 删除按钮。<br>
+        按会话隔离（sessionId 过滤）。
+      </div>
+      <div class="tags"><span class="tag">CompactTaskList.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">D.3</span><span class="tag brand">横向 Tab</span></div>
+      <div class="part-preview">
+        <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <div class="cst" style="padding:2px"><button class="cstb act">工具</button><button class="cstb">技能</button><button class="cstb">摘要</button><button class="cstb">记忆</button></div>
+          <div class="cct" style="padding:4px"><div class="cfr" style="padding:2px 4px;font-size:10px"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3)"><path d="M14 2"/></svg><span class="nm">App.tsx</span><span class="mt">2.4KB</span></div></div>
+        </div>
+      </div>
+      <h4>上下文横向 Tab · Context Tabs</h4>
+      <div class="en">Tool / Skill / Summary / Memory</div>
+      <div class="desc">
+        横向 4 个 Tab：<b>工具 / 技能 / 摘要 / 记忆</b>。<br>
+        下方面板展示对应文件列表，点击文件唤起 <b>CodeViewerModal</b>。<br>
+        默认 Tab = <code>tool_files</code>。
+      </div>
+      <div class="tags"><span class="tag">ContextTabPanel.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">D.4</span></div>
+      <div class="part-preview">
+        <div class="file-tree-demo">
+          📂 <b>agentx</b>/
+          <div class="indent">📂 docs/</div>
+          <div class="indent" style="padding-left:28px">📄 agentx-ui-blueprint.html</div>
+          <div class="indent">📂 backend/</div>
+          <div class="indent" style="padding-left:28px">📂 app/</div>
+        </div>
+      </div>
+      <h4>文件树 · File Tree</h4>
+      <div class="en">Recursive File Tree (Files Tab)</div>
+      <div class="desc">
+        递归展开的目录树，每层缩进 <b>14px</b>。<br>
+        点击文件唤起 CodeViewerModal；点击文件夹展开/折叠。<br>
+        调用 <code>workspace.list(path, threadId)</code> 异步加载。
+      </div>
+      <div class="tags"><span class="tag">FileTree.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">D.5</span></div>
+      <div class="part-preview">
+        <div class="git-demo">
+          <div class="git-row" style="background:var(--bg-subtle);border-radius:4px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/></svg><span style="font-weight:500">main</span><span style="color:var(--t3);margin-left:auto">↓ 3</span></div>
+          <div class="git-status-row"><span style="color:var(--emerald)">+</span><span>新文件.md</span><span style="color:var(--t3);margin-left:auto">新增</span></div>
+          <div class="git-status-row"><span style="color:var(--amber)">M</span><span>README.md</span><span style="color:var(--t3);margin-left:auto">修改</span></div>
+        </div>
+      </div>
+      <h4>Git 面板 · Git Panel</h4>
+      <div class="en">IDEA-Style Git Panel (Git Tab)</div>
+      <div class="desc">
+        <b>分支选择器</b> + <b>暂存 / 取消暂存</b> + <b>提交历史</b>（可展开查看 author / date / hash）。<br>
+        后端用 <code>git2</code> crate 封装（src-tauri/src/git/）。
+      </div>
+      <div class="tags"><span class="tag">GitPanel.tsx</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">4</span>Tab 切换逻辑</h2>
+  <div class="diagram"><pre>Tab 状态: useState&lt;"tasks" | "files" | "git"&gt;("tasks")
+       │
+       ▼
+onClick={() => setActive(id)}
+       │
+       ├── "tasks" → CompactTaskList + ContextTabPanel
+       ├── "files" → FileTree
+       └── "git"   → GitPanel
+
+git 状态由 useGitStore 管理：
+       ├── repoStatus.isGitRepo
+       └── repoStatus.clean
+       │
+       └── clean=false → Git Tab 显示 amber 圆点徽章</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">5</span>关键交互</h2>
+  <table>
+    <thead><tr><th style="width:200px">交互</th><th>行为</th></tr></thead>
+    <tbody>
+      <tr><td>切换 Tasks / Files / Git</td><td>本地 useState 切换，无 URL 同步</td></tr>
+      <tr><td>Tasks 按会话隔离</td><td>tasks.filter(t => t.sessionId === currentId)</td></tr>
+      <tr><td>任务状态变化自动滚底</td><td>新任务 / running→done 切换时</td></tr>
+      <tr><td>任务删除</td><td>hover 出现 × 按钮，tasksStore.removeTask</td></tr>
+      <tr><td>上下文 Tab 文件点击</td><td>onFileClick → App.tsx 打开 CodeViewerModal</td></tr>
+      <tr><td>文件树展开</td><td>点击 chevron / 文件夹图标，懒加载子节点</td></tr>
+      <tr><td>文件树文件点击</td><td>唤起 CodeViewerModal（与上下文 Tab 共用）</td></tr>
+      <tr><td>Git 暂存切换</td><td>点击复选框切换暂存状态（IDEA 行为）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="05-tracecards.html">← M.05 轨迹卡片</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <a href="07-overlays.html" class="all">M.07 弹窗 →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.06 工作区面板 · 详细设计</p>
+</footer>
+
+</div>
+</body>
+</html>

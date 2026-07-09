@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>M.04 聊天工作区 详细设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.cv-demo {
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.cv-empty { padding: 32px 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.cv-ei { width: 56px; height: 56px; border-radius: 16px; background: rgba(79,70,229,0.08); color: var(--brand-500); display: inline-flex; align-items: center; justify-content: center; }
+.cv-eh { font-size: 16px; font-weight: 600; color: var(--t1); }
+.cv-ep { font-size: 13px; color: var(--t3); }
+.cv-ep code { padding: 1px 6px; border-radius: 4px; background: var(--bg-surface); color: var(--t-accent); font-family: ui-monospace, monospace; font-size: 12px; margin: 0 2px; }
+.cv-eg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 360px; }
+.cv-ec { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: left; }
+.cv-ec .t { font-size: 12px; font-weight: 600; color: var(--t1); margin-bottom: 2px; }
+.cv-ec .d { font-size: 11px; color: var(--t3); }
+
+.msg-row { display: flex; gap: 4px; padding: 8px 24px; }
+.msg-row.user { justify-content: flex-end; }
+.ub { max-width: 80%; background: var(--brand-700); color: var(--brand-200); padding: 8px 12px; border-radius: 10px; border-bottom-right-radius: 6px; font-size: 13px; line-height: 1.5; }
+.ub-edit { background: rgba(217,119,6,0.15); border: 1px dashed var(--amber); padding: 6px 8px; border-radius: 8px; font-size: 13px; max-width: 80%; }
+
+.composer-demo { border-top: 1px solid var(--border); background: var(--bg-surface); padding: 8px 12px; }
+.cp-inner { max-width: 768px; margin: 0 auto; }
+.cp-box { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px 6px; background: var(--bg-surface); }
+.cp-ta { width: 100%; min-height: 40px; border: none; outline: none; resize: none; font-family: inherit; font-size: 13px; color: var(--t1); background: transparent; line-height: 1.5; }
+.cp-tb { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.cp-l, .cp-r { display: flex; align-items: center; gap: 4px; }
+.cp-btn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px; border-radius: 6px; background: transparent; border: none; color: var(--t2); font-size: 11px; font-weight: 500; cursor: pointer; font-family: inherit; }
+.cp-btn.accent { color: var(--brand-500); }
+.cp-sndb { width: 26px; height: 26px; border-radius: 6px; background: var(--brand-500); color: #fff; border: none; display: inline-flex; align-items: center; justify-content: center; }
+.ws-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; background: rgba(79,70,229,0.08); color: var(--brand-500); border-radius: 6px; font-size: 11px; font-weight: 500; border: 1px solid rgba(79,70,229,0.18); }
+
+.cn-demo { position: absolute; right: 12px; top: 24px; bottom: 96px; width: 16px; display: flex; flex-direction: column; gap: 2px; }
+.cn-seg { flex: 1; width: 100%; border-radius: 2px; background: rgba(0,0,0,0.06); }
+.cn-seg.act { background: rgba(0,0,0,0.4); }
+.sbtn-demo { position: absolute; right: 12px; bottom: 16px; width: 28px; height: 28px; border-radius: 50%; background: var(--bg-surface); border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; box-shadow: var(--sh-soft); }
+
+.todo-demo { background: var(--bg-app); border-top: 1px solid var(--border); padding: 8px 12px; }
+.todo-row { display: flex; align-items: flex-start; gap: 6px; padding: 4px 0; font-size: 12px; }
+.todo-chk { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--t3); display: inline-flex; align-items: center; justify-content: center; }
+.todo-chk.done { background: var(--brand-700); border-color: var(--brand-600); color: var(--brand-200); }
+.todo-text.done { color: var(--t3); text-decoration: line-through; }
+
+.fs-table { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<nav class="topnav">
+  <div class="topnav-left">
+    <a href="index.html" class="topnav-brand">
+      <span class="bm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg></span>
+      AgentX UI 蓝图
+    </a>
+    <div class="topnav-crumbs">
+      <a href="index.html">导航</a>
+      <span class="sep">/</span>
+      <a href="01-master.html">M.01 主图</a>
+      <span class="sep">/</span>
+      <span class="current">M.04 聊天工作区</span>
+    </div>
+  </div>
+  <div class="topnav-modules">
+    <a href="index.html">总览</a>
+    <a href="01-master.html">主图</a>
+    <a href="02-titlebar.html">Title</a>
+    <a href="03-sessionlist.html">会话</a>
+    <a href="04-chatview.html" class="active">聊天</a>
+    <a href="05-tracecards.html">轨迹</a>
+    <a href="06-workspace.html">面板</a>
+    <a href="07-overlays.html">弹窗</a>
+    <a href="08-naming.html">命名</a>
+    <a href="09-derivation.html">派生</a>
+  </div>
+</nav>
+
+<div class="cover">
+  <div class="badge">M.04</div>
+  <h1>聊天工作区 详细设计</h1>
+  <div class="sub">中央 ChatView · 5 个拆解卡片（C.1 - C.5）</div>
+  <div class="meta">
+    <span>📐 区域：C. 中央聊天工作区 (flex-1)</span>
+    <span>📦 关联代码：components/chat/ChatView.tsx</span>
+    <span>🔌 数据流：useChatStream (SSE)</span>
+  </div>
+</div>
+
+<section>
+  <h2><span class="num">1</span>垂直布局</h2>
+  <p class="lede">ChatView 自上而下：消息流（flex-1 滚动）→ TodoProgress（条件）→ ErrorBanner（条件）→ ChatComposer（固定底部）。</p>
+
+  <div class="diagram"><pre>┌─────────────────────────────────────────┐
+│ Message Stream (flex-1, overflow-y-auto) │
+│  ┌───────────────────────────────────┐   │
+│  │ EmptyState / AssistantUIThread   │   │
+│  │   (虚拟化，virtualizer)            │   │
+│  └───────────────────────────────────┘   │
+│           [ChatNavigation 右浮]          │
+├─────────────────────────────────────────┤
+│ TodoProgress (todos.length > 0 时)        │
+├─────────────────────────────────────────┤
+│ ErrorBanner (errorMsg || dropError)       │
+├─────────────────────────────────────────┤
+│ ChatComposer (固定底部)                    │
+│  ┌───────────────────────────────────┐   │
+│  │ textarea (max-w-3xl)              │   │
+│  │ 左 toolbar + 右 toolbar            │   │
+│  └───────────────────────────────────┘   │
+└─────────────────────────────────────────┘</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">2</span>拆解卡片（5 项）</h2>
+
+  <div class="parts-grid">
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">C.1</span></div>
+      <div class="part-preview">
+        <div class="cv-empty" style="padding:12px">
+          <div class="cv-ei" style="width:36px;height:36px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/></svg></div>
+          <div class="cv-eh" style="font-size:12px">开始与 Agent 对话</div>
+        </div>
+      </div>
+      <h4>空状态 · Empty State</h4>
+      <div class="en">Empty State (No Messages Yet)</div>
+      <div class="desc">无消息时中央展示区。Sparkles 图标 + 标题 + 引导文案 + 4 张示例卡片网格。</div>
+      <div class="tags"><span class="tag">EmptyState.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">C.2</span><span class="tag brand">交互</span></div>
+      <div class="part-preview">
+        <div style="display:flex;flex-direction:column;gap:6px;width:100%">
+          <div class="msg-row user" style="padding:2px"><div class="ub" style="font-size:11px">帮我写一个 Python 函数</div></div>
+          <div class="msg-row user" style="padding:2px"><div class="ub-edit" style="font-size:11px">编辑中：帮我写一个 <span style="border-bottom:1px solid var(--amber)">JS</span> 函数</div></div>
+        </div>
+      </div>
+      <h4>用户消息气泡 · User Message Bubble</h4>
+      <div class="en">User Message Bubble (editable)</div>
+      <div class="desc">
+        右对齐紫色气泡（bg-brand-700）。<br>
+        <b>hover</b> 显示 ✏ 按钮 → 点击进入就地编辑模式（textarea + 模型选择 + 发送按钮）。<br>
+        流式期间禁用编辑。
+      </div>
+      <div class="tags">
+        <span class="tag">UserMessageBubble.tsx</span>
+        <span class="tag brand">字号 14px</span>
+      </div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">C.3</span></div>
+      <div class="part-preview">
+        <div class="cn-demo" style="position:relative;height:80px;width:32px;right:0;top:0"><div class="cn-seg act"></div><div class="cn-seg"></div><div class="cn-seg"></div><div class="cn-seg"></div><div class="cn-seg"></div></div>
+      </div>
+      <h4>分段导航 · Chat Navigation</h4>
+      <div class="en">Segment Navigator + Scroll-To-Bottom</div>
+      <div class="desc">
+        消息流右侧的细分段导航条（每条消息一段，点击平滑跳转）+ ↓ 按钮（滚动距离 > 100px 时浮现，点击回到底部）。
+      </div>
+      <div class="tags"><span class="tag">ChatNavigation.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">C.4</span></div>
+      <div class="part-preview">
+        <div class="todo-demo" style="border:none;padding:8px;background:var(--bg-app);border-radius:8px">
+          <div class="todo-row"><span class="todo-chk done"><svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="currentColor" stroke-width="2"/></svg></span><span class="todo-text done">读取 workspace 配置</span></div>
+          <div class="todo-row"><span class="todo-chk"></span><span>生成 HTML 文档</span></div>
+        </div>
+      </div>
+      <h4>任务进度 · Todo Progress</h4>
+      <div class="en">Todo Progress (todos &gt; 0)</div>
+      <div class="desc">
+        在输入区上方显示的后端 <code>todo_update</code> 事件。<br>
+        按 taskId 分组（DeepAgent 子任务 / code / rag / web），<br>
+        显示完成进度 <code>{completed}/{total}</code>。
+      </div>
+      <div class="tags"><span class="tag">TodoProgress.tsx</span></div>
+    </div>
+
+    <div class="part-card">
+      <div class="part-card-head"><span class="part-card-id">C.5</span><span class="tag brand">核心交互</span></div>
+      <div class="part-preview">
+        <div class="composer-demo" style="border:none;padding:8px">
+          <div class="cp-box">
+            <textarea class="cp-ta" rows="1" placeholder="输入消息…" readonly style="min-height:24px;font-size:11px"></textarea>
+            <div class="cp-tb">
+              <div class="cp-l">
+                <button class="cp-btn accent"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="2"/></svg>Work</button>
+                <span class="ws-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8"/></svg>agentx</span>
+              </div>
+              <div class="cp-r"><button class="cp-sndb"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <h4>输入区 · Chat Composer</h4>
+      <div class="en">Input Box + CommandPicker / MentionPicker</div>
+      <div class="desc">
+        textarea + 左下 mode toggle / workspace chip + 右下 context / model / permission / send。<br>
+        <b>触发器</b>：<code>/</code> 命令面板 · <code>@</code> mention（仅 work）· 拖拽附文件。
+      </div>
+      <div class="tags">
+        <span class="tag brand">核心组件</span>
+        <span class="tag">ChatComposer.tsx</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">3</span>ChatComposer 工具栏布局</h2>
+  <p class="lede">左 = 模式 + workspace，右 = context + model + permission + send。详细设计见 [M.05 轨迹卡片 - 子组件详解]。</p>
+
+  <div class="diagram"><pre>┌────────────────────────────────────────────────────────────┐
+│  textarea (placeholder: 输入消息，/ 调命令与技能，@ 委派…)    │
+├────────────────────────────────────────────────────────────┤
+│  [ModeToggle]  [WS-Chip/Add-Folder-Button]   [67%] [模型] │
+│                                                       [权限] [发送]
+└────────────────────────────────────────────────────────────┘
+ ↑ 左 toolbar (ModeToggle, WorkspaceChip)    ↑ 右 toolbar</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">4</span>消息流渲染机制</h2>
+  <div class="diagram"><pre>messages: ChatMessage[]
+       │
+       ▼ AssistantUIThread
+       │
+       ├── 有 parentRef → VirtualizedThread
+       │     ├── useVirtualizer (overscan=5)
+       │     ├── estimateSize = measureElement 实际高度
+       │     └── absolute + translateY 定位
+       │
+       └── 无 parentRef → 普通列表 (测试环境)
+
+单条消息分发：
+       ├── role=user  → UserMessageBubble
+       ├── role=tool  → ToolSystemMessage
+       └── role=assistant → AssistantMessageParts
+                  ↓
+       buildRenderItems(parts) 配对 + 折叠
+                  ↓
+       SubAgentGroup (含 delegation)
+       或独立卡片 (无 delegation)</pre></div>
+</section>
+
+<section>
+  <h2><span class="num">5</span>关键交互</h2>
+  <table>
+    <thead><tr><th style="width:200px">交互</th><th>行为</th></tr></thead>
+    <tbody>
+      <tr><td>↑ 键（输入框为空）</td><td>快速编辑上一条用户消息（参考 Cursor）</td></tr>
+      <tr><td>Enter（输入框）</td><td>发送消息</td></tr>
+      <tr><td>Shift+Enter</td><td>换行</td></tr>
+      <tr><td>/ 触发</td><td>打开 CommandPicker（命令 + 技能）</td></tr>
+      <tr><td>@ 触发（仅 work）</td><td>打开 MentionPicker（子代理列表）</td></tr>
+      <tr><td>拖拽文件到输入区</td><td>保存为 &lt;file&gt;rel&lt;/file&gt; 标签附在末尾</td></tr>
+      <tr><td>流式期间切换会话</td><td>禁用 + alert</td></tr>
+      <tr><td>发送按钮 状态</td><td>Send → Pause（流式）→ Resume（暂停）→ Send</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="bottom-nav">
+  <a href="03-sessionlist.html">← M.03 会话列表</a>
+  <a href="index.html" class="all">↑ 返回导航</a>
+  <a href="05-tracecards.html" class="all">M.05 轨迹卡片 →</a>
+</div>
+
+<footer>
+<p>AgentX 前端 UI 蓝图 · M.04 聊天工作区 · 详细设计</p>
+</footer>
+
+</div>
+</body>
+</html>
