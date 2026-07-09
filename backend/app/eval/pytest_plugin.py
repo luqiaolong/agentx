@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -95,7 +94,7 @@ class EvalItem(pytest.Item):
         self.case = case
         self.suite_id = suite_id
 
-    def runtest(self) -> None:
+    async def runtest(self) -> None:
         """执行 case + 评分。失败时 ``raise AssertionError`` 并打印详情。"""
         mark_expr = self.config.getoption("-m", default="") or ""
         is_live = "live" in mark_expr
@@ -118,7 +117,7 @@ class EvalItem(pytest.Item):
             judge_results = await composite.evaluate(case_result.events, self.case)
             return case_result, judge_results
 
-        case_result, judge_results = asyncio.run(_run())
+        case_result, judge_results = await _run()
         case_result = EvalRunner.apply_judge_results(case_result, judge_results)
 
         if not case_result.passed:

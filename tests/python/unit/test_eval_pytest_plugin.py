@@ -193,7 +193,7 @@ def test_suite_file_collect_suite_option_multiple(
 # ============================================================
 
 
-def test_runtest_pass_does_not_raise(
+async def test_runtest_pass_does_not_raise(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """case 通过时 runtest 不抛异常（mock 模式 + 空 expect）。"""
@@ -211,10 +211,10 @@ def test_runtest_pass_does_not_raise(
     )
     items = _collect_items(request, yaml_file)
     # 不抛异常即通过
-    items[0].runtest()
+    await items[0].runtest()
 
 
-def test_runtest_fail_raises_assertion_error(
+async def test_runtest_fail_raises_assertion_error(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """L1 断言失败时 runtest 抛 AssertionError。"""
@@ -235,10 +235,10 @@ def test_runtest_fail_raises_assertion_error(
     items = _collect_items(request, yaml_file)
 
     with pytest.raises(AssertionError, match="c-fail"):
-        items[0].runtest()
+        await items[0].runtest()
 
 
-def test_runtest_error_case_raises_assertion_error(
+async def test_runtest_error_case_raises_assertion_error(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """run_router 抛异常 → CaseResult.error → runtest 抛 AssertionError。"""
@@ -250,7 +250,7 @@ def test_runtest_error_case_raises_assertion_error(
     items = _collect_items(request, yaml_file)
 
     with pytest.raises(AssertionError, match="boom"):
-        items[0].runtest()
+        await items[0].runtest()
 
 
 # ============================================================
@@ -283,7 +283,7 @@ def test_reportinfo_returns_correct_format(
 # ============================================================
 
 
-def test_mock_mode_uses_mock_chat_model(
+async def test_mock_mode_uses_mock_chat_model(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """默认 mock 模式：chat_model 为 MockChatModel 实例。"""
@@ -294,12 +294,12 @@ def test_mock_mode_uses_mock_chat_model(
     )
     yaml_file = _write_suite_yaml(tmp_path, _suite())
     items = _collect_items(request, yaml_file)
-    items[0].runtest()
+    await items[0].runtest()
 
     assert isinstance(captured.get("chat_model"), MockChatModel)
 
 
-def test_live_mode_uses_no_chat_model(
+async def test_live_mode_uses_no_chat_model(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """-m live 模式：chat_model 为 None（真实 LLM）。"""
@@ -313,7 +313,7 @@ def test_live_mode_uses_no_chat_model(
 
     yaml_file = _write_suite_yaml(tmp_path, _suite())
     items = _collect_items(request, yaml_file)
-    items[0].runtest()
+    await items[0].runtest()
 
     assert captured.get("chat_model") is None
 
