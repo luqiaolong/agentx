@@ -153,19 +153,27 @@ async def test_run_agent_with_approval_readonly_streak_forces_stop() -> None:
                     "app.deep.execution._inject_tool_error_for_call",
                     new=AsyncMock(),
                 ) as mock_inject:
-                    events = []
-                    async for evt in run_agent_with_approval(
-                        agent,
-                        config,
-                        thread_id="t1",
-                        workspace_path=None,
-                        permission_mode="standard",
-                        runtime_dangerous=set(),
-                        source="deep",
-                        inputs={"messages": []},
-                        readonly_streak_threshold=2,
+                    with patch(
+                        "app.deep.execution._handle_directory_extension",
+                        new=AsyncMock(
+                            return_value=MagicMock(
+                                events=[], denied=False, timed_out=False
+                            )
+                        ),
                     ):
-                        events.append(evt)
+                        events = []
+                        async for evt in run_agent_with_approval(
+                            agent,
+                            config,
+                            thread_id="t1",
+                            workspace_path=None,
+                            permission_mode="standard",
+                            runtime_dangerous=set(),
+                            source="deep",
+                            inputs={"messages": []},
+                            readonly_streak_threshold=2,
+                        ):
+                            events.append(evt)
 
     assert any(e.get("event") == "error" for e in events)
     assert mock_inject.call_count >= 1
