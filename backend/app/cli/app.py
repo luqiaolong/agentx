@@ -272,6 +272,22 @@ def _build_eval_parser() -> argparse.ArgumentParser:
     # eval show
     show_parser = sub.add_parser("show", help="显示 suite 详情")
     show_parser.add_argument("suite_name", help="suite 名称")
+    # eval export-feedback (FR-10)
+    export_parser = sub.add_parser(
+        "export-feedback",
+        help="从 observation_feedback 导出 👎 反馈为 EvalSuite YAML",
+    )
+    export_parser.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help="回溯天数（默认 30）",
+    )
+    export_parser.add_argument(
+        "--output-dir",
+        default="tests/eval/suites",
+        help="YAML 输出目录（相对 cwd，默认 tests/eval/suites/）",
+    )
     return parser
 
 
