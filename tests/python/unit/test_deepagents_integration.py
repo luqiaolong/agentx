@@ -186,10 +186,11 @@ async def test_create_agent_passes_correct_config(tmp_path: Path, monkeypatch: p
         assert kwargs["name"] == "test_agent"
         assert kwargs["interrupt_on"] == build_interrupt_config()
         assert kwargs["memory"] == resolve_memory_paths(str(tmp_path))
-        assert kwargs["skills"] == [str(skills_dir)]
+        # skills 参数已移除（项目自研 skill 系统替代 deepagents SkillsMiddleware）
+        assert "skills" not in kwargs
         assert kwargs["backend"] is not None
 
-        # 验证 memory 非空且 skills 只含一个目录
+        # 验证 memory 非空
         assert len(kwargs["memory"]) == 1
         assert kwargs["memory"][0].endswith("AGENTS.md")
 
@@ -210,108 +211,15 @@ async def test_create_agent_uses_default_name_and_none_backend(tmp_path: Path, m
         assert kwargs["name"] == "deep_agent"
         assert kwargs["backend"] is None
         assert kwargs["memory"] is None
-        assert kwargs["skills"] is None
+        # skills 参数已移除
+        assert "skills" not in kwargs
 
 
 # ============================================================
-# permissions= 默认注入 + 自定义透传
+# permissions= 已移除（deepagents 0.6+ 与 SafeLocalShellBackend 不兼容）
+# 项目通过 SafeLocalShellBackend + SessionSandbox 替代框架级 permissions
+# 以下测试已删除
 # ============================================================
-
-
-@pytest.mark.asyncio
-async def test_create_agent_default_permissions_injected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """未传 ``permissions=`` 时注入 ``_DEFAULT_PERMISSIONS``（deny 写系统目录 + .git）。"""
-    from app.deep.harness import _DEFAULT_PERMISSIONS
-
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
-    with patch("app.deep.harness.create_deep_agent") as mock_create:
-        mock_create.return_value = MagicMock()
-        create_agent(
-            MagicMock(),
-            [],
-            system_prompt="prompt",
-            workspace_path=str(tmp_path),
-        )
-        _, kwargs = mock_create.call_args
-        # 默认注入 _DEFAULT_PERMISSIONS（非 None）
-        assert kwargs["permissions"] is _DEFAULT_PERMISSIONS
-        # 应有 2 条规则：deny 写 /proc /sys /dev /etc + deny 写 .git
-        assert len(kwargs["permissions"]) == 2
-        modes = {p.mode for p in kwargs["permissions"]}
-        assert modes == {"deny"}
-        # 所有规则都是 write 操作
-        for perm in kwargs["permissions"]:
-            assert "write" in perm.operations
-
-
-@pytest.mark.asyncio
-async def test_create_agent_custom_permissions_override_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """传入自定义 ``permissions=`` 时覆盖默认值，原样透传给 ``create_deep_agent``。"""
-    from deepagents import FilesystemPermission
-
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
-    custom_perms = [
-        FilesystemPermission(
-            operations=["read", "write"],
-            paths=["/tmp/**"],
-            mode="allow",
-        ),
-    ]
-    with patch("app.deep.harness.create_deep_agent") as mock_create:
-        mock_create.return_value = MagicMock()
-        create_agent(
-            MagicMock(),
-            [],
-            system_prompt="prompt",
-            workspace_path=str(tmp_path),
-            permissions=custom_perms,
-        )
-        _, kwargs = mock_create.call_args
-        # 自定义 permissions 原样透传，未被替换为默认值
-        assert kwargs["permissions"] is custom_perms
-        assert len(kwargs["permissions"]) == 1
-        assert kwargs["permissions"][0].mode == "allow"
-        assert "/tmp/**" in kwargs["permissions"][0].paths
-
-
-@pytest.mark.asyncio
-async def test_create_agent_no_workspace_still_has_default_permissions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``workspace_path=None`` 时仍然注入 ``_DEFAULT_PERMISSIONS`` 作为静态基线。"""
-    from app.deep.harness import _DEFAULT_PERMISSIONS
-
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
-    with patch("app.deep.harness.create_deep_agent") as mock_create:
-        mock_create.return_value = MagicMock()
-        create_agent(
-            MagicMock(),
-            [],
-            system_prompt="prompt",
-            # workspace_path=None
-        )
-        _, kwargs = mock_create.call_args
-        # 即使没有 workspace，permissions 仍注入默认值（框架级静态基线）
-        assert kwargs["permissions"] is _DEFAULT_PERMISSIONS
-
-
-def test_default_permissions_cover_sensitive_paths() -> None:
-    """``_DEFAULT_PERMISSIONS`` 覆盖系统敏感目录 + .git 目录。"""
-    from app.deep.harness import _DEFAULT_PERMISSIONS
-
-    all_paths: list[str] = []
-    for perm in _DEFAULT_PERMISSIONS:
-        all_paths.extend(perm.paths)
-    # /proc /sys /dev /etc 系统目录
-    assert "/proc/**" in all_paths
-    assert "/sys/**" in all_paths
-    assert "/dev/**" in all_paths
-    assert "/etc/**" in all_paths
-    # .git 目录
-    assert "/**/.git/**" in all_paths
-    # 全部 deny 模式
-    assert all(p.mode == "deny" for p in _DEFAULT_PERMISSIONS)
-    # 全部只针对 write 操作
-    for perm in _DEFAULT_PERMISSIONS:
-        assert perm.operations == ["write"]
 
 
 # ============================================================
