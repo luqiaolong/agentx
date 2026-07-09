@@ -45,30 +45,43 @@ function groupTodosByTaskId(todos: TodoItem[]): Map<string | undefined, TodoItem
 function TodoList({ todos }: { todos: TodoItem[] }) {
   return (
     <ul className="space-y-1">
-      {todos.map((t, i) => (
-        <li key={i} className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
-          <span
-            className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${
-              t.done ? "border-brand-600 bg-brand-700 text-brand-200" : "border-strong"
-            }`}
-          >
-            {t.done && (
-              <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
-                <path
-                  d="M2.5 6L5 8.5L9.5 3.5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-          </span>
-          <span className={t.done ? "text-muted-c line-through" : "text-secondary-c"}>
-            {t.text}
-          </span>
-        </li>
-      ))}
+      {todos.map((t, i) => {
+        const isCompleted = t.status === "completed";
+        const isInProgress = t.status === "in_progress";
+        // pending: 灰色空圆圈；in_progress: 黄色 ◐ + spin；completed: 绿色 ✓
+        const badgeClass = isCompleted
+          ? "border-brand-600 bg-brand-700 text-brand-200"
+          : isInProgress
+            ? "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+            : "border-strong text-muted-c";
+        return (
+          <li key={i} className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
+            <span
+              className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${badgeClass} ${
+                isInProgress ? "animate-spin" : ""
+              }`}
+            >
+              {isCompleted && (
+                <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
+                  <path
+                    d="M2.5 6L5 8.5L9.5 3.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+              {isInProgress && (
+                <span className="text-[10px] leading-none">◐</span>
+              )}
+            </span>
+            <span className={isCompleted ? "text-muted-c line-through" : "text-secondary-c"}>
+              {t.content}
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }

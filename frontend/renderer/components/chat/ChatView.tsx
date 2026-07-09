@@ -477,7 +477,7 @@ export function ChatView() {
     setIsPaused(false);
   };
 
-  const completedTodos = todos.filter((t) => t.done).length;
+  const completedTodos = todos.filter((t) => t.status === "completed").length;
 
   const scrollToBottom = () => {
     const el = scrollContainerRef.current;

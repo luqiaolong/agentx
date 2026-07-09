@@ -153,7 +153,7 @@ class EventRenderer:
         print(f"{Fore.YELLOW}{'='*50}{Style.RESET_ALL}", flush=True)
 
     def _render_todo_update(self, data: str) -> None:
-        """todo_update 事件：显示待办列表。"""
+        """todo_update 事件：显示待办列表（原生 deepagents {content, status} 三态 schema）。"""
         try:
             parsed = json.loads(data)
             todos = parsed.get("todos", [])
@@ -161,10 +161,15 @@ class EventRenderer:
             todos = []
 
         for todo in todos:
-            text = todo.get("text", "")
-            done = todo.get("done", False)
-            marker = f"{Fore.GREEN}✓{Style.RESET_ALL}" if done else f"{Fore.YELLOW}○{Style.RESET_ALL}"
-            print(f"  {marker} {text}", flush=True)
+            content = todo.get("content", "")
+            status = todo.get("status", "pending")
+            if status == "completed":
+                marker = f"{Fore.GREEN}✓{Style.RESET_ALL}"
+            elif status == "in_progress":
+                marker = f"{Fore.YELLOW}◐{Style.RESET_ALL}"
+            else:  # pending
+                marker = f"{Fore.LIGHTBLACK_EX}○{Style.RESET_ALL}"
+            print(f"  {marker} {content}", flush=True)
 
     def _render_delegation(self, data: str) -> None:
         """delegation 事件：显示委派信息。"""
@@ -178,58 +183,6 @@ class EventRenderer:
 
         print(f"\n{Fore.MAGENTA}[委派: {target}]{Style.RESET_ALL} {task}", flush=True)
 
-    def _render_team_plan(self, data: str) -> None:
-        """team_plan 事件：显示团队计划。"""
-        try:
-            parsed = json.loads(data)
-            tasks = parsed.get("plan", parsed.get("tasks", parsed.get("subtasks", [])))
-            count = len(tasks) if isinstance(tasks, list) else "?"
-        except (json.JSONDecodeError, TypeError):
-            tasks = []
-            count = "?"
-
-        print(f"\n{Fore.MAGENTA}[团队计划: {count} 个子任务]{Style.RESET_ALL}", flush=True)
-        if isinstance(tasks, list):
-            for i, task in enumerate(tasks, 1):
-                if isinstance(task, dict):
-                    agent = task.get("agent", "?")
-                    purpose = task.get("purpose", task.get("input", ""))
-                    if len(purpose) > 80:
-                        purpose = purpose[:80] + "..."
-                    print(f"  {i}. [{agent}] {purpose}", flush=True)
-        if self.verbose:
-            print(f"{Fore.LIGHTBLACK_EX}{data}{Style.RESET_ALL}", flush=True)
-
-    def _render_team_progress(self, data: str) -> None:
-        """team_progress 事件：显示团队进度。"""
-        try:
-            parsed = json.loads(data)
-            agent = parsed.get("agent", parsed.get("name", ""))
-            status = parsed.get("status", "")
-            message = parsed.get("message", "")
-        except (json.JSONDecodeError, TypeError):
-            agent = ""
-            status = data
-            message = ""
-
-        msg_part = f" — {message}" if message else ""
-        print(f"{Fore.MAGENTA}[{agent}] {status}{msg_part}{Style.RESET_ALL}", flush=True)
-
-    def _render_team_result(self, data: str) -> None:
-        """team_result 事件：显示团队结果。"""
-        try:
-            parsed = json.loads(data)
-            agent = parsed.get("agent", parsed.get("name", ""))
-            result = parsed.get("summary", parsed.get("result", ""))
-        except (json.JSONDecodeError, TypeError):
-            agent = ""
-            result = data
-
-        result_str = str(result)
-        if len(result_str) > 2000:
-            result_str = result_str[:2000] + "..."
-        print(f"{Fore.MAGENTA}[结果: {agent}] {result_str}{Style.RESET_ALL}", flush=True)
-
     def _render_team_done(self, data: str) -> None:
         """team_done 事件：显示团队完成。"""
         print(f"\n{Fore.MAGENTA}[团队任务完成]{Style.RESET_ALL}", flush=True)
@@ -238,16 +191,6 @@ class EventRenderer:
         """classification 事件：verbose 时显示。"""
         if self.verbose:
             print(f"{Fore.CYAN}[分类: {data}]{Style.RESET_ALL}", flush=True)
-
-    def _render_plan(self, data: str) -> None:
-        """plan 事件：verbose 时显示。"""
-        if self.verbose:
-            print(f"{Fore.CYAN}[计划: {data}]{Style.RESET_ALL}", flush=True)
-
-    def _render_plan_update(self, data: str) -> None:
-        """plan_update 事件：verbose 时显示。"""
-        if self.verbose:
-            print(f"{Fore.CYAN}[计划更新: {data}]{Style.RESET_ALL}", flush=True)
 
     def _render_error(self, data: str) -> None:
         """error 事件：红色输出。"""

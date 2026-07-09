@@ -1,15 +1,15 @@
-"""AgentTeam Orchestrator：拆解任务为子任务计划。
+"""AgentTeam Orchestrator：拆解任务为子任务计划（deepagents 原生 Todo schema）。
 
 包含：
 - ``_BASE_EXPERTS``：基础专家清单（硬编码：code / rag / web / deep）。
 - ``_build_team_experts_description``：声明式团队角色描述生成器，从
   ``settings.team_subagents`` 动态生成团队专家清单。
-- ``_ORCHESTRATOR_PROMPT``：Orchestrator 系统 prompt 模板。
+- ``_ORCHESTRATOR_SYSTEM_PROMPT``：Orchestrator 系统 prompt 模板（配合
+  ``create_deep_agent`` 使用，由 ``TodoListMiddleware`` 自动注入
+  ``write_todos`` 工具，LLM 调用 ``write_todos`` 写入 ``state.todos``）。
 - ``_build_project_context``：构建项目上下文摘要，避免 subagent 盲探索。
-- ``_build_orchestrator_prompt``：根据场景组装 Orchestrator prompt。
-- ``TeamPlan`` / ``TeamPlanItem``：结构化输出 schema（配合
-  ``llm.with_structured_output(TeamPlan)``，避免手写 JSON 解析）。
-- ``_postprocess_plan``：对结构化输出做截断 + 危险任务强制改写 deep。
+- ``_todos_to_team_tasks``：从 ``state.todos`` 解析子任务，转换为
+  ``TeamPlanTask`` 列表（解析 ``[agent:xxx]`` 前缀确定 agent 类型）。
 - ``_looks_like_dangerous_task``：启发式判断子任务是否涉及危险操作。
 - ``_validate_task``：校验子任务 agent 是否可用（含 custom / 团队角色）。
   团队角色集合由 ``BUILTIN_TEAM_KEYS`` 决定（不硬编码字面量）。
@@ -17,42 +17,22 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
-
-from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
 
 from app.config.subagents import BUILTIN_TEAM_KEYS
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
 
 __all__ = [
-    "TeamPlan",
-    "TeamPlanItem",
     "_BASE_EXPERTS",
-    "_ORCHESTRATOR_PROMPT",
+    "_ORCHESTRATOR_SYSTEM_PROMPT",
     "_build_project_context",
-    "_build_orchestrator_prompt",
     "_build_team_experts_description",
     "_looks_like_dangerous_task",
-    "_postprocess_plan",
+    "_todos_to_team_tasks",
     "_validate_task",
 ]
-
-
-class TeamPlanItem(BaseModel):
-    """单个子任务的结构化输出项。"""
-
-    agent: str = Field(description="执行专家：code / rag / web / deep / 团队角色 / custom-*")
-    input: str = Field(description="子任务输入，具体到文件路径或搜索词")
-    purpose: str = Field(default="", description="该子任务的目的说明")
-
-
-class TeamPlan(BaseModel):
-    """Orchestrator 结构化输出 schema：拆解后的子任务计划。"""
-
-    reasoning: str = Field(default="", description="为什么这样拆任务的推理")
-    plan: list[TeamPlanItem] = Field(default_factory=list, description="子任务列表")
 
 
 # 基础专家（始终可用）
@@ -91,25 +71,32 @@ def _build_team_experts_description(settings: Any) -> str:
         lines.append(f"- {key}: {desc}")
     return "\n".join(lines)
 
-_ORCHESTRATOR_PROMPT = ChatPromptTemplate.from_messages([
-    (
-        "human",
-        "你是一个任务拆解专家（Orchestrator）。请把用户请求拆分成若干子任务，"
-        "每个子任务指定一个执行专家和输入。"
-        "\n\n可用专家：\n"
-        "{experts}"
-        "\n项目上下文：\n{context}\n"
-        "\n按结构化输出返回计划（reasoning + plan 列表，每项含 agent/input/purpose）。\n"
-        "\n约束：\n"
-        "1. 如果任务涉及写文件、编辑文件、执行系统命令，agent 必须设为 deep。\n"
-        "2. 不要编造文件路径；若用户没给路径，子任务输入里说明需要搜索或推断。\n"
-        "3. 子任务数量不要超过 {max_tasks} 个。\n"
-        "4. 若任务简单，可只返回一个子任务。\n"
-        "5. 子任务输入中应引用项目上下文里的具体路径，避免 subagent 盲探索。\n"
-        "6. 若用户请求涉及多个软件开发环节（如前端+后端+测试），优先使用团队角色（frontend_dev/backend_dev/tester 等）而非通用 code。\n"
-        "\n\n用户请求：{user_message}",
-    ),
-])
+
+# Orchestrator 系统 prompt（配合 create_deep_agent 使用）
+# TodoListMiddleware 自动注入 write_todos 工具 + WRITE_TODOS_SYSTEM_PROMPT
+# LLM 调用 write_todos 写入 state.todos，_plan_node 从 result 读取 todos
+_ORCHESTRATOR_SYSTEM_PROMPT = """你是一个任务拆解专家（Orchestrator）。
+请把用户请求拆分成若干子任务，使用 write_todos 工具写入任务清单。
+
+每个 todo 的 content 必须以 [agent:类型] 开头，格式：
+[agent:code] 读取 src/main.py 并分析入口逻辑
+[agent:deep] 修改 src/main.py 添加日志输出
+[agent:rag] 检索知识库中关于 FastAPI 最佳实践
+
+可用 agent 类型：
+{experts}
+
+约束：
+1. 涉及写文件、编辑文件、执行系统命令的任务，agent 必须设为 deep
+2. 不要编造文件路径；若用户没给路径，子任务输入里说明需要搜索或推断
+3. 子任务数量不要超过 {max_tasks} 个
+4. 若任务简单，可只返回一个子任务
+5. 若用户请求涉及多个软件开发环节（如前端+后端+测试），优先使用团队角色（frontend_dev/backend_dev/tester 等）而非通用 code
+6. 所有 todo 的 status 设为 pending
+"""
+
+# [agent:xxx] 前缀正则：匹配 [agent:code] / [agent:deep] / [agent:custom-mycoder] 等
+_AGENT_PREFIX_RE = re.compile(r"^\s*\[agent:([a-zA-Z0-9_\-]+)\]\s*(.*)", re.DOTALL)
 
 
 def _build_project_context() -> str:
@@ -135,66 +122,67 @@ def _build_project_context() -> str:
     return "\n".join(lines)
 
 
-def _build_orchestrator_prompt(
-    user_message: str,
-    max_tasks: int,
-    context: str = "",
-    scene: str = "work",
-    settings: Any | None = None,
-) -> Any:
-    """构建 Orchestrator prompt，根据场景选择可用专家。
+def _todos_to_team_tasks(
+    todos: list[dict],
+    settings: Any,
+) -> tuple[list[TeamPlanTask], str]:
+    """从 ``state.todos`` 解析子任务，转换为 ``TeamPlanTask`` 列表。
 
-    coding 场景下，团队角色清单从 ``settings.team_subagents`` 动态生成。
-    返回 ``ChatPromptValue``（LangChain 标准 messages 列表），供
-    ``llm.with_structured_output(TeamPlan).ainvoke(prompt)`` 直接消费。
-    """
-    experts = _BASE_EXPERTS
-    if scene == "coding" and settings is not None:
-        team_desc = _build_team_experts_description(settings)
-        if team_desc:
-            experts = experts + "\n" + team_desc
-    return _ORCHESTRATOR_PROMPT.invoke({
-        "max_tasks": max_tasks,
-        "context": context,
-        "experts": experts,
-        "user_message": user_message,
-    })
+    解析每个 todo 的 content 前缀 ``[agent:xxx]`` 确定 agent 类型，
+    剥离前缀后的内容作为 input。调用 ``_validate_task`` 校验 +
+    ``_looks_like_dangerous_task`` 安全改写。
 
-
-def _postprocess_plan(plan: TeamPlan, max_tasks: int) -> tuple[list[TeamPlanTask], str]:
-    """对结构化输出做截断 + 危险任务强制改写 deep。
-
-    接收 ``llm.with_structured_output(TeamPlan)`` 的结果，做以下处理：
-    - 截断到 ``max_tasks`` 条
-    - 规范化 agent/input/purpose（strip + lower agent）
-    - 跳过缺少 agent 或 input 的条目
-    - 涉及危险操作但非 deep 的任务强制改写为 deep（安全约束）
+    Args:
+        todos: deepagents 原生 Todo 列表 ``[{content: str, status: str}, ...]``
+        settings: 全局配置（用于 ``_validate_task`` 校验 agent 可用性）
 
     Returns:
-        (tasks, reasoning)
+        ``(tasks, reasoning)``: tasks 是 ``TeamPlanTask`` 列表，reasoning 是空串
+        （deepagents ``write_todos`` 不产 reasoning，原 ``TeamPlan.reasoning``
+        字段已废弃）。
     """
-    raw_items = plan.plan or []
     tasks: list[TeamPlanTask] = []
-    for item in raw_items[:max_tasks]:
-        agent = (item.agent or "").strip().lower()
-        input_text = (item.input or "").strip()
-        purpose = (item.purpose or "").strip()
-        if not agent or not input_text:
+    errors: dict[str, str] = {}
+
+    for todo in todos or []:
+        content = todo.get("content", "") if isinstance(todo, dict) else ""
+        if not content:
+            continue
+        match = _AGENT_PREFIX_RE.match(content)
+        if not match:
+            logger.warning(
+                "team orchestrator todo missing [agent:xxx] prefix",
+                content_preview=content[:100],
+            )
+            continue
+        agent = match.group(1).strip().lower()
+        input_text = match.group(2).strip()
+        if not input_text:
             continue
         # 安全改写：涉及危险工具关键词但非 deep 的任务强制改为 deep
         if agent != "deep" and _looks_like_dangerous_task(input_text):
             agent = "deep"
-        tasks.append(TeamPlanTask(agent=agent, input=input_text, purpose=purpose))
 
-    if len(raw_items) > max_tasks:
-        logger.warning(
-            "team orchestrator plan truncated",
-            original=len(raw_items),
-            max_tasks=max_tasks,
+        ok, err = _validate_task(TeamPlanTask(agent=agent, input=input_text, purpose=""), settings)
+        if ok:
+            tasks.append(TeamPlanTask(agent=agent, input=input_text, purpose=""))
+        else:
+            errors[agent] = err
+            logger.warning(
+                "team orchestrator task validation failed",
+                agent=agent,
+                error=err,
+            )
+
+    if errors:
+        logger.info(
+            "team orchestrator some tasks filtered",
+            total_todos=len(todos),
+            valid_tasks=len(tasks),
+            invalid_agents=list(errors.keys()),
         )
 
-    reasoning = (plan.reasoning or "").strip()
-    return tasks, reasoning
+    return tasks, ""
 
 
 def _looks_like_dangerous_task(input_text: str) -> bool:

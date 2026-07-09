@@ -38,8 +38,8 @@ beforeEach(() => {
   });
 });
 
-describe("team_plan 单次 upsert 性能", () => {
-  it("N 个 agent 的 team_plan 只触发 1 次 set（不是 N+1 次）", async () => {
+describe("team 单次 upsert 性能", () => {
+  it("N 个 agent 的 team upsert 只触发 1 次 set（不是 N+1 次）", async () => {
     const sid = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
 
@@ -49,7 +49,7 @@ describe("team_plan 单次 upsert 性能", () => {
       setCount++;
     });
 
-    // 模拟 team_plan 事件：5 个 agent
+    // 模拟 team upsert：5 个 agent
     const plan = [
       { agent: "code", input: "do code", purpose: "写代码" },
       { agent: "rag", input: "do rag", purpose: "检索" },

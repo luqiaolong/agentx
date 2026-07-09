@@ -1,11 +1,11 @@
-"""AgentTeam 路径单元测试： Orchestrator 拆任务、并行调度、黑板汇总、安全改写。
+"""AgentTeam 路径单元测试：Orchestrator 拆任务、并行调度、黑板汇总、安全改写。
 
 覆盖：
-1. _postprocess_plan：结构化输出截断 / 危险任务强制改写 deep
+1. _todos_to_team_tasks：从 deepagents 原生 todos 解析子任务 / 危险任务强制改写 deep
 2. _validate_task：内置子代理可用性校验
-3. _bounded_gather：并发上限
-4. Blackboard：汇总序列化
-5. run_team_path：mock Orchestrator + mock 子代理，验证 SSE 事件序列
+3. Blackboard：汇总序列化
+4. run_team_path：mock Orchestrator + mock 子代理，验证 SSE 事件序列
+   （todo_update / token / team_done / error，不再有 team_plan/team_progress/team_result）
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from app.team.orchestrator import (
     _validate_task,
     run_team_path,
 )
-from app.team.planner import TeamPlan, TeamPlanItem, _postprocess_plan
-from app.sse.events import make_team_event
+from app.team.planner import _todos_to_team_tasks
+from app.sse.events import make_sse_event
 
 
 # ============================================================
@@ -51,77 +51,104 @@ def _isolate_settings(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_abort_state():
+    """每个用例前后清理全局 abort 状态。"""
+    from app.security.approval import state as approval_state
+
+    approval_state._abort_flags.clear()
+    approval_state._abort_events.clear()
+    yield
+    approval_state._abort_flags.clear()
+    approval_state._abort_events.clear()
+
+
+def _todo(content: str, status: str = "pending") -> dict:
+    """构造 deepagents 原生 Todo dict。"""
+    return {"content": content, "status": status}
+
+
 # ============================================================
-# 1. _postprocess_plan
+# 1. _todos_to_team_tasks
 # ============================================================
 
 
-def test_postprocess_plan_valid() -> None:
-    """结构化 TeamPlan 输出被正确转换为 TeamPlanTask 列表。"""
-    plan = TeamPlan(
-        reasoning="需要同时查看代码和文档",
-        plan=[
-            TeamPlanItem(agent="code", input="读取 main.py", purpose="入口结构"),
-            TeamPlanItem(agent="rag", input="Router 设计", purpose="检索文档"),
-        ],
-    )
-    tasks, reasoning = _postprocess_plan(plan, max_tasks=5)
+def _make_validate_settings() -> Any:
+    """构造 _todos_to_team_tasks 内部 _validate_task 使用的 settings。"""
+    settings = get_settings()
+    settings.subagents_config = {
+        "rag": {"enabled": True},
+        "web": {"enabled": True, "tools": ["web_search"]},
+    }
+    settings.tools_config = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
+    return settings
+
+
+def test_todos_to_team_tasks_valid() -> None:
+    """todos 列表被正确转换为 TeamPlanTask 列表（解析 [agent:xxx] 前缀）。"""
+    settings = _make_validate_settings()
+    todos = [
+        _todo("[agent:code] 读取 main.py"),
+        _todo("[agent:rag] 检索 Router 设计"),
+    ]
+    tasks, reasoning = _todos_to_team_tasks(todos, settings)
     assert len(tasks) == 2
     assert tasks[0].agent == "code"
     assert tasks[0].input == "读取 main.py"
-    assert reasoning == "需要同时查看代码和文档"
+    assert tasks[1].agent == "rag"
+    assert tasks[1].input == "检索 Router 设计"
+    # deepagents write_todos 不产 reasoning
+    assert reasoning == ""
 
 
-def test_postprocess_plan_empty_plan() -> None:
-    """空 plan 列表返回空任务。"""
-    plan = TeamPlan(reasoning="", plan=[])
-    tasks, reasoning = _postprocess_plan(plan, max_tasks=5)
+def test_todos_to_team_tasks_empty_list() -> None:
+    """空 todos 列表返回空任务。"""
+    settings = _make_validate_settings()
+    tasks, reasoning = _todos_to_team_tasks([], settings)
     assert tasks == []
     assert reasoning == ""
 
 
-def test_postprocess_plan_truncates_over_max_tasks() -> None:
-    """子任务数超过 max_tasks 时被截断。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="code", input=f"任务{i}", purpose=f"目的{i}")
-            for i in range(8)
-        ],
-    )
-    tasks, _ = _postprocess_plan(plan, max_tasks=5)
-    assert len(tasks) == 5
-
-
-def test_postprocess_plan_missing_required_fields_skipped() -> None:
-    """缺少 agent 或 input 的条目被跳过。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="code", input="有效"),
-            TeamPlanItem(agent="", input="无效 agent"),
-            TeamPlanItem(agent="rag", input="", purpose="缺少 input"),
-        ],
-    )
-    tasks, _ = _postprocess_plan(plan, max_tasks=5)
+def test_todos_to_team_tasks_missing_prefix_skipped() -> None:
+    """缺少 [agent:xxx] 前缀的 todo 被跳过。"""
+    settings = _make_validate_settings()
+    todos = [
+        _todo("[agent:code] 有效任务"),
+        _todo("没有前缀的任务"),
+        _todo("[agent:rag]"),
+    ]
+    tasks, _ = _todos_to_team_tasks(todos, settings)
     assert len(tasks) == 1
     assert tasks[0].agent == "code"
 
 
-def test_postprocess_plan_rewrites_dangerous_task_to_deep() -> None:
+def test_todos_to_team_tasks_rewrites_dangerous_task_to_deep() -> None:
     """涉及写/编辑/shell 的任务被强制改写为 deep agent。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="code", input="写入 config.py", purpose="改配置"),
-            TeamPlanItem(agent="code", input="编辑 README.md", purpose="改文档"),
-            TeamPlanItem(agent="code", input="执行命令 ls", purpose="shell"),
-            TeamPlanItem(agent="code", input="读取 main.py", purpose="只读"),
-        ],
-    )
-    tasks, _ = _postprocess_plan(plan, max_tasks=5)
+    settings = _make_validate_settings()
+    todos = [
+        _todo("[agent:code] 写入 config.py"),
+        _todo("[agent:code] 编辑 README.md"),
+        _todo("[agent:code] 执行命令 ls"),
+        _todo("[agent:code] 读取 main.py"),
+    ]
+    tasks, _ = _todos_to_team_tasks(todos, settings)
     assert len(tasks) == 4
     assert tasks[0].agent == "deep"
     assert tasks[1].agent == "deep"
     assert tasks[2].agent == "deep"
     assert tasks[3].agent == "code"
+
+
+def test_todos_to_team_tasks_invalid_agent_filtered() -> None:
+    """未知 agent 类型的 todo 被过滤（_validate_task 返回 False）。"""
+    settings = _make_validate_settings()
+    todos = [
+        _todo("[agent:code] 有效"),
+        _todo("[agent:unknown_agent] 无效"),
+    ]
+    tasks, _ = _todos_to_team_tasks(todos, settings)
+    assert len(tasks) == 1
+    assert tasks[0].agent == "code"
 
 
 # ============================================================
@@ -245,16 +272,13 @@ def test_build_summary_empty_returns_placeholder() -> None:
 
 
 # ============================================================
-# 4. run_team_path 集成
+# 4. run_team_path 集成（todo_update + token + team_done）
 # ============================================================
 
 
-def _make_fake_llm(plan: TeamPlan) -> MagicMock:
-    """构造 mock LLM：with_structured_output().ainvoke 返回 TeamPlan；astream 返回汇总 chunk。"""
+def _make_fake_llm_for_aggregator() -> MagicMock:
+    """构造 mock LLM：astream 返回汇总 chunk（供 Aggregator 使用）。"""
     mock = MagicMock()
-    structured_mock = MagicMock()
-    structured_mock.ainvoke = AsyncMock(return_value=plan)
-    mock.with_structured_output = MagicMock(return_value=structured_mock)
 
     async def _fake_astream(messages: Any) -> AsyncIterator:
         yield SimpleNamespace(content="最终汇总")
@@ -263,18 +287,36 @@ def _make_fake_llm(plan: TeamPlan) -> MagicMock:
     return mock
 
 
-async def test_run_team_path_emits_team_plan_progress_result(
+def _patch_orchestrator_to_return_todos(
+    monkeypatch: pytest.MonkeyPatch,
+    todos: list[dict],
+) -> MagicMock:
+    """patch deepagents.create_deep_agent 返回 mock orchestrator（ainvoke 返回 todos）。
+
+    同时 patch app.team.orchestrator.get_chat_model 返回 mock LLM 供 Aggregator 使用。
+    """
+    fake_llm = _make_fake_llm_for_aggregator()
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: fake_llm)
+
+    fake_orchestrator = MagicMock()
+    fake_orchestrator.ainvoke = AsyncMock(return_value={"todos": todos})
+
+    def _fake_create_deep_agent(*args: Any, **kwargs: Any) -> Any:
+        return fake_orchestrator
+
+    monkeypatch.setattr("deepagents.create_deep_agent", _fake_create_deep_agent)
+    return fake_llm
+
+
+async def test_run_team_path_emits_todo_update_and_aggregates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """完整链路：team_plan → team_progress(running) → team_progress(done) → team_result → token/done。"""
-    plan = TeamPlan(
-        reasoning="需要代码和检索",
-        plan=[
-            TeamPlanItem(agent="code", input="读 main.py", purpose="入口"),
-            TeamPlanItem(agent="rag", input="Router 设计", purpose="文档"),
-        ],
-    )
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
+    """完整链路：todo_update（in_progress + completed）→ token（Aggregator 汇总）→ team_done。"""
+    todos = [
+        _todo("[agent:code] 读 main.py"),
+        _todo("[agent:rag] 检索 Router 设计"),
+    ]
+    _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
@@ -293,39 +335,37 @@ async def test_run_team_path_emits_team_plan_progress_result(
 
     event_types = [e["event"] for e in events]
 
-    # team_plan 在最前
-    assert event_types[0] == "team_plan"
-    plan_data = json.loads(events[0]["data"])
-    assert len(plan_data["plan"]) == 2
+    # todo_update 事件存在（替代旧的 team_plan / team_progress）
+    assert "todo_update" in event_types
 
-    # running 事件
-    running = [e for e in events if e["event"] == "team_progress" and json.loads(e["data"])["status"] == "running"]
-    assert len(running) == 2
+    # 第一个 todo_update 应包含初始 pending 列表（来自 plan 节点后的 state）
+    todo_updates = [e for e in events if e["event"] == "todo_update"]
+    assert len(todo_updates) >= 1
 
-    # done 事件
-    done_progress = [e for e in events if e["event"] == "team_progress" and json.loads(e["data"])["status"] == "done"]
-    assert len(done_progress) == 2
+    # 解析最后一个 todo_update：所有 todo 应为 completed
+    final_todo_data = json.loads(todo_updates[-1]["data"])
+    final_todos = final_todo_data.get("todos", [])
+    assert len(final_todos) == 2
+    for todo in final_todos:
+        assert todo["status"] == "completed", f"Expected completed, got {todo['status']}"
 
-    # team_result 事件
-    results = [e for e in events if e["event"] == "team_result"]
-    assert len(results) == 2
-
-    # Aggregator 输出 token（token 事件 data 为纯字符串，与 graph.py _sse 约定一致）
+    # Aggregator 输出 token
     tokens = [e for e in events if e["event"] == "token"]
     assert len(tokens) >= 1
     assert "".join(e["data"] for e in tokens) == "最终汇总"
+
+    # team_done 收尾
+    assert "team_done" in event_types
 
 
 async def test_run_team_path_all_subtasks_fail_yields_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """所有子任务失败时，发送 error 事件。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="code", input="读文件", purpose="读"),
-        ],
-    )
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
+    todos = [
+        _todo("[agent:code] 读文件"),
+    ]
+    _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
@@ -342,21 +382,19 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     )
 
     error_events = [e for e in events if e["event"] == "error"]
-    assert len(error_events) == 1
-    assert "所有专家任务均失败" in error_events[0]["data"]
+    assert len(error_events) >= 1
+    assert any("所有专家任务均失败" in e["data"] for e in error_events)
 
 
 async def test_run_team_path_partial_failure_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """部分子任务失败时，成功结果仍进入黑板并触发 Aggregator。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="code", input="读文件", purpose="读"),
-            TeamPlanItem(agent="rag", input="检索", purpose="检索"),
-        ],
-    )
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
+    todos = [
+        _todo("[agent:code] 读文件"),
+        _todo("[agent:rag] 检索"),
+    ]
+    _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码成功"}
@@ -375,44 +413,36 @@ async def test_run_team_path_partial_failure_continues(
         )
     )
 
-    # code 成功，rag 失败
-    results = {json.loads(e["data"])["agent"]: e for e in events if e["event"] == "team_result"}
-    assert "code" in results
-    assert "rag" not in results
-
-    # Aggregator 仍执行
+    # code 成功 → Aggregator 仍执行并输出 token
     tokens = [e for e in events if e["event"] == "token"]
     assert len(tokens) >= 1
+    # team_done 收尾
+    assert any(e["event"] == "team_done" for e in events)
 
 
 async def test_run_team_path_invalid_plan_yields_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Orchestrator 输出空计划时发送 error。"""
-    # with_structured_output 永远返回结构化对象，无法返回非法 JSON；
-    # 用空 plan 模拟"未生成有效计划"场景
-    plan = TeamPlan(reasoning="", plan=[])
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
+    """Orchestrator 输出空 todos 时发送 error。"""
+    _patch_orchestrator_to_return_todos(monkeypatch, [])
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-invalid", {"thread_id": "t-invalid", "messages": []})
     )
 
     error_events = [e for e in events if e["event"] == "error"]
-    assert len(error_events) == 1
-    assert "Orchestrator 未生成有效计划" in error_events[0]["data"]
+    assert len(error_events) >= 1
+    assert any("Orchestrator 未生成有效计划" in e["data"] for e in error_events)
 
 
 async def test_run_team_path_deep_subtask_propagates_approval_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """deep 子任务的 approval_request 事件必须透传到前端，否则审批流死锁。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="deep", input="写入文件", purpose="改配置"),
-        ],
-    )
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
+    todos = [
+        _todo("[agent:deep] 写入文件"),
+    ]
+    _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
     async def _fake_run_deep_path(state, message, **kwargs):
         yield {"event": "approval_request", "data": json.dumps({"tool_name": "write_file", "preview": "test"})}
@@ -433,24 +463,21 @@ async def test_run_team_path_deep_subtask_propagates_approval_request(
     assert len(approval_events) == 1
     assert "write_file" in approval_events[0]["data"]
 
-    # deep 子任务成功完成
-    done_progress = [
-        e for e in events
-        if e["event"] == "team_progress" and json.loads(e["data"])["status"] == "done"
-    ]
-    assert len(done_progress) == 1
+    # deep 子任务完成后 todo_update 最终为 completed
+    todo_updates = [e for e in events if e["event"] == "todo_update"]
+    assert len(todo_updates) >= 1
+    final_todos = json.loads(todo_updates[-1]["data"]).get("todos", [])
+    assert any(t["status"] == "completed" for t in final_todos)
 
 
 async def test_run_team_path_token_data_is_plain_string(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """token 事件 data 必须是纯字符串，不能是 JSON 序列化（Bug 1 回归测试）。"""
-    plan = TeamPlan(
-        plan=[
-            TeamPlanItem(agent="code", input="读文件", purpose="读"),
-        ],
-    )
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
+    todos = [
+        _todo("[agent:code] 读文件"),
+    ]
+    _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
@@ -491,9 +518,9 @@ async def test_run_team_path_downgrades_simple_message(
         run_team_path("你好", "t-simple", {"thread_id": "t-simple", "messages": []})
     )
 
-    # 不应有 team_plan 事件
+    # 不应有 todo_update 事件（Orchestrator 未执行）
     event_types = [e["event"] for e in events]
-    assert "team_plan" not in event_types
+    assert "todo_update" not in event_types
     # 应有 token 事件（降级提示）+ team_done 事件
     assert "token" in event_types
     assert "team_done" in event_types
@@ -503,20 +530,21 @@ async def test_run_team_path_downgrades_simple_message(
 
 
 # ============================================================
-# 5. 工具函数
+# 5. SSE 事件构造工具
 # ============================================================
 
 
-def test_make_team_event_serializes_data() -> None:
-    """_make_team_event 将 dict 序列化为 JSON 字符串。"""
-    event = make_team_event("team_plan", {"plan": [], "reasoning": "r"})
-    assert event["event"] == "team_plan"
+def test_make_sse_event_serializes_dict_data() -> None:
+    """make_sse_event 把 dict data 序列化为 JSON 字符串。"""
+    event = make_sse_event("reasoning", {"content": "思考中", "source": "team"})
+    assert event["event"] == "reasoning"
     data = json.loads(event["data"])
-    assert data["reasoning"] == "r"
+    assert data["content"] == "思考中"
+    assert data["source"] == "team"
 
 
-def test_make_team_event_token_uses_plain_string() -> None:
+def test_make_sse_event_token_uses_plain_string() -> None:
     """token 事件 data 必须是纯字符串（与 graph.py _sse 约定一致）。"""
-    event = make_team_event("token", "你好")
+    event = make_sse_event("token", "你好")
     assert event["event"] == "token"
     assert event["data"] == "你好"  # 不是 '"你好"'

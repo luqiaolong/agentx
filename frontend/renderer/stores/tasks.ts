@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
+import type { TodoStatus } from "@/lib/utils";
 
 export interface Task {
   id: string;
   title: string;
   status: "pending" | "running" | "done" | "failed";
-  todos?: { text: string; done: boolean }[];
+  todos?: { content: string; status: TodoStatus }[];
   createdAt: number;
   updatedAt?: number;
   /** 任务所属的会话 ID，用于按会话隔离任务列表 */
@@ -35,6 +36,9 @@ interface TasksState {
  * - v1 -> v2: 任务 title 剥掉 `<workspace>...</workspace>` / `<file>...</file>`
  *   LLM 协议标签 —— 旧逻辑会把 ChatComposer 拼上的工作区路径当任务名。
  * - v2 -> v3: 补 sessionId（任务按会话隔离），旧任务默认空字符串（不匹配任何会话）
+ * - v3 -> v4: todos schema 破坏性升级，从 `{text, done}` 迁移到 deepagents 原生
+ *   `{content, status}`（status: "pending" | "in_progress" | "completed"）。
+ *   旧 `done: true` → `status: "completed"`；`done: false` → `status: "pending"`。
  */
 export function migrateTasksState(
   persisted: unknown,
@@ -68,6 +72,15 @@ export function migrateTasksState(
       sessionId: typeof t.sessionId === "string" ? t.sessionId : "",
     }));
   }
+  if (version < 4) {
+    tasks = tasks.map((t) => ({
+      ...t,
+      todos: (t.todos ?? []).map((old: any) => ({
+        content: typeof old.text === "string" ? old.text : String(old.text ?? ""),
+        status: old.done ? ("completed" as const) : ("pending" as const),
+      })),
+    }));
+  }
   p.tasks = tasks;
   return p as Partial<TasksState>;
 }
@@ -98,7 +111,7 @@ export const useTasksStore = create<TasksState>()(
       {
         name: "agentx-tasks",
         storage: createJSONStorage(() => localStorage),
-        version: 3,
+        version: 4,
         migrate: migrateTasksState,
         // 一次性清理：老版本升级后被赋 sessionId="" 的任务无法匹配任何会话，
         // 渲染时永远不可见；与其持久留存,直接在持久化恢复时一次性清除。

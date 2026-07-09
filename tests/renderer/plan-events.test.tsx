@@ -83,8 +83,8 @@ function Harness({ threadId }: { threadId: string }) {
     <div>
       <ul data-testid="todos">
         {todos.map((t, i) => (
-          <li key={i} data-task-id={t.taskId} data-done={String(t.done)}>
-            {t.text}
+          <li key={i} data-task-id={t.taskId} data-status={t.status}>
+            {t.content}
           </li>
         ))}
       </ul>
@@ -102,53 +102,18 @@ beforeEach(() => {
   });
 });
 
-describe("plan / plan_update 事件", () => {
-  it("plan 事件设置全量 todo 列表", async () => {
-    render(<Harness threadId="t1" />);
-    await act(async () => {
-      emitEvent({
-        type: "plan",
-        plan: [
-          { task_id: "task-a", text: "步骤 1", done: false },
-          { task_id: "task-b", text: "步骤 2", done: false },
-        ],
-      });
-    });
-
-    const items = document.querySelectorAll('[data-testid="todos"] li');
-    expect(items).toHaveLength(2);
-    expect(items[0]?.textContent).toBe("步骤 1");
-    expect(items[0]?.getAttribute("data-task-id")).toBe("task-a");
-    expect(items[1]?.textContent).toBe("步骤 2");
-    expect(items[1]?.getAttribute("data-task-id")).toBe("task-b");
-  });
-
-  it("plan_update 事件覆盖已有 plan", async () => {
-    render(<Harness threadId="t1" />);
-    await act(async () => {
-      emitEvent({
-        type: "plan",
-        plan: [{ task_id: "task-a", text: "旧步骤", done: false }],
-      });
-      emitEvent({
-        type: "plan_update",
-        plan: [{ task_id: "task-a", text: "新步骤", done: true }],
-      });
-    });
-
-    const items = document.querySelectorAll('[data-testid="todos"] li');
-    expect(items).toHaveLength(1);
-    expect(items[0]?.textContent).toBe("新步骤");
-    expect(items[0]?.getAttribute("data-done")).toBe("true");
-  });
-});
-
 describe("todo_update 按 task_id 分组", () => {
   it("无 task_id 时全量替换 todos", async () => {
     render(<Harness threadId="t1" />);
     await act(async () => {
-      emitEvent({ type: "todo_update", todos: [{ text: "a", done: false }] });
-      emitEvent({ type: "todo_update", todos: [{ text: "b", done: true }] });
+      emitEvent({
+        type: "todo_update",
+        todos: [{ content: "a", status: "pending" }],
+      });
+      emitEvent({
+        type: "todo_update",
+        todos: [{ content: "b", status: "completed" }],
+      });
     });
 
     const items = document.querySelectorAll('[data-testid="todos"] li');
@@ -160,24 +125,27 @@ describe("todo_update 按 task_id 分组", () => {
     render(<Harness threadId="t1" />);
     await act(async () => {
       emitEvent({
-        type: "plan",
-        plan: [
-          { task_id: "task-a", text: "任务 A", done: false },
-          { task_id: "task-b", text: "任务 B", done: false },
-        ],
+        type: "todo_update",
+        task_id: "task-a",
+        todos: [{ content: "任务 A", status: "pending" }],
+      });
+      emitEvent({
+        type: "todo_update",
+        task_id: "task-b",
+        todos: [{ content: "任务 B", status: "pending" }],
       });
       emitEvent({
         type: "todo_update",
         task_id: "task-a",
         todos: [
-          { text: "A-1", done: true },
-          { text: "A-2", done: false },
+          { content: "A-1", status: "completed" },
+          { content: "A-2", status: "in_progress" },
         ],
       });
       emitEvent({
         type: "todo_update",
         task_id: "task-b",
-        todos: [{ text: "B-1", done: true }],
+        todos: [{ content: "B-1", status: "completed" }],
       });
     });
 
@@ -186,12 +154,12 @@ describe("todo_update 按 task_id 分组", () => {
     const byText = Array.from(items).map((el) => ({
       text: el.textContent,
       taskId: el.getAttribute("data-task-id"),
-      done: el.getAttribute("data-done"),
+      status: el.getAttribute("data-status"),
     }));
     expect(byText).toEqual([
-      { text: "A-1", taskId: "task-a", done: "true" },
-      { text: "A-2", taskId: "task-a", done: "false" },
-      { text: "B-1", taskId: "task-b", done: "true" },
+      { text: "A-1", taskId: "task-a", status: "completed" },
+      { text: "A-2", taskId: "task-a", status: "in_progress" },
+      { text: "B-1", taskId: "task-b", status: "completed" },
     ]);
   });
 
@@ -201,12 +169,12 @@ describe("todo_update 按 task_id 分组", () => {
       emitEvent({
         type: "todo_update",
         task_id: "task-a",
-        todos: [{ text: "A-1", done: false }],
+        todos: [{ content: "A-1", status: "pending" }],
       });
       emitEvent({
         type: "todo_update",
         task_id: "task-a",
-        todos: [{ text: "A-2", done: true }],
+        todos: [{ content: "A-2", status: "completed" }],
       });
     });
 
@@ -214,5 +182,25 @@ describe("todo_update 按 task_id 分组", () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.textContent).toBe("A-2");
     expect(items[0]?.getAttribute("data-task-id")).toBe("task-a");
+  });
+
+  it("原生 {content, status} schema 正确归一化三态", async () => {
+    render(<Harness threadId="t1" />);
+    await act(async () => {
+      emitEvent({
+        type: "todo_update",
+        todos: [
+          { content: "待办", status: "pending" },
+          { content: "进行中", status: "in_progress" },
+          { content: "已完成", status: "completed" },
+        ],
+      });
+    });
+
+    const items = document.querySelectorAll('[data-testid="todos"] li');
+    expect(items).toHaveLength(3);
+    expect(items[0]?.getAttribute("data-status")).toBe("pending");
+    expect(items[1]?.getAttribute("data-status")).toBe("in_progress");
+    expect(items[2]?.getAttribute("data-status")).toBe("completed");
   });
 });

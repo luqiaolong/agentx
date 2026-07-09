@@ -2,6 +2,7 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type {
   ChatEvent,
+  TodoStatus,
   ApprovalRequest,
   HealthSubitem,
   HealthStatus,
@@ -33,6 +34,7 @@ import type {
 
 export type {
   ChatEvent,
+  TodoStatus,
   ApprovalRequest,
   HealthSubitem,
   HealthStatus,

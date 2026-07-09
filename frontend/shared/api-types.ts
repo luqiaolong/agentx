@@ -3,6 +3,14 @@
 // Tauri 架构下 renderer 通过 invoke()/fetch() 直连，无 preload 中转。
 
 /**
+ * Todo 状态（与 deepagents 原生 `write_todos` schema 对齐）。
+ * - "pending" — 待处理
+ * - "in_progress" — 进行中
+ * - "completed" — 已完成
+ */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/**
  * SSE 事件契约（AGENTS.md §13 两处同步：main.py + useChatStream.ts）。
  *
  * Discriminated union on `type` 字段。token 事件 data 是纯字符串；
@@ -42,31 +50,16 @@ export type ChatEvent = (
   | { type: "delegation"; target: string; source: string; message: string; trace_id?: string }
   // classification 事件：Router 分类决策展示
   | { type: "classification"; label: string; reason: string; trace_id?: string }
-  // todo_update 事件：DeepAgent 任务级 todo 列表
+  // todo_update 事件：DeepAgent 任务级 todo 列表（deepagents 原生 {content, status} schema）
   // 后端可能携带 task_id，用于多任务场景下按任务分组展示
-  | { type: "todo_update"; todos: unknown; task_id?: string; trace_id?: string }
-  // plan / plan_update 事件：Agent 规划阶段输出的任务计划
-  | { type: "plan"; plan: PlanTask[]; trace_id?: string }
-  | { type: "plan_update"; plan: PlanTask[]; trace_id?: string }
+  | {
+      type: "todo_update";
+      todos: { content: string; status: TodoStatus; task_id?: string }[];
+      task_id?: string;
+      trace_id?: string;
+    }
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
   | { type: "approval_request"; [k: string]: unknown; trace_id?: string }
-  // team_plan 事件：AgentTeam 的 Orchestrator 生成的子任务计划
-  | {
-      type: "team_plan";
-      plan: { agent: string; input: string; purpose: string }[];
-      reasoning: string;
-      trace_id?: string;
-    }
-  // team_progress 事件：某个子任务状态变化
-  | {
-      type: "team_progress";
-      agent: string;
-      status: "running" | "done" | "error";
-      message?: string;
-      trace_id?: string;
-    }
-  // team_result 事件：某个子任务完成后写入黑板的结果摘要
-  | { type: "team_result"; agent: string; summary: string; trace_id?: string }
   // team_done 事件：AgentTeam 整体执行结束
   | { type: "team_done"; status?: "error" | "done"; trace_id?: string }
   // paused 事件：后端流被用户暂停
@@ -416,12 +409,6 @@ export interface ModelTestResponse {
   message: string;
   /** 成功时取模型返回的首个 choice content（max_tokens=1 时可能为空字符串） */
   responseText?: string | null;
-}
-
-export interface PlanTask {
-  task_id: string;
-  text: string;
-  done?: boolean;
 }
 
 export interface TodoItem {
