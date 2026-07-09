@@ -6,7 +6,7 @@
 3. _validate_task 使用 BUILTIN_TEAM_KEYS 而非硬编码集合
 4. _validate_task 支持 settings 中新增的 team 角色
 5. _validate_task 拒绝 disabled / 无工具绑定的 team 角色
-6. 缺 trigger_description 时 fallback 到 system_prompt 或固定占位
+6. _ORCHESTRATOR_SYSTEM_PROMPT 模板格式化后包含 team experts
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ from app.config.subagents import (
     SubagentSettings,
 )
 from app.team.planner import (
-    _build_orchestrator_prompt,
+    _BASE_EXPERTS,
+    _ORCHESTRATOR_SYSTEM_PROMPT,
+    _build_project_context,
     _build_team_experts_description,
     _validate_task,
 )
@@ -97,25 +99,29 @@ def test_build_team_experts_description_supports_custom_team_role() -> None:
     assert "数据科学专家" in result
 
 
-def test_build_orchestrator_prompt_coding_scene_includes_team_experts() -> None:
-    """coding 场景下 prompt 应包含 _build_team_experts_description 输出。"""
+def test_orchestrator_system_prompt_includes_team_experts_when_formatted() -> None:
+    """_ORCHESTRATOR_SYSTEM_PROMPT 格式化后应包含 _build_team_experts_description 输出。"""
     team = {
         "frontend_dev": SubagentSettings(
             enabled=True, trigger_description="前端专家"
         ),
     }
     settings = _make_settings(team_subagents=team)
-    prompt_value = _build_orchestrator_prompt(
-        "做前端", max_tasks=5, context="", scene="coding", settings=settings
+    experts = _BASE_EXPERTS + "\n" + _build_team_experts_description(settings)
+    prompt = _ORCHESTRATOR_SYSTEM_PROMPT.format(
+        experts=experts,
+        max_tasks=5,
+        context=_build_project_context(),
     )
-    # _build_orchestrator_prompt 返回 ChatPromptValue（LangChain 标准），
-    # 转为字符串做内容断言
-    prompt = prompt_value.to_string()
+    # team experts 在 prompt 中
     assert "frontend_dev" in prompt
     assert "前端专家" in prompt
     # base experts 也在
     assert "code" in prompt
     assert "rag" in prompt
+    # write_todos 工具使用说明
+    assert "write_todos" in prompt
+    assert "[agent:code]" in prompt
 
 
 def test_validate_task_accepts_builtin_team_keys() -> None:

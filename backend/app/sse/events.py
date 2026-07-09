@@ -8,7 +8,7 @@
   且 data 为 dict 时，自动把 ``trace_id`` 注入到 data 顶层。
 - 显式 ``trace_id=None`` 时，自动从 ``app.observability.trace.current_trace_id``
   读取；调用方显式传入优先（便于 chat 入口覆盖工具内部，避免子任务错位）。
-- ``make_tool_call_event`` / ``make_tool_result_event`` / ``make_todo_event`` /
+- ``make_tool_call_event`` / ``make_tool_result_event`` / ``make_todo_update_event`` /
   ``make_approval_event`` 均接受可选 ``trace_id`` 参数并透传。
 """
 from __future__ import annotations
@@ -70,12 +70,7 @@ def make_sse_event(
         "tool_result",
         "delegation",
         "classification",
-        "team_plan",
-        "team_progress",
-        "team_result",
         "team_done",
-        "plan",
-        "plan_update",
         "error",
         "_subtask_done",
     ):
@@ -100,21 +95,36 @@ def make_sse_event(
     return {"event": event, "data": str(data)}
 
 
-def make_todo_event(
-    text: str,
-    done: bool = False,
+def make_todo_update_event(
+    todos: list[dict[str, Any]],
     task_id: str | None = None,
     trace_id: str | None = None,
 ) -> dict[str, str]:
-    """构造 todo_update SSE 事件。"""
-    todo: dict[str, Any] = {"text": text, "done": done}
+    """构造 todo_update SSE 事件（原生 deepagents Todo schema）。
+
+    Args:
+        todos: deepagents state.todos 原生列表，每项 ``{content: str, status: str}``
+               （status: ``"pending"`` | ``"in_progress"`` | ``"completed"``）。
+        task_id: 任务分组标识（Team 多子任务场景注入 thread_id，单 agent 场景可省）。
+        trace_id: 观测中心 trace_id。
+
+    Returns:
+        SSE 事件 dict ``{"event": "todo_update", "data": "{\"todos\":[...],\"task_id\":...}"}``
+
+    payload 格式::
+
+        {
+            "todos": [
+                {"content": "读取文件", "status": "completed"},
+                {"content": "修改代码", "status": "in_progress"}
+            ],
+            "task_id": "thread-xxx"
+        }
+    """
+    payload: dict[str, Any] = {"todos": todos}
     if task_id is not None:
-        todo["task_id"] = task_id
-    return make_sse_event(
-        "todo_update",
-        {"todos": [todo]},
-        trace_id=trace_id,
-    )
+        payload["task_id"] = task_id
+    return make_sse_event("todo_update", payload, trace_id=trace_id)
 
 
 def make_tool_call_event(
@@ -153,15 +163,6 @@ def make_tool_result_event(
     )
 
 
-def make_team_event(event: str, data: Any, trace_id: str | None = None) -> dict[str, str]:
-    """构造 team 相关 SSE 事件。
-
-    合并到 ``make_sse_event``（统一事件白名单已含 ``_subtask_done`` 哨兵），
-    此处保留为向后兼容别名。
-    """
-    return make_sse_event(event, data, trace_id=trace_id)
-
-
 def make_approval_event(
     data: dict, trace_id: str | None = None
 ) -> dict[str, str]:
@@ -192,9 +193,8 @@ def make_error_event(
 __all__ = [
     "make_sse_event",
     "make_error_event",
-    "make_todo_event",
+    "make_todo_update_event",
     "make_tool_call_event",
     "make_tool_result_event",
-    "make_team_event",
     "make_approval_event",
 ]

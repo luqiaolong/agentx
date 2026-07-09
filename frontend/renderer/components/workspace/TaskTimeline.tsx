@@ -49,7 +49,7 @@ function TaskCard({ task }: { task: Task }) {
   const removeTask = useTasksStore((s) => s.removeTask);
 
   const cfg = STATUS_CONFIG[task.status];
-  const completedTodos = task.todos?.filter((x) => x.done).length ?? 0;
+  const completedTodos = task.todos?.filter((x) => x.status === "completed").length ?? 0;
   const totalTodos = task.todos?.length ?? 0;
   const progress = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
   const hasTodos = totalTodos > 0;
@@ -139,36 +139,46 @@ function TaskCard({ task }: { task: Task }) {
       {/* Todo 列表（可折叠） */}
       {hasTodos && expanded && (
         <ul className="mt-2 space-y-1 border-t border-default pt-2">
-          {task.todos?.map((todo, i) => (
-            <li key={i} className="flex items-start gap-1.5" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
-              <span
-                className={`mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border ${
-                  todo.done
-                    ? "border-brand-600 bg-brand-700 text-brand-200"
-                    : "border-strong"
-                }`}
-              >
-                {todo.done && (
-                  <svg viewBox="0 0 12 12" className="h-2 w-2" fill="none">
-                    <path
-                      d="M2.5 6L5 8.5L9.5 3.5"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </span>
-              <span
-                className={
-                  todo.done ? "text-muted-c line-through" : "text-secondary-c"
-                }
-              >
-                {todo.text}
-              </span>
-            </li>
-          ))}
+          {task.todos?.map((todo, i) => {
+            const isCompleted = todo.status === "completed";
+            const isInProgress = todo.status === "in_progress";
+            const badgeClass = isCompleted
+              ? "border-brand-600 bg-brand-700 text-brand-200"
+              : isInProgress
+                ? "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                : "border-strong text-muted-c";
+            return (
+              <li key={i} className="flex items-start gap-1.5" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
+                <span
+                  className={`mt-0.5 flex h-3 w-3 shrink-0 items-center justify-center rounded-full border ${badgeClass} ${
+                    isInProgress ? "animate-spin" : ""
+                  }`}
+                >
+                  {isCompleted && (
+                    <svg viewBox="0 0 12 12" className="h-2 w-2" fill="none">
+                      <path
+                        d="M2.5 6L5 8.5L9.5 3.5"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                  {isInProgress && (
+                    <span className="text-[8px] leading-none">◐</span>
+                  )}
+                </span>
+                <span
+                  className={
+                    isCompleted ? "text-muted-c line-through" : "text-secondary-c"
+                  }
+                >
+                  {todo.content}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </li>

@@ -343,8 +343,8 @@ AgentTeam 多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggreg
 [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts) 三处。
 
 **核心事件速查**：`token` / `reasoning` / `tool_call` / `tool_result` / `delegation` /
-`todo_update` / `approval_request` / `plan` / `plan_update` / `paused` / `team_plan` /
-`team_progress` / `team_result` / `team_done` / `done` / `error`。
+`todo_update` / `approval_request` / `paused` / `team_done` / `done` / `error`。
+`todo_update` 采用 deepagents 原生 `{content, status}` 三态 schema（pending/in_progress/completed）。
 `source` 取值：`work` / `coding` / `rag` / `web`（旧值 `code`/`deep`/`agent` 已废弃）。
 
 ---

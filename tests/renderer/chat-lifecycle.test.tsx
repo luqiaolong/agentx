@@ -231,7 +231,7 @@ describe("消息生命周期（ChatComposer + useChatStream）", () => {
     await act(async () => {
       emitEvent({
         type: "todo_update",
-        todos: [{ text: "读文件", done: false }],
+        todos: [{ content: "读文件", status: "pending" }],
       });
       emitEvent({ type: "token", data: "hi" });
       emitEvent({ type: "error", data: "boom" });

@@ -281,7 +281,7 @@ export interface ChatState {
       agentUpdate?: { agent: string; patch: Partial<TeamAgentState> };
       status?: "running" | "done" | "error";
       /**
-       * 首次创建 team part 时一次性写入的 agent 列表（team_plan 单次 upsert）。
+       * 首次创建 team part 时一次性写入的 agent 列表（调用方单次 upsert）。
        * 仅在 team part 不存在时生效；已存在时按 agentUpdate 增量更新。
        */
       initialAgents?: TeamAgentState[];
@@ -788,7 +788,7 @@ export const useChatStore = create<ChatState>()(
               const teamIdx = parts.findIndex((p) => p.type === "team");
               if (teamIdx === -1) {
                 // team part 不存在：首次创建
-                // 若提供 initialAgents，一次性写入 plan + agents（team_plan 单次 upsert）
+                // 若提供 initialAgents，一次性写入 plan + agents（单次 upsert）
                 // 否则按原逻辑用 agentUpdate 创建单条 agent
                 const agents: TeamAgentState[] = updaters.initialAgents
                   ? updaters.initialAgents
@@ -815,7 +815,7 @@ export const useChatStore = create<ChatState>()(
                 if (updaters.plan) newPlan = updaters.plan;
                 let newAgents = existing.agents;
                 // MEDIUM-5 修复：re-planning 时 initialAgents 替换整个 agents 数组
-                // （team_plan 重新规划时传入 initialAgents 表示用新 plan 重置 agents）
+                // （调用方重新规划时传入 initialAgents 表示用新 plan 重置 agents）
                 if (updaters.initialAgents) {
                   newAgents = updaters.initialAgents;
                 } else if (updaters.agentUpdate) {

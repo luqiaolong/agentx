@@ -7,9 +7,10 @@
   尊重 ``interrupt_on``，把 LangGraph state 转换为前端 SSE 事件。
 
 SSE 事件映射:
-- ``AIMessage`` with ``tool_calls`` → ``tool_call`` + ``reasoning`` + ``todo_update``
+- ``state.todos`` 变化 → ``todo_update``（原生 deepagents ``{content, status}`` schema）
+- ``AIMessage`` with ``tool_calls`` → ``reasoning`` + ``tool_call``
 - ``AIMessage`` without ``tool_calls`` → ``token``（最终回复）
-- ``ToolMessage`` → ``tool_result`` + ``todo_update``（标记完成）
+- ``ToolMessage`` → ``tool_result``
 
 导入方向：``agent.py`` → ``streaming.py``（单向，无循环）。
 """
@@ -25,10 +26,9 @@ from loguru import logger
 from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.security.approval import get_abort_event
-from app.utils.plan_extraction import extract_plan_or_update
 from app.sse.events import (
     make_sse_event,
-    make_todo_event,
+    make_todo_update_event,
     make_tool_call_event,
     make_tool_result_event,
 )
@@ -44,16 +44,15 @@ async def _stream_agent_events(
     ``astream_events`` 不尊重 ``interrupt_on``（会直接执行工具），
     MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
 
-    SSE 事件映射（spec D1 + T5 扩展）:
-    - AIMessage with tool_calls → ``tool_call`` SSE（含 id/name/args/source）
-      + ``todo_update``（任务级进度，与 tool_call 事件并存，语义不同）
+    SSE 事件映射:
+    - ``state.todos`` 变化 → ``todo_update``（原生 ``{content, status}`` schema，
+      由 deepagents ``TodoListMiddleware`` 维护）
+    - AIMessage with tool_calls → ``reasoning`` + ``tool_call`` SSE
     - AIMessage without tool_calls → ``token``（最终回复，strip_think 后一次性 yield）
-      或 ``plan`` / ``plan_update``（结构化任务计划/更新）
-    - ToolMessage → ``tool_result`` SSE（含 id/name/result/source）
-      + ``todo_update``（标记完成）
+    - ToolMessage → ``tool_result`` SSE
 
     在 ``interrupt_on`` 处暂停时，最后一个 state 的 messages[-1]
-    是 AIMessage（含 tool_calls），此处 yield tool_call + todo_update 后流结束，
+    是 AIMessage（含 tool_calls），此处 yield tool_call 后流结束，
     调用方 ``_is_interrupted`` 返回 True 进入审批流程。
 
     Args:
@@ -128,6 +127,9 @@ async def _stream_agent_events(
     # state 同时包含多个 ToolMessage，只处理最后一条会导致前面工具卡「运行中」）。
     _processed_count = 0
 
+    # 追踪 state.todos 快照，diff 检测 deepagents TodoListMiddleware 更新
+    _last_todos: list[dict] = []
+
     async for state in agent.astream(inputs, config=config, stream_mode="values"):
         if not _first_state_seen:
             _first_state_seen = True
@@ -140,6 +142,15 @@ async def _stream_agent_events(
             )
         if abort_event.is_set():
             raise asyncio.CancelledError("aborted")
+
+        # 读取 deepagents 原生 state.todos（TodoListMiddleware 维护），
+        # diff 检测变化后 yield todo_update 事件（原生 {content, status} schema）。
+        current_todos = state.get("todos", []) if hasattr(state, "get") else []
+        if current_todos != _last_todos:
+            await _obs("todo_update", {"todos": current_todos, "task_id": thread_id})
+            yield make_todo_update_event(current_todos, task_id=thread_id)
+            _last_todos = list(current_todos)
+
         messages = state.get("messages", []) if hasattr(state, "get") else []
         if not messages:
             logger.debug("stream_agent_events: empty messages, skipping")
@@ -202,8 +213,6 @@ async def _stream_agent_events(
                     )
                 await _obs("tool_result", {"id": tool_call_id, "name": tool_name, "result": content, "source": source})
                 yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
-                await _obs("todo_update", {"todos": [{"text": f"工具 {tool_name} 完成", "done": True, "task_id": thread_id}]})
-                yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
                 logger.info(
                     "stream_agent_events: yielded tool_result",
                     thread_id=thread_id,
@@ -260,8 +269,6 @@ async def _stream_agent_events(
                             tc_id = getattr(tc, "id", None) or str(uuid4())
                         await _obs("tool_call", {"id": tc_id, "name": tc_name, "args": tc_args, "source": source})
                         yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
-                        await _obs("todo_update", {"todos": [{"text": f"调用工具: {tc_name}", "done": False, "task_id": thread_id}]})
-                        yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
                 elif getattr(msg, "content", ""):
                     # AIMessage without tool_calls → 最终回复
                     content = msg.content
@@ -278,12 +285,5 @@ async def _stream_agent_events(
                     from app.utils.text import strip_tool_call_xml
                     text = strip_tool_call_xml(text)
                     if text:
-                        # 检测结构化任务计划/更新
-                        plan_info = extract_plan_or_update(text)
-                        if plan_info is not None:
-                            kind, plan_data = plan_info
-                            await _obs(kind, plan_data if isinstance(plan_data, dict) else {"data": plan_data})
-                            yield make_sse_event(kind, plan_data)
-                        else:
-                            await _obs("token", {"content": text})
-                            yield make_sse_event("token", text)
+                        await _obs("token", {"content": text})
+                        yield make_sse_event("token", text)

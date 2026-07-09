@@ -2,21 +2,19 @@ import { useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
-import type { TeamAgentState } from "@/stores/chat";
-import type { ChatEvent } from "@/lib/utils";
+import type { ChatEvent, TodoStatus } from "@/lib/utils";
 import { chat, getCurrentTraceId } from "@/lib/api/chat";
 
 export interface TodoItem {
-  text: string;
-  done: boolean;
+  content: string;
+  status: TodoStatus;
   taskId?: string;
 }
 
 /**
- * 从 todo_update / plan / plan_update 事件提取 todo 列表。
+ * 从 todo_update 事件提取 todo 列表（deepagents 原生 {content, status, task_id} schema）。
  *
- * SSE 契约: 后端发 `{"todos": [{"text": "...", "done": false, "task_id?": "..."}]}`，
- * plan 事件发 `{"plan": [{"task_id": "...", "text": "...", "done": false}]}`。
+ * SSE 契约: 后端发 `{"todos": [{"content": "...", "status": "pending"|"in_progress"|"completed", "task_id?": "..."}]}`。
  */
 function normalizeTodos(
   todosField: unknown,
@@ -27,30 +25,19 @@ function normalizeTodos(
     .map((item): TodoItem | null => {
       if (typeof item !== "object" || item === null) return null;
       const obj = item as Record<string, unknown>;
-      const text = typeof obj.text === "string" ? obj.text : String(obj.text ?? "");
-      const done = typeof obj.done === "boolean" ? obj.done : Boolean(obj.done);
+      const content =
+        typeof obj.content === "string" ? obj.content : String(obj.content ?? "");
+      const status: TodoStatus =
+        obj.status === "pending" ||
+        obj.status === "in_progress" ||
+        obj.status === "completed"
+          ? obj.status
+          : "pending";
       const taskId =
         typeof obj.task_id === "string" && obj.task_id.length > 0
           ? obj.task_id
           : fallbackTaskId;
-      return { text, done, ...(taskId ? { taskId } : {}) };
-    })
-    .filter((x): x is TodoItem => x !== null);
-}
-
-function normalizePlanTasks(planField: unknown): TodoItem[] {
-  if (!Array.isArray(planField)) return [];
-  return planField
-    .map((item): TodoItem | null => {
-      if (typeof item !== "object" || item === null) return null;
-      const obj = item as Record<string, unknown>;
-      const taskId =
-        typeof obj.task_id === "string" && obj.task_id.length > 0
-          ? obj.task_id
-          : undefined;
-      const text = typeof obj.text === "string" ? obj.text : String(obj.text ?? "");
-      const done = typeof obj.done === "boolean" ? obj.done : Boolean(obj.done);
-      return { text, done, ...(taskId ? { taskId } : {}) };
+      return { content, status, ...(taskId ? { taskId } : {}) };
     })
     .filter((x): x is TodoItem => x !== null);
 }
@@ -279,16 +266,6 @@ export function useChatStream(args: UseChatStreamArgs) {
           callbacksRef.current.setPaused?.(false);
           break;
         }
-        case "plan":
-        case "plan_update": {
-          const next = normalizePlanTasks(e.plan);
-          callbacksRef.current.setTodos(next);
-          const tid = currentTaskIdRef.current;
-          if (tid) {
-            updateTask(tid, { todos: next });
-          }
-          break;
-        }
         case "todo_update": {
           const taskId =
             typeof e.task_id === "string" && e.task_id.length > 0
@@ -325,49 +302,6 @@ export function useChatStream(args: UseChatStreamArgs) {
               sessionId,
             });
           }
-          break;
-        }
-        case "team_plan": {
-          if (!pendingIdRef.current) break;
-          const plan = Array.isArray(e.plan) ? e.plan : [];
-          // 单次 upsert：首次创建 team part 时一次性写入 plan + agents
-          // （不再循环 N+1 次调用 set，避免长任务列表的性能开销）
-          upsertTeamNode(pendingIdRef.current, {
-            plan: plan.map((t) => ({
-              agent: String(t?.agent ?? ""),
-              input: String(t?.input ?? ""),
-              purpose: String(t?.purpose ?? ""),
-            })),
-            reasoning: String(e.reasoning ?? ""),
-            initialAgents: plan.map((t) => ({
-              agent: String(t?.agent ?? ""),
-              purpose: String(t?.purpose ?? ""),
-              status: "pending" as const,
-            })),
-          });
-          break;
-        }
-        case "team_progress": {
-          if (!pendingIdRef.current) break;
-          const agent = String(e.agent ?? "");
-          const status = (e.status === "running" || e.status === "done" || e.status === "error"
-            ? e.status
-            : "running") as "running" | "done" | "error";
-          const patch: Partial<TeamAgentState> = { status };
-          if (e.message !== undefined) patch.message = String(e.message);
-          if (status === "running") patch.startedAt = Date.now();
-          if (status === "done" || status === "error") patch.finishedAt = Date.now();
-          upsertTeamNode(pendingIdRef.current, {
-            agentUpdate: { agent, patch },
-          });
-          break;
-        }
-        case "team_result": {
-          if (!pendingIdRef.current) break;
-          const agent = String(e.agent ?? "");
-          upsertTeamNode(pendingIdRef.current, {
-            agentUpdate: { agent, patch: { summary: String(e.summary ?? "") } },
-          });
           break;
         }
         case "team_done": {

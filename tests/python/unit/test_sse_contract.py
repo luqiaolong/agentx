@@ -4,7 +4,7 @@
 1. 路径 A (CHAT): mock LLM astream → 验证 token 事件 data 为纯字符串 + done 事件 data 为 "{}"
 2. /reset: 验证 _event_generator 产出 token + done 事件
 3. approval_request: 验证 _make_approval_event 包含 thread_id（前端 ApprovalDialog 据此调 approve）
-4. todo_update: 验证 _make_todo_event 产出 {"todos": [...]} JSON（前端读 e.todos）
+4. todo_update: 验证 make_todo_update_event 产出 {"todos": [...]} JSON（前端读 e.todos）
 
 契约对齐（preload/index.ts 的 SSE 解析）:
 - token: data 是纯字符串 → preload 放入 {data: payload} → ChatView 读 e.data
@@ -136,15 +136,16 @@ def test_make_approval_event_redacts_edit_file_content():
 # ---- 3. todo_update 事件契约: data 是 {"todos": [...]} JSON ----
 
 
-def test_make_todo_event_produces_todos_json():
+def test_make_todo_update_event_produces_todos_json():
     """todo_update 事件 data 必须是 {"todos": [...]} JSON 对象。
 
     前端 preload 解析: JSON 对象 payload → 展开到 ChatEvent 顶层 →
     ChatView 读 e.todos（不是 e.data）。
     """
-    from app.sse.events import make_todo_event
+    from app.sse.events import make_todo_update_event
 
-    event = make_todo_event("调用工具: read_file", done=False)
+    todos = [{"content": "调用工具: read_file", "status": "in_progress"}]
+    event = make_todo_update_event(todos)
 
     assert event["event"] == "todo_update"
     payload = json.loads(event["data"])
@@ -155,19 +156,21 @@ def test_make_todo_event_produces_todos_json():
     assert len(payload["todos"]) == 1
 
     todo = payload["todos"][0]
-    assert todo["text"] == "调用工具: read_file"
-    assert todo["done"] is False
+    assert todo["content"] == "调用工具: read_file"
+    assert todo["status"] == "in_progress"
 
 
-def test_make_todo_event_done_true():
-    """done=True 的 todo 事件。"""
-    from app.sse.events import make_todo_event
+def test_make_todo_update_event_with_task_id():
+    """带 task_id 的 todo_update 事件。"""
+    from app.sse.events import make_todo_update_event
 
-    event = make_todo_event("工具 read_file 完成", done=True)
+    todos = [{"content": "工具 read_file 完成", "status": "completed"}]
+    event = make_todo_update_event(todos, task_id="thread-123")
     payload = json.loads(event["data"])
 
-    assert payload["todos"][0]["done"] is True
-    assert payload["todos"][0]["text"] == "工具 read_file 完成"
+    assert payload["todos"][0]["status"] == "completed"
+    assert payload["todos"][0]["content"] == "工具 read_file 完成"
+    assert payload["task_id"] == "thread-123"
 
 
 # ---- 4. _sse 辅助函数: token 用 str()，todo/approval 用 json.dumps ----

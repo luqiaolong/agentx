@@ -17,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import get_settings
 from app.observability.logger import logger
-from app.sse.events import make_team_event
+from app.sse.events import make_sse_event
 from app.utils.text import ThinkFilter, extract_chunk_text
 from app.team.blackboard import Blackboard, _serialize_blackboard
 
@@ -107,7 +107,7 @@ async def _run_aggregator(
     ok, reason = _quality_gate(blackboard)
     if not ok:
         logger.warning("team aggregator quality gate rejected", reason=reason)
-        yield make_team_event(
+        yield make_sse_event(
             "error",
             {"message": f"专家结果质量不足: {reason}"},
         )
@@ -118,7 +118,7 @@ async def _run_aggregator(
             temperature=settings.llm_temperature_aggregator, streaming=True
         )
     except ValueError as exc:
-        yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
+        yield make_sse_event("error", {"message": f"LLM 不可用: {exc}"})
         return
 
     prompt = _AGGREGATOR_PROMPT.invoke({
@@ -135,15 +135,15 @@ async def _run_aggregator(
             if getattr(think_filter, "_retain_think", False):
                 reasoning = think_filter.take_think()
                 if reasoning:
-                    yield make_team_event("reasoning", {"content": reasoning, "source": "team"})
+                    yield make_sse_event("reasoning", {"content": reasoning, "source": "team"})
             if cleaned:
-                yield make_team_event("token", cleaned)
+                yield make_sse_event("token", cleaned)
         tail = think_filter.flush()
         if tail:
-            yield make_team_event("token", tail)
+            yield make_sse_event("token", tail)
     except Exception as exc:  # noqa: BLE001
         logger.warning("team aggregator stream failed", error=str(exc))
-        yield make_team_event("error", {"message": f"Aggregator 流式失败: {exc}"})
+        yield make_sse_event("error", {"message": f"Aggregator 流式失败: {exc}"})
 
 
 _SIMPLE_TASK_KEYWORDS = frozenset({

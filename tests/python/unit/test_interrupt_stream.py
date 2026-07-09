@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -64,7 +63,7 @@ async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) -> None:
-    """路径 D 的 _deep_node 在中止后应产出失败的 team_progress error。"""
+    """路径 D 的 _deep_node 在中止后应让子任务失败，最终 Aggregator 发 error + team_done(error)。"""
     from app.team.orchestrator import run_team_path
     import app.team.orchestrator as orch_module
 
@@ -77,27 +76,23 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         lambda msg: (False, ""),
     )
 
-    # 跳过真实 LLM 调用：with_structured_output().ainvoke 返回 fake plan
-    fake_task = MagicMock()
-    fake_task.agent = "deep"
-    fake_task.input = "subtask"
-    fake_task.purpose = "test"
-    fake_plan = MagicMock()
-    structured_llm = MagicMock()
-    structured_llm.ainvoke = AsyncMock(return_value=fake_plan)
+    # patch deepagents.create_deep_agent 返回 mock orchestrator（ainvoke 返回 todos）
+    # 每个 todo 的 content 以 [agent:deep] 开头，_todos_to_team_tasks 解析为 deep 子任务
+    fake_orchestrator = MagicMock()
+    fake_orchestrator.ainvoke = AsyncMock(
+        return_value={"todos": [{"content": "[agent:deep] subtask", "status": "pending"}]}
+    )
+    monkeypatch.setattr(
+        "deepagents.create_deep_agent",
+        lambda *args, **kwargs: fake_orchestrator,
+    )
+
+    # Aggregator LLM mock（中止场景下不会真正调用，但 _plan_node 会先调 get_chat_model）
     fake_llm = MagicMock()
-    fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr(
         orch_module,
         "get_chat_model",
         lambda *args, **kwargs: fake_llm,
-    )
-
-    # 模拟 Orchestrator 生成一个 deep 子任务
-    monkeypatch.setattr(
-        orch_module,
-        "_postprocess_plan",
-        lambda plan, max_tasks: ([fake_task], "reasoning"),
     )
 
     # 模拟 _validate_task 通过
@@ -107,12 +102,13 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         lambda task, settings: (True, ""),
     )
 
-    # 模拟 deep runner：正常情况下不会返回，但 _deep_node 会在事件循环中检查 abort
+    # 模拟 deep runner：正常情况下不会返回，但 _deep_node 会在入口检查 abort
     async def _fake_run_deep_path(state, message: str, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "should not see"}
         await asyncio.sleep(10)
 
-    # 跳过 aggregator
+    # 跳过 aggregator（中止场景下 findings 为空，Aggregator 会发 error，
+    # 但我们用 _empty_stream 简化断言）
     monkeypatch.setattr(
         orch_module,
         "_run_aggregator",
@@ -134,24 +130,15 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         )
     ]
 
-    # 中止后应转为 team_progress error 事件并携带“用户中止”信息。
-    def _parse_data(e: dict[str, str]) -> dict:
-        data = e.get("data", "{}")
-        if isinstance(data, dict):
-            return data
-        try:
-            return json.loads(data)
-        except json.JSONDecodeError:
-            return {}
+    # 中止后子任务节点返回失败 payload "用户中止"，进入 errors dict。
+    # Aggregator 检测 findings={} → 发 error 事件 "所有专家任务均失败" + team_done(error)。
+    error_events = [e for e in events if e.get("event") == "error"]
+    assert len(error_events) >= 1
+    assert any("所有专家任务均失败" in e.get("data", "") for e in error_events)
 
-    progress_errors = [
-        e
-        for e in events
-        if e.get("event") == "team_progress"
-        and _parse_data(e).get("status") == "error"
-    ]
-    assert len(progress_errors) >= 1
-    assert any("中止" in _parse_data(e).get("message", "") for e in progress_errors)
+    # team_done 收尾
+    done_events = [e for e in events if e.get("event") == "team_done"]
+    assert len(done_events) >= 1
 
 
 async def _empty_stream() -> AsyncIterator[dict[str, str]]:
