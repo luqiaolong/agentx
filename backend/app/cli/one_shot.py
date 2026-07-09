@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 
@@ -37,7 +36,7 @@ async def run_one_shot(
     # 加载配置
     apply_config_to_env()
     reload_settings()
-    settings = get_settings()
+    get_settings()  # 触发 settings 缓存预热
 
     # 获取 checkpointer
     try:

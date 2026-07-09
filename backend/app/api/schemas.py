@@ -29,7 +29,7 @@ __all__ = [
 class ApproveRequest(BaseModel):
     thread_id: str = Field(..., description="会话 ID")
     approval: bool = Field(..., description="True=批准 / False=拒绝")
-    decision: str = Field(
+    decision: Literal["approve", "deny", "once", "session"] = Field(
         default="approve",
         description='审批决策类型：approve/deny（dangerous_tool）或 once/session/deny（directory_extension）',
     )
@@ -125,7 +125,7 @@ class McpServerTestRequest(BaseModel):
     """
 
     name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,64}$")
-    transport: str = Field("stdio")
+    transport: Literal["stdio", "sse", "http"] = Field("stdio")
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)

@@ -54,6 +54,8 @@ __all__ = [
 
 
 # 全部工具清单（tools_enabled 默认值）
+# CLI 工具 ``execute`` 由 SafeLocalShellBackend 提供，不在此列表中
+# （仅在 DeepAgent 主路径暴露，subagent 禁止绑定）。
 _ALL_TOOLS = [
     "read_file", "list_dir", "glob", "grep",
     "write_file", "edit_file",
@@ -61,8 +63,6 @@ _ALL_TOOLS = [
     # Git 工具：只读 + 写操作
     "git_status", "git_diff", "git_log", "git_branches",
     "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
-    # CLI 工具：受限系统命令
-    "cli_execute",
 ]
 
 

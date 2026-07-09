@@ -40,7 +40,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     安全设计：
     - 只读工具（read_file/list_dir/glob/grep）复用 ``_make_fs_tools``，与 subagent 一致。
     - 危险工具（write_file/edit_file）**仅** 在 DeepAgent 中暴露，由
-      ``interrupt_before=["tools"]`` 触发审批，避免被 subagent 路径绕过。
+      ``interrupt_on`` 触发审批，避免被 subagent 路径绕过。
     - CLI 执行由 ``SafeLocalShellBackend`` 的内置 ``execute`` 工具提供（blocklist + 元字符过滤），
       不再注册自研 ``cli_execute``。
 
@@ -63,7 +63,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     rag_tools = _make_rag_tools(thread_id)
     web_tools = _make_web_tools(thread_id)
 
-    # 危险工具：仅在 DeepAgent 暴露，配合 interrupt_before 审批
+    # 危险工具：仅在 DeepAgent 暴露，配合 interrupt_on 审批
     @tool
     async def write_file(path: str, content: str) -> str:
         """写入文本文件（覆盖）。"""
@@ -89,7 +89,7 @@ async def _load_mcp_tools() -> tuple[list, set[str]]:
 
     - ``tools``: MCP 工具列表（LangChain BaseTool），失败时为空列表。
     - ``untrusted_tool_names``: 来自 ``trusted=False`` server 的工具名集合，
-      调用方应将其加入 ``runtime_dangerous``，触发 ``interrupt_before`` 审批流。
+      调用方应将其加入 ``runtime_dangerous``，触发 ``interrupt_on`` 审批流。
 
     失败降级：MCP 客户端未安装或连接失败时返回空列表，不影响 DeepAgent 主流程。
     """

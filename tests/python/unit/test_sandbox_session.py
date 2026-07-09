@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -216,15 +216,15 @@ async def test_concurrent_mixed_authorize_revoke(sandbox: SessionSandbox) -> Non
 async def test_authorize_db_first_persists(store_sandbox: SessionSandbox) -> None:
     """authorize 先写 DB 再改内存（DB-first）。"""
     await store_sandbox.authorize("t1", "d:/docs", writable=True, source="manual")
-    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    entries = await store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
     assert len(entries) == 1
     assert entries[0].source == "manual"
 
 
 async def test_authorize_db_failure_rolls_back_memory(tmp_path: Path) -> None:
     """DB 写失败时内存不更新（DB-first 一致性）。"""
-    # 创建一个会抛异常的 mock store
-    failing_store = MagicMock(spec=SandboxStore)
+    # 创建一个会抛异常的 mock store（公共方法已 async，需 AsyncMock 才能 await）
+    failing_store = AsyncMock(spec=SandboxStore)
     failing_store.upsert.side_effect = sqlite3_error()
     failing_store.bootstrap_all.return_value = {}
 
@@ -252,7 +252,7 @@ async def test_revoke_deletes_from_db(store_sandbox: SessionSandbox) -> None:
     """revoke 内存同时删 DB。"""
     await store_sandbox.authorize("t1", "d:/docs", writable=True)
     await store_sandbox.revoke("t1", "d:/docs")
-    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    entries = await store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
     assert len(entries) == 0
 
 
@@ -261,15 +261,15 @@ async def test_clear_deletes_thread_from_db(store_sandbox: SessionSandbox) -> No
     await store_sandbox.authorize("t1", "d:/docs", writable=True)
     await store_sandbox.authorize("t1", "d:/book", writable=False)
     await store_sandbox.clear("t1")
-    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    entries = await store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
     assert len(entries) == 0
 
 
 async def test_bootstrap_restores_from_db(tmp_path: Path) -> None:
     """bootstrap 从 DB 恢复授权到内存。"""
     store = SandboxStore(db_path=tmp_path / "test.db")
-    store.upsert("t1", "d:/docs", writable=True, source="manual")
-    store.upsert("t1", "d:/book", writable=False, source="chip")
+    await store.upsert("t1", "d:/docs", writable=True, source="manual")
+    await store.upsert("t1", "d:/book", writable=False, source="chip")
 
     sandbox = SessionSandbox(store=store)
     await sandbox.bootstrap_from_store()

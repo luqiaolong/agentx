@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -31,23 +30,18 @@ def _clear_abort_state() -> None:
 @pytest.mark.asyncio
 async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) -> None:
     """DeepAgent 流式事件生成器在中止后应抛出 CancelledError。"""
+    from langchain_core.messages import AIMessage
     from app.deep.streaming import _stream_agent_events
     from app.security.approval import set_abort
 
-    async def _fake_astream_events(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
-        # astream_events v2：先产生一个 on_chat_model_stream chunk（hello），
+    async def _fake_astream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        # astream(stream_mode="values")：先产生一个含 AIMessage 的 state（hello），
         # 随后 sleep 模拟长任务，等 abort 触发 CancelledError
-        chunk = SimpleNamespace(content="hello", tool_calls=None)
-        yield {
-            "event": "on_chat_model_stream",
-            "name": "chat_model",
-            "data": {"chunk": chunk},
-            "run_id": "r1",
-        }
+        yield {"messages": [AIMessage(content="hello")]}
         await asyncio.sleep(10)
 
     fake_agent = MagicMock()
-    fake_agent.astream_events = _fake_astream_events
+    fake_agent.astream = _fake_astream
 
     async def _abort_after() -> None:
         await asyncio.sleep(0.05)

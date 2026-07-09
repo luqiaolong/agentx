@@ -171,7 +171,6 @@ def _bcrypt_aes_gcm_decrypt(key: bytes, nonce: bytes, ciphertext_with_tag: bytes
     BCRYPT_AES_ALGORITHM = "AES\0".encode("utf-8")
     BCRYPT_CHAINING_MODE = "ChainingMode\0".encode("utf-8")
     BCRYPT_CHAIN_MODE_GCM = "ChainingModeGCM\0".encode("utf-8")
-    BCRYPT_AUTH_TAG_LENGTH = "AuthTagLength\0".encode("utf-8")
 
     # 分离 ciphertext 和 tag
     if len(ciphertext_with_tag) < 16:

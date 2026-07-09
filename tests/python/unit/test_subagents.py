@@ -20,10 +20,16 @@ def mock_create_agent(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     - ``get_chat_model``：mock 为返回 MagicMock，避免 API key 检查失败
     - ``create_agent``：mock 为返回带 ``astream_events`` 的 fake agent，
       避免 ``create_deep_agent`` 处理 MagicMock model spec 时报错
+
+    注：``build_rag_agent`` / ``build_web_agent`` 实现已收敛到
+    ``app.subagents.base.build_builtin_subagent``，故 ``get_chat_model``
+    在 ``base`` 模块命名空间中被引用，需 mock ``app.subagents.base`` 而非
+    rag_agent / web_agent 模块。
     """
     fake_model = MagicMock(name="fake_chat_model")
-    for mod in (rag_agent_mod, web_agent_mod):
-        monkeypatch.setattr(mod, "get_chat_model", lambda **kw: fake_model)
+    from app.subagents import base as base_mod
+
+    monkeypatch.setattr(base_mod, "get_chat_model", lambda **kw: fake_model)
 
     fake_agent = MagicMock(name="fake_compiled_graph")
     fake_agent.astream_events = MagicMock()
@@ -48,7 +54,7 @@ def test_build_web_agent_returns_agent(mock_create_agent: MagicMock) -> None:
 
 # 3. _make_fs_tools 绑定 thread_id：调用 read_file 工具时内部传入正确的 thread_id
 # 安全约束：subagent 工具列表仅含只读工具（read_file/list_dir/glob/grep），
-# 危险工具（write_file/edit_file）仅由 DeepAgent/Expert 暴露并经 interrupt_before 审批。
+# 危险工具（write_file/edit_file）仅由 DeepAgent/Expert 暴露并经 interrupt_on 审批。
 async def test_fs_tools_bind_thread_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

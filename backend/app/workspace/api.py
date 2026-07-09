@@ -29,40 +29,15 @@ from pathlib import Path
 
 from app.api.schemas import ProjectConfigInitRequest
 from app.observability.logger import logger
-from app.sandbox import PathNotAuthorized
+from app.sandbox import PathNotAuthorized, is_critical
 from app.workspace.config.generator import generate_agentx_dir
 from app.workspace.config.loader import load_project_config
+from app.workspace.config.templates import TEMPLATE_FILE_NAMES
 
 
 # ============================================================
 # 私有辅助函数（来自原 project_config.py）
 # ============================================================
-
-
-def _is_critical_path(resolved: Path) -> bool:
-    """路径是否为系统关键目录、其祖先或其后代（双向检查）。
-
-    复用 ``app.sandbox.CRITICAL_DIRS`` + ``is_under`` 实现，
-    逻辑与 ``SessionSandbox._is_critical`` 一致：
-
-    - 系统目录（``C:/Windows`` 等）：拒绝 resolved 是 crit 本身、其祖先
-      （如 ``C:/``）或其后代（如 ``C:/Windows/System32``）
-    - 用户主目录：仅拒绝 resolved 是 home 本身或其祖先（如 ``C:/Users``），
-      不拒绝 home 的子目录（用户可在 ``C:/Users/me/Projects`` 生成 .agentx）
-    """
-    from app.sandbox import CRITICAL_DIRS, is_under
-
-    home = Path.home().resolve()
-    for crit in CRITICAL_DIRS:
-        if crit == home:
-            # home：仅拒绝授权 home 本身或其上级
-            if is_under(crit, resolved):
-                return True
-            continue
-        # 系统目录：双向拒绝（祖先与后代均不可）
-        if is_under(resolved, crit) or is_under(crit, resolved):
-            return True
-    return False
 
 
 async def _validate_workspace_path(path_str: str, thread_id: str) -> Path:
@@ -87,8 +62,8 @@ async def _validate_workspace_path(path_str: str, thread_id: str) -> Path:
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"路径非法: {exc}")
 
-    # 拒绝系统关键目录（双向：祖先+后代）
-    if _is_critical_path(path):
+    # 拒绝系统关键目录（复用 app.sandbox.is_critical，双向检查 + 根目录处理）
+    if is_critical(path):
         raise HTTPException(
             status_code=400,
             detail=f"不能在系统关键目录生成 .agentx: {path}",
@@ -213,18 +188,10 @@ def register_routes(app: FastAPI) -> None:
                 "agents_md_preview": None,
             }
 
-        # 构建文件状态列表
+        # 构建文件状态列表（复用 templates.py 的 TEMPLATE_FILE_NAMES 作为 SSOT）
         agentx_dir = ws_path / ".agentx"
-        file_names = [
-            "AGENTS.md",
-            "mcp.json",
-            "subagents.json",
-            "tools.json",
-            "system_prompt.md",
-            "rules",
-        ]
         files = []
-        for name in file_names:
+        for name in TEMPLATE_FILE_NAMES:
             fpath = agentx_dir / name
             if fpath.exists():
                 if fpath.is_dir():

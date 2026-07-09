@@ -4,7 +4,7 @@
 
 职责:
 - ``_stream_agent_events``：驱动 ``agent.astream(stream_mode="values")``，
-  尊重 ``interrupt_before``，把 LangGraph state 转换为前端 SSE 事件。
+  尊重 ``interrupt_on``，把 LangGraph state 转换为前端 SSE 事件。
 
 SSE 事件映射:
 - ``AIMessage`` with ``tool_calls`` → ``tool_call`` + ``reasoning`` + ``todo_update``
@@ -49,9 +49,9 @@ def _extract_plan_or_update(text: str) -> tuple[str, Any] | None:
 async def _stream_agent_events(
     agent: Any, inputs: Any, config: dict, source: str = "deep"
 ) -> AsyncIterator[dict[str, str]]:
-    """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_before``。
+    """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_on``。
 
-    ``astream_events`` 不尊重 ``interrupt_before``（会直接执行工具），
+    ``astream_events`` 不尊重 ``interrupt_on``（会直接执行工具），
     MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
 
     SSE 事件映射（spec D1 + T5 扩展）:
@@ -62,7 +62,7 @@ async def _stream_agent_events(
     - ToolMessage → ``tool_result`` SSE（含 id/name/result/source）
       + ``todo_update``（标记完成）
 
-    在 ``interrupt_before=["tools"]`` 处暂停时，最后一个 state 的 messages[-1]
+    在 ``interrupt_on`` 处暂停时，最后一个 state 的 messages[-1]
     是 AIMessage（含 tool_calls），此处 yield tool_call + todo_update 后流结束，
     调用方 ``_is_interrupted`` 返回 True 进入审批流程。
 

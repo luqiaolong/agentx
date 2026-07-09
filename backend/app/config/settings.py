@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # 单次响应最大 token 数；None = 不限制（依赖模型默认）
     # 从 AGENTX_MAX_OUTPUT_TOKENS env 读取；用户在 ModelProviderSettings 设置面板填写
     max_output_tokens: int | None = Field(default=None, ge=1)
+    # LLM 温度默认值（按用途分组，避免 call-site 硬编码）
+    # 结构化抽取/判官：profile 抽取、消息压缩、RubricMiddleware grader fallback
+    llm_temperature_extraction: float = Field(default=0.0, ge=0.0, le=2.0)
+    # Orchestrator/DeepAgent 主模型默认温度
+    llm_temperature_orchestrator: float = Field(default=0.3, ge=0.0, le=2.0)
 
     # ---- Embedding (BGE-M3 service on myserver:8093) ----
     embedding_url: str = "http://192.168.1.4:8093/v1/embeddings"
@@ -86,6 +91,8 @@ class Settings(BaseSettings):
     embedding_timeout: float = 10.0
     embedding_max_batch: int = 32
     embedding_max_chars: int = 24000  # 超过则拒绝（bge-m3 8192 tokens 上限保护）
+    # 嵌入向量维度（BGE-M3 = 1024）；tei_client 用于维度校验
+    embedding_dim: int = Field(default=1024, ge=1)
 
     # ---- Milvus ----
     milvus_host: str = "192.168.1.4"

@@ -5,7 +5,7 @@
 - ``client``: 异步单例 ``McpClientManager``，懒连接 + 工具缓存 + 重连
 
 工具暴露范围：仅 DeepAgent（路径 C）合并 MCP 工具；subagent（路径 B）不暴露，
-遵循 claude.md §10 安全红线——避免绕过 ``interrupt_before`` 审批流。
+遵循 claude.md §10 安全红线——避免绕过 ``interrupt_on`` 审批流。
 """
 
 from app.mcp.client import McpClientManager, get_mcp_manager

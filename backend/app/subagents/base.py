@@ -18,16 +18,18 @@ from typing import Any, AsyncIterator
 from langchain_core.tools import tool
 
 from app.config import get_settings
+from app.llm import get_chat_model
 from app.utils.text import extract_chunk_text
 
 __all__ = [
     "make_fs_tools",
-    "make_cli_tools",
     "make_rag_tools",
     "make_web_tools",
     "extract_text",
     "THINK_PROMPT_SUFFIX",
     "run_react_agent_stream",
+    "build_builtin_subagent",
+    "run_builtin_subagent",
 ]
 
 
@@ -42,11 +44,6 @@ THINK_PROMPT_SUFFIX = (
     "\n\n重要：思考标签外不要输出任何可见文本。所有可见内容必须在工具调用完成后，"
     "根据工具返回结果再输出。"
 )
-
-# 保留旧名作为向后兼容别名（deep/tools.py 等模块历史 import _make_*_tools）
-_make_fs_tools = None  # 占位，下方赋值
-_make_rag_tools = None
-_make_web_tools = None
 
 
 def make_fs_tools(thread_id: str, workspace_path: str | None = None) -> list:
@@ -96,41 +93,13 @@ def make_fs_tools(thread_id: str, workspace_path: str | None = None) -> list:
     return [t for t in tools if enabled.get(tool_name_map.get(t.name, t.name), True)]
 
 
-def make_cli_tools(thread_id: str, workspace_path: str | None = None) -> list:
-    """构建绑定 ``thread_id`` 的 CLI 工具列表。
-
-    子代理可使用 cli_execute（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
-    ``workspace_path`` 作为 cli_execute 未指定 cwd 时的默认工作目录，
-    以及相对路径解析基准。
-
-    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``cli_execute``）。
-    """
-    from app.tools.cli import cli_execute as _cli_execute
-
-    @tool
-    async def cli_execute(
-        command: str,
-        arguments: list[str] | None = None,
-        cwd: str | None = None,
-        timeout: int | None = None,
-    ) -> str:
-        """执行受限 CLI 命令（如 git/npm/python）。黑名单命令会被拒绝。"""
-        return await _cli_execute(
-            thread_id, command, arguments, cwd, timeout, workspace_path
-        )
-
-    tools = [cli_execute]
-    enabled = get_settings().tools_enabled
-    return [t for t in tools if enabled.get(t.name, True)]
-
-
 def make_git_tools(thread_id: str) -> list:
     """构建绑定 ``thread_id`` 的 Git 工具列表（只读 + 写操作）。
 
     安全约束：
     - 子代理可暴露只读 Git 工具（status/diff/log/branches）。
     - 写操作 Git 工具（clone/pull/checkout/stage/commit）在 DeepAgent 中配合
-      ``interrupt_before`` 审批流暴露；子代理通过 ``_sanitize_custom_tools``
+      ``interrupt_on`` 审批流暴露；子代理通过 ``_sanitize_custom_tools``
       过滤掉危险工具，因此本函数即使返回写工具也不会被子代理实际绑定。
 
     工具启用由 ``get_settings().tools_enabled`` 过滤；函数名与配置 key 一致。
@@ -430,9 +399,57 @@ async def run_react_agent_stream(
             }
 
 
+def build_builtin_subagent(
+    name: str,
+    thread_id: str,
+    checkpointer: Any = None,
+) -> Any:
+    """构建内置子代理（rag/web）deep_agent 子图，返回 CompiledStateGraph。
+
+    Args:
+        name: 子代理名称，"rag" 或 "web"。
+        thread_id: 会话 ID。
+        checkpointer: 可选的 LangGraph checkpointer。
+    """
+    from app.deep.harness import create_agent
+
+    settings = get_settings()
+    cfg = settings.subagents[name]
+    model = get_chat_model(temperature=cfg.temperature, streaming=True)
+    if name == "rag":
+        tools = make_rag_tools(thread_id)
+    elif name == "web":
+        tools = make_web_tools(thread_id)
+    else:
+        raise ValueError(f"unknown builtin subagent: {name}")
+    prompt = (cfg.system_prompt or "") + THINK_PROMPT_SUFFIX
+    return create_agent(
+        model,
+        tools,
+        system_prompt=prompt,
+        checkpointer=checkpointer,
+        name=f"{name}_agent",
+    )
+
+
+async def run_builtin_subagent(
+    name: str,
+    thread_id: str,
+    message: str,
+    history: list | None = None,
+    checkpointer: Any = None,
+) -> AsyncIterator[dict]:
+    """运行内置子代理，yield 标准化事件流。"""
+    agent = build_builtin_subagent(name, thread_id, checkpointer=checkpointer)
+    history_msgs = list(history) if history else []
+    inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
+    config = {"configurable": {"thread_id": thread_id}}
+    async for event in run_react_agent_stream(agent, inputs, source=name, config=config):
+        yield event
+
+
 # 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_fs_tools）
 _make_fs_tools = make_fs_tools
-_make_cli_tools = make_cli_tools
 _make_git_tools = make_git_tools
 _make_rag_tools = make_rag_tools
 _make_web_tools = make_web_tools

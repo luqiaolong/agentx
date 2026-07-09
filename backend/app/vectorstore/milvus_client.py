@@ -331,12 +331,13 @@ class MilvusClient:
 
             def _on_skip(text: str, err: Any) -> None:
                 # 在 texts 中定位被跳过的索引（按对象身份匹配，避免重复文本误判）
+                meta = {}
                 for i, t in enumerate(texts):
-                    if t is text or t == text:
+                    if t is text:
                         if i not in skipped_indices:
                             skipped_indices.append(i)
-                            break
-                meta = metadatas[i] if i < len(metadatas) else {}
+                        meta = metadatas[i] if i < len(metadatas) else {}
+                        break
                 logger.warning(
                     "skip chunk in ingest: source={!r} chunk_idx={!r} reason={}",
                     meta.get("source"),
@@ -668,7 +669,8 @@ class LangChainMilvusVectorStore(VectorStore):
 
     ``embedding`` 参数在 ``from_texts`` 中被忽略——MilvusClient 内部已
     通过 ``app.embedding`` 集成 BGE-M3，不依赖外部 Embeddings 注入。
-    同步方法通过 ``asyncio.run`` 调用异步实现。
+    同步方法通过专用线程 + 全新事件循环执行协程（方案 C），避免在已有
+    事件循环中 ``asyncio.run`` 引发 ``RuntimeError``。
     """
 
     def __init__(self, embedding: Embeddings | None = None) -> None:
@@ -676,13 +678,46 @@ class LangChainMilvusVectorStore(VectorStore):
         # embedding 保留用于 as_retriever() 的元数据，实际嵌入由 MilvusClient 内部处理
         self._embedding = embedding
 
+    @staticmethod
+    def _run_coro_sync(coro: Any) -> Any:
+        """在独立线程中运行协程，避免在已有事件循环中调用 ``asyncio.run`` 引发 ``RuntimeError``。
+
+        方案 C：同步方法不通过 ``asyncio.run`` 包装异步方法，而是借助专用线程 +
+        全新事件循环执行协程，保证 FastAPI async 上下文下可安全调用。
+        """
+        import threading
+
+        result: list[Any] = []
+        error: list[BaseException] = []
+
+        def _runner() -> None:
+            new_loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(new_loop)
+                result.append(new_loop.run_until_complete(coro))
+            except Exception as exc:  # noqa: BLE001
+                error.append(exc)
+            finally:
+                new_loop.close()
+
+        t = threading.Thread(target=_runner)
+        t.start()
+        t.join()
+        if error:
+            raise error[0]
+        return result[0] if result else None
+
+    def _sync_similarity_search(
+        self, query: str, k: int = 4, **kwargs: Any
+    ) -> list[Document]:
+        """同步向量检索底层实现：在专用线程中执行异步检索，避免 ``asyncio.run`` 冲突。"""
+        return self._run_coro_sync(self.asimilarity_search(query, k=k, **kwargs))
+
     def similarity_search(
         self, query: str, k: int = 4, **kwargs: Any
     ) -> list[Document]:
         """同步向量检索，返回 LangChain ``Document`` 列表。"""
-        import asyncio
-
-        return asyncio.run(self.asimilarity_search(query, k=k, **kwargs))
+        return self._sync_similarity_search(query, k=k, **kwargs)
 
     async def asimilarity_search(
         self, query: str, k: int = 4, **kwargs: Any
@@ -695,6 +730,17 @@ class LangChainMilvusVectorStore(VectorStore):
             for text, source, score in hits
         ]
 
+    def _sync_add_texts(
+        self,
+        texts: list[str],
+        metadatas: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
+        """同步入库底层实现：在专用线程中执行异步入库，避免 ``asyncio.run`` 冲突。"""
+        return self._run_coro_sync(
+            self.aadd_texts(texts, metadatas=metadatas, **kwargs)
+        )
+
     def add_texts(
         self,
         texts: list[str],
@@ -702,11 +748,7 @@ class LangChainMilvusVectorStore(VectorStore):
         **kwargs: Any,
     ) -> list[str]:
         """同步入库，返回已插入条目的 ID 列表（字符串化）。"""
-        import asyncio
-
-        return asyncio.run(
-            self.aadd_texts(texts, metadatas=metadatas, **kwargs)
-        )
+        return self._sync_add_texts(texts, metadatas=metadatas, **kwargs)
 
     async def aadd_texts(
         self,

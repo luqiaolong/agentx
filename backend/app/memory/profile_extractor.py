@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
 
@@ -80,7 +81,7 @@ async def extract_profile_via_llm(message: str, assistant_reply: str) -> list[di
 
     失败时返回空列表（调用方按"无可抽取"处理，不报错）。
     """
-    llm = get_chat_model(temperature=0.0)
+    llm = get_chat_model(temperature=get_settings().llm_temperature_extraction)
     structured_llm = llm.with_structured_output(ProfileResult)
     prompt = _PROFILE_PROMPT.invoke({"message": message, "assistant_reply": assistant_reply})
     try:

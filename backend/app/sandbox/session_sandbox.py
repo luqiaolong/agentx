@@ -264,7 +264,7 @@ class SessionSandbox:
 
             # DB-first：先写 DB，失败抛异常不更新内存
             if get_settings().sandbox_persistence_enabled:
-                self._store.upsert(thread_id, str(resolved), writable, source)
+                await self._store.upsert(thread_id, str(resolved), writable, source)
 
             # DB 写成功，更新内存
             with trace_span(
@@ -288,7 +288,7 @@ class SessionSandbox:
         async with self._lock:
             # DB-first：先删 DB，获取 existed 返回值
             if get_settings().sandbox_persistence_enabled:
-                existed = self._store.delete_by_path(thread_id, str(resolved))
+                existed = await self._store.delete_by_path(thread_id, str(resolved))
             else:
                 # 持久化禁用时，基于内存判断
                 entries = self._authorized_dirs.get(thread_id, set())
@@ -312,7 +312,7 @@ class SessionSandbox:
             self._temp_authorized.pop(thread_id, None)
             # DB-first：先删 DB
             if get_settings().sandbox_persistence_enabled:
-                self._store.delete_by_thread(thread_id)
+                await self._store.delete_by_thread(thread_id)
 
     async def bootstrap_from_store(self) -> None:
         """启动时从 DB 全量加载授权到内存。失败仅 log error，不阻塞启动。
@@ -322,7 +322,7 @@ class SessionSandbox:
         """
         async with self._lock:
             try:
-                loaded = self._store.bootstrap_all()
+                loaded = await self._store.bootstrap_all()
                 for thread_id, entries in loaded.items():
                     self._authorized_dirs[thread_id] = set(entries)
                 logger.info(

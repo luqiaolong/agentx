@@ -295,7 +295,7 @@ class TestReadonlyStreakProtection:
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._stream_agent_events", side_effect=_stream_side_effect))
-            stack.enter_context(patch("app.agents.expert.coding._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
+            stack.enter_context(patch("app.deep.execution._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=AsyncMock()))
             # run_agent_with_approval 内部 helper（coding.py 未传自定义实现，使用 execution 默认值）
             stack.enter_context(patch("app.deep.execution._inject_tool_error_for_call", new_callable=AsyncMock))
@@ -345,7 +345,7 @@ class TestReadonlyStreakProtection:
             stack.enter_context(patch("app.agents.expert.coding._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
             stack.enter_context(patch("app.agents.expert.coding.build_coding_expert", new_callable=AsyncMock))
             stack.enter_context(patch("app.agents.expert.coding._stream_agent_events", side_effect=_stream_side_effect))
-            stack.enter_context(patch("app.agents.expert.coding._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
+            stack.enter_context(patch("app.deep.execution._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
             stack.enter_context(patch("app.agents.expert.coding.get_sandbox", return_value=AsyncMock()))
             stack.enter_context(patch("app.deep.execution._inject_tool_error_for_call", new_callable=AsyncMock))
             stack.enter_context(patch("app.deep.execution._get_pending_tool_calls", new_callable=AsyncMock, side_effect=pending_values))

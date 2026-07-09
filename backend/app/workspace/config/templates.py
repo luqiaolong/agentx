@@ -95,3 +95,22 @@ TEMPLATES: dict[str, str] = {
     "system_prompt.md": SYSTEM_PROMPT_TEMPLATE,
     "rules/README.md": RULES_README_TEMPLATE,
 }
+
+
+def _derive_top_level_names() -> list[str]:
+    """从 TEMPLATES 键推导 ``.agentx/`` 顶级条目名（保留首次出现顺序）。
+
+    嵌套路径（如 ``rules/README.md``）取顶级目录名（``rules``），
+    供 UI 状态展示用（展示目录而非目录内单个文件）。
+    """
+    seen: list[str] = []
+    for key in TEMPLATES:
+        top = key.split("/", 1)[0]
+        if top not in seen:
+            seen.append(top)
+    return seen
+
+
+# .agentx/ 目录下供 UI 状态展示的顶级条目（文件 + 目录）
+# 自动与 TEMPLATES 同步：新增模板键即自动出现在此列表
+TEMPLATE_FILE_NAMES: list[str] = _derive_top_level_names()

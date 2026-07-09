@@ -2,7 +2,7 @@
 
 覆盖：
 1. DeepAgent 主循环在迭代起点检测到 pause 后 yield paused 事件并阻塞
-2. clear_pause 后 yield resumed 事件并继续执行
+2. clear_pause 后循环继续执行（P0 移除了 resumed 事件，非 SSE 契约）
 3. pause/resume 不清理 abort 标志或 pending approvals
 """
 
@@ -145,8 +145,7 @@ async def test_deep_path_pause_resume(
 
     event_names = [e.get("event") for e in events]
     assert "paused" in event_names
-    assert "resumed" in event_names
-    assert event_names.index("paused") < event_names.index("resumed")
+    # P0 移除了 resumed 事件（非 SSE 契约事件），resume 后循环直接继续 yield token
     assert "token" in event_names
 
     # abort 标志未被清理（run_deep_path 不消费 abort，只依赖 _await_approval 检查）

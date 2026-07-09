@@ -187,7 +187,7 @@ def register_memory_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc))
         # 联动删除沙箱授权记录
         try:
-            get_sandbox_store().delete_by_thread(thread_id)
+            await get_sandbox_store().delete_by_thread(thread_id)
             await get_sandbox().clear(thread_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("sandbox cleanup failed for thread {}: {}", thread_id, exc)

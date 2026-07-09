@@ -180,18 +180,6 @@ async def build_coding_expert(
     )
 
 
-async def _is_interrupted(agent: Any, config: dict) -> bool:
-    """检查 agent 是否在 interrupt 处暂停。
-
-    保留为模块级函数以兼容测试 patch（``patch("app.agents.expert.coding._is_interrupted")``）。
-    实际审批循环逻辑由 ``app.deep.execution.run_agent_with_approval`` 提供。
-    """
-    state = await agent.aget_state(config)
-    if not state or not state.next:
-        return False
-    return "tools" in state.next
-
-
 async def run_coding_expert(
     message: str,
     thread_id: str,
@@ -271,8 +259,9 @@ async def run_coding_expert(
             runtime_dangerous = runtime_dangerous | {"execute"}
 
         # 统一审批执行循环（deep.execution.run_agent_with_approval）
-        # stream_fn / is_interrupted_fn 传入模块级引用，以便测试通过
-        # patch("app.agents.expert.coding._xxx") 替换。
+        # stream_fn 传入模块级引用，以便测试通过
+        # patch("app.agents.expert.coding._stream_agent_events") 替换。
+        # is_interrupted_fn 使用 execution 默认值（app.deep.execution._is_interrupted）。
         async for sse in run_agent_with_approval(
             agent,
             config,
@@ -285,7 +274,6 @@ async def run_coding_expert(
             sandbox=sandbox,
             parent_thread_id=parent_thread_id,
             stream_fn=_stream_agent_events,
-            is_interrupted_fn=_is_interrupted,
             readonly_streak_threshold=10,
         ):
             yield sse

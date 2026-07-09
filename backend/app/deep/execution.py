@@ -119,6 +119,7 @@ async def run_agent_with_approval(
         get_pending_calls_fn: 提取 pending tool_calls 函数。
         inject_tool_error_for_call_fn: 单条 tool_call 错误注入函数。
         inject_tool_error_messages_fn: 批量错误注入函数。
+        yield_event: 可选的异步回调，每 yield 一个事件时同步调用（用于日志/观察）。
         readonly_streak_threshold: 只读工具连续调用阈值（0 禁用）。
         max_iterations: 最大迭代次数。
 
@@ -135,6 +136,7 @@ async def run_agent_with_approval(
     _sandbox = sandbox or get_sandbox()
 
     async def _forward(event: dict[str, str]) -> dict[str, str]:
+        """yield 前同步调用 yield_event 回调（用于日志/观察/统计）。"""
         if yield_event is not None:
             await yield_event(event)
         return event
