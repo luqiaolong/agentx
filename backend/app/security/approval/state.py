@@ -257,39 +257,53 @@ async def is_paused(thread_id: str) -> bool:
         return entry[0] if entry is not None else False
 
 
-async def wait_for_resume(thread_id: str, timeout: float) -> bool:
+async def wait_for_resume(thread_id: str, timeout: float | None = None) -> bool:
     """原子等待恢复信号（锁内 check + event 获取，锁外 await）。
 
     消除竞态：在 ``_state_lock`` 内检查 ``_pause_flags`` 并获取/创建
     ``_pause_events``，锁外 ``await event.wait()``。避免
     "check 后、await 前 clear_pause 已 set event 并 pop" 的窗口。
 
+    额外加固：
+    - 使用整体 deadline 控制最大等待时间。
+    - 每轮等待后重新检查 ``is_paused``；若事件被 reaper 清理或收到
+      虚假唤醒，可重新创建 event 继续等待，避免永久挂起。
+
+    Args:
+        thread_id: 会话 ID。
+        timeout: 最大等待秒数；None 时一直等待直到恢复。
+
     Returns:
         - True：已恢复（或本就未暂停）。
         - False：超时未恢复。
     """
-    async with _state_lock:
-        ts = _now()
-        entry = _pause_flags.get(thread_id)
-        if entry is None or not entry[0]:
-            # 未暂停，直接返回
-            if entry is not None:
-                _pause_flags[thread_id] = (entry[0], ts)
-            return True
-        # 已暂停：获取或创建 event
-        event_entry = _pause_events.get(thread_id)
-        if event_entry is None:
-            event = asyncio.Event()
-            _pause_events[thread_id] = (event, ts)
-        else:
-            event = event_entry[0]
-            _pause_events[thread_id] = (event, ts)
-    # 锁外等待
-    try:
-        await asyncio.wait_for(event.wait(), timeout=timeout)
-        return True
-    except asyncio.TimeoutError:
-        return False
+    deadline = None if timeout is None else asyncio.get_event_loop().time() + timeout
+    poll_interval = 1.0
+
+    while True:
+        async with _state_lock:
+            ts = _now()
+            entry = _pause_flags.get(thread_id)
+            if entry is None or not entry[0]:
+                # 未暂停，直接返回
+                return True
+            # 已暂停：获取或创建 event
+            event_entry = _pause_events.get(thread_id)
+            if event_entry is None:
+                event = asyncio.Event()
+                _pause_events[thread_id] = (event, ts)
+            else:
+                event = event_entry[0]
+                _pause_events[thread_id] = (event, ts)
+
+        now = asyncio.get_event_loop().time()
+        if deadline is not None and now >= deadline:
+            return False
+        wait_time = poll_interval if deadline is None else min(poll_interval, deadline - now)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=wait_time)
+        except asyncio.TimeoutError:
+            pass
 
 
 async def get_pause_event(thread_id: str) -> asyncio.Event:
