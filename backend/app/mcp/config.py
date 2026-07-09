@@ -26,7 +26,7 @@
     ]
 
 安全约束：
-- ``trusted=false``（默认）时，MCP 工具调用经 DeepAgent ``interrupt_before`` 审批流。
+- ``trusted=false``（默认）时，MCP 工具调用经 DeepAgent ``interrupt_on`` 审批流。
 - ``trusted=true`` 时自动放行，仅用于完全可信的 MCP server。
 - MCP 工具**仅**暴露给 DeepAgent（路径 C），subagent 不暴露。
 """

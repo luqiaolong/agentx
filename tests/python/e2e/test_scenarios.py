@@ -202,7 +202,7 @@ async def test_scenario_5_dangerous_tool_blocks_on_approve(async_client):
     """场景 5: shell_exec 危险工具触发后审批阻塞。
 
     验证：当 LLM 调用 shell_exec 等危险工具时，后端会先 yield approval_request
-    （在 astream 收到 interrupt_before="tools" 信号后），然后阻塞等待审批。
+    （在 astream 收到 interrupt_on 信号后），然后阻塞等待审批。
 
     本测试不验证前端 UI，仅验证后端 SSE 流接口契约：
     - 流不会立即结束（done 事件晚于 approval_request）

@@ -2,7 +2,7 @@
 
 安全模型（与前端 PermissionToggle 对齐）：
 - ``workspace`` 模式：命令只能在已授权目录（cwd）下执行，且 ``cli_execute``
-  作为危险工具走 DeepAgent ``interrupt_before`` 审批。
+  作为危险工具走 DeepAgent ``interrupt_on`` 审批。
 - ``full_trust`` 模式：跳过路径授权检查，但仍受以下约束保护：
   - 命令黑名单（删除/格式化/关机等极度危险命令直接拒绝）
   - 禁止 shell 元字符 / 管道 / 重定向

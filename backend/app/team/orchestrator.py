@@ -19,7 +19,7 @@ yield 给调用方（``coding_team.py`` / CLI / 测试）。
 
 安全：
 - 普通子代理只调用只读/安全工具；写/编辑/shell 等危险任务必须指定为 deep
-  子任务，由 run_deep_path 执行并走 interrupt_before 审批。
+  子任务，由 run_deep_path 执行并走 interrupt_on 审批。
 - 若 Orchestrator 把危险任务误分配给普通子代理，planner 会强制改写为 deep。
 
 模块拆分（Phase 2.4）：

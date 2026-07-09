@@ -47,12 +47,6 @@ _DEFAULT_SUPERVISOR_TOOLS: list[str] = [
 # coding Expert 默认工具集（与 Supervisor 一致，Expert 需要完整代码工具）
 _DEFAULT_CODING_EXPERT_TOOLS: list[str] = list(_DEFAULT_SUPERVISOR_TOOLS)
 
-# 危险工具列表（触发 interrupt_before 审批流）
-_DEFAULT_INTERRUPT_BEFORE_TOOLS: list[str] = [
-    "write_file", "edit_file", "cli_execute",
-    "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
-]
-
 # 内置 Expert 键名集合（当前仅 coding，未来扩展 research/trading 等）
 BUILTIN_EXPERT_KEYS: frozenset[str] = frozenset({"coding"})
 
@@ -65,16 +59,13 @@ class SupervisorSettings(BaseModel):
 
     Supervisor 基于 ``create_react_agent`` 构建，自带完整工具集 +
     ``delegate_to_expert`` / ``delegate_to_subagent`` 委派工具。
-    写操作走 ``interrupt_before`` 审批流。
+    写操作走 ``interrupt_on`` 审批流。
     """
 
     enabled: bool = True
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=lambda: list(_DEFAULT_SUPERVISOR_TOOLS))
-    interrupt_before_tools: list[str] = Field(
-        default_factory=lambda: list(_DEFAULT_INTERRUPT_BEFORE_TOOLS)
-    )
 
 
 class ExpertSettings(BaseModel):
@@ -93,9 +84,6 @@ class ExpertSettings(BaseModel):
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=lambda: list(_DEFAULT_CODING_EXPERT_TOOLS))
     scenario: str = ""
-    interrupt_before_tools: list[str] = Field(
-        default_factory=lambda: list(_DEFAULT_INTERRUPT_BEFORE_TOOLS)
-    )
     rubric: str = ""
     grader_model: str | None = None
 
@@ -134,14 +122,12 @@ def _default_agents_config() -> AgentsConfig:
         supervisor=SupervisorSettings(
             system_prompt=_DEFAULT_SUPERVISOR_SYSTEM_PROMPT,
             tools=list(_DEFAULT_SUPERVISOR_TOOLS),
-            interrupt_before_tools=list(_DEFAULT_INTERRUPT_BEFORE_TOOLS),
         ),
         experts={
             "coding": ExpertSettings(
                 system_prompt=_DEFAULT_CODING_EXPERT_SYSTEM_PROMPT,
                 tools=list(_DEFAULT_CODING_EXPERT_TOOLS),
                 scenario="coding",
-                interrupt_before_tools=list(_DEFAULT_INTERRUPT_BEFORE_TOOLS),
             ),
         },
         teams={

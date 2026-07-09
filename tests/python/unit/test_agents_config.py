@@ -53,10 +53,6 @@ class TestSupervisorSettings:
         assert "git_commit" in s.tools
         assert "rag_retrieve" in s.tools
         assert "web_search" in s.tools
-        # interrupt_before_tools 含危险工具
-        assert "write_file" in s.interrupt_before_tools
-        assert "cli_execute" in s.interrupt_before_tools
-        assert "git_commit" in s.interrupt_before_tools
 
     def test_temperature_clamp_low(self) -> None:
         """temperature < 0 报错。"""
@@ -211,14 +207,6 @@ class TestDefaultAgentsConfig:
         """coding Expert 默认工具集与 Supervisor 一致。"""
         cfg = _default_agents_config()
         assert set(cfg.experts["coding"].tools) == set(cfg.supervisor.tools)
-
-    def test_interrupt_before_tools_contains_dangerous(self) -> None:
-        """Supervisor 和 coding Expert 的 interrupt_before_tools 含危险工具。"""
-        cfg = _default_agents_config()
-        expected = {"write_file", "edit_file", "cli_execute",
-                    "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit"}
-        assert expected <= set(cfg.supervisor.interrupt_before_tools)
-        assert expected <= set(cfg.experts["coding"].interrupt_before_tools)
 
 
 # ============================================================

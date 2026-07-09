@@ -99,7 +99,7 @@ def make_git_tools(thread_id: str) -> list:
     安全约束：
     - 子代理可暴露只读 Git 工具（status/diff/log/branches）。
     - 写操作 Git 工具（clone/pull/checkout/stage/commit）在 DeepAgent 中配合
-      ``interrupt_before`` 审批流暴露；子代理通过 ``_sanitize_custom_tools``
+      ``interrupt_on`` 审批流暴露；子代理通过 ``_sanitize_custom_tools``
       过滤掉危险工具，因此本函数即使返回写工具也不会被子代理实际绑定。
 
     工具启用由 ``get_settings().tools_enabled`` 过滤；函数名与配置 key 一致。

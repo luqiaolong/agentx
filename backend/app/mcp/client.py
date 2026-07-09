@@ -118,7 +118,7 @@ class McpClientManager:
         - ``tools``: 所有已连接 server 的 LangChain 工具列表。
         - ``untrusted_tool_names``: 所有 MCP 工具名集合（BUG-5 修复：不再区分
           trusted/untrusted，所有 MCP 工具均进入运行时危险集合，触发
-          ``interrupt_before`` 审批流）。
+          ``interrupt_on`` 审批流）。
 
         安全模型：MCP 工具可执行任意操作（写文件 / shell / 远程调用），
         无论 server 配置为 trusted=True 还是 trusted=False，所有 MCP 工具

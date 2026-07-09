@@ -54,7 +54,7 @@ def test_build_web_agent_returns_agent(mock_create_agent: MagicMock) -> None:
 
 # 3. _make_fs_tools 绑定 thread_id：调用 read_file 工具时内部传入正确的 thread_id
 # 安全约束：subagent 工具列表仅含只读工具（read_file/list_dir/glob/grep），
-# 危险工具（write_file/edit_file）仅由 DeepAgent/Expert 暴露并经 interrupt_before 审批。
+# 危险工具（write_file/edit_file）仅由 DeepAgent/Expert 暴露并经 interrupt_on 审批。
 async def test_fs_tools_bind_thread_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
