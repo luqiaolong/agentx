@@ -217,8 +217,9 @@ async def _run_subtask(
         ):
             _collect_event(event, collected_text, tool_traces)
     # 软件开发专家团角色：用 custom_agent 工厂构建专属 agent，复用 astream_events 事件流
-    elif agent_name in ("frontend_dev", "backend_dev", "tester", "architect", "devops", "ui_designer", "product_manager"):
-        cfg = get_settings().team_subagents.get(agent_name)
+    # 从 settings.team_subagents 动态读取角色列表，不再硬编码角色名
+    elif agent_name in get_settings().team_subagents:
+        cfg = get_settings().team_subagents[agent_name]
         if cfg and cfg.system_prompt:
             # MUST 传 thread_id：_make_custom_tools 用 thread_id 绑定沙箱授权
             from app.subagents.custom_agent import build_custom_agent

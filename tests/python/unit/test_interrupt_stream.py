@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,14 +34,20 @@ async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
     from app.deep.streaming import _stream_agent_events
     from app.security.approval import set_abort
 
-    async def _fake_astream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
-        from langchain_core.messages import AIMessage
-
-        yield {"messages": [AIMessage(content="hello")]}
+    async def _fake_astream_events(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+        # astream_events v2：先产生一个 on_chat_model_stream chunk（hello），
+        # 随后 sleep 模拟长任务，等 abort 触发 CancelledError
+        chunk = SimpleNamespace(content="hello", tool_calls=None)
+        yield {
+            "event": "on_chat_model_stream",
+            "name": "chat_model",
+            "data": {"chunk": chunk},
+            "run_id": "r1",
+        }
         await asyncio.sleep(10)
 
     fake_agent = MagicMock()
-    fake_agent.astream = _fake_astream
+    fake_agent.astream_events = _fake_astream_events
 
     async def _abort_after() -> None:
         await asyncio.sleep(0.05)
@@ -76,9 +83,16 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         lambda msg: (False, ""),
     )
 
-    # 跳过真实 LLM 调用：ainvoke 必须返回可 await 的对象
+    # 跳过真实 LLM 调用：with_structured_output().ainvoke 返回 fake plan
+    fake_task = MagicMock()
+    fake_task.agent = "deep"
+    fake_task.input = "subtask"
+    fake_task.purpose = "test"
+    fake_plan = MagicMock()
+    structured_llm = MagicMock()
+    structured_llm.ainvoke = AsyncMock(return_value=fake_plan)
     fake_llm = MagicMock()
-    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="plan"))
+    fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr(
         orch_module,
         "get_chat_model",
@@ -86,14 +100,10 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     # 模拟 Orchestrator 生成一个 deep 子任务
-    fake_task = MagicMock()
-    fake_task.agent = "deep"
-    fake_task.input = "subtask"
-    fake_task.purpose = "test"
     monkeypatch.setattr(
         orch_module,
-        "_parse_plan",
-        lambda text, max_tasks: ([fake_task], "reasoning"),
+        "_postprocess_plan",
+        lambda plan, max_tasks: ([fake_task], "reasoning"),
     )
 
     # 模拟 _validate_task 通过

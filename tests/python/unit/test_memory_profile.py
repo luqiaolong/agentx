@@ -315,20 +315,29 @@ def test_build_profile_prompt_orders_by_updated_at_desc(tmp_path: Path) -> None:
 # ============================================================
 
 
-async def test_extract_profile_via_llm_parses_json(
+async def test_extract_profile_via_llm_returns_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LLM 抽取：mock get_chat_model，验证 JSON 解析。"""
-    from app.memory.profile_extractor import extract_profile_via_llm
-
-    # mock LLM 返回 JSON（ainvoke 必须用 AsyncMock 才能 await）
-    fake_response = MagicMock()
-    fake_response.content = (
-        '{"entries": [{"key": "uses_ts", "category": "project", '
-        '"content": "用户用 TypeScript 写前端"}]}'
+    """LLM 抽取：mock with_structured_output 返回 ProfileResult。"""
+    from app.memory.profile_extractor import (
+        ProfileEntry,
+        ProfileResult,
+        extract_profile_via_llm,
     )
+
+    result = ProfileResult(
+        entries=[
+            ProfileEntry(
+                key="uses_ts",
+                category="project",
+                content="用户用 TypeScript 写前端",
+            )
+        ]
+    )
+    structured_llm = MagicMock()
+    structured_llm.ainvoke = AsyncMock(return_value=result)
     fake_llm = MagicMock()
-    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+    fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
     entries = await extract_profile_via_llm("我用 TypeScript", "好的")
@@ -341,52 +350,61 @@ async def test_extract_profile_via_llm_no_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """LLM 返回空 entries。"""
-    from app.memory.profile_extractor import extract_profile_via_llm
+    from app.memory.profile_extractor import ProfileResult, extract_profile_via_llm
 
-    fake_response = MagicMock()
-    fake_response.content = '{"entries": []}'
+    result = ProfileResult(entries=[])
+    structured_llm = MagicMock()
+    structured_llm.ainvoke = AsyncMock(return_value=result)
     fake_llm = MagicMock()
-    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+    fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
     entries = await extract_profile_via_llm("你好", "你好")
     assert entries == []
 
 
-async def test_extract_profile_via_llm_invalid_json(
+async def test_extract_profile_via_llm_handles_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LLM 返回非法 JSON 时返回空列表（不报错）。"""
+    """LLM 调用抛异常时返回空列表（不报错）。"""
     from app.memory.profile_extractor import extract_profile_via_llm
 
-    fake_response = MagicMock()
-    fake_response.content = "not a json"
+    structured_llm = MagicMock()
+    structured_llm.ainvoke = AsyncMock(side_effect=RuntimeError("LLM 不可用"))
     fake_llm = MagicMock()
-    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+    fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
     entries = await extract_profile_via_llm("msg", "reply")
     assert entries == []
 
 
-async def test_extract_profile_via_llm_json_with_surrounding_text(
+async def test_extract_profile_via_llm_multiple_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LLM 返回含解释文字 + JSON 时容错提取 JSON。"""
-    from app.memory.profile_extractor import extract_profile_via_llm
-
-    fake_response: Any = MagicMock()
-    fake_response.content = (
-        '分析结果如下：\n{"entries": [{"key": "k1", "category": "fact", '
-        '"content": "重要事实"}]}\n以上。'
+    """LLM 返回多条目时全部转换为 dict。"""
+    from app.memory.profile_extractor import (
+        ProfileEntry,
+        ProfileResult,
+        extract_profile_via_llm,
     )
+
+    result = ProfileResult(
+        entries=[
+            ProfileEntry(key="k1", category="fact", content="重要事实"),
+            ProfileEntry(key="k2", category="preference", content="偏好简洁"),
+        ]
+    )
+    structured_llm = MagicMock()
+    structured_llm.ainvoke = AsyncMock(return_value=result)
     fake_llm = MagicMock()
-    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+    fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
     entries = await extract_profile_via_llm("msg", "reply")
-    assert len(entries) == 1
+    assert len(entries) == 2
     assert entries[0]["key"] == "k1"
+    assert entries[1]["key"] == "k2"
 
 
 # ============================================================

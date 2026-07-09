@@ -3,14 +3,43 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import re
 from typing import Any
 
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
+
 from app.llm import get_chat_model
+from app.observability.logger import logger
 
 # T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
 _extract_tasks: set[asyncio.Task] = set()
+
+
+class ProfileEntry(BaseModel):
+    """单条用户画像条目。"""
+
+    key: str = Field(description="条目唯一键，如 uses_ts / project_framework")
+    category: str = Field(description="分类：preference / project / fact")
+    content: str = Field(description="条目内容描述")
+
+
+class ProfileResult(BaseModel):
+    """画像抽取结构化输出。"""
+
+    entries: list[ProfileEntry] = Field(default_factory=list, description="抽取到的画像条目")
+
+
+_PROFILE_SYSTEM = (
+    "你是一个用户画像抽取器。分析对话，抽取「值得跨会话记住的事实」：\n"
+    "- 用户偏好（如\"喜欢简洁回复\"、\"用 TypeScript\"）\n"
+    "- 项目约定（如\"项目用 FastAPI\"、\"测试用 pytest\"）\n"
+    "- 重要事实（如\"用户是前端工程师\"、\"工作日 9-18 点在线\"）\n"
+    "若无可抽取内容，返回空 entries。不要编造，只抽取明确的事实。"
+)
+
+_PROFILE_PROMPT = ChatPromptTemplate.from_messages(
+    [("system", _PROFILE_SYSTEM), ("human", "对话：\n用户: {message}\n助手: {assistant_reply}")]
+)
 
 
 async def extract_last_assistant_reply(agent: Any, config: dict) -> str:
@@ -43,34 +72,23 @@ async def extract_last_assistant_reply(agent: Any, config: dict) -> str:
 
 
 async def extract_profile_via_llm(message: str, assistant_reply: str) -> list[dict]:
-    """调 LLM 抽取画像条目。
+    """调 LLM 抽取画像条目（结构化输出）。
 
-    Prompt 引导 LLM 抽取「值得跨会话记住的事实」：用户偏好、项目约定、重要事实。
-    输出 JSON ``{"entries": [{"key", "category", "content"}]}``，无内容返回空列表。
+    使用 ``llm.with_structured_output(ProfileResult)`` 让模型直接返回结构化对象，
+    避免手写 JSON 解析与 markdown 剥离。返回 ``list[dict]`` 以兼容
+    ``upsert_from_llm(entries: list[dict])`` 契约。
 
     失败时返回空列表（调用方按"无可抽取"处理，不报错）。
     """
-    prompt = (
-        "你是一个用户画像抽取器。分析以下对话，抽取\"值得跨会话记住的事实\"：\n"
-        "- 用户偏好（如\"喜欢简洁回复\"、\"用 TypeScript\"）\n"
-        "- 项目约定（如\"项目用 FastAPI\"、\"测试用 pytest\"）\n"
-        "- 重要事实（如\"用户是前端工程师\"、\"工作日 9-18 点在线\"）\n\n"
-        f"对话：\n用户: {message}\n助手: {assistant_reply}\n\n"
-        '输出 JSON: {{"entries": [{{"key": "...", "category": "...", "content": "..."}}]}}\n'
-        '若无可抽取内容，返回 {{"entries": []}}。不要编造，只抽取明确的事实。'
-    )
     llm = get_chat_model(temperature=0.0)
-    response = await llm.ainvoke(prompt)
-    text = response.content if hasattr(response, "content") else str(response)
-
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return []
+    structured_llm = llm.with_structured_output(ProfileResult)
+    prompt = _PROFILE_PROMPT.invoke({"message": message, "assistant_reply": assistant_reply})
     try:
-        data = json.loads(match.group())
-        return data.get("entries", []) if isinstance(data, dict) else []
-    except json.JSONDecodeError:
+        result: ProfileResult = await structured_llm.ainvoke(prompt)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("profile extract via llm failed", error=str(exc))
         return []
+    return [entry.model_dump() for entry in result.entries]
 
 
 __all__ = ["extract_profile_via_llm", "extract_last_assistant_reply"]

@@ -105,9 +105,12 @@ def test_build_orchestrator_prompt_coding_scene_includes_team_experts() -> None:
         ),
     }
     settings = _make_settings(team_subagents=team)
-    prompt = _build_orchestrator_prompt(
+    prompt_value = _build_orchestrator_prompt(
         "做前端", max_tasks=5, context="", scene="coding", settings=settings
     )
+    # _build_orchestrator_prompt 返回 ChatPromptValue（LangChain 标准），
+    # 转为字符串做内容断言
+    prompt = prompt_value.to_string()
     assert "frontend_dev" in prompt
     assert "前端专家" in prompt
     # base experts 也在

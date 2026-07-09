@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from .milvus_client import (
+    LangChainMilvusVectorStore,
     MilvusUnavailable,
     delete_by_source,
     delete_by_source_type,
@@ -16,6 +17,7 @@ from .milvus_client import (
 )
 
 __all__ = [
+    "LangChainMilvusVectorStore",
     "MilvusUnavailable",
     "delete_by_source",
     "delete_by_source_type",

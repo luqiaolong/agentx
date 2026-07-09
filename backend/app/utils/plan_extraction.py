@@ -7,10 +7,9 @@ DeepAgent 与 Chat 路径都会调用：从 LLM 输出文本中提取 ``{"plan":
 - ``plan``：结构化任务计划数组
 - ``plan_update``：单个任务的 status 更新
 
-提取规则：
-1. 剥离 markdown 代码块（```json ... ``` 或 ``` ... ```）
-2. JSON 解析
-3. 顶层必须含 ``plan``（list）或 ``plan_update``（dict）字段
+JSON 解析委托给 ``langchain_core.utils.json.parse_json_markdown``（自动剥离
+```json 代码块、处理尾逗号与部分 JSON），不再手写 markdown 正则 + json.loads。
+顶层必须含 ``plan``（list 或 ``{"steps": [...]}``）或 ``plan_update``（dict）字段。
 
 支持的 plan item schema（任一即可，不强制）：
 - ``{id, title, status}`` — 项目最初设计
@@ -19,9 +18,9 @@ DeepAgent 与 Chat 路径都会调用：从 LLM 输出文本中提取 ``{"plan":
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
+
+from langchain_core.utils.json import parse_json_markdown
 
 __all__ = ["extract_plan_or_update"]
 
@@ -74,6 +73,9 @@ def _normalize_plan_items(plan_data: Any) -> Any:
 def extract_plan_or_update(text: str) -> tuple[str, Any] | None:
     """从 LLM 输出文本提取结构化 plan/plan_update。
 
+    使用 ``langchain_core.utils.json.parse_json_markdown`` 解析 JSON（自动处理
+    markdown 代码块、尾逗号、部分 JSON），不再手写正则与 json.loads。
+
     支持：
     - 纯 JSON：``{"plan": [...]}`` / ``{"plan": {"steps": [...]}}`` / ``{"plan_update": {...}}``
     - markdown 代码块包裹：`````json\n{...}\n``````
@@ -89,30 +91,24 @@ def extract_plan_or_update(text: str) -> tuple[str, Any] | None:
     if not text:
         return None
 
-    candidates = [text]
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if match:
-        candidates.append(match.group(1).strip())
+    try:
+        data = parse_json_markdown(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
 
-    for candidate in candidates:
-        try:
-            data = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if not isinstance(data, dict):
-            continue
+    plan = data.get("plan")
+    # 顶层 plan 是 list（项目原始 schema）
+    if isinstance(plan, list):
+        return "plan", {"plan": _normalize_plan_items(plan)}
+    # 顶层 plan 是 dict 且含 steps（LLM 嵌套 schema）
+    if isinstance(plan, dict) and isinstance(plan.get("steps"), list):
+        return "plan", {"plan": _normalize_plan_items(plan["steps"])}
 
-        plan = data.get("plan")
-        # 顶层 plan 是 list（项目原始 schema）
-        if isinstance(plan, list):
-            return "plan", {"plan": _normalize_plan_items(plan)}
-        # 顶层 plan 是 dict 且含 steps（LLM 嵌套 schema）
-        if isinstance(plan, dict) and isinstance(plan.get("steps"), list):
-            return "plan", {"plan": _normalize_plan_items(plan["steps"])}
-
-        if isinstance(data.get("plan_update"), dict):
-            update = data["plan_update"]
-            if "status" not in update and "done" in update:
-                update["status"] = "done" if update["done"] else "pending"
-            return "plan_update", update
+    if isinstance(data.get("plan_update"), dict):
+        update = data["plan_update"]
+        if "status" not in update and "done" in update:
+            update["status"] = "done" if update["done"] else "pending"
+        return "plan_update", update
     return None

@@ -55,6 +55,7 @@ except ImportError:  # pragma: no cover - tei_client 尚未实现时兜底
 __all__ = [
     "MilvusUnavailable",
     "MilvusClient",
+    "LangChainMilvusVectorStore",
     "get_milvus_client",
     "ingest",
     "search",
@@ -649,3 +650,88 @@ async def delete_by_source(source: str) -> int:
 async def delete_by_source_type(source_type: str) -> None:
     """模块级委托：按 source_type 批量删除（drop + recreate partition）。"""
     return await get_milvus_client().delete_by_source_type(source_type)
+
+
+# ---- LangChain VectorStore 适配器 ----
+
+from langchain_core.documents import Document  # noqa: E402
+from langchain_core.embeddings import Embeddings  # noqa: E402
+from langchain_core.vectorstores import VectorStore  # noqa: E402
+
+
+class LangChainMilvusVectorStore(VectorStore):
+    """LangChain ``VectorStore`` 适配器：委托给现有 ``MilvusClient`` 单例。
+
+    实现标准 ``similarity_search`` / ``add_texts`` / ``from_texts``，使
+    Milvus 向量库可被 LangChain ``as_retriever()`` / LCEL chain /
+    ``create_retrieval_chain`` 直接消费。
+
+    ``embedding`` 参数在 ``from_texts`` 中被忽略——MilvusClient 内部已
+    通过 ``app.embedding`` 集成 BGE-M3，不依赖外部 Embeddings 注入。
+    同步方法通过 ``asyncio.run`` 调用异步实现。
+    """
+
+    def __init__(self, embedding: Embeddings | None = None) -> None:
+        self._milvus = get_milvus_client()
+        # embedding 保留用于 as_retriever() 的元数据，实际嵌入由 MilvusClient 内部处理
+        self._embedding = embedding
+
+    def similarity_search(
+        self, query: str, k: int = 4, **kwargs: Any
+    ) -> list[Document]:
+        """同步向量检索，返回 LangChain ``Document`` 列表。"""
+        import asyncio
+
+        return asyncio.run(self.asimilarity_search(query, k=k, **kwargs))
+
+    async def asimilarity_search(
+        self, query: str, k: int = 4, **kwargs: Any
+    ) -> list[Document]:
+        """异步向量检索，委托给 ``MilvusClient.search``。"""
+        filter_expr = kwargs.get("filter")
+        hits = await self._milvus.search(query, top_k=k, filter=filter_expr)
+        return [
+            Document(page_content=text, metadata={"source": source, "score": score})
+            for text, source, score in hits
+        ]
+
+    def add_texts(
+        self,
+        texts: list[str],
+        metadatas: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
+        """同步入库，返回已插入条目的 ID 列表（字符串化）。"""
+        import asyncio
+
+        return asyncio.run(
+            self.aadd_texts(texts, metadatas=metadatas, **kwargs)
+        )
+
+    async def aadd_texts(
+        self,
+        texts: list[str],
+        metadatas: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
+        """异步入库，委托给 ``MilvusClient.ingest``。"""
+        source_type = kwargs.get("source_type", "manual")
+        metas = metadatas or [{} for _ in texts]
+        ids = await self._milvus.ingest(texts, metas, source_type=source_type)
+        return [str(i) for i in ids]
+
+    @classmethod
+    def from_texts(
+        cls,
+        texts: list[str],
+        embedding: Embeddings,
+        metadatas: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> "LangChainMilvusVectorStore":
+        """从文本列表创建 VectorStore 实例（LangChain 标准工厂方法）。
+
+        ``embedding`` 参数被忽略——MilvusClient 内部已集成 BGE-M3 嵌入。
+        """
+        vs = cls(embedding=embedding)
+        vs.add_texts(texts, metadatas=metadatas, **kwargs)
+        return vs

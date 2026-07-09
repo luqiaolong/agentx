@@ -33,7 +33,7 @@ class _FakeAgent:
         每个 state 中的 messages 最后一条消息被转换为：
         - AIMessage without tool_calls → on_chat_model_end 事件
         - AIMessage with tool_calls → on_chat_model_end 事件
-        - ToolMessage → on_tool_end 事件
+        - ToolMessage → on_chain_end 事件（state 中包含 messages）
         """
         from langchain_core.messages import AIMessage, ToolMessage
 
@@ -50,10 +50,11 @@ class _FakeAgent:
                     "run_id": "run-" + str(id(last_msg)),
                 }
             elif isinstance(last_msg, ToolMessage):
+                # ToolMessage 通过 on_chain_end 的 state 产出
                 yield {
-                    "event": "on_tool_end",
-                    "name": last_msg.name or "unknown",
-                    "data": {"output": last_msg.content},
+                    "event": "on_chain_end",
+                    "name": "tools",
+                    "data": {"output": state},
                     "run_id": getattr(last_msg, "tool_call_id", "") or "run-" + str(id(last_msg)),
                 }
         # 最终 on_chain_end

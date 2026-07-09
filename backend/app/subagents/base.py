@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator
 from langchain_core.tools import tool
 
 from app.config import get_settings
+from app.utils.text import extract_chunk_text
 
 __all__ = [
     "make_fs_tools",
@@ -367,21 +368,13 @@ def make_web_tools(thread_id: str) -> list:
 
 
 def extract_text(chunk: Any) -> str:
-    """从流式 chunk 中提取纯文本内容（兼容 str / list 内容块）。"""
-    if chunk is None:
-        return ""
-    content = getattr(chunk, "content", chunk)
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and isinstance(block.get("text"), str):
-                parts.append(block["text"])
-        return "".join(parts)
-    return ""
+    """从流式 chunk 中提取纯文本内容（兼容 str / list 内容块）。
+
+    委托给 ``app.utils.text.extract_chunk_text(strip=False)``——
+    保留原始文本（不剥离 think 块），由下游 ``ThinkFilter`` 流式处理。
+    保留本函数是为了向后兼容（``__all__`` 导出 + 外部可能引用）。
+    """
+    return extract_chunk_text(chunk, strip=False)
 
 
 async def run_react_agent_stream(

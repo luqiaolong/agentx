@@ -51,14 +51,12 @@ from app.team.blackboard import (  # noqa: F401
 from app.team.planner import (  # noqa: F401
     _BASE_EXPERTS,
     _ORCHESTRATOR_PROMPT,
+    TeamPlan,
     _build_orchestrator_prompt,
     _build_project_context,
     _build_team_experts_description,
-    _extract_codeblock,
-    _extract_first_json_object,
     _looks_like_dangerous_task,
-    _parse_plan,
-    _try_parse_json,
+    _postprocess_plan,
     _validate_task,
 )
 from app.team.scheduler import (  # noqa: F401
@@ -137,14 +135,14 @@ async def run_team_path(
             message, max_tasks, context=context, settings=settings
         )
         try:
-            response = await llm.ainvoke(orchestrator_prompt)
-            raw_text = response.content if hasattr(response, "content") else str(response)
+            structured_llm = llm.with_structured_output(TeamPlan)
+            plan_obj: TeamPlan = await structured_llm.ainvoke(orchestrator_prompt)
         except Exception as exc:  # noqa: BLE001
             logger.warning("team orchestrator invoke failed", error=str(exc))
             yield make_team_event("error", {"message": f"Orchestrator 调用失败: {exc}"})
             return
 
-        plan, reasoning = _parse_plan(raw_text, max_tasks)
+        plan, reasoning = _postprocess_plan(plan_obj, max_tasks)
         if not plan:
             yield make_team_event("error", {"message": "Orchestrator 未生成有效计划"})
             return

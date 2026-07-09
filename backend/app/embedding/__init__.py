@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .tei_client import (
     EmbeddingUnavailable,
+    LangChainTeiEmbeddings,
     TextTooLongError,
     embed_text,
     embed_texts,
@@ -16,6 +17,7 @@ from .tei_client import (
 
 __all__ = [
     "EmbeddingUnavailable",
+    "LangChainTeiEmbeddings",
     "TextTooLongError",
     "embed_text",
     "embed_texts",

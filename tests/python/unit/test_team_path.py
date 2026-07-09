@@ -1,7 +1,7 @@
 """AgentTeam 路径单元测试： Orchestrator 拆任务、并行调度、黑板汇总、安全改写。
 
 覆盖：
-1. _parse_plan：JSON 提取 / 截断 / 危险任务强制改写 deep
+1. _postprocess_plan：结构化输出截断 / 危险任务强制改写 deep
 2. _validate_task：内置子代理可用性校验
 3. _bounded_gather：并发上限
 4. Blackboard：汇总序列化
@@ -22,11 +22,11 @@ from app.team.orchestrator import (
     Blackboard,
     TeamPlanTask,
     _build_summary,
-    _parse_plan,
     _serialize_blackboard,
     _validate_task,
     run_team_path,
 )
+from app.team.planner import TeamPlan, TeamPlanItem, _postprocess_plan
 from app.utils.sse_events import make_team_event
 
 
@@ -52,120 +52,71 @@ def _isolate_settings(monkeypatch: pytest.MonkeyPatch):
 
 
 # ============================================================
-# 1. _parse_plan
+# 1. _postprocess_plan
 # ============================================================
 
 
-def test_parse_plan_valid_json() -> None:
-    """标准 JSON 输出被正确解析。"""
-    raw = json.dumps(
-        {
-            "reasoning": "需要同时查看代码和文档",
-            "plan": [
-                {"agent": "code", "input": "读取 main.py", "purpose": "入口结构"},
-                {"agent": "rag", "input": "Router 设计", "purpose": "检索文档"},
-            ],
-        },
-        ensure_ascii=False,
+def test_postprocess_plan_valid() -> None:
+    """结构化 TeamPlan 输出被正确转换为 TeamPlanTask 列表。"""
+    plan = TeamPlan(
+        reasoning="需要同时查看代码和文档",
+        plan=[
+            TeamPlanItem(agent="code", input="读取 main.py", purpose="入口结构"),
+            TeamPlanItem(agent="rag", input="Router 设计", purpose="检索文档"),
+        ],
     )
-    tasks, reasoning = _parse_plan(raw, max_tasks=5)
+    tasks, reasoning = _postprocess_plan(plan, max_tasks=5)
     assert len(tasks) == 2
     assert tasks[0].agent == "code"
     assert tasks[0].input == "读取 main.py"
     assert reasoning == "需要同时查看代码和文档"
 
 
-def test_parse_plan_markdown_wrapped() -> None:
-    """模型输出被 markdown 代码块包裹时也能提取。"""
-    raw = (
-        "```json\n"
-        + json.dumps(
-            {"plan": [{"agent": "web", "input": "搜索", "purpose": "联网"}]},
-            ensure_ascii=False,
-        )
-        + "\n```"
-    )
-    tasks, _ = _parse_plan(raw, max_tasks=5)
-    assert len(tasks) == 1
-    assert tasks[0].agent == "web"
-
-
-def test_parse_plan_markcodeblock_with_leading_text() -> None:
-    """模型输出在 markdown 代码块前有额外文本时也能提取。"""
-    raw = (
-        "好的，这是我的计划：\n```json\n"
-        + json.dumps(
-            {"plan": [{"agent": "code", "input": "读文件", "purpose": "读"}]},
-            ensure_ascii=False,
-        )
-        + "\n```\n请确认。"
-    )
-    tasks, _ = _parse_plan(raw, max_tasks=5)
-    assert len(tasks) == 1
-    assert tasks[0].agent == "code"
-
-
-def test_parse_plan_json_with_leading_text() -> None:
-    """模型输出 JSON 前有额外文本时也能提取（无 markdown 包裹）。"""
-    raw = (
-        "我来分析一下：\n"
-        + json.dumps(
-            {"plan": [{"agent": "rag", "input": "检索", "purpose": "文档"}]},
-            ensure_ascii=False,
-        )
-        + "\n以上就是计划。"
-    )
-    tasks, _ = _parse_plan(raw, max_tasks=5)
-    assert len(tasks) == 1
-    assert tasks[0].agent == "rag"
-
-
-def test_parse_plan_truncates_over_max_tasks() -> None:
-    """子任务数超过 max_tasks 时被截断。"""
-    plan = [{"agent": "code", "input": f"任务{i}", "purpose": f"目的{i}"} for i in range(8)]
-    raw = json.dumps({"plan": plan}, ensure_ascii=False)
-    tasks, _ = _parse_plan(raw, max_tasks=5)
-    assert len(tasks) == 5
-
-
-def test_parse_plan_invalid_json_returns_empty() -> None:
-    """非 JSON 输出返回空计划。"""
-    tasks, reasoning = _parse_plan("这不是 JSON", max_tasks=5)
+def test_postprocess_plan_empty_plan() -> None:
+    """空 plan 列表返回空任务。"""
+    plan = TeamPlan(reasoning="", plan=[])
+    tasks, reasoning = _postprocess_plan(plan, max_tasks=5)
     assert tasks == []
     assert reasoning == ""
 
 
-def test_parse_plan_missing_required_fields_skipped() -> None:
-    """缺少 agent 或 input 的条目被跳过。"""
-    raw = json.dumps(
-        {
-            "plan": [
-                {"agent": "code", "input": "有效"},
-                {"agent": "", "input": "无效 agent"},
-                {"agent": "rag", "purpose": "缺少 input"},
-            ]
-        },
-        ensure_ascii=False,
+def test_postprocess_plan_truncates_over_max_tasks() -> None:
+    """子任务数超过 max_tasks 时被截断。"""
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="code", input=f"任务{i}", purpose=f"目的{i}")
+            for i in range(8)
+        ],
     )
-    tasks, _ = _parse_plan(raw, max_tasks=5)
+    tasks, _ = _postprocess_plan(plan, max_tasks=5)
+    assert len(tasks) == 5
+
+
+def test_postprocess_plan_missing_required_fields_skipped() -> None:
+    """缺少 agent 或 input 的条目被跳过。"""
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="code", input="有效"),
+            TeamPlanItem(agent="", input="无效 agent"),
+            TeamPlanItem(agent="rag", input="", purpose="缺少 input"),
+        ],
+    )
+    tasks, _ = _postprocess_plan(plan, max_tasks=5)
     assert len(tasks) == 1
     assert tasks[0].agent == "code"
 
 
-def test_parse_plan_rewrites_dangerous_task_to_deep() -> None:
+def test_postprocess_plan_rewrites_dangerous_task_to_deep() -> None:
     """涉及写/编辑/shell 的任务被强制改写为 deep agent。"""
-    raw = json.dumps(
-        {
-            "plan": [
-                {"agent": "code", "input": "写入 config.py", "purpose": "改配置"},
-                {"agent": "code", "input": "编辑 README.md", "purpose": "改文档"},
-                {"agent": "code", "input": "执行命令 ls", "purpose": "shell"},
-                {"agent": "code", "input": "读取 main.py", "purpose": "只读"},
-            ]
-        },
-        ensure_ascii=False,
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="code", input="写入 config.py", purpose="改配置"),
+            TeamPlanItem(agent="code", input="编辑 README.md", purpose="改文档"),
+            TeamPlanItem(agent="code", input="执行命令 ls", purpose="shell"),
+            TeamPlanItem(agent="code", input="读取 main.py", purpose="只读"),
+        ],
     )
-    tasks, _ = _parse_plan(raw, max_tasks=5)
+    tasks, _ = _postprocess_plan(plan, max_tasks=5)
     assert len(tasks) == 4
     assert tasks[0].agent == "deep"
     assert tasks[1].agent == "deep"
@@ -298,10 +249,12 @@ def test_build_summary_empty_returns_placeholder() -> None:
 # ============================================================
 
 
-def _make_fake_llm(content: str) -> MagicMock:
-    """构造 mock LLM：ainvoke 返回 content；astream 返回单个 chunk。"""
+def _make_fake_llm(plan: TeamPlan) -> MagicMock:
+    """构造 mock LLM：with_structured_output().ainvoke 返回 TeamPlan；astream 返回汇总 chunk。"""
     mock = MagicMock()
-    mock.ainvoke = AsyncMock(return_value=SimpleNamespace(content=content))
+    structured_mock = MagicMock()
+    structured_mock.ainvoke = AsyncMock(return_value=plan)
+    mock.with_structured_output = MagicMock(return_value=structured_mock)
 
     async def _fake_astream(messages: Any) -> AsyncIterator:
         yield SimpleNamespace(content="最终汇总")
@@ -314,14 +267,14 @@ async def test_run_team_path_emits_team_plan_progress_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """完整链路：team_plan → team_progress(running) → team_progress(done) → team_result → token/done。"""
-    plan = {
-        "reasoning": "需要代码和检索",
-        "plan": [
-            {"agent": "code", "input": "读 main.py", "purpose": "入口"},
-            {"agent": "rag", "input": "Router 设计", "purpose": "文档"},
+    plan = TeamPlan(
+        reasoning="需要代码和检索",
+        plan=[
+            TeamPlanItem(agent="code", input="读 main.py", purpose="入口"),
+            TeamPlanItem(agent="rag", input="Router 设计", purpose="文档"),
         ],
-    }
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    )
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
@@ -365,12 +318,12 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """所有子任务失败时，发送 error 事件。"""
-    plan = {
-        "plan": [
-            {"agent": "code", "input": "读文件", "purpose": "读"},
-        ]
-    }
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="code", input="读文件", purpose="读"),
+        ],
+    )
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
@@ -392,13 +345,13 @@ async def test_run_team_path_partial_failure_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """部分子任务失败时，成功结果仍进入黑板并触发 Aggregator。"""
-    plan = {
-        "plan": [
-            {"agent": "code", "input": "读文件", "purpose": "读"},
-            {"agent": "rag", "input": "检索", "purpose": "检索"},
-        ]
-    }
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="code", input="读文件", purpose="读"),
+            TeamPlanItem(agent="rag", input="检索", purpose="检索"),
+        ],
+    )
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码成功"}
@@ -428,8 +381,11 @@ async def test_run_team_path_partial_failure_continues(
 async def test_run_team_path_invalid_plan_yields_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Orchestrator 输出非法 JSON 时发送 error。"""
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm("不是 JSON"))
+    """Orchestrator 输出空计划时发送 error。"""
+    # with_structured_output 永远返回结构化对象，无法返回非法 JSON；
+    # 用空 plan 模拟"未生成有效计划"场景
+    plan = TeamPlan(reasoning="", plan=[])
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
 
     events = await _collect_events(
         run_team_path("分析项目的整体架构设计", "t-invalid", {"thread_id": "t-invalid", "messages": []})
@@ -444,12 +400,12 @@ async def test_run_team_path_deep_subtask_propagates_approval_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """deep 子任务的 approval_request 事件必须透传到前端，否则审批流死锁。"""
-    plan = {
-        "plan": [
-            {"agent": "deep", "input": "写入文件", "purpose": "改配置"},
-        ]
-    }
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="deep", input="写入文件", purpose="改配置"),
+        ],
+    )
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
 
     async def _fake_run_deep_path(state, message, **kwargs):
         yield {"event": "approval_request", "data": json.dumps({"tool_name": "write_file", "preview": "test"})}
@@ -479,12 +435,12 @@ async def test_run_team_path_token_data_is_plain_string(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """token 事件 data 必须是纯字符串，不能是 JSON 序列化（Bug 1 回归测试）。"""
-    plan = {
-        "plan": [
-            {"agent": "code", "input": "读文件", "purpose": "读"},
-        ]
-    }
-    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(json.dumps(plan, ensure_ascii=False)))
+    plan = TeamPlan(
+        plan=[
+            TeamPlanItem(agent="code", input="读文件", purpose="读"),
+        ],
+    )
+    monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: _make_fake_llm(plan))
 
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}

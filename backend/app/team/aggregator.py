@@ -10,7 +10,10 @@
 
 from __future__ import annotations
 
+import re as _re
 from typing import TYPE_CHECKING, AsyncIterator
+
+from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import get_settings
 from app.observability.logger import logger
@@ -31,16 +34,19 @@ __all__ = [
 ]
 
 
-# Aggregator prompt
-_AGGREGATOR_PROMPT = (
-    "你是团队汇总专家。以下是一群专家针对用户问题的协作结果。\n\n"
-    "用户问题：{user_message}\n\n"
-    "专家发现：\n{blackboard_summary}\n\n"
-    "失败说明：\n{error_summary}\n\n"
-    "请综合以上信息，给出完整、准确的最终回答。"
-    "如果专家结果有冲突，请说明并给出判断依据。"
-    "保持回答简洁，使用标准 Markdown。"
-)
+# Aggregator prompt：使用 LangChain ChatPromptTemplate 替代手写 f-string
+_AGGREGATOR_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "human",
+        "你是团队汇总专家。以下是一群专家针对用户问题的协作结果。\n\n"
+        "用户问题：{user_message}\n\n"
+        "专家发现：\n{blackboard_summary}\n\n"
+        "失败说明：\n{error_summary}\n\n"
+        "请综合以上信息，给出完整、准确的最终回答。"
+        "如果专家结果有冲突，请说明并给出判断依据。"
+        "保持回答简洁，使用标准 Markdown。",
+    ),
+])
 
 
 def _build_summary(text_parts: list[str], tool_traces: list[str], agent_name: str) -> str:
@@ -113,15 +119,15 @@ async def _run_aggregator(
         yield make_team_event("error", {"message": f"LLM 不可用: {exc}"})
         return
 
-    prompt = _AGGREGATOR_PROMPT.format(
-        user_message=user_message,
-        blackboard_summary=_serialize_blackboard(blackboard),
-        error_summary="\n".join(f"{k}: {v}" for k, v in blackboard.errors.items()) or "无",
-    )
+    prompt = _AGGREGATOR_PROMPT.invoke({
+        "user_message": user_message,
+        "blackboard_summary": _serialize_blackboard(blackboard),
+        "error_summary": "\n".join(f"{k}: {v}" for k, v in blackboard.errors.items()) or "无",
+    })
 
     think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
     try:
-        async for chunk in llm.astream([{"role": "user", "content": prompt}]):
+        async for chunk in llm.astream(prompt):
             raw = extract_chunk_text(chunk, strip=False)
             cleaned = think_filter.feed(raw)
             if getattr(think_filter, "_retain_think", False):
@@ -147,7 +153,6 @@ _SIMPLE_TASK_KEYWORDS = frozenset({
 
 # 匹配模式：中文 keywords 用子串匹配；英文 keywords 用单词边界匹配
 # 避免 "hi" 子串命中 "this"/"think" 等英文词。
-import re as _re
 _KEYWORD_PATTERNS = tuple(
     _re.compile(rf"\b{_re.escape(kw)}\b") if all(ord(c) < 128 for c in kw)
     else _re.compile(_re.escape(kw))

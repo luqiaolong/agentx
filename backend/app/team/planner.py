@@ -7,9 +7,9 @@
 - ``_ORCHESTRATOR_PROMPT``：Orchestrator 系统 prompt 模板。
 - ``_build_project_context``：构建项目上下文摘要，避免 subagent 盲探索。
 - ``_build_orchestrator_prompt``：根据场景组装 Orchestrator prompt。
-- ``_parse_plan``：从 LLM 输出中提取 JSON 计划并校验（含危险任务强制改写 deep）。
-- ``_try_parse_json`` / ``_extract_codeblock`` / ``_extract_first_json_object``：
-  JSON 提取辅助（支持纯 JSON / markdown 代码块 / 前后带额外文本三种形态）。
+- ``TeamPlan`` / ``TeamPlanItem``：结构化输出 schema（配合
+  ``llm.with_structured_output(TeamPlan)``，避免手写 JSON 解析）。
+- ``_postprocess_plan``：对结构化输出做截断 + 危险任务强制改写 deep。
 - ``_looks_like_dangerous_task``：启发式判断子任务是否涉及危险操作。
 - ``_validate_task``：校验子任务 agent 是否可用（含 custom / 团队角色）。
   团队角色集合由 ``BUILTIN_TEAM_KEYS`` 决定（不硬编码字面量）。
@@ -17,27 +17,42 @@
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
+
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
 
 from app.config.subagents import BUILTIN_TEAM_KEYS
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
 
 __all__ = [
+    "TeamPlan",
+    "TeamPlanItem",
     "_BASE_EXPERTS",
     "_ORCHESTRATOR_PROMPT",
     "_build_project_context",
     "_build_orchestrator_prompt",
     "_build_team_experts_description",
-    "_parse_plan",
-    "_try_parse_json",
-    "_extract_codeblock",
-    "_extract_first_json_object",
     "_looks_like_dangerous_task",
+    "_postprocess_plan",
     "_validate_task",
 ]
+
+
+class TeamPlanItem(BaseModel):
+    """单个子任务的结构化输出项。"""
+
+    agent: str = Field(description="执行专家：code / rag / web / deep / 团队角色 / custom-*")
+    input: str = Field(description="子任务输入，具体到文件路径或搜索词")
+    purpose: str = Field(default="", description="该子任务的目的说明")
+
+
+class TeamPlan(BaseModel):
+    """Orchestrator 结构化输出 schema：拆解后的子任务计划。"""
+
+    reasoning: str = Field(default="", description="为什么这样拆任务的推理")
+    plan: list[TeamPlanItem] = Field(default_factory=list, description="子任务列表")
 
 
 # 基础专家（始终可用）
@@ -76,27 +91,25 @@ def _build_team_experts_description(settings: Any) -> str:
         lines.append(f"- {key}: {desc}")
     return "\n".join(lines)
 
-_ORCHESTRATOR_PROMPT = (
-    "你是一个任务拆解专家（Orchestrator）。请把用户请求拆分成若干子任务，"
-    "每个子任务指定一个执行专家和输入。"
-    "\n\n可用专家：\n"
-    "{experts}"
-    "\n项目上下文：\n{context}\n"
-    "\n输出必须是严格 JSON，不要 markdown 代码块，不要额外解释：\n"
-    "{{\n"
-    '  "reasoning": "为什么这样拆任务",\n'
-    '  "plan": [\n'
-    '    {{"agent": "code", "input": "具体子任务输入", "purpose": "目的说明"}}\n'
-    "  ]\n"
-    "}}\n"
-    "\n约束：\n"
-    "1. 如果任务涉及写文件、编辑文件、执行系统命令，agent 必须设为 deep。\n"
-    "2. 不要编造文件路径；若用户没给路径，子任务输入里说明需要搜索或推断。\n"
-    "3. 子任务数量不要超过 {max_tasks} 个。\n"
-    "4. 若任务简单，可只返回一个子任务。\n"
-    "5. 子任务输入中应引用项目上下文里的具体路径，避免 subagent 盲探索。\n"
-    "6. 若用户请求涉及多个软件开发环节（如前端+后端+测试），优先使用团队角色（frontend_dev/backend_dev/tester 等）而非通用 code。\n"
-)
+_ORCHESTRATOR_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "human",
+        "你是一个任务拆解专家（Orchestrator）。请把用户请求拆分成若干子任务，"
+        "每个子任务指定一个执行专家和输入。"
+        "\n\n可用专家：\n"
+        "{experts}"
+        "\n项目上下文：\n{context}\n"
+        "\n按结构化输出返回计划（reasoning + plan 列表，每项含 agent/input/purpose）。\n"
+        "\n约束：\n"
+        "1. 如果任务涉及写文件、编辑文件、执行系统命令，agent 必须设为 deep。\n"
+        "2. 不要编造文件路径；若用户没给路径，子任务输入里说明需要搜索或推断。\n"
+        "3. 子任务数量不要超过 {max_tasks} 个。\n"
+        "4. 若任务简单，可只返回一个子任务。\n"
+        "5. 子任务输入中应引用项目上下文里的具体路径，避免 subagent 盲探索。\n"
+        "6. 若用户请求涉及多个软件开发环节（如前端+后端+测试），优先使用团队角色（frontend_dev/backend_dev/tester 等）而非通用 code。\n"
+        "\n\n用户请求：{user_message}",
+    ),
+])
 
 
 def _build_project_context() -> str:
@@ -128,66 +141,44 @@ def _build_orchestrator_prompt(
     context: str = "",
     scene: str = "work",
     settings: Any | None = None,
-) -> str:
+) -> Any:
     """构建 Orchestrator prompt，根据场景选择可用专家。
 
     coding 场景下，团队角色清单从 ``settings.team_subagents`` 动态生成。
+    返回 ``ChatPromptValue``（LangChain 标准 messages 列表），供
+    ``llm.with_structured_output(TeamPlan).ainvoke(prompt)`` 直接消费。
     """
     experts = _BASE_EXPERTS
     if scene == "coding" and settings is not None:
         team_desc = _build_team_experts_description(settings)
         if team_desc:
             experts = experts + "\n" + team_desc
-    return (
-        _ORCHESTRATOR_PROMPT.format(max_tasks=max_tasks, context=context, experts=experts)
-        + f"\n\n用户请求：{user_message}"
-    )
+    return _ORCHESTRATOR_PROMPT.invoke({
+        "max_tasks": max_tasks,
+        "context": context,
+        "experts": experts,
+        "user_message": user_message,
+    })
 
 
-def _parse_plan(text: str, max_tasks: int) -> tuple[list[TeamPlanTask], str]:
-    """从 Orchestrator 输出中提取 JSON 计划并校验。
+def _postprocess_plan(plan: TeamPlan, max_tasks: int) -> tuple[list[TeamPlanTask], str]:
+    """对结构化输出做截断 + 危险任务强制改写 deep。
 
-    支持三种 LLM 输出形态：
-    1. 纯 JSON 对象（理想情况）
-    2. markdown 代码块包裹的 JSON（```json ... ```）
-    3. JSON 对象前后有额外文本（"好的，这是计划：{...}"）
+    接收 ``llm.with_structured_output(TeamPlan)`` 的结果，做以下处理：
+    - 截断到 ``max_tasks`` 条
+    - 规范化 agent/input/purpose（strip + lower agent）
+    - 跳过缺少 agent 或 input 的条目
+    - 涉及危险操作但非 deep 的任务强制改写为 deep（安全约束）
 
     Returns:
         (tasks, reasoning)
     """
-    text = text.strip()
-
-    # 策略 1：直接解析（最快路径）
-    data = _try_parse_json(text)
-    if data is None:
-        # 策略 2：提取 markdown 代码块内容
-        codeblock = _extract_codeblock(text)
-        if codeblock:
-            data = _try_parse_json(codeblock)
-    if data is None:
-        # 策略 3：从文本中提取第一个 {...} 对象
-        extracted = _extract_first_json_object(text)
-        if extracted:
-            data = _try_parse_json(extracted)
-
-    if data is None:
-        logger.warning("team orchestrator output is not valid JSON", raw_len=len(text))
-        return [], ""
-
-    if not isinstance(data, dict):
-        return [], ""
-
-    plan = data.get("plan", [])
-    if not isinstance(plan, list):
-        return [], ""
-
+    raw_items = plan.plan or []
     tasks: list[TeamPlanTask] = []
-    for item in plan[:max_tasks]:
-        if not isinstance(item, dict):
-            continue
-        agent = str(item.get("agent", "")).strip().lower()
-        input_text = str(item.get("input", "")).strip()
-        purpose = str(item.get("purpose", "")).strip()
+    for item in raw_items[:max_tasks]:
+        agent = (item.agent or "").strip().lower()
+        input_text = (item.input or "").strip()
+        purpose = (item.purpose or "").strip()
         if not agent or not input_text:
             continue
         # 安全改写：涉及危险工具关键词但非 deep 的任务强制改为 deep
@@ -195,61 +186,15 @@ def _parse_plan(text: str, max_tasks: int) -> tuple[list[TeamPlanTask], str]:
             agent = "deep"
         tasks.append(TeamPlanTask(agent=agent, input=input_text, purpose=purpose))
 
-    if len(plan) > max_tasks:
+    if len(raw_items) > max_tasks:
         logger.warning(
             "team orchestrator plan truncated",
-            original=len(plan),
+            original=len(raw_items),
             max_tasks=max_tasks,
         )
 
-    reasoning = str(data.get("reasoning", "")).strip()
+    reasoning = (plan.reasoning or "").strip()
     return tasks, reasoning
-
-
-def _try_parse_json(text: str) -> Any | None:
-    """尝试解析 JSON，失败返回 None。"""
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-
-def _extract_codeblock(text: str) -> str | None:
-    """从 markdown 代码块中提取内容（```json ... ``` 或 ``` ... ```）。"""
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return None
-
-
-def _extract_first_json_object(text: str) -> str | None:
-    """从文本中提取第一个 {...} 对象（平衡括号匹配）。"""
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\" and in_string:
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
 
 
 def _looks_like_dangerous_task(input_text: str) -> bool:

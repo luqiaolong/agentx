@@ -205,10 +205,52 @@ async def healthcheck() -> dict:
         return {"status": "unhealthy", "error": str(exc)}
 
 
+from langchain_core.embeddings import Embeddings  # noqa: E402 — 适配器在文件末尾
+
+
+class LangChainTeiEmbeddings(Embeddings):
+    """LangChain ``Embeddings`` 适配器：委托给现有 ``TeiClient`` 单例。
+
+    实现标准 ``embed_documents`` / ``embed_query``（同步）与
+    ``aembed_documents`` / ``aembed_query``（异步），使 BGE-M3 嵌入服务
+    可被所有 LangChain VectorStore / Retriever / LCEL chain 直接消费。
+
+    同步方法通过 ``asyncio.run`` 调用异步实现——仅在同步上下文中使用
+    （LangChain 的 sync chain）。异步方法直接委托，无额外线程开销。
+    """
+
+    def __init__(self) -> None:
+        self._client = get_embedding_client()
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """同步批量嵌入。``None`` 跳过位替换为零向量。"""
+        import asyncio
+
+        return asyncio.run(self.aembed_documents(texts))
+
+    def embed_query(self, text: str) -> list[float]:
+        """同步单文本嵌入。"""
+        import asyncio
+
+        return asyncio.run(self.aembed_query(text))
+
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        """异步批量嵌入。``None`` 跳过位替换为零向量（保留顺序对齐）。"""
+        results = await self._client.embed_texts(texts)
+        settings = get_settings()
+        dim = settings.embedding_dim if hasattr(settings, "embedding_dim") else 1024
+        return [vec if vec is not None else [0.0] * dim for vec in results]
+
+    async def aembed_query(self, text: str) -> list[float]:
+        """异步单文本嵌入。"""
+        return await self._client.embed_text(text)
+
+
 __all__ = [
     "EmbeddingUnavailable",
     "TextTooLongError",
     "TeiClient",
+    "LangChainTeiEmbeddings",
     "embed_text",
     "embed_texts",
     "get_embedding_client",
