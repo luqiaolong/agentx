@@ -58,7 +58,8 @@ import httpx  # noqa: F401 — re-export：测试 patch app.main.httpx.AsyncClie
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # ---- lifespan / 中间件依赖 ----
 from app.config import get_settings
@@ -217,7 +218,7 @@ app.add_middleware(
 )
 
 
-class UTF8JSONBodyMiddleware(BaseHTTPMiddleware):
+class UTF8JSONBodyMiddleware:
     """application/json request body 编码探测与解码。
 
     背景：Windows Git Bash + curl 在命令行 ``-d '{"name":"测试"}'`` 时会做
@@ -226,37 +227,52 @@ class UTF8JSONBodyMiddleware(BaseHTTPMiddleware):
     Starlette 默认按声明的 charset 解码 → 400。
 
     本 middleware 拦截 ``application/json`` 请求：
-    1. UTF-8 解码成功 → 放回 body（正常路径）
-    2. UTF-8 失败但 GBK 成功 → 转码为 UTF-8 再放回（兼容 Windows curl）
+    1. UTF-8 解码成功 → 正常放行
+    2. UTF-8 失败但 GBK 成功 → 转码为 UTF-8 后通过新的 ``receive`` 传给下游
     3. 都失败 → 400 with 明确错误
 
     非 application/json 请求透传不动，避免误伤 form / multipart / SSE 上行。
+    通过包装 ``receive`` 而不是写入 ``request._body`` 私有属性，避免 Starlette
+    版本升级后内部状态变更导致 body 被忽略或重复消费。
     """
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         content_type = (request.headers.get("content-type") or "").lower()
-        if content_type.startswith("application/json"):
-            raw = await request.body()
-            if raw:
-                # 1. 优先 UTF-8
+        if not content_type.startswith("application/json"):
+            await self.app(scope, receive, send)
+            return
+
+        raw = await request.body()
+        if not raw:
+            body_bytes = b""
+        else:
+            try:
+                raw.decode("utf-8")
+                body_bytes = raw
+            except UnicodeDecodeError:
                 try:
-                    text = raw.decode("utf-8")
+                    text = raw.decode("gbk")
+                    body_bytes = text.encode("utf-8")
                 except UnicodeDecodeError:
-                    # 2. 回退 GBK（Windows cmd / Git Bash 默认）
-                    try:
-                        text = raw.decode("gbk")
-                    except UnicodeDecodeError:
-                        from starlette.responses import JSONResponse
-                        return JSONResponse(
-                            {"detail": "request body is not valid UTF-8 or GBK"},
-                            status_code=400,
-                        )
-                    # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
-                    request._body = text.encode("utf-8")  # noqa: SLF001
-                else:
-                    # UTF-8 合法，按原样放回
-                    request._body = raw  # noqa: SLF001
-        return await call_next(request)
+                    response = JSONResponse(
+                        {"detail": "request body is not valid UTF-8 or GBK"},
+                        status_code=400,
+                    )
+                    await response(scope, receive, send)
+                    return
+
+        async def new_receive() -> Message:
+            return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+        await self.app(scope, new_receive, send)
 
 
 app.add_middleware(UTF8JSONBodyMiddleware)
