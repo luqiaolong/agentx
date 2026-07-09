@@ -65,7 +65,8 @@ from app.config import get_settings
 from app.embedding import get_embedding_client
 from app.mcp import get_mcp_manager  # noqa: F401 — re-export：测试 monkeypatch app.main.get_mcp_manager
 from app.memory import (
-    close_checkpointer,
+    aclose_checkpointer,
+    close_checkpointer,  # noqa: F401 — re-export：CLI 等同步上下文使用
     get_async_checkpointer,  # noqa: F401 — re-export：测试 monkeypatch app.main.get_async_checkpointer
     get_checkpointer,
 )
@@ -183,7 +184,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
             logger.warning("embedding client close failed on shutdown: {}", exc)
         try:
-            close_checkpointer()
+            await aclose_checkpointer()
             logger.info("checkpointer closed on shutdown")
         except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
             logger.warning("checkpointer close failed on shutdown: {}", exc)
@@ -256,10 +257,14 @@ class UTF8JSONBodyMiddleware(BaseHTTPMiddleware):
                     status_code=400,
                 )
             # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
-            request._body = text.encode("utf-8")  # noqa: SLF001
+            new_body = text.encode("utf-8")
         else:
             # UTF-8 合法，按原样放回
-            request._body = raw  # noqa: SLF001
+            new_body = raw
+
+        # 注入新 body 到 request 缓存（Starlette 中间件常用模式，
+        # request._body 是 body() 的缓存字段，写它使下游 body()/json() 读取新字节）
+        request._body = new_body  # noqa: SLF001
         return await call_next(request)
 
 

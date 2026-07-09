@@ -55,6 +55,9 @@ def get_checkpointer() -> SqliteSaver:
     db_path = _db_path()
     # check_same_thread=False：SqliteSaver 内部用锁保证线程安全
     _sync_conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    # WAL + busy_timeout：并发写不锁（与 ObservationStore 一致）
+    _sync_conn.execute("PRAGMA journal_mode=WAL")
+    _sync_conn.execute("PRAGMA busy_timeout=30000")
     _sync_saver = SqliteSaver(_sync_conn)
     _sync_saver.setup()  # 创建 checkpoint 表
     logger.info("SQLite 同步 checkpointer 已初始化", db_path=str(db_path))
@@ -74,6 +77,9 @@ async def get_async_checkpointer() -> AsyncSqliteSaver:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     db_path = _db_path()
     _async_conn = await aiosqlite.connect(str(db_path))
+    # WAL + busy_timeout：并发写不锁（与同步连接一致）
+    await _async_conn.execute("PRAGMA journal_mode=WAL")
+    await _async_conn.execute("PRAGMA busy_timeout=30000")
     _async_saver = AsyncSqliteSaver(_async_conn)
     await _async_saver.setup()  # 创建 checkpoint 表
     logger.info("SQLite 异步 checkpointer 已初始化", db_path=str(db_path))

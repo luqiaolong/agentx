@@ -318,31 +318,42 @@ def test_safe_local_shell_backend_inherits_from_local_shell_backend() -> None:
 def test_safe_local_shell_backend_execute_blocks_blocklisted_command(tmp_path: Path) -> None:
     """``SafeLocalShellBackend.execute`` 拦截黑名单命令（如 ``rm``）。"""
     from app.deepagent.safe_shell_backend import SafeLocalShellBackend
+    from deepagents.backends.protocol import ExecuteResponse
 
     backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
     result = backend.execute("rm -rf /")
-    assert isinstance(result, str)
-    assert "黑名单" in result
+    assert isinstance(result, ExecuteResponse)
+    assert result.exit_code == 126
+    assert "黑名单" in result.output
 
 
 def test_safe_local_shell_backend_execute_blocks_metachar(tmp_path: Path) -> None:
     """``SafeLocalShellBackend.execute`` 拦截 shell 元字符（命令链/管道/重定向）。"""
     from app.deepagent.safe_shell_backend import SafeLocalShellBackend
+    from deepagents.backends.protocol import ExecuteResponse
 
     backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
     # ; 是命令分隔符
     result = backend.execute("echo hello; rm -rf /")
-    assert isinstance(result, str)
-    assert "元字符" in result or "非法" in result
+    assert isinstance(result, ExecuteResponse)
+    assert result.exit_code == 126
+    assert "元字符" in result.output or "非法" in result.output
 
 
 def test_safe_local_shell_backend_execute_blocks_empty_command(tmp_path: Path) -> None:
     """``SafeLocalShellBackend.execute`` 拒绝空命令。"""
     from app.deepagent.safe_shell_backend import SafeLocalShellBackend
+    from deepagents.backends.protocol import ExecuteResponse
 
     backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
-    assert backend.execute("") == "command 不能为空"
-    assert backend.execute("   ") == "command 不能为空"
+    result = backend.execute("")
+    assert isinstance(result, ExecuteResponse)
+    assert result.exit_code == 1
+    assert result.output == "command 不能为空"
+    result2 = backend.execute("   ")
+    assert isinstance(result2, ExecuteResponse)
+    assert result2.exit_code == 1
+    assert result2.output == "command 不能为空"
 
 
 # ============================================================

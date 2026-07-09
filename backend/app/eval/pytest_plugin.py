@@ -34,6 +34,7 @@ __all__ = [
     "pytest_addoption",
     "pytest_collect_file",
     "pytest_configure",
+    "pytest_runtest_call",
 ]
 
 
@@ -95,7 +96,12 @@ class EvalItem(pytest.Item):
         self.suite_id = suite_id
 
     async def runtest(self) -> None:
-        """执行 case + 评分。失败时 ``raise AssertionError`` 并打印详情。"""
+        """执行 case + 评分。失败时 ``raise AssertionError`` 并打印详情。
+
+        注意：本方法是 async，但 pytest 不会自动 await 自定义 ``pytest.Item``
+        子类的 ``runtest``（``asyncio_mode=auto`` 仅处理 ``test_*`` 函数）。
+        ``pytest_runtest_call`` hook 负责驱动本协程。
+        """
         mark_expr = self.config.getoption("-m", default="") or ""
         is_live = "live" in mark_expr
 
@@ -135,3 +141,19 @@ class EvalItem(pytest.Item):
 
     def reportinfo(self):
         return self.path, 0, f"[{self.suite_id}] {self.case.id}"
+
+
+def pytest_runtest_call(item: pytest.Item) -> None:
+    """驱动 ``EvalItem.runtest`` async 协程。
+
+    pytest ``asyncio_mode=auto`` 仅自动 await ``test_*`` 函数，不处理自定义
+    ``pytest.Item`` 子类的 ``runtest``。本 hook 检测 item 是否为 ``EvalItem``
+    且 ``runtest`` 返回 coroutine，若是则用事件循环驱动至完成。
+    """
+    if not isinstance(item, EvalItem):
+        return
+    import asyncio
+
+    result = item.runtest()
+    if asyncio.iscoroutine(result):
+        asyncio.run(result)
