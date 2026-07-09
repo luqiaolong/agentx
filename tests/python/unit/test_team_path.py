@@ -282,11 +282,13 @@ async def test_run_team_path_emits_team_plan_progress_result(
     async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "检索结果"}
 
-    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
-    monkeypatch.setattr("app.team.orchestrator.run_rag_agent", _fake_run_rag_agent)
-
     events = await _collect_events(
-        run_team_path("分析项目入口文件和文档结构", "t-team", {"thread_id": "t-team", "messages": []})
+        run_team_path(
+            "分析项目入口文件和文档结构",
+            "t-team",
+            {"thread_id": "t-team", "messages": []},
+            subtask_runners={"code": _fake_run_coding_expert, "rag": _fake_run_rag_agent},
+        )
     )
 
     event_types = [e["event"] for e in events]
@@ -330,10 +332,13 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
         if False:
             yield {}
 
-    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
-
     events = await _collect_events(
-        run_team_path("分析项目的整体架构设计", "t-fail", {"thread_id": "t-fail", "messages": []})
+        run_team_path(
+            "分析项目的整体架构设计",
+            "t-fail",
+            {"thread_id": "t-fail", "messages": []},
+            subtask_runners={"code": _fake_run_coding_expert},
+        )
     )
 
     error_events = [e for e in events if e["event"] == "error"]
@@ -361,11 +366,13 @@ async def test_run_team_path_partial_failure_continues(
         if False:
             yield {}
 
-    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
-    monkeypatch.setattr("app.team.orchestrator.run_rag_agent", _fake_run_rag_agent)
-
     events = await _collect_events(
-        run_team_path("分析项目的整体架构设计", "t-partial", {"thread_id": "t-partial", "messages": []})
+        run_team_path(
+            "分析项目的整体架构设计",
+            "t-partial",
+            {"thread_id": "t-partial", "messages": []},
+            subtask_runners={"code": _fake_run_coding_expert, "rag": _fake_run_rag_agent},
+        )
     )
 
     # code 成功，rag 失败
@@ -412,10 +419,13 @@ async def test_run_team_path_deep_subtask_propagates_approval_request(
         yield {"event": "token", "data": "deep 结果"}
         yield {"event": "tool_result", "data": json.dumps({"name": "write_file", "result": "ok"})}
 
-    monkeypatch.setattr("app.team.orchestrator.run_deep_path", _fake_run_deep_path)
-
     events = await _collect_events(
-        run_team_path("请修改配置文件中的数据库连接", "t-deep", {"thread_id": "t-deep", "messages": []})
+        run_team_path(
+            "请修改配置文件中的数据库连接",
+            "t-deep",
+            {"thread_id": "t-deep", "messages": []},
+            subtask_runners={"deep": _fake_run_deep_path},
+        )
     )
 
     # approval_request 必须出现在事件流中（Bug 2 回归测试）
@@ -445,10 +455,13 @@ async def test_run_team_path_token_data_is_plain_string(
     async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
 
-    monkeypatch.setattr("app.team.orchestrator.run_coding_expert", _fake_run_coding_expert)
-
     events = await _collect_events(
-        run_team_path("分析项目的整体架构设计", "t-token", {"thread_id": "t-token", "messages": []})
+        run_team_path(
+            "分析项目的整体架构设计",
+            "t-token",
+            {"thread_id": "t-token", "messages": []},
+            subtask_runners={"code": _fake_run_coding_expert},
+        )
     )
 
     tokens = [e for e in events if e["event"] == "token"]

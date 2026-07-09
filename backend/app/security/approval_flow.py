@@ -48,7 +48,7 @@ __all__ = [
     "_await_approval",
     "_handle_directory_extension",
     "_ExtensionResult",
-    "_READ_ONLY_FS_TOOLS",
+    "_READONLY_TOOLS",
     "_APPROVAL_POLL_INTERVAL",
     "_ABSOLUTE_MAX_WAIT",
 ]
@@ -59,12 +59,7 @@ _APPROVAL_POLL_INTERVAL = 0.3
 # approval_max_wait=0 时的绝对上限（秒），避免无限阻塞
 _ABSOLUTE_MAX_WAIT = 3600.0
 
-# 只读 fs 工具名集合（用于 directory_extension 预检查）
-_READ_ONLY_FS_TOOLS: frozenset[str] = frozenset(
-    {"read_file", "list_dir", "glob_files", "grep_files", "glob", "grep"}
-)
-
-# 只读工具集合（用于循环保护检测，与 coding.py 保持一致）
+# 只读工具集合（directory_extension 预检查 + 循环保护检测共用）
 _READONLY_TOOLS: frozenset[str] = frozenset(
     {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
 )
@@ -276,7 +271,7 @@ async def _handle_directory_extension(
     seen: set[str] = set()
     for tc in pending_calls:
         name = tc.get("name", "")
-        if name not in _READ_ONLY_FS_TOOLS:
+        if name not in _READONLY_TOOLS:
             continue
         paths = _extract_paths_from_tool_call(tc, workspace_path)
         if not paths:
@@ -327,7 +322,7 @@ async def _handle_directory_extension(
             (
                 tc
                 for tc in pending_calls
-                if tc.get("name", "") in _READ_ONLY_FS_TOOLS
+                if tc.get("name", "") in _READONLY_TOOLS
                 and path in _extract_paths_from_tool_call(tc, workspace_path)
             ),
             {},
