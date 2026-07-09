@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import pytest
 
 from app.security import (
     DEFAULT_BLOCKLIST,
@@ -104,6 +105,19 @@ def test_has_forbidden_args_false() -> None:
     assert not has_forbidden_args("normal_arg")
     assert not has_forbidden_args("--flag")
     assert not has_forbidden_args("path/to/file")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "echo 1\necho 2",
+        "echo 1\r\necho 2",
+        "echo $'\n'",
+    ],
+)
+def test_has_forbidden_args_blocks_newline(payload: str) -> None:
+    """换行符可被 shell 利用来拼接多行命令，必须被拦截。"""
+    assert has_forbidden_args(payload) is True
 
 
 # ============================================================

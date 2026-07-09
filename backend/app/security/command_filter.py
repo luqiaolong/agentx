@@ -54,7 +54,7 @@ DEFAULT_BLOCKLIST: frozenset[str] = frozenset(
 
 # 禁止出现在命令参数中的 shell 元字符（一条正则覆盖所有危险字符）。
 # 从 ``app.tools.cli._FORBIDDEN_ARG_PATTERN`` 迁移，保持一致。
-FORBIDDEN_ARG_PATTERN: re.Pattern[str] = re.compile(r"[;&|`$<>]")
+FORBIDDEN_ARG_PATTERN: re.Pattern[str] = re.compile(r"[;&|`$<>\r\n]")
 
 # ---- cli_execute 脱敏正则 ----
 
