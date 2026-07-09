@@ -86,6 +86,7 @@ async def run_agent_with_approval(
     get_pending_calls_fn: Callable[[Any, dict], Awaitable[list[dict]]] | None = None,
     inject_tool_error_for_call_fn: Callable[[Any, dict, dict, str], Awaitable[None]] | None = None,
     inject_tool_error_messages_fn: Callable[[Any, dict, str], Awaitable[None]] | None = None,
+    yield_event: Callable[[dict], Awaitable[None]] | None = None,
     readonly_streak_threshold: int = 0,
     max_iterations: int = 100,
 ) -> AsyncIterator[dict[str, str]]:
@@ -117,6 +118,7 @@ async def run_agent_with_approval(
         get_pending_calls_fn: 提取 pending tool_calls 函数。
         inject_tool_error_for_call_fn: 单条 tool_call 错误注入函数。
         inject_tool_error_messages_fn: 批量错误注入函数。
+        yield_event: 可选的异步回调，每 yield 一个事件时同步调用（用于日志/观察）。
         readonly_streak_threshold: 只读工具连续调用阈值（0 禁用）。
         max_iterations: 最大迭代次数。
 
@@ -132,6 +134,12 @@ async def run_agent_with_approval(
     _inject_msgs = inject_tool_error_messages_fn or _inject_tool_error_messages
     _sandbox = sandbox or get_sandbox()
 
+    async def _forward(event: dict[str, str]) -> dict[str, str]:
+        """yield 前同步调用 yield_event 回调（用于日志/观察/统计）。"""
+        if yield_event is not None:
+            await yield_event(event)
+        return event
+
     is_full_trust = permission_mode == "full_trust"
     iteration = 0
     readonly_streak = 0
@@ -139,11 +147,11 @@ async def run_agent_with_approval(
     # 1. 初始流式执行
     try:
         async for sse in _stream(agent, inputs, config, source):
-            yield sse
+            yield await _forward(sse)
     except Exception as exc:  # noqa: BLE001
         logger.exception("agent initial stream failed", thread_id=thread_id, source=source)
         await _inject_msgs(agent, config, f"执行失败: {exc}")
-        yield make_sse_event("error", f"执行失败: {exc}")
+        yield await _forward(make_sse_event("error", f"执行失败: {exc}"))
         return
 
     # 2. 中断/恢复循环
@@ -152,14 +160,14 @@ async def run_agent_with_approval(
 
         # 暂停/恢复检查
         if await is_paused(thread_id):
-            yield make_sse_event("paused", {})
+            yield await _forward(make_sse_event("paused", {}))
             pause_event = await get_pause_event(thread_id)
             if await is_paused(thread_id):
                 await pause_event.wait()
 
         # abort 检查
         if await is_aborted(thread_id):
-            yield make_sse_event("error", "操作已中止")
+            yield await _forward(make_sse_event("error", "操作已中止"))
             return
 
         if not await _is_int(agent, config):
@@ -195,10 +203,10 @@ async def run_agent_with_approval(
                         tc,
                         "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。",
                     )
-                yield make_sse_event(
+                yield await _forward(make_sse_event(
                     "error",
                     "工具调用次数过多，已强制停止。请简化您的请求或明确指定目标路径。",
-                )
+                ))
                 return
 
         # full_trust 模式：直接恢复
@@ -206,11 +214,11 @@ async def run_agent_with_approval(
             await _sandbox.clear_temp(thread_id)
             try:
                 async for sse in _stream(agent, None, config, source):
-                    yield sse
+                    yield await _forward(sse)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("agent resume failed", thread_id=thread_id)
                 await _inject_msgs(agent, config, f"恢复失败: {exc}")
-                yield make_sse_event("error", f"恢复失败: {exc}")
+                yield await _forward(make_sse_event("error", f"恢复失败: {exc}"))
                 return
             continue
 
@@ -221,8 +229,8 @@ async def run_agent_with_approval(
             if name not in runtime_dangerous:
                 continue
 
-            # execute 始终需要审批（让用户审查命令内容）
-            if name == "execute":
+            # execute / cli_execute 始终需要审批（让用户审查命令内容）
+            if name in ("execute", "cli_execute"):
                 dangerous_calls.append(tc)
                 continue
 
@@ -257,7 +265,7 @@ async def run_agent_with_approval(
 
         if dangerous_calls:
             for tc in dangerous_calls:
-                yield _make_approval_event(tc, thread_id, kind="dangerous_tool")
+                yield await _forward(_make_approval_event(tc, thread_id, kind="dangerous_tool"))
 
             decision = await _await_approval(
                 thread_id,
@@ -268,7 +276,7 @@ async def run_agent_with_approval(
             if decision is None or not decision.approved:
                 for tc in dangerous_calls:
                     await _inject_call(agent, config, tc, "用户拒绝执行危险操作")
-                yield make_sse_event("error", "用户拒绝执行危险操作")
+                yield await _forward(make_sse_event("error", "用户拒绝执行危险操作"))
                 return
 
             logger.info(
@@ -288,30 +296,30 @@ async def run_agent_with_approval(
                 parent_thread_id=parent_thread_id,
             )
             for evt in extension_handled.events:
-                yield evt
+                yield await _forward(evt)
             if extension_handled.denied:
-                yield make_sse_event("error", "用户拒绝访问该目录")
+                yield await _forward(make_sse_event("error", "用户拒绝访问该目录"))
                 await _inject_msgs(agent, config, "用户拒绝访问该目录")
                 return
             if extension_handled.timed_out:
-                yield make_sse_event("error", "目录授权等待被中断，操作未执行")
+                yield await _forward(make_sse_event("error", "目录授权等待被中断，操作未执行"))
                 await _inject_msgs(agent, config, "目录授权等待被中断，操作未执行")
                 return
 
         # 恢复执行
         try:
             async for sse in _stream(agent, None, config, source):
-                yield sse
+                yield await _forward(sse)
         except Exception as exc:  # noqa: BLE001
             logger.exception("agent resume failed", thread_id=thread_id)
             await _inject_msgs(agent, config, f"恢复失败: {exc}")
-            yield make_sse_event("error", f"恢复失败: {exc}")
+            yield await _forward(make_sse_event("error", f"恢复失败: {exc}"))
             return
 
         await _sandbox.clear_temp(thread_id)
 
     if iteration >= max_iterations:
         logger.warning("agent hit max iterations", thread_id=thread_id)
-        yield make_sse_event("error", "达到最大迭代上限")
+        yield await _forward(make_sse_event("error", "达到最大迭代上限"))
         await _inject_msgs(agent, config, "达到最大迭代上限")
         return

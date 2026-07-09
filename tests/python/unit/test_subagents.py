@@ -20,10 +20,16 @@ def mock_create_agent(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     - ``get_chat_model``：mock 为返回 MagicMock，避免 API key 检查失败
     - ``create_agent``：mock 为返回带 ``astream_events`` 的 fake agent，
       避免 ``create_deep_agent`` 处理 MagicMock model spec 时报错
+
+    注：``build_rag_agent`` / ``build_web_agent`` 实现已收敛到
+    ``app.subagents.base.build_builtin_subagent``，故 ``get_chat_model``
+    在 ``base`` 模块命名空间中被引用，需 mock ``app.subagents.base`` 而非
+    rag_agent / web_agent 模块。
     """
     fake_model = MagicMock(name="fake_chat_model")
-    for mod in (rag_agent_mod, web_agent_mod):
-        monkeypatch.setattr(mod, "get_chat_model", lambda **kw: fake_model)
+    from app.subagents import base as base_mod
+
+    monkeypatch.setattr(base_mod, "get_chat_model", lambda **kw: fake_model)
 
     fake_agent = MagicMock(name="fake_compiled_graph")
     fake_agent.astream_events = MagicMock()

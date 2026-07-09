@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator
 from langchain_core.tools import tool
 
 from app.config import get_settings
+from app.llm import get_chat_model
 from app.utils.text import extract_chunk_text
 
 __all__ = [
@@ -27,6 +28,8 @@ __all__ = [
     "extract_text",
     "THINK_PROMPT_SUFFIX",
     "run_react_agent_stream",
+    "build_builtin_subagent",
+    "run_builtin_subagent",
 ]
 
 
@@ -394,6 +397,55 @@ async def run_react_agent_stream(
                 "result": data.get("output"),
                 "source": source,
             }
+
+
+def build_builtin_subagent(
+    name: str,
+    thread_id: str,
+    checkpointer: Any = None,
+) -> Any:
+    """构建内置子代理（rag/web）deep_agent 子图，返回 CompiledStateGraph。
+
+    Args:
+        name: 子代理名称，"rag" 或 "web"。
+        thread_id: 会话 ID。
+        checkpointer: 可选的 LangGraph checkpointer。
+    """
+    from app.deep.harness import create_agent
+
+    settings = get_settings()
+    cfg = settings.subagents[name]
+    model = get_chat_model(temperature=cfg.temperature, streaming=True)
+    if name == "rag":
+        tools = make_rag_tools(thread_id)
+    elif name == "web":
+        tools = make_web_tools(thread_id)
+    else:
+        raise ValueError(f"unknown builtin subagent: {name}")
+    prompt = (cfg.system_prompt or "") + THINK_PROMPT_SUFFIX
+    return create_agent(
+        model,
+        tools,
+        system_prompt=prompt,
+        checkpointer=checkpointer,
+        name=f"{name}_agent",
+    )
+
+
+async def run_builtin_subagent(
+    name: str,
+    thread_id: str,
+    message: str,
+    history: list | None = None,
+    checkpointer: Any = None,
+) -> AsyncIterator[dict]:
+    """运行内置子代理，yield 标准化事件流。"""
+    agent = build_builtin_subagent(name, thread_id, checkpointer=checkpointer)
+    history_msgs = list(history) if history else []
+    inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
+    config = {"configurable": {"thread_id": thread_id}}
+    async for event in run_react_agent_stream(agent, inputs, source=name, config=config):
+        yield event
 
 
 # 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_fs_tools）
