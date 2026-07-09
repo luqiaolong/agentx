@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+
+from langchain_core.messages import trim_messages
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.agents.expert import run_coding_expert
@@ -285,12 +287,19 @@ async def run_router(
                 logger.warning("load history failed", error=str(exc))
                 history = []
 
-        # 简单按消息数截断（token 预算由 deepagents SummarizationMiddleware 自动处理，
-        # tool_call 配对由 PatchToolCallsMiddleware 自动修复）
+        # T-P3-1: 用 LangChain 标准 trim_messages 替代手写 history[-max_msgs:]。
+        # strategy="last" 保留最近消息（行为等价），避免破坏 tool_call 配对
+        # （trim_messages 自动检测 tool_call ↔ ToolMessage 完整性）。
+        # token 预算由 deepagents SummarizationMiddleware 处理。
         settings = get_settings()
         max_msgs = settings.context_max_messages
         if len(history) > max_msgs:
-            history = history[-max_msgs:]
+            history = trim_messages(
+                history,
+                max_tokens=max_msgs,
+                token_counter=len,
+                strategy="last",
+            )
 
         logger.info(
             "router dispatch",
