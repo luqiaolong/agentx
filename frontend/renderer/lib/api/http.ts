@@ -124,7 +124,17 @@ export const workspace = {
       params.set("thread_id", threadId);
     }
     const r = await fetch(`${API_BASE}/api/workspace/list?${params.toString()}`);
-    return (await r.json()) as { entries: WorkspaceEntry[] };
+    // 非 200（如 400 路径未授权 / 404 路径不存在）必须抛错，
+    // 否则直接 r.json() 会拿到 {"detail": "..."}，解构出 entries=undefined，
+    // 后续 [...list] 展开会抛 "list is not iterable"，掩盖真实错误。
+    if (!r.ok) {
+      const detail = ((await r.json().catch(() => ({}))) as { detail?: string }).detail;
+      throw new Error(detail ?? `列出目录失败 (HTTP ${r.status})`);
+    }
+    const data = (await r.json()) as { entries?: WorkspaceEntry[] };
+    // 防御性兜底：后端契约是 {entries: [...]},但第三方/旧版本可能返回其他结构,
+    // 此处确保返回值始终是数组,避免 [...list] 在调用方崩溃。
+    return { entries: Array.isArray(data.entries) ? data.entries : [] };
   },
   /**
    * 读取沙箱内文本文件（供 CodeViewer 使用）。
