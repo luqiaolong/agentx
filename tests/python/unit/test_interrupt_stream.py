@@ -64,7 +64,7 @@ async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) -> None:
-    """路径 D 的 _runner 在中止后应产出失败的 _subtask_done 哨兵。"""
+    """路径 D 的 _deep_node 在中止后应产出失败的 team_progress error。"""
     from app.team.orchestrator import run_team_path
     import app.team.orchestrator as orch_module
 
@@ -107,18 +107,10 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         lambda task, settings: (True, ""),
     )
 
-    # 模拟 _run_subtask：正常情况下不会返回，但 _runner 会在进入前检查 abort
-    async def _fake_run_subtask(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+    # 模拟 deep runner：正常情况下不会返回，但 _deep_node 会在事件循环中检查 abort
+    async def _fake_run_deep_path(state, message: str, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "should not see"}
         await asyncio.sleep(10)
-
-    # _runner 在 orchestrator 模块闭包中通过模块级名称访问 _run_subtask，
-    # 因此必须替换 orchestrator 模块中的绑定而非 scheduler 模块。
-    monkeypatch.setattr(
-        orch_module,
-        "_run_subtask",
-        _fake_run_subtask,
-    )
 
     # 跳过 aggregator
     monkeypatch.setattr(
@@ -138,10 +130,10 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
             "team task",
             "t-abort-team",
             {"thread_id": "t-abort-team", "messages": [], "agent_mode": "coding_team"},
+            subtask_runners={"deep": _fake_run_deep_path},
         )
     ]
 
-    # _subtask_done 是内部哨兵，不会透传到前端；
     # 中止后应转为 team_progress error 事件并携带“用户中止”信息。
     def _parse_data(e: dict[str, str]) -> dict:
         data = e.get("data", "{}")

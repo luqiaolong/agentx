@@ -24,6 +24,7 @@ __all__ = [
     "Blackboard",
     "TeamPlanTask",
     "TeamState",
+    "SubtaskState",
     "TeamSubtaskResult",
     "_merge_dict",
     "_serialize_blackboard",
@@ -96,6 +97,28 @@ class TeamState(TypedDict, total=False):
     findings: Annotated[dict[str, str], _merge_dict]
     errors: Annotated[dict[str, str], _merge_dict]
     subtask_results: Annotated[dict[str, dict], _merge_dict]
+
+
+class SubtaskState(TypedDict, total=False):
+    """单个子任务节点的状态（通过 ``langgraph.types.Send`` 注入）。
+
+    - ``task``: 字典 ``{"agent": str, "input": str, "purpose": str}``，
+      避免直接序列化 dataclass 对象，也兼容测试里的 MagicMock 任务。
+    - ``task_index``: 子任务在 plan 中的序号，用于生成独立 child_thread_id。
+    - ``parent_thread_id``: 父 thread_id，用于 abort 事件查找与 child 命名。
+    - 其余字段透传自 ``TeamState``。
+    """
+
+    task: dict
+    task_index: int
+    parent_thread_id: str
+    history: list
+    permission_mode: str
+    scene_prompt: str | None
+    profile_prompt: str
+    workspace_path: str | None
+    chat_model: Any
+    subtask_runners: Any
 
 
 def _serialize_blackboard(blackboard: Blackboard | Mapping) -> str:
