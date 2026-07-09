@@ -24,8 +24,8 @@ export const toolsSchema = z.object({
   git_checkout: z.boolean(),
   git_stage: z.boolean(),
   git_commit: z.boolean(),
-  // CLI 工具
-  cli_execute: z.boolean(),
+  // CLI 工具（deepagents LocalShellBackend 内置）
+  execute: z.boolean(),
 });
 
 export type ToolsFormValues = z.infer<typeof toolsSchema>;

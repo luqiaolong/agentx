@@ -262,8 +262,8 @@ export interface ToolsConfig {
   git_checkout: boolean;
   git_stage: boolean;
   git_commit: boolean;
-  // CLI 工具
-  cli_execute: boolean;
+  // CLI 工具（deepagents LocalShellBackend 内置，由 SafeLocalShellBackend 提供）
+  execute: boolean;
 }
 
 export interface SkillFileInfo {

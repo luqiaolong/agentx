@@ -70,9 +70,9 @@ const TOOL_GROUPS: ToolGroup[] = [
     title: "CLI",
     tools: [
       {
-        key: "cli_execute",
-        label: "cli_execute",
-        desc: "执行受限 CLI 命令（默认关闭，危险操作，需审批）",
+        key: "execute",
+        label: "execute",
+        desc: "执行受限 shell 命令（deepagents SafeLocalShellBackend 提供，blocklist + 元字符过滤，需审批）",
         Icon: Terminal,
       },
     ],
@@ -97,8 +97,8 @@ const DEFAULT_TOOLS: ToolsFormValues = {
   git_checkout: true,
   git_stage: true,
   git_commit: true,
-  // CLI 工具默认开启
-  cli_execute: true,
+  // CLI 工具默认开启（deepagents LocalShellBackend 提供）
+  execute: true,
 };
 
 export function ToolsSettings() {

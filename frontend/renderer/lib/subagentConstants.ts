@@ -5,7 +5,8 @@ import type { ToolsConfig } from "@/lib/utils";
  *
  * 危险工具（write_file / edit_file / shell_exec / git_clone / git_pull /
  * git_checkout / git_stage / git_commit 等）对内置 subagent 禁用绑定。
- * cli_execute 允许子代理使用（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
+ * ``execute`` 由 deepagents ``SafeLocalShellBackend`` 提供（黑名单 + 沙箱授权 + 元字符过滤
+ * 已足够安全），允许子代理使用。
  */
 export const ALL_TOOLS: string[] = [
   "read_file",
@@ -19,8 +20,8 @@ export const ALL_TOOLS: string[] = [
   "git_diff",
   "git_log",
   "git_branches",
-  // CLI 工具
-  "cli_execute",
+  // CLI 工具（deepagents LocalShellBackend 内置，由 SafeLocalShellBackend 包装）
+  "execute",
 ];
 
 /**
