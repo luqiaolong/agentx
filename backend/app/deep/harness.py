@@ -153,8 +153,13 @@ def create_agent(
 ) -> Any:
     """主入口：封装 create_deep_agent。
 
-    组装 HarnessProfile、interrupt_on、memory、skills、backend、subagents 等配置，
+    组装 HarnessProfile、interrupt_on、memory、backend、subagents 等配置，
     调用 ``deepagents.create_deep_agent`` 构建编译后的图。
+
+    注意：不传递 ``skills`` 参数。deepagents 的 SkillsMiddleware 通过 backend 读取技能
+    目录，但 SafeLocalShellBackend 的 root_dir 限制为 workspace_path，而项目 skills 目录
+    （data/skills/）位于项目根目录，不一定在当前 workspace_path 下，会导致 Path outside
+    root directory 错误。项目自研 skill 系统（skills_loader + skills_store）已覆盖此功能。
 
     Args:
         model: ChatOpenAI 实例（已配置 temperature/streaming）。
@@ -174,7 +179,6 @@ def create_agent(
     ensure_harness_profile("openai")
     interrupt_on = build_interrupt_config()
     memory_paths = resolve_memory_paths(workspace_path)
-    skills_dir = resolve_skills_dir()
     backend = resolve_backend(workspace_path)
 
     middleware: list = []
@@ -188,7 +192,6 @@ def create_agent(
         system_prompt=system_prompt,
         interrupt_on=interrupt_on,
         memory=memory_paths or None,
-        skills=[skills_dir] if skills_dir else None,
         backend=backend,
         subagents=subagents,
         middleware=middleware,
