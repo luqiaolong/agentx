@@ -33,7 +33,8 @@ class SafeLocalShellBackend(LocalShellBackend):
     - blocklist: 复用 ``app.security.command_filter.DEFAULT_BLOCKLIST`` + 用户配置
     - 元字符过滤: 复用 ``has_forbidden_args``，拦截 ``; & | ` $ < >``
     - root_dir: 父类 ``LocalShellBackend`` 限制工作目录
-    - interrupt_on: ``DANGEROUS_TOOLS`` 含 ``execute``，触发审批流
+    - 审批: execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension
+      机制处理（workspace 之外未授权时触发审批）。
     """
 
     def execute(self, command: str, **kwargs) -> str:  # type: ignore[override]

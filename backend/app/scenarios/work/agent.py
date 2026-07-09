@@ -402,9 +402,8 @@ async def run_work_supervisor(
             _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
-        # execute 由 SafeLocalShellBackend 提供，不在 agent_tools 中但需审批
-        if workspace_path:
-            runtime_dangerous = runtime_dangerous | {"execute"}
+        # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
+        # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
 
         # ---- 3. 公共审批执行层（app.deepagent.approval_runner.run_agent_with_approval）----
         # 由统一执行层负责 _is_interrupted、中断循环、危险工具判定等逻辑，

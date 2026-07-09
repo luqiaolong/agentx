@@ -355,8 +355,8 @@ def test_excluded_builtin_tools_covers_fs_and_task() -> None:
     assert {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}.issubset(_EXCLUDED_BUILTIN_TOOLS)
 
 
-def test_dangerous_tools_contains_execute_after_migration() -> None:
-    """``DANGEROUS_TOOLS`` 含 ``execute``（替代原 ``cli_execute``）。"""
-    assert "execute" in DANGEROUS_TOOLS
-    # cli_execute 已从 DANGEROUS_TOOLS 中移除
+def test_dangerous_tools_does_not_contain_execute() -> None:
+    """``execute`` 已从 ``DANGEROUS_TOOLS`` 中移除，审批改为 directory_extension 机制。"""
+    assert "execute" not in DANGEROUS_TOOLS
+    # cli_execute 也不在 DANGEROUS_TOOLS 中
     assert "cli_execute" not in DANGEROUS_TOOLS

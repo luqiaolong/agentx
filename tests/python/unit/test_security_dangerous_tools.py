@@ -28,11 +28,10 @@ def test_dangerous_tools_is_frozenset() -> None:
 
 
 def test_dangerous_tools_contains_expected_tools() -> None:
-    """包含写操作 + CLI + Git 写操作。"""
+    """包含写操作 + Git 写操作。execute 已移除，审批改为 directory_extension 机制。"""
     expected = {
         "edit_file",
         "write_file",
-        "execute",
         "git_clone",
         "git_pull",
         "git_checkout",
@@ -86,10 +85,11 @@ def test_forbidden_subagent_tools_forbids_execute_and_cli_execute() -> None:
 
 
 def test_compute_runtime_dangerous_intersection() -> None:
-    """仅返回 DANGEROUS_TOOLS ∩ enabled。"""
+    """仅返回 DANGEROUS_TOOLS ∩ enabled。execute 已不在 DANGEROUS_TOOLS 中。"""
     enabled = {"write_file", "read_file", "list_dir", "execute"}
     result = compute_runtime_dangerous(enabled, set())
-    assert result == frozenset({"write_file", "execute"})
+    # execute 已从 DANGEROUS_TOOLS 移除，不再出现在 runtime_dangerous 中
+    assert result == frozenset({"write_file"})
 
 
 def test_compute_runtime_dangerous_union_with_mcp() -> None:

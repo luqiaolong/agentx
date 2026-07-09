@@ -273,12 +273,6 @@ async def run_agent_with_approval(
             if name not in runtime_dangerous:
                 continue
 
-            # execute / cli_execute 始终需要审批（让用户审查命令内容），
-            # 不因 workspace 已授权而自动放行
-            if name in ("execute", "cli_execute"):
-                dangerous_calls.append(tc)
-                continue
-
             paths = _extract_paths_from_tool_call(tc, workspace_path)
             if not paths:
                 # 无路径参数的危险工具：若已选工作区且授权则自动放行
@@ -331,25 +325,25 @@ async def run_agent_with_approval(
                 tools=[tc.get("name") for tc in dangerous_calls],
                 source=source,
             )
-        else:
-            # 非危险工具：检查只读 fs 工具是否越界
-            extension_handled: _ExtensionResult = await _handle_directory_extension(
-                pending_calls,
-                thread_id,
-                _sandbox,
-                workspace_path=workspace_path,
-                parent_thread_id=parent_thread_id,
-            )
-            for evt in extension_handled.events:
-                yield await _forward(evt)
-            if extension_handled.denied:
-                yield await _forward(make_error_event( "用户拒绝访问该目录"))
-                await _inject_msgs(agent, config, "用户拒绝访问该目录")
-                return
-            if extension_handled.timed_out:
-                yield await _forward(make_error_event( "目录授权等待被中断，操作未执行"))
-                await _inject_msgs(agent, config, "目录授权等待被中断，操作未执行")
-                return
+
+        # 所有工具：检查是否越界（含只读工具、execute、cli_execute 等）
+        extension_handled: _ExtensionResult = await _handle_directory_extension(
+            pending_calls,
+            thread_id,
+            _sandbox,
+            workspace_path=workspace_path,
+            parent_thread_id=parent_thread_id,
+        )
+        for evt in extension_handled.events:
+            yield await _forward(evt)
+        if extension_handled.denied:
+            yield await _forward(make_error_event( "用户拒绝访问该目录"))
+            await _inject_msgs(agent, config, "用户拒绝访问该目录")
+            return
+        if extension_handled.timed_out:
+            yield await _forward(make_error_event( "目录授权等待被中断，操作未执行"))
+            await _inject_msgs(agent, config, "目录授权等待被中断，操作未执行")
+            return
 
         # 恢复执行
         try:

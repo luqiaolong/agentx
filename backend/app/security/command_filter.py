@@ -1,7 +1,7 @@
 """CLI 命令过滤 + 参数脱敏。
 
 从 ``app.tools.cli`` 提取命令黑名单 / 元字符校验逻辑，
-从 ``app.deep.approval`` 提取 ``_redact_args`` 并扩展支持 ``execute``
+从 ``app.deepagent.approval_runner`` 提取 ``_redact_args`` 并扩展支持 ``execute``
 （deepagents LocalShellBackend 内置工具）和 ``cli_execute``（旧自研工具，
 子代理路径仍使用）的 ``command`` / ``arguments`` 脱敏
 （token / password / user:pass@host）。

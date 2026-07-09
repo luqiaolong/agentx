@@ -210,8 +210,8 @@ class TestDefaultAgentsConfig:
         from app.security.dangerous_tools import DANGEROUS_TOOLS
 
         tools = set(_DEFAULT_SUPERVISOR_TOOLS)
+        # execute 已从 DANGEROUS_TOOLS 中移除，审批改为 directory_extension 机制
         assert DANGEROUS_TOOLS & tools == {
-            "execute",
             "write_file",
             "edit_file",
             "git_clone",

@@ -21,14 +21,16 @@ __all__ = [
 
 # CLI 工具名：deepagents ``LocalShellBackend`` 内置的 ``execute`` 工具
 # （由 ``SafeLocalShellBackend`` 继承并提供，blocklist + 元字符过滤）。
-SHELL_CLI_TOOL_NAME = "execute"
+# 注意：execute 不再属于 DANGEROUS_TOOLS，其审批通过 directory_extension
+# 机制处理（workspace 之外未授权时触发审批）。
+CLI_TOOL_NAME = "execute"
 
-# 触发人工审批中断的工具集合：写操作 + CLI + Git 写操作。
+# 触发人工审批中断的工具集合：写操作 + Git 写操作。
+# execute 已移除：shell 命令的审批改为基于工作目录是否授权（directory_extension）。
 DANGEROUS_TOOLS: frozenset[str] = frozenset(
     {
         "edit_file",
         "write_file",
-        SHELL_CLI_TOOL_NAME,
         "git_clone",
         "git_pull",
         "git_checkout",
@@ -64,7 +66,7 @@ def compute_runtime_dangerous(
 
     公式：``(DANGEROUS_TOOLS ∩ enabled_tool_names) ∪ mcp_untrusted_names``
 
-    - ``DANGEROUS_TOOLS`` 是静态危险工具集合（写/shell/git 写）。
+    - ``DANGEROUS_TOOLS`` 是静态危险工具集合（写/git 写）。
     - ``enabled_tool_names`` 是当前会话已启用的工具名集合（来自 settings.tools_enabled）。
       未启用的工具不会暴露给 LLM，故无需审批。
     - ``mcp_untrusted_names`` 是来自 ``trusted=False`` MCP server 的工具名集合，

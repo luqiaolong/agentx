@@ -104,7 +104,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
-        {"id": "tc-2", "name": "execute", "args": {"command": "ls"}},
+        {"id": "tc-2", "name": "edit_file", "args": {"path": "/tmp/b.txt"}},
     ]
 
     monkeypatch.setattr(
@@ -132,7 +132,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
         e
         async for e in run_deep_path(
             {"thread_id": "t-multi"},
-            "write and run",
+            "write and edit",
         )
     ]
 
@@ -141,7 +141,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
     data0 = json.loads(approval_events[0].get("data", "{}"))
     data1 = json.loads(approval_events[1].get("data", "{}"))
     assert data0.get("tool_name") == "write_file"
-    assert data1.get("tool_name") == "execute"
+    assert data1.get("tool_name") == "edit_file"
 
     # 没有 error 事件
     assert not any(e.get("event") == "error" for e in events)

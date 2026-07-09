@@ -186,15 +186,15 @@ def test_make_deep_tools_all_disabled_returns_empty(
 
 
 def test_dangerous_tools_constant_unchanged() -> None:
-    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/execute 及 Git 写操作。
+    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file 及 Git 写操作。
 
+    execute 已移除，审批改为 directory_extension 机制。
     常量是模块级 frozenset，不随 tools_enabled 变化。
     即使工具被禁用，常量本身不变（运行时危险集合通过交集计算）。
     """
     assert DANGEROUS_TOOLS == {
         "edit_file",
         "write_file",
-        "execute",
         "git_clone",
         "git_pull",
         "git_checkout",

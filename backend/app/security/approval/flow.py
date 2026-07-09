@@ -9,11 +9,11 @@
    使审批层与执行层路径基准一致。
 2. **Team 模式 thread_id 不继承**：辅助函数接受 ``parent_thread_id``，
    授权检查时同时查询子 / 父 thread 的授权。
-3. **cli_execute 无 cwd 自动免审批**：``cli_execute`` 始终需要审批（让用户审查命令内容），
-   不再因 workspace 已授权就自动放行。
-4. **directory_extension 工作区免审批死代码**：``_handle_directory_extension``
-   传 ``base=workspace_path`` + ``parent_thread_id``，并修正
-   ``all_under_workspace`` 用 ``writable=False`` 检查（只读工具仅需读权限）。
+3. **cli_execute 无 cwd 自动免审批**：``cli_execute`` / ``execute`` 的审批
+   改为基于工作目录是否授权（directory_extension），不再强制 dangerous_tool 审批。
+4. **directory_extension 扩展到所有工具**：``_handle_directory_extension``
+   不再限于只读工具，覆盖所有工具（含 execute / cli_execute / 写操作等）。
+   写操作/execute 使用 ``writable=True`` 检查，只读工具使用 ``writable=False``。
 5. **full_trust 仍弹审批框**：``full_trust`` 模式下跳过所有审批（含
    ``directory_extension`` 预检查），直接恢复执行。
 6. **approval_max_wait=0 无限阻塞**：``approval_max_wait=0`` 时上限改为 3600s
@@ -78,12 +78,13 @@ def _extract_paths_from_tool_call(
     支持的工具：
     - read_file / write_file / edit_file / list_dir / grep: args["path"]
     - glob / glob_files: args["pattern"] → 取 _glob_base
+    - execute: 工作目录由 SafeLocalShellBackend 的 root_dir 限制；
+      若已选择 workspace，回退到 workspace_path 作为工作目录。
     - cli_execute: args["cwd"]；未指定时若已选择 workspace，回退到 workspace_path
       作为默认工作目录，避免已授权工作区仍被误标为危险操作。
-    - execute: 无路径参数（由 backend root_dir 限制工作目录），返回空列表。
 
-    注意：``execute`` / ``cli_execute`` 在 dangerous_tool 判定时始终需要审批，
-    不因路径已授权而自动放行。
+    注意：write_file / edit_file / git_* 在 dangerous_tool 判定时检查路径授权；
+    execute 不再属于 dangerous_tool，其路径通过 directory_extension 机制检查。
     """
     from app.tools.filesystem import _glob_base
 
@@ -101,8 +102,11 @@ def _extract_paths_from_tool_call(
         base = _glob_base(str(pattern))
         return [base] if base else []
     if name == "execute":
-        # execute 工具由 SafeLocalShellBackend 提供，工作目录由 backend root_dir 限制，
-        # 无路径参数需要提取
+        # execute 工具由 SafeLocalShellBackend 提供，工作目录由 root_dir 限制。
+        # 若已选择 workspace，root_dir = workspace_path，此时工作目录已授权；
+        # 若未选择 workspace，root_dir = None，此时无目录限制，需要审批。
+        if workspace_path:
+            return [workspace_path]
         return []
     if name == "cli_execute":
         p = args.get("cwd")
@@ -237,10 +241,14 @@ async def _handle_directory_extension(
     workspace_path: str | None = None,
     parent_thread_id: str | None = None,
 ) -> _ExtensionResult:
-    """处理只读 fs 工具的目录越界扩展授权。
+    """处理工具调用的目录越界扩展授权。
 
     遍历 pending_calls，收集所有越界路径，**一次性批量 yield** 所有
     approval_request(kind=directory_extension) 事件，然后等待用户统一决策。
+
+    覆盖范围：所有工具（含只读工具、execute、cli_execute 等），
+    不仅限于 _READONLY_TOOLS。任何工具操作 workspace 之外未授权的目录
+    都需要用户审批。
 
     决策映射：
     - once / approve：``sandbox.authorize_temp`` 临时授权（所有越界路径）
@@ -250,10 +258,8 @@ async def _handle_directory_extension(
     bug #1 修复：所有 ``is_path_authorized`` 调用传 ``base=workspace_path``，
     使审批层与执行层路径基准一致。
     bug #2 修复：传 ``parent_thread_id``，Team 模式子任务继承父 thread 授权。
-    bug #4 修复：``all_under_workspace`` 用 ``writable=False`` 检查（只读工具
-    仅需读权限），且传 ``base=workspace_path``。收集越界路径后进行第二轮
-    复核：若所有越界路径在并发期间已被授权（如其他协程已 authorize），
-    自动放行，避免不必要的审批弹窗。
+    bug #4 修复：收集越界路径后进行第二轮复核：若所有越界路径在并发期间
+    已被授权（如其他协程已 authorize），自动放行，避免不必要的审批弹窗。
 
     Args:
         pending_calls: 待执行的工具调用列表。
@@ -271,16 +277,16 @@ async def _handle_directory_extension(
     seen: set[str] = set()
     for tc in pending_calls:
         name = tc.get("name", "")
-        if name not in _READONLY_TOOLS:
-            continue
         paths = _extract_paths_from_tool_call(tc, workspace_path)
         if not paths:
             continue
+        # 根据工具类型决定 writable 检查：写操作/execute 需要 writable=True
+        needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
         for path in paths:
             if await sandbox.is_path_authorized(
                 thread_id,
                 path,
-                writable=False,
+                writable=needs_writable,
                 base=workspace_path,
                 parent_thread_id=parent_thread_id,
             ):
@@ -292,16 +298,22 @@ async def _handle_directory_extension(
     if not unauthorized_paths:
         return _ExtensionResult(events=[])
 
-    # bug #4 修复：第二轮复核（all_under_workspace 自动放行）
+    # bug #4 修复：第二轮复核（自动放行）
     # 并发授权场景：在收集越界路径与弹出审批框之间，可能有其他协程已授权
-    # 这些路径。用 writable=False（只读工具仅需读权限）重新检查所有越界路径，
-    # 若全部已授权则自动放行，避免不必要的审批弹窗。
+    # 这些路径。重新检查所有越界路径，若全部已授权则自动放行。
     still_unauthorized: list[str] = []
     for path in unauthorized_paths:
+        # 使用同样的 needs_writable 逻辑重新检查
+        tc_for_path = next(
+            (tc for tc in pending_calls if path in _extract_paths_from_tool_call(tc, workspace_path)),
+            {},
+        )
+        name = tc_for_path.get("name", "")
+        needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
         if await sandbox.is_path_authorized(
             thread_id,
             path,
-            writable=False,
+            writable=needs_writable,
             base=workspace_path,
             parent_thread_id=parent_thread_id,
         ):
@@ -322,18 +334,19 @@ async def _handle_directory_extension(
             (
                 tc
                 for tc in pending_calls
-                if tc.get("name", "") in _READONLY_TOOLS
-                and path in _extract_paths_from_tool_call(tc, workspace_path)
+                if path in _extract_paths_from_tool_call(tc, workspace_path)
             ),
             {},
         )
+        name = representative_tc.get("name", "")
+        needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
         events.append(
             _make_approval_event(
                 representative_tc,
                 thread_id,
                 kind="directory_extension",
                 requested_path=path,
-                writable=False,
+                writable=needs_writable,
             )
         )
 
@@ -353,14 +366,27 @@ async def _handle_directory_extension(
     if decision.decision in ("once", "approve"):
         for path in unauthorized_paths:
             try:
-                await sandbox.authorize_temp(thread_id, path, writable=False)
+                # 使用第一个涉及该路径的 tool_call 决定 writable
+                tc_for_path = next(
+                    (tc for tc in pending_calls if path in _extract_paths_from_tool_call(tc, workspace_path)),
+                    {},
+                )
+                name = tc_for_path.get("name", "")
+                needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+                await sandbox.authorize_temp(thread_id, path, writable=needs_writable)
             except ValueError as exc:
                 logger.warning("authorize_temp failed", path=path, error=str(exc))
                 return _ExtensionResult(events=events, denied=True)
     elif decision.decision == "session":
         for path in unauthorized_paths:
             try:
-                await sandbox.authorize(thread_id, path, writable=False)
+                tc_for_path = next(
+                    (tc for tc in pending_calls if path in _extract_paths_from_tool_call(tc, workspace_path)),
+                    {},
+                )
+                name = tc_for_path.get("name", "")
+                needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+                await sandbox.authorize(thread_id, path, writable=needs_writable)
             except ValueError as exc:
                 logger.warning("authorize session failed", path=path, error=str(exc))
                 return _ExtensionResult(events=events, denied=True)

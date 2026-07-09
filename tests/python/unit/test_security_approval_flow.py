@@ -668,12 +668,12 @@ class TestPathBaseConsistency:
 
 
 # ============================================================
-# 7. execute 始终需审批（bug #3）
+# 7. execute 审批改为 directory_extension 机制（原 bug #3 逻辑变更）
 # ============================================================
 
 
-class TestCliExecuteAlwaysApproval:
-    """bug #3：execute 始终需要审批，不因 workspace 已授权而放行。"""
+class TestExecuteDirectoryExtensionApproval:
+    """execute 已从 DANGEROUS_TOOLS 移除，审批改为 directory_extension 机制。"""
 
     @pytest.fixture
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -688,14 +688,13 @@ class TestCliExecuteAlwaysApproval:
         return {}
 
     @pytest.mark.asyncio
-    async def test_cli_execute_needs_approval_even_if_workspace_authorized(
+    async def test_execute_no_dangerous_approval_when_workspace_authorized(
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """execute 即使 workspace 已授权仍需审批。"""
+        """execute 在 workspace 已授权时不再触发 dangerous_tool 审批。"""
         from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = MagicMock()
-        # workspace 已授权（is_path_authorized 返回 True）
         sandbox.is_path_authorized = AsyncMock(return_value=True)
         sandbox.clear_temp = AsyncMock()
 
@@ -708,7 +707,6 @@ class TestCliExecuteAlwaysApproval:
             AsyncMock(return_value=_FakeExtensionResult()),
         )
 
-        # cli_execute 在 runtime_dangerous 中
         pending_calls = [_fake_tool_call("tc-1", "execute", {"command": "ls"})]
 
         agent = MagicMock()
@@ -722,7 +720,7 @@ class TestCliExecuteAlwaysApproval:
                 thread_id="test-thread",
                 workspace_path="/workspace",
                 permission_mode="standard",
-                runtime_dangerous={"execute"},  # execute 是危险工具
+                runtime_dangerous=set(),  # execute 不在危险工具中
                 sandbox=sandbox,
                 source="work",
                 inputs={"messages": []},
@@ -734,12 +732,63 @@ class TestCliExecuteAlwaysApproval:
             )
         ]
 
-        # 应有 approval_request 事件（execute 始终需审批）
+        # 不应有 dangerous_tool 审批事件
+        approval_events = [e for e in events if e.get("event") == "approval_request"]
+        assert len(approval_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_triggers_directory_extension_when_not_authorized(
+        self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """execute 在 workspace 未授权时触发 directory_extension 审批。"""
+        from app.deepagent.approval_runner import run_agent_with_approval
+
+        sandbox = MagicMock()
+        sandbox.is_path_authorized = AsyncMock(return_value=False)
+        sandbox.clear_temp = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._await_approval",
+            AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
+        )
+
+        # _handle_directory_extension 返回真实的审批事件
+        ext_event = {"event": "approval_request", "data": '{"kind":"directory_extension","tool_name":"execute"}'}
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._handle_directory_extension",
+            AsyncMock(return_value=_FakeExtensionResult(events=[ext_event])),
+        )
+
+        pending_calls = [_fake_tool_call("tc-1", "execute", {"command": "ls"})]
+
+        agent = MagicMock()
+        config = {"configurable": {"thread_id": "test-thread"}}
+
+        events = [
+            e
+            async for e in run_agent_with_approval(
+                agent,
+                config,
+                thread_id="test-thread",
+                workspace_path="/workspace",
+                permission_mode="standard",
+                runtime_dangerous=set(),
+                sandbox=sandbox,
+                source="work",
+                inputs={"messages": []},
+                stream_fn=_empty_stream,
+                is_interrupted_fn=AsyncMock(side_effect=[True, False]),
+                get_pending_calls_fn=AsyncMock(return_value=pending_calls),
+                inject_tool_error_for_call_fn=AsyncMock(),
+                inject_tool_error_messages_fn=AsyncMock(),
+            )
+        ]
+
+        # 应有 directory_extension 审批事件
         approval_events = [e for e in events if e.get("event") == "approval_request"]
         assert len(approval_events) == 1
-
-        # 验证 approval_request 的 data 包含 cli_execute
         approval_data = json.loads(approval_events[0]["data"])
+        assert approval_data["kind"] == "directory_extension"
         assert approval_data["tool_name"] == "execute"
 
 
