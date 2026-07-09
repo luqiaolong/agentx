@@ -34,7 +34,10 @@ class McpClientManager:
         self._lock = asyncio.Lock()
         self._client: Any | None = None  # MultiServerMCPClient 实例
         self._servers: list[McpServerConfig] = []
-        self._tools: list[Any] = []  # LangChain BaseTool 列表
+        self._tools: list[Any] = []  # LangChain BaseTool 列表（所有 server 合并）
+        # server_name → 该 server 的 LangChain BaseTool 列表（per-server 缓存）。
+        # 由 _initialize_locked 填充，供 list_servers 报告 per-server tool_count。
+        self._server_tools: dict[str, list[Any]] = {}
         self._errors: dict[str, str] = {}  # server_name → 连接错误
         self._initialized = False
 
@@ -50,6 +53,7 @@ class McpClientManager:
             logger.info("no enabled MCP servers, skipping client init")
             self._initialized = True
             self._tools = []
+            self._server_tools = {}
             self._errors = {}
             return
 
@@ -64,12 +68,14 @@ class McpClientManager:
             )
             self._initialized = True
             self._tools = []
+            self._server_tools = {}
             self._errors = {s.name: "langchain-mcp-adapters 未安装" for s in enabled}
             return
 
         spec: dict[str, dict[str, Any]] = {s.name: s.to_client_spec() for s in enabled}
         self._client = MultiServerMCPClient(spec)
         self._errors = {}
+        self._server_tools = {}
 
         # 逐个 server 探测工具，失败的 server 跳过但不阻塞其他
         all_tools: list[Any] = []
@@ -78,6 +84,7 @@ class McpClientManager:
                 # MultiServerMCPClient.get_tools(server_name=...) 返回该 server 的工具
                 tools = await self._client.get_tools(server_name=server.name)
                 all_tools.extend(tools)
+                self._server_tools[server.name] = list(tools)
                 logger.info(
                     "MCP server '{}' connected, {} tools discovered",
                     server.name,
@@ -165,11 +172,10 @@ class McpClientManager:
 
         result: list[dict[str, Any]] = []
         for s in self._servers:
-            tool_count = sum(
-                1 for t in self._tools
-                # MCP 工具名通常含 server 名前缀（MultiServerMCPClient 默认）
-                # 或可通过 metadata 查询；此处用工具总数近似
-            )
+            # BUG-5 修复：旧代码 tool_count = sum(1 for t in self._tools) 实际计算的是
+            # 全局工具总数（self._tools 跨所有 server），导致每个 server 都报告同一总数。
+            # 正确做法是从 per-server 缓存中取该 server 自己的工具数。
+            tool_count = len(self._server_tools.get(s.name, []))
             result.append({
                 "name": s.name,
                 "transport": s.transport,
@@ -226,15 +232,39 @@ class McpClientManager:
         """在锁保护下关闭客户端连接。
 
         langchain-mcp-adapters 0.1.0+ 的 ``MultiServerMCPClient`` 不支持顶层
-        ``async with`` / ``__aexit__``（会抛 ``AttributeError``）。
-        这里仅清内部状态；stdio 子进程由 Python GC + 进程退出时回收。
-        真正需要立刻回收子进程时，调用方应使用 ``client.session(name)`` 的
-        async context manager（见 ``test_server``）。
+        ``async with`` / ``__aexit__``（会抛 ``NotImplementedError``）。
+        因此逐个 server 调用 ``client.session(name)`` async context manager，
+        借其 ``__aexit__`` 触发 ``create_session`` 内部的 stdio/sse/http
+        资源清理（stdio 子进程会随 ``stdio_client().__aexit__`` 被终止），
+        避免 stdio 子进程一直悬挂到 Python 进程退出才回收。
+
+        失败的 server 单独 try/except 隔离，不阻塞其他 server 清理；
+        全部尝试完毕后才置 ``self._client = None``，保证清理过程中
+        ``self._client`` 仍可用。
         """
-        if self._client is None:
+        client = self._client
+        if client is None:
             return
+
+        # 仅清理已启用且初始化期间未失败的 server。
+        for server in self._servers:
+            if not server.enabled or server.name in self._errors:
+                continue
+            try:
+                # 进入并立即退出 session async context manager，
+                # 让其 __aexit__ 执行 stdio 子进程 / http 连接关闭。
+                async with client.session(server.name):
+                    pass
+            except Exception as exc:  # noqa: BLE001 — 单 server 关闭失败不影响其他
+                logger.warning(
+                    "MCP server '{}' 关闭会话失败: {}",
+                    server.name,
+                    exc,
+                )
+
         self._client = None
         self._tools = []
+        self._server_tools = {}
         self._errors = {}
 
     async def close(self) -> None:

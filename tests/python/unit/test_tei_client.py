@@ -294,3 +294,34 @@ async def test_get_embedding_client_singleton():
     a = get_embedding_client()
     b = get_embedding_client()
     assert a is b
+
+
+# ---- 10. 同步 embed 在已有事件循环中不崩溃（方案 C） ----
+@respx.mock
+async def test_sync_embed_in_async_context():
+    """``embed_documents`` 在已运行事件循环中调用不应抛 ``RuntimeError``。
+
+    回归：原实现用 ``asyncio.run(self.aembed_documents(...))`` 包裹，在 FastAPI
+    async 上下文（已有事件循环）中会抛
+    ``RuntimeError: cannot be called from a running event loop``。方案 C 改为
+    直接走同步 ``httpx.Client`` + tenacity 重试，与事件循环解耦。
+    """
+    settings = get_settings()
+    respx.post(settings.embedding_url).mock(side_effect=_make_response)
+
+    emb = tei_module.LangChainTeiEmbeddings()
+
+    # 在已运行的事件循环中调用同步方法 —— 不应抛 RuntimeError
+    result = emb.embed_documents(["hello", "world"])
+
+    assert len(result) == 2
+    for vec in result:
+        assert isinstance(vec, list)
+        assert len(vec) == 1024
+        assert vec[0] == pytest.approx(0.1)
+
+    # embed_query 同理走同步路径
+    single = emb.embed_query("single")
+    assert isinstance(single, list)
+    assert len(single) == 1024
+    assert single[0] == pytest.approx(0.1)

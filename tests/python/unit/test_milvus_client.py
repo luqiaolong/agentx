@@ -17,6 +17,7 @@ import pytest
 
 from app.config import get_settings
 from app.vectorstore.milvus_client import (
+    LangChainMilvusVectorStore,
     MilvusClient,
     MilvusUnavailable,
     _VALID_SOURCE_TYPES,
@@ -297,8 +298,6 @@ async def test_healthcheck_healthy(monkeypatch):
 async def test_ingest_skips_too_long_text_via_on_skip():
     client = _make_client_with_collection()
 
-    captured_on_skip = {}
-
     async def _fake_embed_texts(texts, on_skip=None):
         # 模拟 TEI 客户端契约：on_skip(text, err) ?2 个参
         from app.embedding import TextTooLongError
@@ -463,3 +462,63 @@ async def test_delete_by_source_type_accepts_all_valid_types():
         with patch("app.vectorstore.milvus_client.Partition", new=MagicMock()):
             await client.delete_by_source_type(st)
         client._collection.drop_partition.assert_called_once_with(st)
+
+
+# ---------------- 10. ingest 空列表不抛 NameError（_on_skip 闭包回归）----------------
+
+@pytest.mark.asyncio
+async def test_ingest_empty_texts():
+    """ingest([], []) 不应抛出 NameError（_on_skip 闭包 i 未绑定回归）。"""
+    client = _make_client_with_collection()
+    with patch(
+        "app.vectorstore.milvus_client.embed_texts",
+        new=AsyncMock(return_value=[]),
+    ):
+        ids = await client.ingest(texts=[], metadatas=[], source_type="file")
+    assert ids == []
+
+
+# ---------------- 11. _on_skip 未匹配时使用空 meta（不抛 NameError）----------------
+
+@pytest.mark.asyncio
+async def test_ingest_no_match():
+    """_on_skip 收到不在 texts 中的 text 时应使用 {} 而非抛 NameError。"""
+    client = _make_client_with_collection()
+
+    async def _fake_embed_texts(texts, on_skip=None):
+        # 模拟 TEI 回调一个不在 texts 中的 text（身份不匹配）
+        if on_skip is not None:
+            on_skip("not_in_texts", Exception("too long"))
+        return [None] * len(texts)
+
+    with patch(
+        "app.vectorstore.milvus_client.embed_texts",
+        new=_fake_embed_texts,
+    ):
+        mutation_result = MagicMock()
+        mutation_result.primary_keys = []
+        client._collection.insert = MagicMock(return_value=mutation_result)
+
+        ids = await client.ingest(
+            texts=["actual_text"],
+            metadatas=[{"source": "a.pdf", "chunk_idx": 0}],
+            source_type="file",
+        )
+
+    # 全部被跳过 → 返回空列表，未抛 NameError
+    assert ids == []
+
+
+# ---------------- 12. async 上下文中调 sync similarity_search 不抛 RuntimeError ----------------
+
+@pytest.mark.asyncio
+async def test_sync_similarity_search_in_async_context():
+    """在已有事件循环中调用同步 similarity_search 不应抛 RuntimeError。"""
+    store = LangChainMilvusVectorStore()
+    # mock 底层 async search，避免真实 Milvus 调用
+    store._milvus.search = AsyncMock(return_value=[])
+
+    result = store.similarity_search("query", k=4)
+
+    assert result == []
+    store._milvus.search.assert_called_once()

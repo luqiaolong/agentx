@@ -8,7 +8,8 @@
 - ``sqlite3.connect(timeout=30)``：连接级超时 30 秒
 
 设计要点：
-- 使用 ``sqlite3`` 同步连接（``SessionSandbox`` 调用方在 ``asyncio.Lock`` 内同步调用）
+- 使用 ``sqlite3`` 同步连接，公共方法通过 ``asyncio.to_thread`` 在线程池执行
+  （方案 B），避免阻塞 ``SessionSandbox`` 所在事件循环
 - 每次操作 ``with sqlite3.connect(...)`` 建立短连接，避免连接生命周期管理
 - ``source`` 字段 UPSERT 优先级：``manual`` > ``chip`` > ``legacy``
 - 本层为纯 CRUD，异常直接抛给调用方
@@ -16,6 +17,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,8 +45,10 @@ class SandboxEntry:
 class SandboxStore:
     """``sandbox_authorize`` 表的 CRUD 封装。
 
-    所有方法均为同步。每次操作建立短连接，WAL 模式 + busy_timeout 保证
-    并发写不锁。SQLite 本地文件 IO 足够快（< 5ms），无需连接池。
+    所有公共方法均为 ``async``：实际 sqlite3 同步逻辑放在 ``_sync_*`` 私有方法，
+    通过 ``asyncio.to_thread`` 在线程池执行（方案 B），避免阻塞事件循环。
+    每次操作建立短连接，WAL 模式 + busy_timeout 保证并发写不锁。
+    SQLite 本地文件 IO 足够快（< 5ms），无需连接池。
     """
 
     def __init__(self, db_path: Path | None = None) -> None:
@@ -71,10 +75,17 @@ class SandboxStore:
         )
         conn.commit()
 
-    def upsert(
+    async def upsert(
         self, thread_id: str, resolved_path: str, writable: bool, source: str
     ) -> None:
         """UPSERT 一条授权记录。manual source 不被 chip 覆盖。"""
+        await asyncio.to_thread(
+            self._sync_upsert, thread_id, resolved_path, writable, source
+        )
+
+    def _sync_upsert(
+        self, thread_id: str, resolved_path: str, writable: bool, source: str
+    ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with sqlite3.connect(str(self._db_path), timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
@@ -93,8 +104,13 @@ class SandboxStore:
             )
             conn.commit()
 
-    def delete_by_path(self, thread_id: str, resolved_path: str) -> bool:
+    async def delete_by_path(self, thread_id: str, resolved_path: str) -> bool:
         """删除单条授权记录。返回是否曾存在。"""
+        return await asyncio.to_thread(
+            self._sync_delete_by_path, thread_id, resolved_path
+        )
+
+    def _sync_delete_by_path(self, thread_id: str, resolved_path: str) -> bool:
         with sqlite3.connect(str(self._db_path), timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
             cur = conn.execute(
@@ -104,8 +120,11 @@ class SandboxStore:
             conn.commit()
             return cur.rowcount > 0
 
-    def delete_by_thread(self, thread_id: str) -> int:
+    async def delete_by_thread(self, thread_id: str) -> int:
         """删除 thread 下所有授权记录。返回删除行数。"""
+        return await asyncio.to_thread(self._sync_delete_by_thread, thread_id)
+
+    def _sync_delete_by_thread(self, thread_id: str) -> int:
         with sqlite3.connect(str(self._db_path), timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
             cur = conn.execute(
@@ -115,8 +134,11 @@ class SandboxStore:
             conn.commit()
             return cur.rowcount
 
-    def list_by_thread(self, thread_id: str) -> list[SandboxEntry]:
+    async def list_by_thread(self, thread_id: str) -> list[SandboxEntry]:
         """列出 thread 的所有授权记录。"""
+        return await asyncio.to_thread(self._sync_list_by_thread, thread_id)
+
+    def _sync_list_by_thread(self, thread_id: str) -> list[SandboxEntry]:
         with sqlite3.connect(str(self._db_path), timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
             cur = conn.execute(
@@ -133,8 +155,11 @@ class SandboxStore:
                 for row in cur.fetchall()
             ]
 
-    def bootstrap_all(self) -> dict[str, set[tuple[Path, bool]]]:
+    async def bootstrap_all(self) -> dict[str, set[tuple[Path, bool]]]:
         """全量加载，按 thread_id 分组返回 {(path, writable), ...}。"""
+        return await asyncio.to_thread(self._sync_bootstrap_all)
+
+    def _sync_bootstrap_all(self) -> dict[str, set[tuple[Path, bool]]]:
         result: dict[str, set[tuple[Path, bool]]] = {}
         with sqlite3.connect(str(self._db_path), timeout=30) as conn:
             conn.execute("PRAGMA busy_timeout=30000")
