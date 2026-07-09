@@ -70,9 +70,14 @@ def test_forbidden_subagent_tools_no_shell_exec() -> None:
     assert "shell_exec" not in FORBIDDEN_SUBAGENT_TOOLS
 
 
-def test_forbidden_subagent_tools_allows_cli_execute() -> None:
-    """cli_execute 允许子代理使用（黑名单 + 沙箱 + 元字符过滤已足够安全）。"""
-    assert "cli_execute" not in FORBIDDEN_SUBAGENT_TOOLS
+def test_forbidden_subagent_tools_forbids_execute_and_cli_execute() -> None:
+    """execute + cli_execute 均禁止子代理绑定（subagent 无审批流，shell 操作会绕过审批）。
+
+    - ``execute`` = SafeLocalShellBackend 内置工具（新名）
+    - ``cli_execute`` = 旧名，保留以过滤仍引用旧名的陈旧配置
+    """
+    assert "execute" in FORBIDDEN_SUBAGENT_TOOLS
+    assert "cli_execute" in FORBIDDEN_SUBAGENT_TOOLS
 
 
 # ============================================================

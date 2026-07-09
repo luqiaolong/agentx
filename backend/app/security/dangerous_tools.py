@@ -38,11 +38,15 @@ DANGEROUS_TOOLS: frozenset[str] = frozenset(
 )
 
 # 自定义子代理禁止绑定的危险工具（与 AGENTS.md §18 安全红线一致）。
-# subagent 无 interrupt_before 审批流，暴露写/编辑/git 写操作会绕过审批。
+# subagent 无 interrupt_before 审批流，暴露写/编辑/git 写/shell 操作会绕过审批。
+# ``execute`` = SafeLocalShellBackend 内置工具（新名）；``cli_execute`` = 旧名，
+# 保留以过滤仍引用旧名的陈旧配置。
 FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
     {
         "write_file",
         "edit_file",
+        "execute",
+        "cli_execute",
         "git_clone",
         "git_pull",
         "git_checkout",

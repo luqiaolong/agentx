@@ -30,7 +30,7 @@ def test_tools_enabled_default_all_true() -> None:
     """不设 env，tools_enabled 返回全部工具全 true。"""
     settings = get_settings()
     tools = settings.tools_enabled
-    assert len(tools) == 18
+    assert len(tools) == 17
     assert all(tools.values())
 
 
@@ -45,8 +45,6 @@ def test_tools_enabled_field_names() -> None:
         # Git
         "git_status", "git_diff", "git_log", "git_branches",
         "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
-        # CLI
-        "cli_execute",
     }
     assert set(tools.keys()) == expected
 
@@ -173,7 +171,6 @@ def test_make_deep_tools_all_disabled_returns_empty(
                 "git_checkout": False,
                 "git_stage": False,
                 "git_commit": False,
-                "cli_execute": False,
             }
         ),
     )
@@ -189,7 +186,7 @@ def test_make_deep_tools_all_disabled_returns_empty(
 
 
 def test_dangerous_tools_constant_unchanged() -> None:
-    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/cli_execute 及 Git 写操作。
+    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/execute 及 Git 写操作。
 
     常量是模块级 frozenset，不随 tools_enabled 变化。
     即使工具被禁用，常量本身不变（运行时危险集合通过交集计算）。
