@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -52,36 +52,9 @@ def test_build_web_agent_returns_agent(mock_create_agent: MagicMock) -> None:
     assert hasattr(agent, "astream_events")
 
 
-# 3. _make_fs_tools 绑定 thread_id：调用 read_file 工具时内部传入正确的 thread_id
-# 安全约束：subagent 工具列表仅含只读工具（read_file/list_dir/glob/grep），
-# 危险工具（write_file/edit_file）仅由 DeepAgent/Expert 暴露并经 interrupt_on 审批。
-async def test_fs_tools_bind_thread_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # mock filesystem.read_file，捕获调用参数
-    fake_read = AsyncMock(return_value="file-content")
-    monkeypatch.setattr(
-        "app.tools.filesystem.read_file", fake_read, raising=True
-    )
-
-    # _make_fs_tools 在 base.py 有同名别名，供 rag/web 子代理使用
-    from app.subagents.base import _make_fs_tools
-
-    tools = _make_fs_tools("t1")
-    # 只读工具集：read_file, list_dir, glob_files, grep_files
-    assert len(tools) == 4
-    # 验证不包含危险工具
-    tool_names = {t.name for t in tools}
-    assert "write_file" not in tool_names
-    assert "edit_file" not in tool_names
-
-    # 找到 read_file 工具（@tool 装饰后名为 read_file）
-    read_tool = next(t for t in tools if t.name == "read_file")
-    result = await read_tool.ainvoke({"path": "d:/docs/x.txt"})
-
-    assert result == "file-content"
-    # 验证闭包正确绑定了 thread_id（base 为 workspace 上下文，未传时为 None）
-    fake_read.assert_awaited_once_with("t1", "d:/docs/x.txt", base=None)
+# 3. fs 工具由 AuthorizedLocalShellBackend 注入（Phase A.2 已删除 _make_fs_tools）
+#    子代理通过 create_agent(excluded_tools=FORBIDDEN_SUBAGENT_TOOLS) 过滤写工具，
+#    无需单独测试 _make_fs_tools（已删除）。
 
 
 # 4. 无 TAVILY_API_KEY 时 web_search 返回错误字符串

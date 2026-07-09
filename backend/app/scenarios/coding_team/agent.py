@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator
 
+from app.deepagent.context import current_thread_id
 from app.observability.logger import logger
 from app.team.orchestrator import run_team_path
 
@@ -60,6 +61,8 @@ async def run_coding_team(
         "thread_id": thread_id,
         "agent_mode": "coding_team",
     }
+    # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
+    current_thread_id.set(thread_id)
 
     logger.info(
         "coding_team.start",

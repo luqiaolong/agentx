@@ -25,12 +25,15 @@ __all__ = [
 # 机制处理（workspace 之外未授权时触发审批）。
 CLI_TOOL_NAME = "execute"
 
-# 触发人工审批中断的工具集合：写操作 + Git 写操作。
+# 触发人工审批中断的工具集合：写操作 + Git 写操作 + 文件删除。
 # execute 已移除：shell 命令的审批改为基于工作目录是否授权（directory_extension）。
+# write_file / edit_file 由 deepagents 内置（AuthorizedLocalShellBackend 提供），
+# delete_file 为项目自研工具（tool_assembly._make_deep_tools 闭包构建）。
 DANGEROUS_TOOLS: frozenset[str] = frozenset(
     {
         "edit_file",
         "write_file",
+        "delete_file",
         "git_clone",
         "git_pull",
         "git_checkout",
@@ -47,6 +50,7 @@ FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
     {
         "write_file",
         "edit_file",
+        "delete_file",
         "execute",
         "cli_execute",
         "git_clone",

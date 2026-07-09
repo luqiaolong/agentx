@@ -134,12 +134,12 @@ def test_redact_args_write_file_hides_content() -> None:
 
 
 def test_redact_args_edit_file_hides_text() -> None:
-    """edit_file 的 old_text / new_text 被脱敏。"""
-    args = {"path": "/tmp/a.txt", "old_text": "old", "new_text": "new"}
+    """edit_file 的 old_string / new_string 被脱敏。"""
+    args = {"file_path": "/tmp/a.txt", "old_string": "old", "new_string": "new"}
     result = redact_args("edit_file", args)
-    assert result["path"] == "/tmp/a.txt"
-    assert result["old_text"] == "<redacted>"
-    assert result["new_text"] == "<redacted>"
+    assert result["file_path"] == "/tmp/a.txt"
+    assert result["old_string"] == "<redacted>"
+    assert result["new_string"] == "<redacted>"
 
 
 def test_redact_args_write_file_preserves_other_fields() -> None:

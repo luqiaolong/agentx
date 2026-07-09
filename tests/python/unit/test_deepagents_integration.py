@@ -1,12 +1,12 @@
 """deepagents 集成测试：验证 harness 层配置正确组装并传递给 ``create_deep_agent``。
 
 本模块不调用真实 LLM，通过 mock ``deepagents.create_deep_agent`` 验证：
-- ``excluded_tools`` 隐藏内置 fs 工具 + 禁用默认 subagent
+- 默认 HarnessProfile 启用全部内置 fs 工具（excluded_tools 为空）
+- per-call excluded_tools 机制：传入 FORBIDDEN_SUBAGENT_TOOLS 注册子代理专用 profile
 - ``interrupt_on`` 从 ``DANGEROUS_TOOLS`` 动态生成
 - ``memory=`` 自动加载 ``.agentx/AGENTS.md`` + ``rules/*.md``
-- ``skills=`` 指向 ``data/skills/`` 目录
-- ``backend=`` 启用 ``SafeLocalShellBackend``（继承 ``LocalShellBackend``），提供 ``execute`` 工具
-- ``permissions=`` 注入 ``FilesystemPermission`` 静态安全基线
+- ``backend=`` 启用 ``AuthorizedLocalShellBackend``（继承 ``SafeLocalShellBackend``），
+  提供 ``execute`` + 内置 fs 工具（带 SessionSandbox 动态授权）
 - ``middleware=`` 注入 ``RubricMiddleware``（当 ``rubric=`` 非 None 时）
 - 整体配置通过 ``create_agent`` 正确组装
 """
@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.deepagent.factory import (
-    _EXCLUDED_BUILTIN_TOOLS,
     _registered_keys,
     build_interrupt_config,
     create_agent,
@@ -29,6 +28,7 @@ from app.deepagent.factory import (
     resolve_skills_dir,
 )
 from app.deepagent.tool_assembly import DANGEROUS_TOOLS
+from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
 
 
 @pytest.fixture(autouse=True)
@@ -55,14 +55,32 @@ def test_build_interrupt_config_from_dangerous_tools() -> None:
 # ============================================================
 
 
-def test_harness_profile_excludes_builtin_tools() -> None:
-    """``HarnessProfile`` 排除 deepagents 内置 fs 工具，避免与项目自研工具冲突。"""
+def test_harness_profile_default_enables_builtin_tools() -> None:
+    """默认 HarnessProfile 启用全部内置 fs 工具（excluded_tools 为空）。
+
+    Phase A 后内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由
+    AuthorizedLocalShellBackend 自动注入，默认 profile 不排除任何工具。
+    """
     with patch("app.deepagent.factory.register_harness_profile") as mock_register:
-        ensure_harness_profile("openai")
+        ensure_harness_profile(None)
         assert mock_register.call_count == 1
         profile = mock_register.call_args[0][1]
-        for tool in _EXCLUDED_BUILTIN_TOOLS:
-            assert tool in profile.excluded_tools
+        assert profile.excluded_tools == frozenset()
+
+
+def test_harness_profile_subagent_excludes_forbidden_tools() -> None:
+    """per-call excluded_tools 机制：传入 FORBIDDEN_SUBAGENT_TOOLS 注册子代理专用 profile。
+
+    子代理无 interrupt_on 审批流，写/编辑/git/shell 工具必须通过 excluded_tools 隐藏。
+    """
+    with patch("app.deepagent.factory.register_harness_profile") as mock_register:
+        ensure_harness_profile(FORBIDDEN_SUBAGENT_TOOLS)
+        profile = mock_register.call_args[0][1]
+        assert FORBIDDEN_SUBAGENT_TOOLS.issubset(profile.excluded_tools)
+        # 至少包含 write_file / edit_file / execute
+        assert "write_file" in profile.excluded_tools
+        assert "edit_file" in profile.excluded_tools
+        assert "execute" in profile.excluded_tools
 
 
 def test_harness_profile_disables_default_subagent() -> None:
@@ -76,8 +94,8 @@ def test_harness_profile_disables_default_subagent() -> None:
 def test_ensure_harness_profile_is_idempotent() -> None:
     """重复注册同一 key 不会再次调用 ``register_harness_profile``。"""
     with patch("app.deepagent.factory.register_harness_profile") as mock_register:
-        ensure_harness_profile("openai")
-        ensure_harness_profile("openai")
+        ensure_harness_profile(None)
+        ensure_harness_profile(None)
         assert mock_register.call_count == 1
 
 
@@ -126,13 +144,15 @@ def test_resolve_skills_dir_none_when_missing(tmp_path: Path, monkeypatch: pytes
     assert resolve_skills_dir() is None
 
 
-def test_resolve_backend_returns_safe_local_shell_backend(tmp_path: Path) -> None:
-    """``resolve_backend`` 返回 ``SafeLocalShellBackend`` 实例（继承 ``LocalShellBackend`` → ``FilesystemBackend``）。"""
+def test_resolve_backend_returns_authorized_local_shell_backend(tmp_path: Path) -> None:
+    """``resolve_backend`` 返回 ``AuthorizedLocalShellBackend`` 实例（继承 ``SafeLocalShellBackend`` → ``LocalShellBackend`` → ``FilesystemBackend``）。"""
     from deepagents.backends import FilesystemBackend, LocalShellBackend
 
+    from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
     from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 
     backend = resolve_backend(str(tmp_path))
+    assert isinstance(backend, AuthorizedLocalShellBackend)
     assert isinstance(backend, SafeLocalShellBackend)
     assert isinstance(backend, LocalShellBackend)
     assert isinstance(backend, FilesystemBackend)
@@ -357,13 +377,22 @@ def test_safe_local_shell_backend_execute_blocks_empty_command(tmp_path: Path) -
 
 
 # ============================================================
-# 工具冲突排除清单
+# 内置 fs 工具启用验证
 # ============================================================
 
 
-def test_excluded_builtin_tools_covers_fs_and_task() -> None:
-    """内置 fs 工具在排除清单中，避免绕过沙箱授权。"""
-    assert {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}.issubset(_EXCLUDED_BUILTIN_TOOLS)
+def test_builtin_fs_tools_enabled_by_default() -> None:
+    """默认 profile 不排除任何内置 fs 工具，确保 LLM 可用 ls/read_file/write_file/edit_file/glob/grep。
+
+    Phase A 后这些工具由 AuthorizedLocalShellBackend 提供（带 SessionSandbox 动态授权），
+    不再需要手动排除以避免与自研工具冲突——自研 fs 工具已删除。
+    """
+    with patch("app.deepagent.factory.register_harness_profile") as mock_register:
+        ensure_harness_profile(None)
+        profile = mock_register.call_args[0][1]
+        builtin_fs = {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}
+        # 默认 profile 不排除任何内置 fs 工具
+        assert not (builtin_fs & profile.excluded_tools)
 
 
 def test_dangerous_tools_does_not_contain_execute() -> None:

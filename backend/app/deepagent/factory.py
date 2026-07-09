@@ -1,18 +1,25 @@
 """deepagents 0.6+ harness 集成层。
 
 封装 create_deep_agent 配置:
-- excluded_tools: 隐藏内置 fs 工具(保留项目自研工具,沙箱授权绑定)
-- HarnessProfile: 注册模型 profile,排除内置工具 + 禁用默认 subagent
+- excluded_tools: 按 per-call 传入的 excluded_tools 注册 HarnessProfile，
+  默认启用全部内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）。
+  子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具。
+- HarnessProfile: 注册模型 profile，排除指定工具 + 禁用默认 subagent
 - build_interrupt_config: 从 DANGEROUS_TOOLS 动态生成 interrupt_on
 - resolve_memory_paths: 解析 .agentx/AGENTS.md + rules 路径列表
 - resolve_skills_dir: 解析 data/skills/ 路径
-- resolve_backend: 构建 SafeLocalShellBackend 启用 Context Offloading + execute 工具
-- create_agent: 主入口,封装 create_deep_agent
+- resolve_backend: 构建 AuthorizedLocalShellBackend 启用 Context Offloading + execute 工具 +
+  内置 fs 工具（带 SessionSandbox 动态授权）
+- create_agent: 主入口，封装 create_deep_agent
 
 注意: deepagents 0.6+ 的 FilesystemMiddleware 不支持在提供 command execution
 (SandboxBackendProtocol) 的 backend 上同时使用 permissions 参数。
-项目通过 SafeLocalShellBackend (blocklist+元字符过滤) + SessionSandbox (动态授权)
-替代框架级 permissions，因此 create_agent 不再传递 permissions。
+项目通过 AuthorizedLocalShellBackend（继承 SafeLocalShellBackend 的 blocklist+元字符过滤）
++ SessionSandbox（动态授权）替代框架级 permissions，因此 create_agent 不再传递 permissions。
+
+内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 AuthorizedLocalShellBackend
+自动注入，无需在 tools 列表中声明。AuthorizedLocalShellBackend.override 6 个 fs 方法，
+注入 thread_id 级动态授权（通过 current_thread_id contextvar 传递）。
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from deepagents import (
 )
 
 from app.config import DATA_DIR, get_settings
-from app.deepagent.safe_shell_backend import SafeLocalShellBackend
+from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
 from app.deepagent.tool_assembly import DANGEROUS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
@@ -43,39 +50,53 @@ __all__ = [
     "resolve_skills_dir",
 ]
 
-# 隐藏 deepagents 内置 fs 工具：项目自研工具集（_make_deep_tools）已覆盖
-# 读写/glob/grep 能力，且绑定沙箱授权。暴露内置工具会绕过授权校验。
-_EXCLUDED_BUILTIN_TOOLS: frozenset[str] = frozenset(
-    {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}
-)
-
 # 已注册 profile key 集合，保证 register_harness_profile 幂等
 _registered_keys: set[str] = set()
 
 
-def ensure_harness_profile(model_name: str = "openai") -> None:
-    """注册模型 HarnessProfile（幂等）。
+def _profile_key(excluded_tools: frozenset[str] | None) -> str:
+    """根据 excluded_tools 生成唯一 profile key。
 
-    - excluded_tools: 隐藏内置 fs 工具，避免与项目自研工具重复
+    None 或空集合 → ``"openai"``（默认 profile，启用全部内置 fs 工具）。
+    非空集合 → ``"openai-{hash}"``（per-call profile，排除指定工具）。
+    """
+    if not excluded_tools:
+        return "openai"
+    return f"openai-{hash(frozenset(excluded_tools))}"
+
+
+def ensure_harness_profile(
+    excluded_tools: frozenset[str] | None = None,
+) -> str:
+    """注册模型 HarnessProfile（幂等），返回 profile key。
+
+    - excluded_tools: None 或空 → 默认 profile，启用全部内置 fs 工具
+      （ls/read_file/write_file/edit_file/glob/grep 由 backend 注入）。
+    - excluded_tools 非空 → per-call profile，排除指定工具
+      （子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具）。
     - general_purpose_subagent: 禁用默认 subagent（项目使用自研委派工具链）
-    - key 统一为 ``"openai"``（项目所有模型均通过 ChatOpenAI 接入）
 
     重复注册同一 key 会被 deepagents 覆盖，此处用 ``_registered_keys`` 跳过
     二次注册，保持日志干净并避免潜在的 profile 竞争。
+
+    Returns:
+        profile key 字符串，供调用方用于日志追踪。
     """
-    if model_name in _registered_keys:
-        return
+    key = _profile_key(excluded_tools)
+    if key in _registered_keys:
+        return key
     profile = HarnessProfile(
-        excluded_tools=frozenset(_EXCLUDED_BUILTIN_TOOLS),
+        excluded_tools=frozenset(excluded_tools) if excluded_tools else frozenset(),
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
     )
-    register_harness_profile(model_name, profile)
-    _registered_keys.add(model_name)
+    register_harness_profile(key, profile)
+    _registered_keys.add(key)
     logger.info(
         "harness profile registered",
-        key=model_name,
-        excluded_tools=sorted(_EXCLUDED_BUILTIN_TOOLS),
+        key=key,
+        excluded_tools=sorted(excluded_tools) if excluded_tools else [],
     )
+    return key
 
 
 def build_interrupt_config() -> dict[str, bool]:
@@ -120,22 +141,23 @@ def resolve_skills_dir() -> str | None:
     return None
 
 
-def resolve_backend(workspace_path: str | None) -> SafeLocalShellBackend | None:
-    """构建 SafeLocalShellBackend，启用 Context Offloading + execute 工具。
+def resolve_backend(workspace_path: str | None) -> AuthorizedLocalShellBackend | None:
+    """构建 AuthorizedLocalShellBackend，启用 Context Offloading + execute 工具 + 内置 fs 工具。
 
     workspace_path 为 None 时返回 None（不启用 backend）。
 
-    使用 ``SafeLocalShellBackend``（继承 ``LocalShellBackend``）替代原 ``FilesystemBackend``：
+    使用 ``AuthorizedLocalShellBackend``（继承 ``SafeLocalShellBackend``）：
     - 提供 deepagents 内置 ``execute`` 工具（``subprocess.run(shell=True)``），
-      替代项目自研 ``cli_execute``。
-    - ``SafeLocalShellBackend.execute`` override 添加 blocklist + 元字符过滤，
-      复用 ``app.security.command_filter`` 安全层。
+      ``SafeLocalShellBackend.execute`` override 添加 blocklist + 元字符过滤。
+    - 提供 deepagents 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep），
+      ``AuthorizedLocalShellBackend`` override 6 个 fs 方法注入 SessionSandbox 动态授权
+      （通过 ``current_thread_id`` contextvar 传递 thread_id）。
     - ``virtual_mode=True`` 使 backend 内部 fs 操作（Context Offloading）使用虚拟路径语义。
-    - ``root_dir=workspace_path`` 限制 shell 命令工作目录。
+    - ``root_dir=workspace_path`` 限制 shell 命令工作目录和 fs 操作根目录。
     """
     if workspace_path is None:
         return None
-    return SafeLocalShellBackend(root_dir=workspace_path, virtual_mode=True)
+    return AuthorizedLocalShellBackend(root_dir=workspace_path, virtual_mode=True)
 
 
 def create_agent(
@@ -150,33 +172,42 @@ def create_agent(
     subagents: list | None = None,
     rubric: str | None = None,
     grader_model: Any | None = None,
+    excluded_tools: frozenset[str] | None = None,
 ) -> Any:
     """主入口：封装 create_deep_agent。
 
     组装 HarnessProfile、interrupt_on、memory、backend、subagents 等配置，
     调用 ``deepagents.create_deep_agent`` 构建编译后的图。
 
+    内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
+    自动注入，无需在 ``tools`` 列表中声明。``excluded_tools`` 参数控制哪些内置工具被隐藏：
+    - None 或空：全部内置 fs 工具启用（主 agent 路径）
+    - FORBIDDEN_SUBAGENT_TOOLS：隐藏写工具（子代理只读路径）
+
     注意：不传递 ``skills`` 参数。deepagents 的 SkillsMiddleware 通过 backend 读取技能
-    目录，但 SafeLocalShellBackend 的 root_dir 限制为 workspace_path，而项目 skills 目录
+    目录，但 AuthorizedLocalShellBackend 的 root_dir 限制为 workspace_path，而项目 skills 目录
     （data/skills/）位于项目根目录，不一定在当前 workspace_path 下，会导致 Path outside
     root directory 错误。项目自研 skill 系统（skills_loader + skills_store）已覆盖此功能。
 
     Args:
         model: ChatOpenAI 实例（已配置 temperature/streaming）。
-        tools: 项目自研工具列表（fs + git + rag + web + 委派工具）。
+        tools: 项目自研工具列表（git + rag + web + delete_file + 委派工具）。
+            内置 fs 工具由 backend 自动注入，不在此列表中。
         checkpointer: LangGraph checkpointer（AsyncSqliteSaver 单例）。
         system_prompt: 完整 system prompt（含画像前缀 + 场景 prompt + 工作区后缀）。
         thread_id: 会话 ID（保留参数，deepagents 通过 config 注入）。
-        workspace_path: 工作区路径，用于解析 memory 路径和 SafeLocalShellBackend。
+        workspace_path: 工作区路径，用于解析 memory 路径和 AuthorizedLocalShellBackend。
         name: 图名称，默认 ``"deep_agent"``。
         subagents: 可选声明式子代理列表，透传给 create_deep_agent(subagents=...)。
         rubric: 可选 rubric 文本；非空时注入 RubricMiddleware 启用运行时自纠。
         grader_model: 可选 grader 模型；为空时调用 get_chat_model(temperature=0)。
+        excluded_tools: 可选，排除的内置工具名集合。None 或空时启用全部内置 fs 工具；
+            子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
     """
-    ensure_harness_profile("openai")
+    ensure_harness_profile(excluded_tools)
     interrupt_on = build_interrupt_config()
     memory_paths = resolve_memory_paths(workspace_path)
     backend = resolve_backend(workspace_path)

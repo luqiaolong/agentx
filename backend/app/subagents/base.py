@@ -1,12 +1,14 @@
 """子代理公共基类与工具函数。
 
 提取 code/rag/web/custom agent 共享的：
-- ``make_fs_tools`` / ``make_rag_tools`` / ``make_web_tools``：工具构造（公开名，去掉下划线前缀）
+- ``make_rag_tools`` / ``make_web_tools``：工具构造（公开名，去掉下划线前缀）
 - ``extract_text``：流式 chunk 文本提取
 - ``THINK_PROMPT_SUFFIX``：思考过程提示常量
 - ``run_react_agent_stream``：标准化事件流转换
 
-消除三个 agent 文件的重复代码，并提供给 ``deep/tools.py`` 跨包复用。
+内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
+自动注入，子代理通过 ``create_agent(excluded_tools=FORBIDDEN_SUBAGENT_TOOLS)`` 过滤写工具。
+本模块不再提供 ``make_fs_tools``（Phase A.2 已删除）。
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ from app.llm import get_chat_model
 from app.utils.text import extract_chunk_text
 
 __all__ = [
-    "make_fs_tools",
     "make_rag_tools",
     "make_web_tools",
     "extract_text",
@@ -44,53 +45,6 @@ THINK_PROMPT_SUFFIX = (
     "\n\n重要：思考标签外不要输出任何可见文本。所有可见内容必须在工具调用完成后，"
     "根据工具返回结果再输出。"
 )
-
-
-def make_fs_tools(thread_id: str, workspace_path: str | None = None) -> list:
-    """构建绑定 ``thread_id`` 的文件系统工具列表（仅只读工具）。
-
-    filesystem 工具的签名含 ``thread_id``（用于沙箱授权校验），该参数不应暴露给
-    LLM。这里通过闭包绑定 ``thread_id``，对外只声明业务参数。
-
-    安全约束：subagent 不返回 write_file / edit_file，避免绕过 DeepAgent 审批流。
-
-    ``workspace_path`` 用于沙箱授权时解析相对路径的基准，避免误解析到 PROJECT_ROOT。
-
-    工具启用由 ``get_settings().tools_enabled`` 过滤；工具内部名与配置 key 的
-    映射：``glob_files``→``glob``、``grep_files``→``grep``。
-    """
-    from app.tools import filesystem as fs
-
-    @tool
-    async def read_file(path: str) -> str:
-        """读取文本文件内容。"""
-        return await fs.read_file(thread_id, path, base=workspace_path)
-
-    @tool
-    async def list_dir(path: str) -> list[str]:
-        """列出目录下的条目名称（不含路径前缀）。"""
-        return await fs.list_dir(thread_id, path, base=workspace_path)
-
-    @tool
-    async def glob_files(pattern: str) -> list[str]:
-        """glob 匹配文件路径，pattern 形如 ``d:/docs/**/*.md``。"""
-        return await fs.glob(thread_id, pattern, base=workspace_path)
-
-    @tool
-    async def grep_files(pattern: str, path: str) -> list[str]:
-        """在 path 目录下递归搜索匹配 pattern（正则）的行。"""
-        return await fs.grep(thread_id, pattern, path, base=workspace_path)
-
-    tools = [read_file, list_dir, glob_files, grep_files]
-    # 工具内部函数名 → tools_enabled 配置 key 的映射
-    tool_name_map = {
-        "read_file": "read_file",
-        "list_dir": "list_dir",
-        "glob_files": "glob",
-        "grep_files": "grep",
-    }
-    enabled = get_settings().tools_enabled
-    return [t for t in tools if enabled.get(tool_name_map.get(t.name, t.name), True)]
 
 
 def make_git_tools(thread_id: str) -> list:
@@ -412,6 +366,7 @@ def build_builtin_subagent(
         checkpointer: 可选的 LangGraph checkpointer。
     """
     from app.deepagent.factory import create_agent
+    from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
 
     settings = get_settings()
     cfg = settings.subagents[name]
@@ -429,6 +384,7 @@ def build_builtin_subagent(
         system_prompt=prompt,
         checkpointer=checkpointer,
         name=f"{name}_agent",
+        excluded_tools=FORBIDDEN_SUBAGENT_TOOLS,
     )
 
 
@@ -448,8 +404,7 @@ async def run_builtin_subagent(
         yield event
 
 
-# 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_fs_tools）
-_make_fs_tools = make_fs_tools
+# 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_git_tools）
 _make_git_tools = make_git_tools
 _make_rag_tools = make_rag_tools
 _make_web_tools = make_web_tools

@@ -118,14 +118,19 @@ def _redact_cli_execute_args(args: dict) -> dict:
 
 
 def _redact_fs_args(args: dict) -> dict:
-    """脱敏 write_file / edit_file 的参数 dict（隐藏文件内容）。"""
+    """脱敏 write_file / edit_file 的参数 dict（隐藏文件内容）。
+
+    内置 fs 工具参数名（deepagents FilesystemMiddleware）：
+    - write_file: ``file_path`` / ``content``
+    - edit_file: ``file_path`` / ``old_string`` / ``new_string`` / ``replace_all``
+    """
     redacted = dict(args)
     if "content" in redacted:
         redacted["content"] = "<redacted>"
-    if "new_text" in redacted:
-        redacted["new_text"] = "<redacted>"
-    if "old_text" in redacted:
-        redacted["old_text"] = "<redacted>"
+    if "new_string" in redacted:
+        redacted["new_string"] = "<redacted>"
+    if "old_string" in redacted:
+        redacted["old_string"] = "<redacted>"
     return redacted
 
 
@@ -133,7 +138,7 @@ def redact_args(tool_name: str, args: dict | list | str) -> dict:
     """统一脱敏入口。
 
     根据工具名选择脱敏策略：
-    - ``write_file`` / ``edit_file``：隐藏 ``content`` / ``new_text`` / ``old_text``。
+    - ``write_file`` / ``edit_file``：隐藏 ``content`` / ``new_string`` / ``old_string``。
     - ``execute`` / ``cli_execute``：对 ``command`` / ``arguments`` 做凭证脱敏
       （token=xxx / password=xxx / user:pass@host → ``***REDACTED***``）。
       ``execute`` 是 deepagents ``LocalShellBackend`` 内置工具（单 ``command`` 参数）；

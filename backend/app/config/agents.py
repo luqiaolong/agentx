@@ -34,14 +34,16 @@ __all__ = [
     "_parse_agents_config",
 ]
 
-# Supervisor 默认完整工具集（fs 读写 + cli + git + rag + web）
+# Supervisor 默认完整工具集（内置 fs + delete_file + git + rag + web）
+# 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 AuthorizedLocalShellBackend 注入；
+# delete_file 为项目自研；execute 由 backend 内置提供。
 _DEFAULT_SUPERVISOR_TOOLS: list[str] = [
-    "read_file", "list_dir", "glob", "grep",
-    "write_file", "edit_file",
+    "read_file", "ls", "glob", "grep",
+    "write_file", "edit_file", "delete_file",
     "web_search", "rag_retrieve",
     "git_status", "git_diff", "git_log", "git_branches",
     "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
-    "execute",  # 修正：原 cli_execute 已废弃
+    "execute",
 ]
 
 # coding Expert 默认工具集（与 Supervisor 一致，Expert 需要完整代码工具）

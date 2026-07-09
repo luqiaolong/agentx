@@ -803,7 +803,7 @@ class TestExtractPathsMigration:
     def test_extract_paths_read_file(self) -> None:
         from app.security.approval.flow import _extract_paths_from_tool_call
 
-        tc = {"name": "read_file", "args": {"path": "/tmp/a.txt"}}
+        tc = {"name": "read_file", "args": {"file_path": "/tmp/a.txt"}}
         assert _extract_paths_from_tool_call(tc) == ["/tmp/a.txt"]
 
     def test_extract_paths_cli_execute_with_cwd(self) -> None:

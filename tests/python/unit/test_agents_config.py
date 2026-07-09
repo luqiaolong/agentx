@@ -182,11 +182,13 @@ class TestDefaultAgentsConfig:
         assert cfg.coding_team_enabled is False
 
     def test_supervisor_tools_complete(self) -> None:
-        """Supervisor 默认工具集含 fs/cli/git/rag/web 全部。"""
+        """Supervisor 默认工具集含 fs/cli/git/rag/web + delete_file 全部。"""
         cfg = _default_agents_config()
         tools = set(cfg.supervisor.tools)
-        # fs
-        assert {"read_file", "list_dir", "glob", "grep", "write_file", "edit_file"} <= tools
+        # fs（内置工具名：ls 而非 list_dir）
+        assert {"read_file", "ls", "glob", "grep", "write_file", "edit_file"} <= tools
+        # delete_file（项目自研）
+        assert "delete_file" in tools
         # cli
         assert "execute" in tools
         assert "cli_execute" not in tools
@@ -214,6 +216,7 @@ class TestDefaultAgentsConfig:
         assert DANGEROUS_TOOLS & tools == {
             "write_file",
             "edit_file",
+            "delete_file",
             "git_clone",
             "git_pull",
             "git_checkout",

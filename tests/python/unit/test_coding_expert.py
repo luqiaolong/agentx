@@ -278,7 +278,7 @@ class TestReadonlyStreakProtection:
         interrupted_values = [True] * 10
         # pending_calls: 10 DIFFERENT readonly calls (streak increments each iteration)
         pending_values = [
-            [{"name": "list_dir", "args": {"path": f"dir-{i}"}, "id": f"tc-{i}"}]
+            [{"name": "ls", "args": {"path": f"dir-{i}"}, "id": f"tc-{i}"}]
             for i in range(1, 11)
         ]
 
@@ -323,7 +323,7 @@ class TestReadonlyStreakProtection:
         interrupted_values = [True, True, True, False]
         # pending_calls: 3 DIFFERENT readonly calls (streak=3 < 10)
         pending_values = [
-            [{"name": "list_dir", "args": {"path": f"dir-{i}"}, "id": f"tc-{i}"}]
+            [{"name": "ls", "args": {"path": f"dir-{i}"}, "id": f"tc-{i}"}]
             for i in range(1, 4)
         ]
 

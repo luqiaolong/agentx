@@ -28,10 +28,11 @@ def test_dangerous_tools_is_frozenset() -> None:
 
 
 def test_dangerous_tools_contains_expected_tools() -> None:
-    """包含写操作 + Git 写操作。execute 已移除，审批改为 directory_extension 机制。"""
+    """包含写操作 + Git 写操作 + delete_file。execute 已移除，审批改为 directory_extension 机制。"""
     expected = {
         "edit_file",
         "write_file",
+        "delete_file",
         "git_clone",
         "git_pull",
         "git_checkout",
