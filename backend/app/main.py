@@ -65,7 +65,7 @@ from app.config import get_settings
 from app.embedding import get_embedding_client
 from app.mcp import get_mcp_manager  # noqa: F401 — re-export：测试 monkeypatch app.main.get_mcp_manager
 from app.memory import (
-    close_checkpointer,
+    aclose_checkpointer,
     get_async_checkpointer,  # noqa: F401 — re-export：测试 monkeypatch app.main.get_async_checkpointer
     get_checkpointer,
 )
@@ -183,7 +183,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
             logger.warning("embedding client close failed on shutdown: {}", exc)
         try:
-            close_checkpointer()
+            await aclose_checkpointer()
             logger.info("checkpointer closed on shutdown")
         except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
             logger.warning("checkpointer close failed on shutdown: {}", exc)

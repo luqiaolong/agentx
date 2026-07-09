@@ -81,10 +81,9 @@ async def get_async_checkpointer() -> AsyncSqliteSaver:
 
 
 def close_checkpointer() -> None:
-    """关闭 checkpointer 连接并重置单例（应用关闭时调用）。
+    """关闭 checkpointer（仅在无运行事件循环的同步上下文中使用）。
 
-    同步连接立即关闭；异步连接 best-effort 关闭——若无运行中的事件循环则用
-    ``asyncio.run`` 关闭，否则仅清理引用并告警（应在异步上下文中另行关闭）。
+    若从异步上下文中调用，请改用 ``aclose_checkpointer()``。
     """
     global _sync_saver, _sync_conn, _async_saver, _async_conn
 
@@ -101,13 +100,21 @@ def close_checkpointer() -> None:
     # 关闭异步 saver（best-effort）
     if _async_conn is not None:
         try:
-            asyncio.run(_async_conn.close())
-            logger.info("SQLite 异步 checkpointer 已关闭")
+            loop = asyncio.get_running_loop()
         except RuntimeError:
-            # 存在运行中的事件循环，无法用 asyncio.run；仅清理引用
-            logger.warning("异步 checkpointer 连接未关闭（存在运行中的事件循环）")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("关闭异步 checkpointer 失败", error=str(exc))
+            loop = None
+
+        if loop is not None:
+            logger.warning(
+                "close_checkpointer called inside a running event loop; "
+                "use aclose_checkpointer() to close the async connection properly."
+            )
+        else:
+            try:
+                asyncio.run(_async_conn.close())
+                logger.info("SQLite 异步 checkpointer 已关闭")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("关闭异步 checkpointer 失败", error=str(exc))
         _async_conn = None
         _async_saver = None
 
