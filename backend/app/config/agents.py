@@ -60,12 +60,18 @@ class SupervisorSettings(BaseModel):
     Supervisor 基于 ``create_react_agent`` 构建，自带完整工具集 +
     ``delegate_to_expert`` / ``delegate_to_subagent`` 委派工具。
     写操作走 ``interrupt_on`` 审批流。
+
+    ``rubric`` 字段为可选自纠规则文本，透传到 ``build_work_supervisor`` →
+    ``create_agent``，非空时挂载 RubricMiddleware 启用运行时自纠。``grader_model``
+    是评估 rubric 时的可选 LLM；非 None 时直接使用，None 时降级到 ``get_chat_model(temperature=0)``。
     """
 
     enabled: bool = True
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=lambda: list(_DEFAULT_SUPERVISOR_TOOLS))
+    rubric: str = ""
+    grader_model: str | None = None
 
 
 class ExpertSettings(BaseModel):

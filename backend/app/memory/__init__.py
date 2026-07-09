@@ -16,7 +16,12 @@
 
 from __future__ import annotations
 
-from .checkpointer import close_checkpointer, get_async_checkpointer, get_checkpointer
+from .checkpointer import (
+    aclose_checkpointer,
+    close_checkpointer,
+    get_async_checkpointer,
+    get_checkpointer,
+)
 from .checkpointer_view import (
     ThreadIdInvalid,
     delete_thread,
@@ -55,6 +60,7 @@ __all__ = [
     "SkillNameInvalid",
     "SkillPathEscape",
     "ThreadIdInvalid",
+    "aclose_checkpointer",
     "build_profile_prompt",
     "close_checkpointer",
     "delete_skill_file",
