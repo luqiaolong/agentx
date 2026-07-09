@@ -535,7 +535,6 @@ async def run_approval_loop(
             pause_event = await get_pause_event(thread_id)
             if await is_paused(thread_id):
                 await pause_event.wait()
-            yield make_sse_event("resumed", {})
 
         if not await _is_int(graph, config):
             logger.info("approval_loop: not interrupted, breaking", thread_id=thread_id)

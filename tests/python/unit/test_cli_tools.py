@@ -23,18 +23,6 @@ from app.tools.cli import (
 )
 
 
-def test_cli_tool_schema_uses_arguments_not_vargs() -> None:
-    """@tool 包裹的 cli_execute schema 必须使用 arguments，避免 LangChain 重命名为 v__args。"""
-    from app.subagents.base import make_cli_tools
-
-    tools = make_cli_tools("t-schema")
-    assert len(tools) == 1
-    cli_tool = tools[0]
-    schema = cli_tool.args_schema.model_json_schema()
-    assert "arguments" in schema.get("properties", {})
-    assert "v__args" not in schema.get("properties", {})
-
-
 @pytest.fixture
 def fresh_sandbox():
     """每个测试使用独立 sandbox 内存状态。"""

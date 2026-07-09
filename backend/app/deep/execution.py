@@ -156,7 +156,6 @@ async def run_agent_with_approval(
             pause_event = await get_pause_event(thread_id)
             if await is_paused(thread_id):
                 await pause_event.wait()
-            yield make_sse_event("resumed", {})
 
         # abort 检查
         if await is_aborted(thread_id):

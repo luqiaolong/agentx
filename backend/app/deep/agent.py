@@ -14,13 +14,8 @@ import asyncio
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.config import get_settings
-from app.deep.execution import (
-    run_agent_with_approval,
-    _get_pending_tool_calls as _get_pending_tool_calls,
-    _is_interrupted as _is_interrupted,
-)
+from app.deep.execution import run_agent_with_approval
 from app.deep.harness import create_agent
-from app.deep.streaming import _stream_agent_events as _stream_agent_events
 from app.deep.tools import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
@@ -31,11 +26,6 @@ from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.security.approval_flow import (
-    _await_approval as _await_approval,
-    _handle_directory_extension as _handle_directory_extension,
-    _make_approval_event as _make_approval_event,
-)
 from app.utils.prompts import resolve_system_prompt
 
 if TYPE_CHECKING:

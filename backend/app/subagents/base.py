@@ -22,7 +22,6 @@ from app.utils.text import extract_chunk_text
 
 __all__ = [
     "make_fs_tools",
-    "make_cli_tools",
     "make_rag_tools",
     "make_web_tools",
     "extract_text",
@@ -42,11 +41,6 @@ THINK_PROMPT_SUFFIX = (
     "\n\n重要：思考标签外不要输出任何可见文本。所有可见内容必须在工具调用完成后，"
     "根据工具返回结果再输出。"
 )
-
-# 保留旧名作为向后兼容别名（deep/tools.py 等模块历史 import _make_*_tools）
-_make_fs_tools = None  # 占位，下方赋值
-_make_rag_tools = None
-_make_web_tools = None
 
 
 def make_fs_tools(thread_id: str, workspace_path: str | None = None) -> list:
@@ -94,34 +88,6 @@ def make_fs_tools(thread_id: str, workspace_path: str | None = None) -> list:
     }
     enabled = get_settings().tools_enabled
     return [t for t in tools if enabled.get(tool_name_map.get(t.name, t.name), True)]
-
-
-def make_cli_tools(thread_id: str, workspace_path: str | None = None) -> list:
-    """构建绑定 ``thread_id`` 的 CLI 工具列表。
-
-    子代理可使用 cli_execute（黑名单 + 沙箱授权 + 元字符过滤已足够安全）。
-    ``workspace_path`` 作为 cli_execute 未指定 cwd 时的默认工作目录，
-    以及相对路径解析基准。
-
-    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``cli_execute``）。
-    """
-    from app.tools.cli import cli_execute as _cli_execute
-
-    @tool
-    async def cli_execute(
-        command: str,
-        arguments: list[str] | None = None,
-        cwd: str | None = None,
-        timeout: int | None = None,
-    ) -> str:
-        """执行受限 CLI 命令（如 git/npm/python）。黑名单命令会被拒绝。"""
-        return await _cli_execute(
-            thread_id, command, arguments, cwd, timeout, workspace_path
-        )
-
-    tools = [cli_execute]
-    enabled = get_settings().tools_enabled
-    return [t for t in tools if enabled.get(t.name, True)]
 
 
 def make_git_tools(thread_id: str) -> list:
@@ -432,7 +398,6 @@ async def run_react_agent_stream(
 
 # 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_fs_tools）
 _make_fs_tools = make_fs_tools
-_make_cli_tools = make_cli_tools
 _make_git_tools = make_git_tools
 _make_rag_tools = make_rag_tools
 _make_web_tools = make_web_tools
