@@ -127,10 +127,14 @@ function ReasoningBlockImpl({
     setStoredExpanded(messageId, partId, next);
   }, [expanded, messageId, partId]);
 
-  // 流式时（!done && text.length === 0）显示「思考中…」+ 跳动圆点
+  // 流式时（!done && text.length === 0）：单行内联「思考中…」+ 跳动圆点（无卡片背景）
   if (!done && text.length === 0) {
     return (
-      <div className="flex items-center gap-1.5 rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+      <div
+        className="flex items-center gap-1.5 py-1 text-muted-c/60"
+        style={{ fontSize: 'var(--fs-msg-tool)' }}
+        data-testid="reasoning-stream-empty"
+      >
         <Brain className="h-2.5 w-2.5" />
         <span>思考中</span>
         <span className="flex gap-0.5">
@@ -142,16 +146,22 @@ function ReasoningBlockImpl({
     );
   }
 
-  // 流式且有文本：展示可滚动预览区（不展示折叠卡片）
+  // 流式且有文本：流式展开 — 标题行 + 单色 monospace 滚动预览（外层无卡片背景）
   if (!done && text.length > 0) {
     return (
-      <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft" data-testid="reasoning-stream-preview">
-        <div className="mb-0.5 flex items-center gap-1.5 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+      <div
+        className="w-full py-1"
+        data-testid="reasoning-stream-preview"
+      >
+        <div
+          className="mb-1 flex items-center gap-1.5 text-muted-c/60"
+          style={{ fontSize: 'var(--fs-msg-tool)' }}
+        >
           <Brain className="h-2.5 w-2.5" />
           <span>思考中… {elapsedSec}s</span>
         </div>
         <div
-          className="overflow-auto bg-muted-c/5 p-1 font-mono text-muted-c/70"
+          className="overflow-auto border-l border-default pl-2 font-mono text-muted-c/70"
           style={{ maxHeight: "120px", fontSize: 'var(--fs-msg-code)' }}
         >
           <pre className="whitespace-pre-wrap">{text}</pre>
@@ -160,9 +170,12 @@ function ReasoningBlockImpl({
     );
   }
 
-  // 完成时：折叠为标题行「已思考 N 秒」，点击展开回看完整 reasoning
+  // 完成时：折叠为标题行「已思考 N 秒」，点击展开回看完整 reasoning（无卡片背景）
   return (
-    <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
+    <div
+      className="w-full py-1"
+      data-testid="reasoning-done"
+    >
       <TraceCardHeader
         icon={<Brain className="h-2.5 w-2.5" />}
         title={`已思考 ${elapsedSec} 秒`}
@@ -171,7 +184,7 @@ function ReasoningBlockImpl({
       />
       {expanded && text.length > 0 && (
         <div
-          className="mt-1 overflow-auto border-t border-default pt-1.5 bg-muted-c/5 p-1 font-mono text-muted-c/70"
+          className="mt-1 overflow-auto border-l border-default pl-2 font-mono text-muted-c/70"
           style={{ maxHeight: "240px", fontSize: 'var(--fs-msg-code)' }}
         >
           <pre className="whitespace-pre-wrap">{text}</pre>

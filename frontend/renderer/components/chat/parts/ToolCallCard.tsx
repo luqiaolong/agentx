@@ -153,7 +153,7 @@ function ToolCallCardImpl({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:ring-offset-1"
+        className="flex w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5 focus:outline-none focus-visible:outline-none"
       >
         <Wrench className="h-2.5 w-2.5 shrink-0 text-muted-c/60" />
         <span className="font-mono text-muted-c/70">{toolName}</span>
