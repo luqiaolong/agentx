@@ -34,15 +34,15 @@ __all__ = [
     "_parse_agents_config",
 ]
 
-# Supervisor 默认完整工具集（内置 fs + delete_file + git + rag + web）
+# Supervisor 默认完整工具集（内置 fs + delete_file + rag + web + execute）
 # 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 AuthorizedLocalShellBackend 注入；
-# delete_file 为项目自研；execute 由 backend 内置提供。
+# delete_file 为项目自研；execute 由 backend 内置提供（含 Git 操作，Git 写操作由
+# ``SafeLocalShellBackend.execute`` 通过 ``is_git_write_command`` 拦截）。
+# Phase B.1 已删除独立 git_* 工具，Git 操作改由 execute 承担。
 _DEFAULT_SUPERVISOR_TOOLS: list[str] = [
     "read_file", "ls", "glob", "grep",
     "write_file", "edit_file", "delete_file",
     "web_search", "rag_retrieve",
-    "git_status", "git_diff", "git_log", "git_branches",
-    "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
     "execute",
 ]
 

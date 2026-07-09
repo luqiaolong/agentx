@@ -6,6 +6,9 @@
 变更：
 - ``DANGEROUS_TOOLS`` / ``FORBIDDEN_SUBAGENT_TOOLS`` 改为 ``frozenset``。
 - CLI 工具名从 ``cli_execute`` 改为 ``execute``（由 ``SafeLocalShellBackend`` 提供）。
+- Phase B.3：移除所有 ``git_*`` 条目。Git 写操作（commit/push/checkout 等）不再通过
+  独立工具暴露，而是由 ``SafeLocalShellBackend.execute`` 通过 ``is_git_write_command``
+  拦截（返回 exit_code=126 提示走审批流）。
 
 新增 ``compute_runtime_dangerous``：根据已启用工具名 + MCP 不可信工具名，
 计算运行时实际触发 ``interrupt_on`` 审批的工具集合。
@@ -20,13 +23,17 @@ __all__ = [
 ]
 
 # CLI 工具名：deepagents ``LocalShellBackend`` 内置的 ``execute`` 工具
-# （由 ``SafeLocalShellBackend`` 继承并提供，blocklist + 元字符过滤）。
+# （由 ``SafeLocalShellBackend`` 继承并提供，blocklist + 元字符过滤 + Git 写操作拦截）。
 # 注意：execute 不再属于 DANGEROUS_TOOLS，其审批通过 directory_extension
 # 机制处理（workspace 之外未授权时触发审批）。
+# Git 写操作（commit/push/checkout 等）由 ``is_git_write_command`` 在
+# ``SafeLocalShellBackend.execute`` 中拦截，不在此集合中。
 CLI_TOOL_NAME = "execute"
 
-# 触发人工审批中断的工具集合：写操作 + Git 写操作 + 文件删除。
+# 触发人工审批中断的工具集合：写操作 + 文件删除。
 # execute 已移除：shell 命令的审批改为基于工作目录是否授权（directory_extension）。
+# Git 写操作已移除：由 ``SafeLocalShellBackend.execute`` 通过 ``is_git_write_command``
+# 拦截（返回 exit_code=126），不再通过独立工具 + interrupt_on 审批。
 # write_file / edit_file 由 deepagents 内置（AuthorizedLocalShellBackend 提供），
 # delete_file 为项目自研工具（tool_assembly._make_deep_tools 闭包构建）。
 DANGEROUS_TOOLS: frozenset[str] = frozenset(
@@ -34,18 +41,15 @@ DANGEROUS_TOOLS: frozenset[str] = frozenset(
         "edit_file",
         "write_file",
         "delete_file",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
     }
 )
 
 # 自定义子代理禁止绑定的危险工具（与 AGENTS.md §18 安全红线一致）。
-# subagent 无 interrupt_on 审批流，暴露写/编辑/git 写/shell 操作会绕过审批。
+# subagent 无 interrupt_on 审批流，暴露写/编辑/shell 操作会绕过审批。
 # ``execute`` = SafeLocalShellBackend 内置工具（新名）；``cli_execute`` = 旧名，
 # 保留以过滤仍引用旧名的陈旧配置。
+# Git 写操作由 ``SafeLocalShellBackend.execute`` 拦截，无需在此禁止 git_* 工具
+# （git_* 工具已删除，子代理无法引用）。
 FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
     {
         "write_file",
@@ -53,11 +57,6 @@ FORBIDDEN_SUBAGENT_TOOLS: frozenset[str] = frozenset(
         "delete_file",
         "execute",
         "cli_execute",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
     }
 )
 

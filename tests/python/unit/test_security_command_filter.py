@@ -6,6 +6,7 @@
 3. is_command_blocked / has_forbidden_args
 4. redact_args 各工具脱敏（write_file/edit_file/cli_execute/其他）
 5. redact_args 输入类型处理（dict/list/str/None）
+6. is_git_write_command Git 写操作检测（Phase B.2）
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from app.security import (
     FORBIDDEN_ARG_PATTERN,
     has_forbidden_args,
     is_command_blocked,
+    is_git_write_command,
     redact_args,
 )
 
@@ -265,3 +267,85 @@ def test_redact_args_int_input() -> None:
     """非 dict/list/str 输入返回空 dict。"""
     result = redact_args("write_file", 123)
     assert result == {}
+
+
+# ============================================================
+# 7. is_git_write_command — Git 写操作检测（Phase B.2）
+# ============================================================
+
+
+def test_is_git_write_command_commit() -> None:
+    """git commit -m "msg" 是写操作。"""
+    assert is_git_write_command('git commit -m "msg"') is True
+
+
+def test_is_git_write_command_push() -> None:
+    """git push origin main 是写操作。"""
+    assert is_git_write_command("git push origin main") is True
+
+
+def test_is_git_write_command_clone() -> None:
+    """git clone https://... 是写操作。"""
+    assert is_git_write_command("git clone https://github.com/user/repo.git") is True
+
+
+def test_is_git_write_command_status_is_readonly() -> None:
+    """git status 是只读操作，不是写操作。"""
+    assert is_git_write_command("git status") is False
+
+
+def test_is_git_write_command_diff_is_readonly() -> None:
+    """git diff 是只读操作。"""
+    assert is_git_write_command("git diff") is False
+
+
+def test_is_git_write_command_log_is_readonly() -> None:
+    """git log 是只读操作。"""
+    assert is_git_write_command("git log") is False
+
+
+def test_is_git_write_command_branch_is_readonly() -> None:
+    """git branch（无 -d/-D）是只读操作。"""
+    assert is_git_write_command("git branch") is False
+
+
+def test_is_git_write_command_show_is_readonly() -> None:
+    """git show 是只读操作。"""
+    assert is_git_write_command("git show") is False
+
+
+def test_is_git_write_command_non_git_command() -> None:
+    """非 git 命令返回 False。"""
+    assert is_git_write_command("echo hello") is False
+
+
+def test_is_git_write_command_empty_string() -> None:
+    """空字符串返回 False。"""
+    assert is_git_write_command("") is False
+
+
+def test_is_git_write_command_whitespace_only() -> None:
+    """纯空白字符串返回 False。"""
+    assert is_git_write_command("   ") is False
+
+
+def test_is_git_write_command_git_alone() -> None:
+    """只有 git 无子命令返回 False。"""
+    assert is_git_write_command("git") is False
+
+
+def test_is_git_write_command_other_write_subcommands() -> None:
+    """其他写子命令（add/merge/rebase/reset/stash/pull/checkout）也被拦截。"""
+    assert is_git_write_command("git add file.txt") is True
+    assert is_git_write_command("git merge feature") is True
+    assert is_git_write_command("git rebase main") is True
+    assert is_git_write_command("git reset --hard HEAD~1") is True
+    assert is_git_write_command("git stash") is True
+    assert is_git_write_command("git pull") is True
+    assert is_git_write_command("git checkout main") is True
+
+
+def test_is_git_write_command_shlex_error_returns_false() -> None:
+    """shlex.split 解析失败（不匹配的引号）安全降级返回 False。"""
+    # 不匹配的引号会让 shlex.split 抛 ValueError
+    assert is_git_write_command('git commit -m "unclosed quote') is False

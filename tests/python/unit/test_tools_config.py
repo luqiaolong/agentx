@@ -30,7 +30,7 @@ def test_tools_enabled_default_all_true() -> None:
     """不设 env，tools_enabled 返回全部工具全 true。"""
     settings = get_settings()
     tools = settings.tools_enabled
-    assert len(tools) == 18
+    assert len(tools) == 9
     assert all(tools.values())
 
 
@@ -42,9 +42,6 @@ def test_tools_enabled_field_names() -> None:
         "read_file", "ls", "glob", "grep",
         "write_file", "edit_file", "delete_file",
         "web_search", "rag_retrieve",
-        # Git
-        "git_status", "git_diff", "git_log", "git_branches",
-        "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
     }
     assert set(tools.keys()) == expected
 
@@ -92,7 +89,7 @@ def test_tools_enabled_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     assert settings.tools_config == {}
 
     tools = settings.tools_enabled
-    assert len(tools) == 10
+    assert len(tools) == 9
     assert all(tools.values())
 
 
@@ -115,32 +112,21 @@ def test_make_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> No
     # 其他工具仍在
     assert "rag_retrieve" in tool_names
     assert "delete_file" in tool_names
-    assert "git_status" in tool_names
     # 内置 fs 工具不在 _make_deep_tools 输出中（由 backend 注入）
     assert "read_file" not in tool_names
     assert "write_file" not in tool_names
 
 
 def test_make_deep_tools_all_enabled() -> None:
-    """默认全启用，返回 delete_file + git + rag + web（内置 fs 工具由 backend 注入）。"""
+    """默认全启用，返回 delete_file + rag + web（内置 fs 工具由 backend 注入）。"""
     tools = _make_deep_tools("t1")
-    # delete_file(1) + git(9) + rag(1) + web(1) = 12
-    assert len(tools) == 12
+    # delete_file(1) + rag(1) + web(1) = 3
+    assert len(tools) == 3
     tool_names = {t.name for t in tools}
     expected = {
         "delete_file",
         "rag_retrieve",
         "web_search",
-        # Git
-        "git_status",
-        "git_diff",
-        "git_log",
-        "git_branches",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
     }
     assert tool_names == expected
 
@@ -162,15 +148,6 @@ def test_make_deep_tools_all_disabled_returns_empty(
                 "delete_file": False,
                 "web_search": False,
                 "rag_retrieve": False,
-                "git_status": False,
-                "git_diff": False,
-                "git_log": False,
-                "git_branches": False,
-                "git_clone": False,
-                "git_pull": False,
-                "git_checkout": False,
-                "git_stage": False,
-                "git_commit": False,
             }
         ),
     )
@@ -186,9 +163,11 @@ def test_make_deep_tools_all_disabled_returns_empty(
 
 
 def test_dangerous_tools_constant_unchanged() -> None:
-    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/delete_file 及 Git 写操作。
+    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/delete_file。
 
     execute 已移除，审批改为 directory_extension 机制。
+    git_* 已移除，Git 写操作由 ``SafeLocalShellBackend.execute`` 通过
+    ``is_git_write_command`` 拦截（Phase B.2）。
     常量是模块级 frozenset，不随 tools_enabled 变化。
     即使工具被禁用，常量本身不变（运行时危险集合通过交集计算）。
     """
@@ -196,11 +175,6 @@ def test_dangerous_tools_constant_unchanged() -> None:
         "edit_file",
         "write_file",
         "delete_file",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
     }
 
 
@@ -225,7 +199,7 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
     runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
 
     assert "delete_file" not in runtime_dangerous
-    assert "git_clone" in runtime_dangerous  # git_clone 仍启用
+    assert runtime_dangerous == frozenset()  # delete_file 是唯一在 _make_deep_tools 中的危险工具
 
 
 def test_runtime_dangerous_all_enabled() -> None:
@@ -234,20 +208,15 @@ def test_runtime_dangerous_all_enabled() -> None:
     注意：write_file/edit_file 由 backend 注入、不在 _make_deep_tools 返回的工具集中，
     故无 workspace_path 时 runtime_dangerous 不含它们（交集运算自动排除）。
     有 workspace_path 时由 run_deep_path 显式补充（见 agent.py）。
+    git_* 工具已删除（Phase B.1），不再出现在 runtime_dangerous 中。
     """
     agent_tools = _make_deep_tools("t1")
     enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
     runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
 
-    # _make_deep_tools 含 delete_file 及全部 Git 写操作；
-    # write_file/edit_file 不在工具集中（由 backend 注入）
+    # _make_deep_tools 仅含 delete_file（write_file/edit_file 由 backend 注入）
     assert runtime_dangerous == {
         "delete_file",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
     }
     assert "execute" not in runtime_dangerous
     assert "write_file" not in runtime_dangerous
