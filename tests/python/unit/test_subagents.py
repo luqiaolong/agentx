@@ -34,7 +34,7 @@ def mock_create_agent(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     fake_agent = MagicMock(name="fake_compiled_graph")
     fake_agent.astream_events = MagicMock()
     fake_create = MagicMock(return_value=fake_agent, name="fake_create_agent")
-    monkeypatch.setattr("app.deep.harness.create_agent", fake_create)
+    monkeypatch.setattr("app.deepagent.factory.create_agent", fake_create)
     return fake_create
 
 

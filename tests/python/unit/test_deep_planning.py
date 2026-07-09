@@ -125,7 +125,7 @@ def test_extract_plan_or_update_normal_text() -> None:
 @pytest.mark.asyncio
 async def test_stream_yields_plan_event() -> None:
     """AIMessage 内容为 plan JSON 时，应发射 plan SSE 事件。"""
-    from app.deep.streaming import _stream_agent_events
+    from app.deepagent.streaming import _stream_agent_events
     from app.security.approval import state as approval_state
 
     approval_state._abort_flags.clear()
@@ -147,7 +147,7 @@ async def test_stream_yields_plan_event() -> None:
 @pytest.mark.asyncio
 async def test_stream_yields_plan_update_event() -> None:
     """AIMessage 内容为 plan_update JSON 时，应发射 plan_update SSE 事件。"""
-    from app.deep.streaming import _stream_agent_events
+    from app.deepagent.streaming import _stream_agent_events
     from app.security.approval import state as approval_state
 
     approval_state._abort_flags.clear()
@@ -169,7 +169,7 @@ async def test_stream_yields_plan_update_event() -> None:
 @pytest.mark.asyncio
 async def test_stream_yields_token_for_normal_text() -> None:
     """AIMessage 内容为普通文本时，仍发射 token 事件。"""
-    from app.deep.streaming import _stream_agent_events
+    from app.deepagent.streaming import _stream_agent_events
     from app.security.approval import state as approval_state
 
     approval_state._abort_flags.clear()
@@ -188,7 +188,7 @@ async def test_stream_yields_token_for_normal_text() -> None:
 @pytest.mark.asyncio
 async def test_todo_update_includes_task_id() -> None:
     """tool_call / tool_result 附带的 todo_update 应携带 task_id。"""
-    from app.deep.streaming import _stream_agent_events
+    from app.deepagent.streaming import _stream_agent_events
     from app.security.approval import state as approval_state
 
     approval_state._abort_flags.clear()
@@ -218,7 +218,7 @@ async def test_todo_update_includes_task_id() -> None:
 
 def test_system_prompt_includes_plan_instructions() -> None:
     """DeepAgent 系统提示包含结构化计划指令（由 write_todos 工具承担）。"""
-    from app.deep.agent import _DEEP_SYSTEM_PROMPT
+    from app.deepagent.agent import _DEEP_SYSTEM_PROMPT
 
     # write_todos 工具由 deepagents 自动注册，prompt 中提及该工具引导 LLM 使用
     assert "write_todos" in _DEEP_SYSTEM_PROMPT

@@ -49,7 +49,7 @@
 - **审批状态**：[app.security.approval.state](file:///d:/java/agentprojects/agentx/backend/app/security/approval/state.py) 模块级 dict + `asyncio.Lock`，5 个 dict value 为 `tuple[T, float]`（TTL timestamp）。
 - **TTL reaper**：`start_reaper()` 后台协程每 5 分钟清理 30 分钟无活动的 thread_id（`main.py` lifespan 启动）。
 - **原子原语**：`wait_for_resume(thread_id, timeout)` / `wait_for_abort(thread_id, timeout)` 消除 "check 后、await 前 clear 已 set event" 竞态。
-- **公共审批循环**：[app.security.approval_flow.run_approval_loop](file:///d:/java/agentprojects/agentx/backend/app/security/approval_flow.py) 统一 work/coding 两场景审批逻辑。
+- **公共审批循环**：[app.security.approval.flow.run_approval_loop](file:///d:/java/agentprojects/agentx/backend/app/security/approval/flow.py) 统一 work/coding 两场景审批逻辑。
 - **危险工具**：[app.security.dangerous_tools](file:///d:/java/agentprojects/agentx/backend/app/security/dangerous_tools.py) `DANGEROUS_TOOLS` + `FORBIDDEN_SUBAGENT_TOOLS`（`frozenset`，移除已废弃的 `shell_exec`）。
 - **命令过滤**：[app.security.command_filter](file:///d:/java/agentprojects/agentx/backend/app/security/command_filter.py) `DEFAULT_BLOCKLIST` + `redact_args`（`cli_execute` 的 `command`/`arguments` 脱敏）。
 - 沙箱授权目录通过 `POST /api/sandbox/authorize` 显式开启（renderer 直连 HTTP，**不**走 Tauri invoke）。
@@ -72,9 +72,9 @@
 
 `2026-07-06-paths-refactor` 重构后 `graph.py` 与路径模块**无循环导入**：
 
-- `graph.py` 顶层单向 import `app.chat.run` / `app.deep.agent` /
+- `graph.py` 顶层单向 import `app.chat.run` / `app.deepagent.agent` /
   `app.subagents.dispatch` / `app.team.orchestrator`。
-- `deep/agent.py` 用 `TYPE_CHECKING` 延迟导入 `RouterState`，**禁止**改为运行时导入。
+- `deepagent/agent.py` 用 `TYPE_CHECKING` 延迟导入 `RouterState`，**禁止**改为运行时导入。
 - `team/orchestrator.py` 回退路径 A 时在函数内延迟 import `run_chat_path`（保持 lazy）。
 - `app.paths` 包已删除，**禁止**重新创建 `backend/app/paths/` 目录。
 

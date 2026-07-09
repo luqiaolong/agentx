@@ -1,6 +1,6 @@
 """DeepAgent 工具集构建。
 
-从 ``app.deep.agent`` 拆出（Phase 2.3），保持公共 API 不变。
+从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
 - ``DANGEROUS_TOOLS``：触发人工审批中断的工具集合（写操作 + shell 执行）
@@ -11,7 +11,7 @@
 CLI 执行由 ``SafeLocalShellBackend`` 提供的 deepagents 内置 ``execute`` 工具承担，
 不再注册自研 ``cli_execute`` 工具。
 
-导入方向：``agent.py`` → ``tools.py``（单向，无循环）。
+导入方向：``agent.py`` → ``tool_assembly.py``（单向，无循环）。
 """
 
 from __future__ import annotations

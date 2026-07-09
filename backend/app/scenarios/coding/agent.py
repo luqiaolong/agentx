@@ -1,6 +1,6 @@
 """coding 场景 Expert（代码专家 agent）实现。
 
-基于 ``app.deep.harness.create_agent`` / ``build_deep_agent`` 框架构建，与 DeepAgent
+基于 ``app.deepagent.factory.create_agent`` / ``build_deep_agent`` 框架构建，与 DeepAgent
 共享 streaming/approval 基础设施，但有以下区别：
 1. 使用 coding Expert 专用 system prompt（``_DEFAULT_CODING_EXPERT_SYSTEM_PROMPT``）
 2. 通过 deepagents ``SubAgentMiddleware`` 声明式注入 rag/web/custom 子代理
@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from deepagents import SubAgent
 
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
-from app.deep.agent import build_deep_agent
-from app.deep.execution import run_agent_with_approval
-from app.deep.streaming import _stream_agent_events
-from app.deep.tools import (
+from app.deepagent.agent import build_deep_agent
+from app.deepagent.approval_runner import run_agent_with_approval
+from app.deepagent.streaming import _stream_agent_events
+from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
     _load_mcp_tools,
@@ -32,7 +32,7 @@ from app.deep.tools import (
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.subagents.base import THINK_PROMPT_SUFFIX, make_rag_tools, make_web_tools
-from app.utils.sse_events import make_error_event
+from app.sse.events import make_error_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -261,8 +261,8 @@ async def run_coding_expert(
 
         # 统一审批执行循环（deep.execution.run_agent_with_approval）
         # stream_fn 传入模块级引用，以便测试通过
-        # patch("app.agents.expert.coding._stream_agent_events") 替换。
-        # is_interrupted_fn 使用 execution 默认值（app.deep.execution._is_interrupted）。
+        # patch("app.scenarios.coding.agent._stream_agent_events") 替换。
+        # is_interrupted_fn 使用 execution 默认值（app.deepagent.approval_runner._is_interrupted）。
         async for sse in run_agent_with_approval(
             agent,
             config,

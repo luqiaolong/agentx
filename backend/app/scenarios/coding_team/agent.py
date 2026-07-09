@@ -1,5 +1,7 @@
 """coding_team 场景级 AgentTeam 实现。
 
+本文件是场景入口薄封装，框架实现见 ``app.team.orchestrator``。
+
 AgentTeam 是统称（类型），当前唯一实例是 coding team。
 复用现有 ``app.team`` 框架（orchestrator/scheduler/planner/aggregator/blackboard），
 但作为场景的子模式（``coding_team``），不是顶层模式。

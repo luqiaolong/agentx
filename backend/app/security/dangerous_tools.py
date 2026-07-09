@@ -1,6 +1,6 @@
 """危险工具分类与运行时危险集合计算。
 
-从 ``app.deep.tools`` 提取 ``DANGEROUS_TOOLS``，从 ``app.config.subagents``
+从 ``app.deepagent.tool_assembly`` 提取 ``DANGEROUS_TOOLS``，从 ``app.config.subagents``
 提取 ``FORBIDDEN_SUBAGENT_TOOLS``，统一迁移至 ``app.security`` 包。
 
 变更：
@@ -21,14 +21,14 @@ __all__ = [
 
 # CLI 工具名：deepagents ``LocalShellBackend`` 内置的 ``execute`` 工具
 # （由 ``SafeLocalShellBackend`` 继承并提供，blocklist + 元字符过滤）。
-CLI_TOOL_NAME = "execute"
+SHELL_CLI_TOOL_NAME = "execute"
 
 # 触发人工审批中断的工具集合：写操作 + CLI + Git 写操作。
 DANGEROUS_TOOLS: frozenset[str] = frozenset(
     {
         "edit_file",
         "write_file",
-        CLI_TOOL_NAME,
+        SHELL_CLI_TOOL_NAME,
         "git_clone",
         "git_pull",
         "git_checkout",

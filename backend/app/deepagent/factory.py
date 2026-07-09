@@ -29,8 +29,8 @@ from deepagents import (
 )
 
 from app.config import DATA_DIR, get_settings
-from app.deep.safe_shell_backend import SafeLocalShellBackend
-from app.deep.tools import DANGEROUS_TOOLS
+from app.deepagent.safe_shell_backend import SafeLocalShellBackend
+from app.deepagent.tool_assembly import DANGEROUS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
 

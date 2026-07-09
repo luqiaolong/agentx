@@ -24,8 +24,7 @@ from app.security.approval import (
     submit_approval,
 )
 from app.config import get_settings
-from app.observability.langsmith import mark_redacted, trace_span
-from app.observability.langsmith_dual import dual_trace
+from app.observability.langsmith import dual_trace, mark_redacted, trace_span
 from app.observability.logger import logger
 from app.observability.observation import get_observation_sink
 from app.observability.trace import bind_trace, new_trace_id

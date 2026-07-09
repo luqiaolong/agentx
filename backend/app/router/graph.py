@@ -25,9 +25,9 @@ import re
 from langchain_core.messages import trim_messages
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from app.agents.expert import run_coding_expert
-from app.agents.supervisor import run_work_supervisor
-from app.agents.team import run_coding_team
+from app.scenarios.coding import run_coding_expert
+from app.scenarios.work import run_work_supervisor
+from app.scenarios.coding_team import run_coding_team
 from app.config import get_settings
 from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import SkillDef, _parse_frontmatter, _tools_from_meta
@@ -37,7 +37,7 @@ from app.observability.logger import logger
 from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.workspace.config import load_project_config, merge_configs
-from app.utils.sse_events import make_sse_event
+from app.sse.events import make_sse_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel

@@ -455,7 +455,7 @@ ErrorBoundary 渲染错误恢复。
 |---|---|
 | 新增 REST 端点 | [backend/app/main.py](file:///d:/java/agentprojects/agentx/backend/app/main.py) 顶部端点总览 + §1.1「优先用现成框架」 |
 | 新增 / 修改 SSE 事件 | §13 + [`docs/agents/02-sse-event-contract.md`](file:///d:/java/agentprojects/agentx/docs/agents/02-sse-event-contract.md) + [lib/api/chat.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/lib/api/chat.ts) + [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts) |
-| 新增工具 | [backend/app/tools/](file:///d:/java/agentprojects/agentx/backend/app/tools/) + `subagents/*_agent.py` + [deep/agent.py](file:///d:/java/agentprojects/agentx/backend/app/deep/agent.py)（危险工具**仅**路径 C） |
+| 新增工具 | [backend/app/tools/](file:///d:/java/agentprojects/agentx/backend/app/tools/) + `subagents/*_agent.py` + [deepagent/agent.py](file:///d:/java/agentprojects/agentx/backend/app/deepagent/agent.py)（危险工具**仅**路径 C） |
 | 调整分类规则 | [classifier.py](file:///d:/java/agentprojects/agentx/backend/app/router/classifier.py) 关键词表 + §12 路径分发 |
 | 新增 Tauri command | [src-tauri/src/commands/](file:///d:/java/agentprojects/agentx/src-tauri/src/commands/) + [lib.rs](file:///d:/java/agentprojects/agentx/src-tauri/src/lib.rs) `invoke_handler!` 注册 + [shared/api-types.ts](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts) 类型同步 |
 | 调整路径实现 | `docs/agents/03-key-conventions.md` §14.5（不要重新引入 paths/ 包） |

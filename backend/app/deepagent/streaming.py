@@ -1,6 +1,6 @@
 """DeepAgent SSE 流式事件驱动。
 
-从 ``app.deep.agent`` 拆出（Phase 2.3），保持公共 API 不变。
+从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
 - ``_stream_agent_events``：驱动 ``agent.astream(stream_mode="values")``，
@@ -26,7 +26,7 @@ from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.security.approval import get_abort_event
 from app.utils.plan_extraction import extract_plan_or_update
-from app.utils.sse_events import (
+from app.sse.events import (
     make_sse_event,
     make_todo_event,
     make_tool_call_event,

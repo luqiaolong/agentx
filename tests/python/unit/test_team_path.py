@@ -27,7 +27,7 @@ from app.team.orchestrator import (
     run_team_path,
 )
 from app.team.planner import TeamPlan, TeamPlanItem, _postprocess_plan
-from app.utils.sse_events import make_team_event
+from app.sse.events import make_team_event
 
 
 # ============================================================

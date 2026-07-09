@@ -23,30 +23,16 @@ from app.config import PROJECT_ROOT, get_settings
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox import PathNotAuthorized, get_sandbox, is_critical
-from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args
-from app.utils.paths import normalize_path
+from app.security.command_filter import has_forbidden_args, is_command_blocked
+from app.sandbox.path_guard import normalize_path
 
-__all__ = ["CLI_TOOL_NAME", "cli_execute"]
+__all__ = ["LLM_CLI_TOOL_NAME", "cli_execute"]
 
-CLI_TOOL_NAME: str = "cli_execute"
+LLM_CLI_TOOL_NAME: str = "cli_execute"
 
 # 系统关键目录校验委托给 app.sandbox.is_critical()（与 session_sandbox.py 统一），
 # 不再维护第二套正则模式——此前 cli.py 的 Windows 正则 `^C:\\\\Windows` 因
 # 反斜杠转义错误（匹配 2 个字面反斜杠，实际路径只有 1 个）导致形同虚设。
-
-
-def _effective_blocklist() -> frozenset[str]:
-    """合并默认黑名单与用户配置黑名单。"""
-    cfg = get_settings().cli_tool_blocklist
-    if not cfg:
-        return DEFAULT_BLOCKLIST
-    user_blocked = frozenset(cmd.strip().lower() for cmd in cfg if isinstance(cmd, str) and cmd.strip())
-    return DEFAULT_BLOCKLIST | user_blocked
-
-
-def _is_command_blocked(command: str) -> bool:
-    """命令名是否在黑名单内（含用户配置合并）。"""
-    return command.strip().lower() in _effective_blocklist()
 
 
 def _is_critical_dir(path: Path) -> bool:
@@ -130,7 +116,7 @@ async def cli_execute(
     if not command:
         return "command 不能为空"
 
-    if _is_command_blocked(command):
+    if is_command_blocked(command):
         return f"命令 '{command}' 在黑名单中，禁止执行（删除/格式化/提权等极度危险操作）"
 
     arguments = list(arguments) if arguments else []

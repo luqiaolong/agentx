@@ -2,13 +2,13 @@
 
 聚合导出：
 - 危险工具分类：``DANGEROUS_TOOLS`` / ``FORBIDDEN_SUBAGENT_TOOLS`` / ``compute_runtime_dangerous``
-- 命令过滤与脱敏：``DEFAULT_BLOCKLIST`` / ``FORBIDDEN_ARG_PATTERN`` / ``is_command_blocked``
-  / ``has_forbidden_args`` / ``redact_args``
+- 命令过滤与脱敏：``DEFAULT_BLOCKLIST`` / ``FORBIDDEN_ARG_PATTERN`` / ``effective_blocklist``
+  / ``is_command_blocked`` / ``has_forbidden_args`` / ``redact_args``
 - 审批决策与状态：``ApprovalDecision`` / ``ApprovalResult`` / ``submit_approval`` /
   ``pop_approval`` / ``set_abort`` / ``is_aborted`` / ``clear_abort`` / ``wait_for_abort`` /
   ``set_pause`` / ``clear_pause`` / ``wait_for_resume`` / ``start_reaper``
 
-与 ``app.approval`` / ``app.deep.tools`` / ``app.tools.cli`` / ``app.config.subagents``
+与 ``app.approval`` / ``app.deepagent.tool_assembly`` / ``app.tools.cli`` / ``app.config.subagents``
 平行存在，Phase 5 统一迁移 import 后旧定义可删除。
 """
 
@@ -32,6 +32,7 @@ from app.security.approval import (
 from app.security.command_filter import (
     DEFAULT_BLOCKLIST,
     FORBIDDEN_ARG_PATTERN,
+    effective_blocklist,
     has_forbidden_args,
     is_command_blocked,
     redact_args,
@@ -50,6 +51,7 @@ __all__ = [
     # command_filter
     "DEFAULT_BLOCKLIST",
     "FORBIDDEN_ARG_PATTERN",
+    "effective_blocklist",
     "is_command_blocked",
     "has_forbidden_args",
     "redact_args",

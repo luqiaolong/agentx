@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.deep.harness import (
+from app.deepagent.factory import (
     _EXCLUDED_BUILTIN_TOOLS,
     _registered_keys,
     build_interrupt_config,
@@ -28,7 +28,7 @@ from app.deep.harness import (
     resolve_memory_paths,
     resolve_skills_dir,
 )
-from app.deep.tools import DANGEROUS_TOOLS
+from app.deepagent.tool_assembly import DANGEROUS_TOOLS
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +57,7 @@ def test_build_interrupt_config_from_dangerous_tools() -> None:
 
 def test_harness_profile_excludes_builtin_tools() -> None:
     """``HarnessProfile`` 排除 deepagents 内置 fs 工具，避免与项目自研工具冲突。"""
-    with patch("app.deep.harness.register_harness_profile") as mock_register:
+    with patch("app.deepagent.factory.register_harness_profile") as mock_register:
         ensure_harness_profile("openai")
         assert mock_register.call_count == 1
         profile = mock_register.call_args[0][1]
@@ -67,7 +67,7 @@ def test_harness_profile_excludes_builtin_tools() -> None:
 
 def test_harness_profile_disables_default_subagent() -> None:
     """``HarnessProfile`` 禁用默认通用子代理，项目使用自研委派工具。"""
-    with patch("app.deep.harness.register_harness_profile") as mock_register:
+    with patch("app.deepagent.factory.register_harness_profile") as mock_register:
         ensure_harness_profile("openai")
         profile = mock_register.call_args[0][1]
         assert profile.general_purpose_subagent.enabled is False
@@ -75,7 +75,7 @@ def test_harness_profile_disables_default_subagent() -> None:
 
 def test_ensure_harness_profile_is_idempotent() -> None:
     """重复注册同一 key 不会再次调用 ``register_harness_profile``。"""
-    with patch("app.deep.harness.register_harness_profile") as mock_register:
+    with patch("app.deepagent.factory.register_harness_profile") as mock_register:
         ensure_harness_profile("openai")
         ensure_harness_profile("openai")
         assert mock_register.call_count == 1
@@ -114,7 +114,7 @@ def test_resolve_memory_paths_none_workspace() -> None:
 
 def test_resolve_skills_dir_returns_data_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``resolve_skills_dir`` 返回 ``DATA_DIR/skills`` 绝对路径。"""
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
     assert resolve_skills_dir() == str(skills_dir)
@@ -122,7 +122,7 @@ def test_resolve_skills_dir_returns_data_skills(tmp_path: Path, monkeypatch: pyt
 
 def test_resolve_skills_dir_none_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``data/skills`` 不存在时返回 None。"""
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     assert resolve_skills_dir() is None
 
 
@@ -130,7 +130,7 @@ def test_resolve_backend_returns_safe_local_shell_backend(tmp_path: Path) -> Non
     """``resolve_backend`` 返回 ``SafeLocalShellBackend`` 实例（继承 ``LocalShellBackend`` → ``FilesystemBackend``）。"""
     from deepagents.backends import FilesystemBackend, LocalShellBackend
 
-    from app.deep.safe_shell_backend import SafeLocalShellBackend
+    from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 
     backend = resolve_backend(str(tmp_path))
     assert isinstance(backend, SafeLocalShellBackend)
@@ -151,14 +151,14 @@ def test_resolve_backend_none_when_no_workspace() -> None:
 @pytest.mark.asyncio
 async def test_create_agent_passes_correct_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``create_agent`` 正确组装所有 deepagents 参数。"""
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
     agentx_dir = tmp_path / ".agentx"
     agentx_dir.mkdir()
     (agentx_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
 
-    with patch("app.deep.harness.create_deep_agent") as mock_create:
+    with patch("app.deepagent.factory.create_deep_agent") as mock_create:
         mock_graph = MagicMock()
         mock_create.return_value = mock_graph
 
@@ -198,9 +198,9 @@ async def test_create_agent_passes_correct_config(tmp_path: Path, monkeypatch: p
 @pytest.mark.asyncio
 async def test_create_agent_uses_default_name_and_none_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """未传 name 时默认 ``deep_agent``；未传 workspace 时 backend 为 None。"""
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
 
-    with patch("app.deep.harness.create_deep_agent") as mock_create:
+    with patch("app.deepagent.factory.create_deep_agent") as mock_create:
         mock_create.return_value = MagicMock()
         create_agent(
             MagicMock(),
@@ -232,10 +232,10 @@ async def test_create_agent_rubric_injects_rubric_middleware(tmp_path: Path, mon
     """``rubric=`` 非 None 时注入 ``RubricMiddleware`` 到 ``middleware`` 列表。"""
     from deepagents import RubricMiddleware
 
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     fake_grader = MagicMock(name="auto_grader")
-    with patch("app.deep.harness.create_deep_agent") as mock_create, \
-         patch("app.deep.harness.get_chat_model", return_value=fake_grader) as mock_get_model:
+    with patch("app.deepagent.factory.create_deep_agent") as mock_create, \
+         patch("app.deepagent.factory.get_chat_model", return_value=fake_grader) as mock_get_model:
         mock_create.return_value = MagicMock()
         create_agent(
             MagicMock(),
@@ -258,8 +258,8 @@ async def test_create_agent_rubric_injects_rubric_middleware(tmp_path: Path, mon
 @pytest.mark.asyncio
 async def test_create_agent_no_rubric_yields_empty_middleware(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``rubric=`` 为 None 时 ``middleware`` 为空列表（不注入 RubricMiddleware）。"""
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
-    with patch("app.deep.harness.create_deep_agent") as mock_create:
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
+    with patch("app.deepagent.factory.create_deep_agent") as mock_create:
         mock_create.return_value = MagicMock()
         create_agent(
             MagicMock(),
@@ -277,11 +277,11 @@ async def test_create_agent_rubric_uses_grader_model(tmp_path: Path, monkeypatch
     """``rubric=`` + ``grader_model=`` 时使用传入的 grader 而非 ``get_chat_model``。"""
     from deepagents import RubricMiddleware
 
-    monkeypatch.setattr("app.deep.harness.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     fake_grader = MagicMock(name="custom_grader")
 
-    with patch("app.deep.harness.create_deep_agent") as mock_create, \
-         patch("app.deep.harness.get_chat_model") as mock_get_model:
+    with patch("app.deepagent.factory.create_deep_agent") as mock_create, \
+         patch("app.deepagent.factory.get_chat_model") as mock_get_model:
         mock_create.return_value = MagicMock()
         create_agent(
             MagicMock(),
@@ -309,7 +309,7 @@ def test_safe_local_shell_backend_inherits_from_local_shell_backend() -> None:
     """``SafeLocalShellBackend`` 继承 ``LocalShellBackend`` → ``FilesystemBackend``。"""
     from deepagents.backends import FilesystemBackend, LocalShellBackend
 
-    from app.deep.safe_shell_backend import SafeLocalShellBackend
+    from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 
     assert issubclass(SafeLocalShellBackend, LocalShellBackend)
     assert issubclass(SafeLocalShellBackend, FilesystemBackend)
@@ -317,7 +317,7 @@ def test_safe_local_shell_backend_inherits_from_local_shell_backend() -> None:
 
 def test_safe_local_shell_backend_execute_blocks_blocklisted_command(tmp_path: Path) -> None:
     """``SafeLocalShellBackend.execute`` 拦截黑名单命令（如 ``rm``）。"""
-    from app.deep.safe_shell_backend import SafeLocalShellBackend
+    from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 
     backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
     result = backend.execute("rm -rf /")
@@ -327,7 +327,7 @@ def test_safe_local_shell_backend_execute_blocks_blocklisted_command(tmp_path: P
 
 def test_safe_local_shell_backend_execute_blocks_metachar(tmp_path: Path) -> None:
     """``SafeLocalShellBackend.execute`` 拦截 shell 元字符（命令链/管道/重定向）。"""
-    from app.deep.safe_shell_backend import SafeLocalShellBackend
+    from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 
     backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
     # ; 是命令分隔符
@@ -338,7 +338,7 @@ def test_safe_local_shell_backend_execute_blocks_metachar(tmp_path: Path) -> Non
 
 def test_safe_local_shell_backend_execute_blocks_empty_command(tmp_path: Path) -> None:
     """``SafeLocalShellBackend.execute`` 拒绝空命令。"""
-    from app.deep.safe_shell_backend import SafeLocalShellBackend
+    from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 
     backend = SafeLocalShellBackend(root_dir=str(tmp_path), virtual_mode=True)
     assert backend.execute("") == "command 不能为空"

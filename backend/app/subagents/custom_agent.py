@@ -95,7 +95,7 @@ def build_custom_agent(
 
     # 模式 2：显式参数（用于 team 角色等动态构建）
     if system_prompt is not None or tools is not None or temperature is not None:
-        from app.deep.harness import create_agent
+        from app.deepagent.factory import create_agent
 
         if not tools:
             logger.warning(
@@ -119,7 +119,7 @@ def build_custom_agent(
         )
 
     # 模式 1：从配置加载
-    from app.deep.harness import create_agent
+    from app.deepagent.factory import create_agent
 
     custom = settings.custom_subagents
     if key not in custom:

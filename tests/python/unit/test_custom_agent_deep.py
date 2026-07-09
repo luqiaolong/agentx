@@ -13,7 +13,7 @@ from app.subagents.custom_agent import build_custom_agent
 async def test_build_custom_agent_uses_create_deep_agent() -> None:
     """自定义子代理应基于 create_deep_agent 而非 create_react_agent。"""
     with patch("app.subagents.custom_agent.get_chat_model"), \
-         patch("app.deep.harness.create_agent") as mock_create:
+         patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
 
         build_custom_agent(
@@ -32,7 +32,7 @@ async def test_build_custom_agent_uses_create_deep_agent() -> None:
 async def test_build_custom_agent_forbids_dangerous_tools() -> None:
     """子代理工具集应过滤掉危险工具。"""
     with patch("app.subagents.custom_agent.get_chat_model"), \
-         patch("app.deep.harness.create_agent") as mock_create:
+         patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
 
         build_custom_agent(

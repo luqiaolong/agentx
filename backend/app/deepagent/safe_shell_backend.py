@@ -17,26 +17,9 @@ from __future__ import annotations
 
 from deepagents.backends import LocalShellBackend
 
-from app.config import get_settings
-from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args
+from app.security.command_filter import has_forbidden_args, is_command_blocked
 
 __all__ = ["SafeLocalShellBackend"]
-
-
-def _effective_blocklist() -> frozenset[str]:
-    """合并默认黑名单与用户配置黑名单。"""
-    cfg = get_settings().cli_tool_blocklist
-    if not cfg:
-        return DEFAULT_BLOCKLIST
-    user_blocked = frozenset(
-        cmd.strip().lower() for cmd in cfg if isinstance(cmd, str) and cmd.strip()
-    )
-    return DEFAULT_BLOCKLIST | user_blocked
-
-
-def _is_command_blocked(command: str) -> bool:
-    """命令名是否在黑名单内（含用户配置合并）。"""
-    return command.strip().lower() in _effective_blocklist()
 
 
 class SafeLocalShellBackend(LocalShellBackend):
@@ -72,7 +55,7 @@ class SafeLocalShellBackend(LocalShellBackend):
         cmd_name = command.split()[0] if command else ""
 
         # 2. blocklist 检查
-        if _is_command_blocked(cmd_name):
+        if is_command_blocked(cmd_name):
             return f"命令 '{cmd_name}' 在黑名单中，禁止执行（删除/格式化/提权等极度危险操作）"
 
         # 3. 元字符过滤（阻断 shell 注入：; & | ` $ < >）

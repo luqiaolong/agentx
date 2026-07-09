@@ -58,8 +58,8 @@ def _resolve_subtask_runners(
     if subtask_runners is not None:
         return subtask_runners
     # Lazy import 避免模块顶部循环依赖
-    from app.agents.expert.coding import run_coding_expert
-    from app.deep.agent import run_deep_path
+    from app.scenarios.coding.agent import run_coding_expert
+    from app.deepagent.agent import run_deep_path
     from app.subagents import run_custom_agent, run_rag_agent, run_web_agent
 
     return {

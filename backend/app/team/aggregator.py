@@ -17,7 +17,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import get_settings
 from app.observability.logger import logger
-from app.utils.sse_events import make_team_event
+from app.sse.events import make_team_event
 from app.utils.text import ThinkFilter, extract_chunk_text
 from app.team.blackboard import Blackboard, _serialize_blackboard
 
