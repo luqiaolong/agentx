@@ -378,7 +378,13 @@ class SessionSandbox:
         """
         try:
             resolved = normalize_path(path, base=base)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "path authorization check failed",
+                path=str(path),
+                base=str(base),
+                error=str(exc),
+            )
             return False
         if is_critical(resolved):
             return False
