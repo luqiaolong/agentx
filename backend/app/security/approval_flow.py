@@ -87,9 +87,9 @@ def _extract_paths_from_tool_call(
     - glob / glob_files: args["pattern"] → 取 _glob_base
     - cli_execute: args["cwd"]；未指定时若已选择 workspace，回退到 workspace_path
       作为默认工作目录，避免已授权工作区仍被误标为危险操作。
+    - execute: 无路径参数（由 backend root_dir 限制工作目录），返回空列表。
 
-    注意：``cli_execute`` 的路径提取仅用于 directory_extension 预检查；
-    bug #3 修复后 ``cli_execute`` 在 dangerous_tool 判定时始终需要审批，
+    注意：``execute`` / ``cli_execute`` 在 dangerous_tool 判定时始终需要审批，
     不因路径已授权而自动放行。
     """
     from app.tools.filesystem import _glob_base
@@ -107,6 +107,10 @@ def _extract_paths_from_tool_call(
             return []
         base = _glob_base(str(pattern))
         return [base] if base else []
+    if name == "execute":
+        # execute 工具由 SafeLocalShellBackend 提供，工作目录由 backend root_dir 限制，
+        # 无路径参数需要提取
+        return []
     if name == "cli_execute":
         p = args.get("cwd")
         if p:
@@ -161,6 +165,8 @@ def _make_approval_event(
     elif name == "edit_file":
         path = args.get("path", "?") if isinstance(args, dict) else "?"
         preview = f"将编辑文件: {path}"
+    elif name == "execute":
+        preview = f"将执行命令: {args.get('command', '?') if isinstance(args, dict) else '?'}"
     elif name == "cli_execute":
         preview = f"将执行 CLI 命令: {args.get('command')} {' '.join(args.get('arguments') or [])}"
     elif name in ("git_clone", "git_pull", "git_checkout", "git_stage", "git_commit"):
@@ -599,9 +605,9 @@ async def run_approval_loop(
             name = tc.get("name", "")
             if name not in runtime_dangerous:
                 continue
-            # bug #3: cli_execute 始终需要审批（让用户审查命令内容），
+            # execute / cli_execute 始终需要审批（让用户审查命令内容），
             # 不因 workspace 已授权而自动放行
-            if name == "cli_execute":
+            if name in ("execute", "cli_execute"):
                 dangerous_calls.append(tc)
                 continue
             paths = _extract_paths_from_tool_call(tc, workspace_path)

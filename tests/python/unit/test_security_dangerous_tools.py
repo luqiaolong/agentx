@@ -32,7 +32,7 @@ def test_dangerous_tools_contains_expected_tools() -> None:
     expected = {
         "edit_file",
         "write_file",
-        "cli_execute",
+        "execute",
         "git_clone",
         "git_pull",
         "git_checkout",
@@ -82,9 +82,9 @@ def test_forbidden_subagent_tools_allows_cli_execute() -> None:
 
 def test_compute_runtime_dangerous_intersection() -> None:
     """仅返回 DANGEROUS_TOOLS ∩ enabled。"""
-    enabled = {"write_file", "read_file", "list_dir", "cli_execute"}
+    enabled = {"write_file", "read_file", "list_dir", "execute"}
     result = compute_runtime_dangerous(enabled, set())
-    assert result == frozenset({"write_file", "cli_execute"})
+    assert result == frozenset({"write_file", "execute"})
 
 
 def test_compute_runtime_dangerous_union_with_mcp() -> None:

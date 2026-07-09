@@ -8,6 +8,9 @@
 - ``_make_deep_tools``：构建 DeepAgent 内置工具集（只读 fs + 危险 fs + rag + web）
 - ``_load_mcp_tools``：异步加载 MCP 工具并标记非可信工具
 
+CLI 执行由 ``SafeLocalShellBackend`` 提供的 deepagents 内置 ``execute`` 工具承担，
+不再注册自研 ``cli_execute`` 工具。
+
 导入方向：``agent.py`` → ``tools.py``（单向，无循环）。
 """
 
@@ -18,7 +21,6 @@ from app.config import get_settings
 from app.observability.logger import logger
 from app.security.dangerous_tools import DANGEROUS_TOOLS
 from app.subagents.base import _make_fs_tools, _make_git_tools, _make_rag_tools, _make_web_tools
-from app.tools.cli import cli_execute as cli_execute_impl
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -39,6 +41,8 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     - 只读工具（read_file/list_dir/glob/grep）复用 ``_make_fs_tools``，与 subagent 一致。
     - 危险工具（write_file/edit_file）**仅** 在 DeepAgent 中暴露，由
       ``interrupt_before=["tools"]`` 触发审批，避免被 subagent 路径绕过。
+    - CLI 执行由 ``SafeLocalShellBackend`` 的内置 ``execute`` 工具提供（blocklist + 元字符过滤），
+      不再注册自研 ``cli_execute``。
 
     T4: 根据 ``get_settings().tools_enabled`` 过滤工具集。若工具被禁用，
     则不暴露给 LLM，且运行时 dangerous 集合也不含该工具（见 ``run_deep_path``）。
@@ -48,7 +52,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
 
     Args:
         thread_id: 会话 ID，用于沙箱授权校验。
-        workspace_path: 可选当前工作区绝对路径，作为 cli_execute 未传 cwd 时的默认值。
+        workspace_path: 可选当前工作区绝对路径，作为 fs 工具相对路径基准。
     """
     from langchain_core.tools import tool
 
@@ -72,23 +76,8 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
             thread_id, path, old_text, new_text, base=workspace_path
         )
 
-    @tool
-    async def cli_execute(
-        command: str,
-        arguments: list[str] | None = None,
-        cwd: str | None = None,
-        timeout: int | None = None,
-    ) -> str:
-        """执行受限 CLI 命令（如 git/npm/python）。需要用户授权与设置开启。
-
-        若未指定 cwd，默认使用当前会话绑定的 workspace 路径（如已选择工作区）。
-        """
-        effective_cwd = cwd if cwd else workspace_path
-        return await cli_execute_impl(
-            thread_id, command, arguments, effective_cwd, timeout, workspace_path
-        )
-
-    all_tools = [*fs_tools, write_file, edit_file, cli_execute, *git_tools, *rag_tools, *web_tools]
+    # CLI 执行由 SafeLocalShellBackend 的内置 execute 工具提供，不再注册自研 cli_execute
+    all_tools = [*fs_tools, write_file, edit_file, *git_tools, *rag_tools, *web_tools]
 
     # 根据 settings.tools_enabled 过滤；未配置的工具默认启用
     enabled = get_settings().tools_enabled

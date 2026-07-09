@@ -6,7 +6,7 @@
 - build_interrupt_config: 从 DANGEROUS_TOOLS 动态生成 interrupt_on
 - resolve_memory_paths: 解析 .agentx/AGENTS.md + rules 路径列表
 - resolve_skills_dir: 解析 data/skills/ 路径
-- resolve_backend: 构建 FilesystemBackend 启用 Context Offloading
+- resolve_backend: 构建 SafeLocalShellBackend 启用 Context Offloading + execute 工具
 - create_agent: 主入口,封装 create_deep_agent
 """
 
@@ -16,15 +16,16 @@ from pathlib import Path
 from typing import Any
 
 from deepagents import (
+    FilesystemPermission,
     GeneralPurposeSubagentProfile,
     HarnessProfile,
     RubricMiddleware,
     create_deep_agent,
     register_harness_profile,
 )
-from deepagents.backends import FilesystemBackend
 
 from app.config import DATA_DIR
+from app.deep.safe_shell_backend import SafeLocalShellBackend
 from app.deep.tools import DANGEROUS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
@@ -46,6 +47,22 @@ _EXCLUDED_BUILTIN_TOOLS: frozenset[str] = frozenset(
 
 # 已注册 profile key 集合，保证 register_harness_profile 幂等
 _registered_keys: set[str] = set()
+
+# 框架级静态安全基线：deny 写入系统敏感目录 + .git 目录。
+# 与 SessionSandbox（应用级动态授权）互补：FilesystemPermission = 框架级静态基线。
+# 注意：仅作用于 deepagents 内置 fs 工具层；项目自研 fs 工具由 SessionSandbox 管控。
+_DEFAULT_PERMISSIONS: list[FilesystemPermission] = [
+    FilesystemPermission(
+        operations=["write"],
+        paths=["/proc/**", "/sys/**", "/dev/**", "/etc/**"],
+        mode="deny",
+    ),
+    FilesystemPermission(
+        operations=["write"],
+        paths=["/**/.git/**"],
+        mode="deny",
+    ),
+]
 
 
 def ensure_harness_profile(model_name: str = "openai") -> None:
@@ -115,20 +132,22 @@ def resolve_skills_dir() -> str | None:
     return None
 
 
-def resolve_backend(workspace_path: str | None) -> FilesystemBackend | None:
-    """构建 FilesystemBackend，启用 Context Offloading。
+def resolve_backend(workspace_path: str | None) -> SafeLocalShellBackend | None:
+    """构建 SafeLocalShellBackend，启用 Context Offloading + execute 工具。
 
     workspace_path 为 None 时返回 None（不启用 backend）。
 
-    Notes:
-        - ``virtual_mode=True`` 显式指定，避免 deepagents 0.6.12 的弃用警告，
-          并使 backend 使用虚拟路径语义（非真实文件系统路径）。
-        - 该 backend 仅用于 Context Offloading 的虚拟文件系统暂存，
-          与项目自研 fs 工具操作的真实文件系统不冲突。
+    使用 ``SafeLocalShellBackend``（继承 ``LocalShellBackend``）替代原 ``FilesystemBackend``：
+    - 提供 deepagents 内置 ``execute`` 工具（``subprocess.run(shell=True)``），
+      替代项目自研 ``cli_execute``。
+    - ``SafeLocalShellBackend.execute`` override 添加 blocklist + 元字符过滤，
+      复用 ``app.security.command_filter`` 安全层。
+    - ``virtual_mode=True`` 使 backend 内部 fs 操作（Context Offloading）使用虚拟路径语义。
+    - ``root_dir=workspace_path`` 限制 shell 命令工作目录。
     """
     if workspace_path is None:
         return None
-    return FilesystemBackend(root_dir=workspace_path, virtual_mode=True)
+    return SafeLocalShellBackend(root_dir=workspace_path, virtual_mode=True)
 
 
 def create_agent(
@@ -143,6 +162,7 @@ def create_agent(
     subagents: list | None = None,
     rubric: str | None = None,
     grader_model: Any | None = None,
+    permissions: list[FilesystemPermission] | None = None,
 ) -> Any:
     """主入口：封装 create_deep_agent。
 
@@ -151,15 +171,17 @@ def create_agent(
 
     Args:
         model: ChatOpenAI 实例（已配置 temperature/streaming）。
-        tools: 项目自研工具列表（fs + cli + git + rag + web + 委派工具）。
+        tools: 项目自研工具列表（fs + git + rag + web + 委派工具）。
         checkpointer: LangGraph checkpointer（AsyncSqliteSaver 单例）。
         system_prompt: 完整 system prompt（含画像前缀 + 场景 prompt + 工作区后缀）。
         thread_id: 会话 ID（保留参数，deepagents 通过 config 注入）。
-        workspace_path: 工作区路径，用于解析 memory 路径和 FilesystemBackend。
+        workspace_path: 工作区路径，用于解析 memory 路径和 SafeLocalShellBackend。
         name: 图名称，默认 ``"deep_agent"``。
         subagents: 可选声明式子代理列表，透传给 create_deep_agent(subagents=...)。
         rubric: 可选 rubric 文本；非空时注入 RubricMiddleware 启用运行时自纠。
         grader_model: 可选 grader 模型；为空时调用 get_chat_model(temperature=0)。
+        permissions: 可选 FilesystemPermission 列表；为空时注入 _DEFAULT_PERMISSIONS
+            （deny 写入 /proc /sys /dev /etc + .git 目录）。与 SessionSandbox 互补。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -169,6 +191,7 @@ def create_agent(
     memory_paths = resolve_memory_paths(workspace_path)
     skills_dir = resolve_skills_dir()
     backend = resolve_backend(workspace_path)
+    effective_permissions = permissions if permissions is not None else _DEFAULT_PERMISSIONS
 
     middleware: list = []
     if rubric:
@@ -182,6 +205,7 @@ def create_agent(
         interrupt_on=interrupt_on,
         memory=memory_paths or None,
         skills=[skills_dir] if skills_dir else None,
+        permissions=effective_permissions,
         backend=backend,
         subagents=subagents,
         middleware=middleware,

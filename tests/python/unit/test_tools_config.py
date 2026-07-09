@@ -123,7 +123,7 @@ def test_make_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> No
 def test_make_deep_tools_all_enabled() -> None:
     """默认全启用，返回全部工具。"""
     tools = _make_deep_tools("t1")
-    assert len(tools) == 18
+    assert len(tools) == 17
     tool_names = {t.name for t in tools}
     expected = {
         "read_file",
@@ -132,7 +132,6 @@ def test_make_deep_tools_all_enabled() -> None:
         "grep_files",
         "write_file",
         "edit_file",
-        "cli_execute",
         "rag_retrieve",
         "web_search",
         # Git
@@ -198,7 +197,7 @@ def test_dangerous_tools_constant_unchanged() -> None:
     assert DANGEROUS_TOOLS == {
         "edit_file",
         "write_file",
-        "cli_execute",
+        "execute",
         "git_clone",
         "git_pull",
         "git_checkout",
@@ -231,22 +230,22 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
 def test_runtime_dangerous_all_enabled() -> None:
     """默认全启用，runtime_dangerous = DANGEROUS_TOOLS ∩ 已启用工具名。
 
-    注意：DANGEROUS_TOOLS 含 shell_exec，但 shell_exec 不在 DeepAgent 工具集中，
-    故 runtime_dangerous 不含 shell_exec（交集运算自动排除）。
+    注意：DANGEROUS_TOOLS 含 execute，但 execute 由 SafeLocalShellBackend 提供、
+    不在 _make_deep_tools 返回的工具集中，故 runtime_dangerous 不含 execute
+    （交集运算自动排除）。
     """
     agent_tools = _make_deep_tools("t1")
     enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
     runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
 
-    # 工具集含 edit_file/write_file/cli_execute 及全部 Git 写操作，不含 shell_exec
+    # 工具集含 edit_file/write_file 及全部 Git 写操作；execute 不在工具集中
     assert runtime_dangerous == {
         "edit_file",
         "write_file",
-        "cli_execute",
         "git_clone",
         "git_pull",
         "git_checkout",
         "git_stage",
         "git_commit",
     }
-    assert "shell_exec" not in runtime_dangerous
+    assert "execute" not in runtime_dangerous

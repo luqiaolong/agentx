@@ -54,7 +54,7 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             _fake_tool("write_file"),
             _fake_tool("edit_file"),
             _fake_tool("shell_exec"),
-            _fake_tool("cli_execute"),
+            _fake_tool("execute"),
         ],
     )
     monkeypatch.setattr(
@@ -104,7 +104,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
-        {"id": "tc-2", "name": "cli_execute", "args": {"command": "ls"}},
+        {"id": "tc-2", "name": "execute", "args": {"command": "ls"}},
     ]
 
     monkeypatch.setattr(
@@ -141,7 +141,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
     data0 = json.loads(approval_events[0].get("data", "{}"))
     data1 = json.loads(approval_events[1].get("data", "{}"))
     assert data0.get("tool_name") == "write_file"
-    assert data1.get("tool_name") == "cli_execute"
+    assert data1.get("tool_name") == "execute"
 
     # 没有 error 事件
     assert not any(e.get("event") == "error" for e in events)

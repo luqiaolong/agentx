@@ -119,6 +119,8 @@ async def build_coding_expert(
     checkpointer: Any = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    rubric: str | None = None,
+    grader_model: Any | None = None,
 ) -> Any:
     """构造 coding 场景 Expert agent。
 
@@ -173,7 +175,8 @@ async def build_coding_expert(
         workspace_path=workspace_path,
         chat_model=chat_model,
         subagents=subagents,
-        rubric=expert_cfg.rubric or None,
+        rubric=expert_cfg.rubric if expert_cfg.rubric else rubric,
+        grader_model=grader_model,
     )
 
 
@@ -263,6 +266,9 @@ async def run_coding_expert(
             _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
         }
         runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+        # execute 由 SafeLocalShellBackend 提供，不在 agent_tools 中但需审批
+        if workspace_path:
+            runtime_dangerous = runtime_dangerous | {"execute"}
 
         # 统一审批执行循环（deep.execution.run_agent_with_approval）
         # stream_fn / is_interrupted_fn 传入模块级引用，以便测试通过
