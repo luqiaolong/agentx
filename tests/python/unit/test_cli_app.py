@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from app.cli.app import (
     _build_parser,

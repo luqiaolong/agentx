@@ -211,6 +211,7 @@ async def run_coding_expert(
     """
     config: dict = {"configurable": {"thread_id": thread_id or "coding-default"}}
     sandbox = get_sandbox()
+    settings = get_settings()
     is_full_trust = permission_mode == "full_trust"
 
     try:

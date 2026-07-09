@@ -31,14 +31,6 @@ from app.eval.cli import (
     _ext_for,
     run_eval_command,
 )
-from app.eval.models import (
-    CaseExpect,
-    CaseResult,
-    EvalCase,
-    EvalResult,
-    EvalSuite,
-    EventAssertion,
-)
 from app.eval.reporters import ConsoleReporter, JsonReporter, MarkdownReporter
 
 

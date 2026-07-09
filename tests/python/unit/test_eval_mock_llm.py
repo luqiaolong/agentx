@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.eval.mocks.llm import MockChatModel, MockFixture

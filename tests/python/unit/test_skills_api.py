@@ -58,7 +58,7 @@ def _write_skill(
             front_parts.append(f"trigger: {trigger}")
         if tools is not None:
             front_parts.append(f"tools: {tools}")
-        body = f"---\n{'\n'.join(front_parts)}\n---\n\n{content}"
+        body = "---\n" + "\n".join(front_parts) + "\n---\n\n" + content
     (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
 
 

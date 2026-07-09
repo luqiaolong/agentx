@@ -48,7 +48,7 @@ function TraceCardHeaderImpl({
     <button
       type="button"
       onClick={onToggle}
-      className={`flex w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:ring-offset-1 ${className}`}
+      className={`flex w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5 focus:outline-none focus-visible:outline-none ${className}`}
       style={{ fontSize: 'var(--fs-msg-tool)' }}
       aria-expanded={expanded}
     >

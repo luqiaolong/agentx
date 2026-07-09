@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from app.workspace.config.generator import generate_agentx_dir
-from app.workspace.config.loader import ProjectConfig, load_project_config
-from app.workspace.config.merger import MergedConfig, merge_configs
+from app.workspace.config.loader import load_project_config
+from app.workspace.config.merger import merge_configs
 from app.workspace.config.templates import TEMPLATES
 
 

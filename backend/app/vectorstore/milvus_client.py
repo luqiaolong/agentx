@@ -260,7 +260,8 @@ class MilvusClient:
         )
 
     def _build_schema(self) -> Any:
-        """构造 collection schema（bge-m3 dim=1024）。"""
+        """构造 collection schema（向量维度由 settings.embedding_dim 决定）。"""
+        settings = get_settings()
         fields = [
             FieldSchema("id", DataType.INT64, is_primary=True, auto_id=True),
             FieldSchema("text", DataType.VARCHAR, max_length=65535),
@@ -268,7 +269,7 @@ class MilvusClient:
             FieldSchema("source_type", DataType.VARCHAR, max_length=32),
             FieldSchema("chunk_idx", DataType.INT32),
             FieldSchema("created_at", DataType.INT64),
-            FieldSchema("vector", DataType.FLOAT_VECTOR, dim=1024),
+            FieldSchema("vector", DataType.FLOAT_VECTOR, dim=settings.embedding_dim),
         ]
         return CollectionSchema(fields=fields, description="AgentX knowledge base")
 
@@ -451,7 +452,10 @@ class MilvusClient:
                     collection.search,
                     data=[vec],
                     anns_field="vector",
-                    param={"metric_type": "COSINE", "params": {"ef": 64}},
+                    param={
+                        "metric_type": "COSINE",
+                        "params": {"ef": get_settings().milvus_hnsw_ef_search},
+                    },
                     limit=top_k,
                     expr=filter,
                     output_fields=["text", "source"],

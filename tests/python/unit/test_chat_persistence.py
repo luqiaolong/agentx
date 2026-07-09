@@ -155,7 +155,7 @@ async def test_empty_assistant_content_skips_persistence() -> None:
     original = graph_module.run_work_supervisor
     graph_module.run_work_supervisor = _fake_run_work_supervisor
     try:
-        events = [e async for e in run_router("hi", "t-empty", checkpointer=checkpointer, agent_mode="work")]
+        _ = [e async for e in run_router("hi", "t-empty", checkpointer=checkpointer, agent_mode="work")]
     finally:
         graph_module.run_work_supervisor = original
 
