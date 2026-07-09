@@ -26,7 +26,8 @@ from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.utils.prompts import resolve_system_prompt
+from app.utils.prompts import build_workspace_prompt_suffix, resolve_system_prompt
+from app.utils.sse_events import make_error_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -51,18 +52,6 @@ __all__ = [
     "build_deep_agent",
     "run_deep_path",
 ]
-
-
-def _workspace_prompt_suffix(workspace_path: str | None) -> str:
-    """根据工作区路径生成 system prompt 后缀。"""
-    if not workspace_path:
-        return ""
-    return (
-        f"\n\n当前工作目录: {workspace_path}\n"
-        "该目录已授权，你可以直接使用 list_dir、read_file、glob、grep 等工具访问。"
-        "执行 execute 工具时，命令默认在当前工作目录下运行。"
-        "执行文件读写工具时，优先使用当前工作目录下的相对路径。"
-    )
 
 
 async def build_deep_agent(
@@ -93,7 +82,7 @@ async def build_deep_agent(
         scene_prompt=scene_prompt,
         skill_extra=profile_prompt or None,
     )
-    system_prompt = base_prompt + _workspace_prompt_suffix(workspace_path)
+    system_prompt = base_prompt + build_workspace_prompt_suffix(workspace_path)
     return create_agent(
         model,
         tools,
@@ -151,13 +140,13 @@ async def run_deep_path(
             chat_model=chat_model,
         )
     except ValueError as exc:
-        yield {"event": "error", "data": f"LLM 不可用: {exc}"}
+        yield make_error_event(f"LLM 不可用: {exc}")
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("build_deep_agent failed", thread_id=thread_id)
-        yield {"event": "error", "data": f"DeepAgent 初始化失败: {exc}"}
+        yield make_error_event(f"DeepAgent 初始化失败: {exc}")
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
         return

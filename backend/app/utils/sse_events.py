@@ -173,8 +173,25 @@ def make_approval_event(
     return make_sse_event("approval_request", data, trace_id=trace_id)
 
 
+def make_error_event(
+    message: str, code: str | None = None, trace_id: str | None = None
+) -> dict[str, str]:
+    """构造 error SSE 事件（结构化 JSON）。
+
+    数据格式：
+    - ``message``: 错误描述（必填）。
+    - ``code``: 可选错误码。
+    - ``trace_id``: 可选追踪 ID（注入 data 顶层）。
+    """
+    payload: dict[str, Any] = {"message": message}
+    if code is not None:
+        payload["code"] = code
+    return make_sse_event("error", payload, trace_id=trace_id)
+
+
 __all__ = [
     "make_sse_event",
+    "make_error_event",
     "make_todo_event",
     "make_tool_call_event",
     "make_tool_result_event",

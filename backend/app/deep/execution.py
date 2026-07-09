@@ -13,7 +13,11 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 from loguru import logger
 
-from app.security.approval import get_pause_event, is_aborted, is_paused
+from app.security.approval import (
+    is_aborted,
+    is_paused,
+    wait_for_resume,
+)
 from app.security.approval_flow import (
     _APPROVAL_POLL_INTERVAL,
     _READONLY_TOOLS,
@@ -25,7 +29,7 @@ from app.security.approval_flow import (
     _make_approval_event,
     _resolve_max_wait,
 )
-from app.utils.sse_events import make_sse_event
+from app.utils.sse_events import make_error_event, make_sse_event
 
 __all__ = ["run_agent_with_approval"]
 
@@ -157,7 +161,7 @@ async def run_agent_with_approval(
     except Exception as exc:  # noqa: BLE001
         logger.exception("agent initial stream failed", thread_id=thread_id, source=source)
         await _inject_msgs(agent, config, f"执行失败: {exc}")
-        yield await _forward(make_sse_event("error", f"执行失败: {exc}"))
+        yield await _forward(make_error_event( f"执行失败: {exc}"))
         return
 
     # 2. 中断/恢复循环
@@ -170,14 +174,12 @@ async def run_agent_with_approval(
         # 暂停/恢复检查
         if await is_paused(thread_id):
             yield await _forward(make_sse_event("paused", {}))
-            pause_event = await get_pause_event(thread_id)
-            if await is_paused(thread_id):
-                await pause_event.wait()
+            await wait_for_resume(thread_id, timeout=_resolve_max_wait())
             # 恢复后继续执行；不发送已废弃的 resumed 事件
 
         # abort 检查
         if await is_aborted(thread_id):
-            yield await _forward(make_sse_event("error", "操作已中止"))
+            yield await _forward(make_error_event( "操作已中止"))
             return
 
         if not await _is_int(agent, config):
@@ -260,7 +262,7 @@ async def run_agent_with_approval(
             except Exception as exc:  # noqa: BLE001
                 logger.exception("agent resume failed", thread_id=thread_id)
                 await _inject_msgs(agent, config, f"恢复失败: {exc}")
-                yield await _forward(make_sse_event("error", f"恢复失败: {exc}"))
+                yield await _forward(make_error_event( f"恢复失败: {exc}"))
                 return
             continue
 
@@ -319,7 +321,7 @@ async def run_agent_with_approval(
             if decision is None or not decision.approved:
                 for tc in dangerous_calls:
                     await _inject_call(agent, config, tc, "用户拒绝执行危险操作")
-                yield await _forward(make_sse_event("error", "用户拒绝执行危险操作"))
+                yield await _forward(make_error_event( "用户拒绝执行危险操作"))
                 return
 
             logger.info(
@@ -341,11 +343,11 @@ async def run_agent_with_approval(
             for evt in extension_handled.events:
                 yield await _forward(evt)
             if extension_handled.denied:
-                yield await _forward(make_sse_event("error", "用户拒绝访问该目录"))
+                yield await _forward(make_error_event( "用户拒绝访问该目录"))
                 await _inject_msgs(agent, config, "用户拒绝访问该目录")
                 return
             if extension_handled.timed_out:
-                yield await _forward(make_sse_event("error", "目录授权等待被中断，操作未执行"))
+                yield await _forward(make_error_event( "目录授权等待被中断，操作未执行"))
                 await _inject_msgs(agent, config, "目录授权等待被中断，操作未执行")
                 return
 
@@ -356,13 +358,13 @@ async def run_agent_with_approval(
         except Exception as exc:  # noqa: BLE001
             logger.exception("agent resume failed", thread_id=thread_id)
             await _inject_msgs(agent, config, f"恢复失败: {exc}")
-            yield await _forward(make_sse_event("error", f"恢复失败: {exc}"))
+            yield await _forward(make_error_event( f"恢复失败: {exc}"))
             return
 
         await _sandbox.clear_temp(thread_id)
 
     if iteration >= max_iterations:
         logger.warning("agent hit max iterations", thread_id=thread_id)
-        yield await _forward(make_sse_event("error", "达到最大迭代上限"))
+        yield await _forward(make_error_event( "达到最大迭代上限"))
         await _inject_msgs(agent, config, "达到最大迭代上限")
         return

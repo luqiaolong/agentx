@@ -32,7 +32,7 @@ from app.deep.tools import (
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.subagents.base import THINK_PROMPT_SUFFIX, make_rag_tools, make_web_tools
-from app.utils.sse_events import make_sse_event
+from app.utils.sse_events import make_error_event, make_sse_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -242,11 +242,11 @@ async def run_coding_expert(
                 chat_model=chat_model,
             )
         except ValueError as exc:
-            yield make_sse_event("error", f"LLM 不可用: {exc}")
+            yield make_error_event(f"LLM 不可用: {exc}")
             return
         except Exception as exc:  # noqa: BLE001
             logger.exception("build_coding_expert failed", thread_id=thread_id)
-            yield make_sse_event("error", f"Coding Expert 初始化失败: {exc}")
+            yield make_error_event(f"Coding Expert 初始化失败: {exc}")
             return
 
         # 运行时危险工具集合

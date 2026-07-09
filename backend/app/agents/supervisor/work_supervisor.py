@@ -39,8 +39,8 @@ from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.utils.prompts import resolve_system_prompt
-from app.utils.sse_events import make_sse_event
+from app.utils.prompts import build_workspace_prompt_suffix, resolve_system_prompt
+from app.utils.sse_events import make_error_event, make_sse_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -49,18 +49,6 @@ __all__ = [
     "build_work_supervisor",
     "run_work_supervisor",
 ]
-
-
-def _workspace_prompt_suffix(workspace_path: str | None) -> str:
-    """根据工作区路径生成 system prompt 后缀。"""
-    if not workspace_path:
-        return ""
-    return (
-        f"\n\n当前工作目录: {workspace_path}\n"
-        "该目录已授权，你可以直接使用 list_dir、read_file、glob、grep 等工具访问。"
-        "执行 execute 工具时，命令默认在当前工作目录下运行。"
-        "执行文件读写工具时，优先使用当前工作目录下的相对路径。"
-    )
 
 
 def _build_subagent_runnables(
@@ -257,7 +245,7 @@ async def build_work_supervisor(
         scene_prompt=None,
         skill_extra=profile_prompt or None,
     )
-    system_prompt = base_prompt + _workspace_prompt_suffix(workspace_path)
+    system_prompt = base_prompt + build_workspace_prompt_suffix(workspace_path)
 
     return create_agent(
         model,
@@ -318,7 +306,7 @@ async def run_work_supervisor(
         )
         yield make_sse_event("delegation", {
             "target": expert_name,
-            "source": "work",
+            "source": expert_name,
             "message": f"@mention 强制委派给 {expert_name} Expert",
         })
         from app.agents.expert.coding import run_coding_expert
@@ -348,7 +336,7 @@ async def run_work_supervisor(
         )
         yield make_sse_event("delegation", {
             "target": agent_name,
-            "source": "work",
+            "source": agent_name,
             "message": f"@mention 强制委派给 {agent_name} 子代理",
         })
 
@@ -368,6 +356,9 @@ async def run_work_supervisor(
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, True)
             logger.info("supervisor full_trust mode enabled", thread_id=thread_id)
+
+        # 加载 supervisor 配置（rubric / grader_model 在此读取）
+        supervisor_cfg = get_settings().agents.supervisor
 
         history_msgs = list(history) if history else []
         inputs = {"messages": [*history_msgs, {"role": "user", "content": cleaned_message}]}
@@ -395,13 +386,15 @@ async def run_work_supervisor(
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
                 chat_model=chat_model,
+                rubric=supervisor_cfg.rubric or None,
+                grader_model=supervisor_cfg.grader_model,
             )
         except ValueError as exc:
-            yield make_sse_event("error", f"LLM 不可用: {exc}")
+            yield make_error_event(f"LLM 不可用: {exc}")
             return
         except Exception as exc:  # noqa: BLE001
             logger.exception("build_work_supervisor failed", thread_id=thread_id)
-            yield make_sse_event("error", f"Supervisor 初始化失败: {exc}")
+            yield make_error_event(f"Supervisor 初始化失败: {exc}")
             return
 
         # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集 + MCP untrusted

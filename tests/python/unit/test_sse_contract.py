@@ -196,12 +196,25 @@ def test_sse_done_data_is_empty_json():
     assert event == {"event": "done", "data": "{}"}
 
 
-def test_sse_error_uses_plain_string():
-    """error 事件 data 是纯字符串错误消息。"""
-    from app.utils.sse_events import make_sse_event
+def test_sse_error_is_structured_json():
+    """error 事件 data 是结构化 JSON，至少包含 message。"""
+    from app.utils.sse_events import make_error_event
 
-    event = make_sse_event("error", "LLM 不可用")
-    assert event == {"event": "error", "data": "LLM 不可用"}
+    event = make_error_event("LLM 不可用")
+    assert event["event"] == "error"
+    payload = json.loads(event["data"])
+    assert payload["message"] == "LLM 不可用"
+
+
+def test_sse_error_with_code():
+    """error 事件可携带 code 字段。"""
+    from app.utils.sse_events import make_error_event
+
+    event = make_error_event("something went wrong", code="E123")
+    assert event["event"] == "error"
+    payload = json.loads(event["data"])
+    assert payload["message"] == "something went wrong"
+    assert payload["code"] == "E123"
 
 
 def test_sse_todo_update_serializes_dict():
