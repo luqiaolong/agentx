@@ -81,7 +81,9 @@ async def build_deep_agent(
     if chat_model is not None:
         model = chat_model
     else:
-        model = get_chat_model(temperature=0.3, streaming=True)
+        model = get_chat_model(
+            temperature=get_settings().llm_temperature_orchestrator, streaming=True
+        )
     if tools is None:
         tools = _make_deep_tools(thread_id)
     if checkpointer is None:

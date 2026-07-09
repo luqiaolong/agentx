@@ -233,7 +233,7 @@ class LangChainTeiEmbeddings(Embeddings):
         """
         results = self._sync_embed(texts)
         settings = get_settings()
-        dim = settings.embedding_dim if hasattr(settings, "embedding_dim") else 1024
+        dim = settings.embedding_dim
         return [vec if vec is not None else [0.0] * dim for vec in results]
 
     def embed_query(self, text: str) -> list[float]:
@@ -328,7 +328,7 @@ class LangChainTeiEmbeddings(Embeddings):
         """异步批量嵌入。``None`` 跳过位替换为零向量（保留顺序对齐）。"""
         results = await self._client.embed_texts(texts)
         settings = get_settings()
-        dim = settings.embedding_dim if hasattr(settings, "embedding_dim") else 1024
+        dim = settings.embedding_dim
         return [vec if vec is not None else [0.0] * dim for vec in results]
 
     async def aembed_query(self, text: str) -> list[float]:

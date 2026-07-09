@@ -11,6 +11,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.config import get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
 
@@ -58,7 +59,7 @@ async def summarize_messages(messages: list[Any]) -> str:
     history = _serialize_messages(messages)
     prompt = _SUMMARY_PROMPT.invoke({"history": history})
 
-    llm = get_chat_model(temperature=0.0)
+    llm = get_chat_model(temperature=get_settings().llm_temperature_extraction)
     response = await llm.ainvoke(prompt)
     text = response.content if hasattr(response, "content") else str(response)
     if isinstance(text, list):

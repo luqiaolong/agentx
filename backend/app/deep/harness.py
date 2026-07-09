@@ -28,7 +28,7 @@ from deepagents import (
     register_harness_profile,
 )
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, get_settings
 from app.deep.safe_shell_backend import SafeLocalShellBackend
 from app.deep.tools import DANGEROUS_TOOLS
 from app.llm import get_chat_model
@@ -183,7 +183,9 @@ def create_agent(
 
     middleware: list = []
     if rubric:
-        _grader = grader_model if grader_model is not None else get_chat_model(temperature=0)
+        _grader = grader_model if grader_model is not None else get_chat_model(
+            temperature=get_settings().llm_temperature_extraction
+        )
         middleware.append(RubricMiddleware(model=_grader, max_iterations=3))
 
     return create_deep_agent(

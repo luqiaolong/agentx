@@ -147,7 +147,7 @@ async def _plan_node(state: TeamState) -> dict:
     chat_model = state.get("chat_model")
     try:
         llm = chat_model if chat_model is not None else get_chat_model(
-            temperature=0.3, streaming=False
+            temperature=settings.llm_temperature_orchestrator, streaming=False
         )
     except ValueError as exc:
         writer(make_team_event("error", {"message": f"LLM 不可用: {exc}"}))
