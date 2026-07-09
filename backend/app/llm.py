@@ -49,6 +49,8 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
         }
         if settings.max_output_tokens:
             kwargs["max_tokens"] = settings.max_output_tokens
+        if settings.llm_timeout is not None:
+            kwargs["timeout"] = settings.llm_timeout
         return ChatOpenAI(**kwargs)
 
     # Kimi Coding Plan（Moonshot 编程套餐，独立服务）：OpenAI 兼容接口
@@ -66,6 +68,8 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
         }
         if settings.max_output_tokens:
             kwargs["max_tokens"] = settings.max_output_tokens
+        if settings.llm_timeout is not None:
+            kwargs["timeout"] = settings.llm_timeout
         return ChatOpenAI(**kwargs)
 
     # GLM Coding Plan（智谱编程套餐）：OpenAI 兼容接口，Coding Plan 专用端点
@@ -82,6 +86,8 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
         }
         if settings.max_output_tokens:
             kwargs["max_tokens"] = settings.max_output_tokens
+        if settings.llm_timeout is not None:
+            kwargs["timeout"] = settings.llm_timeout
         return ChatOpenAI(**kwargs)
 
     # OpenAI 系列：gpt-* / o1-* / o3-*
@@ -100,6 +106,8 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["base_url"] = settings.openai_base_url
         if settings.max_output_tokens:
             kwargs["max_tokens"] = settings.max_output_tokens
+        if settings.llm_timeout is not None:
+            kwargs["timeout"] = settings.llm_timeout
         return ChatOpenAI(**kwargs)
 
     # 兜底：若有 openai_api_key 则按 OpenAI 兼容处理（支持自定义 base_url）
@@ -116,6 +124,8 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["base_url"] = settings.openai_base_url
         if settings.max_output_tokens:
             kwargs["max_tokens"] = settings.max_output_tokens
+        if settings.llm_timeout is not None:
+            kwargs["timeout"] = settings.llm_timeout
         return ChatOpenAI(**kwargs)
 
     raise ValueError(

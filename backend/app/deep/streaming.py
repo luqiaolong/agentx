@@ -92,7 +92,47 @@ async def _stream_agent_events(
         inputs_type=type(inputs).__name__,
         source=source,
     )
+
+    # 去重集合：基于消息签名避免 LangGraph astream 在 interrupt/resume 后
+    # 重发已处理过的消息（astream 每次从图起点遍历，会重复 emit 历史状态）。
+    # 签名 = msg_type + content_hash + tool_call_ids，覆盖 AIMessage 和 ToolMessage。
+    _seen_signatures: set[str] = set()
+
+    def _msg_signature(msg: Any) -> str:
+        """为消息生成唯一签名，用于去重。"""
+        msg_type = type(msg).__name__
+        content = getattr(msg, "content", "")
+        if isinstance(content, list):
+            content = "".join(
+                block if isinstance(block, str)
+                else block.get("text", "") if isinstance(block, dict)
+                else ""
+                for block in content
+            )
+        content_hash = str(hash(content)) if content else ""
+        tc_ids = ""
+        tcs = getattr(msg, "tool_calls", None) or []
+        if tcs:
+            tc_ids = "|".join(
+                str(tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", ""))
+                for tc in tcs
+            )
+        return f"{msg_type}:{content_hash}:{tc_ids}"
+
+    # 诊断：记录 astream 首次 state 到达的耗时，帮助定位 LLM 调用阻塞
+    _astream_start = asyncio.get_event_loop().time()
+    _first_state_seen = False
+
     async for state in agent.astream(inputs, config=config, stream_mode="values"):
+        if not _first_state_seen:
+            _first_state_seen = True
+            elapsed = asyncio.get_event_loop().time() - _astream_start
+            logger.info(
+                "stream_agent_events: first state arrived after {elapsed:.2f}s",
+                thread_id=thread_id,
+                elapsed=elapsed,
+                source=source,
+            )
         if abort_event.is_set():
             raise asyncio.CancelledError("aborted")
         messages = state.get("messages", []) if hasattr(state, "get") else []
@@ -100,8 +140,17 @@ async def _stream_agent_events(
             logger.debug("stream_agent_events: empty messages, skipping")
             continue
         last_msg = messages[-1]
+        sig = _msg_signature(last_msg)
+        if sig in _seen_signatures:
+            logger.debug(
+                "stream_agent_events: duplicate message skipped sig={sig} msg_type={msg_type}",
+                sig=sig,
+                msg_type=type(last_msg).__name__,
+            )
+            continue
+        _seen_signatures.add(sig)
         msg_type = type(last_msg).__name__
-        logger.debug(
+        logger.info(
             "stream_agent_events: msg_type={msg_type} msg_count={msg_count} source={source}",
             msg_type=msg_type,
             msg_count=len(messages),

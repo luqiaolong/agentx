@@ -62,6 +62,13 @@ export type MessagePart =
       status: "running" | "complete" | "error";
       /** tool-call part 写入时间（工具开始执行）。 */
       startedAt: number;
+      /**
+       * tool-call 完成时间（毫秒）。
+       * - 正常完成：tool-result 配对时写入（即 ToolCallCard 的 arrivedAt）
+       * - SSE 异常中断兜底：`markRunningToolCallsComplete` 在 done/error 终态写入
+       * - 仍在 running：未定义
+       */
+      completedAt?: number;
     }
   | {
       type: "tool-result";
@@ -244,6 +251,25 @@ export interface ChatState {
     text: string,
   ) => void;
   /**
+   * 追加一个**独立**的 reasoning step 到指定 message（chat-trace-multi-reasoning）。
+   *
+   * 与 `appendPartText(messageId, "reasoning", text)` 的区别：
+   * - 旧实现会把同 message 的 reasoning 累积到最后一个 `done===false` 的 part，
+   *   导致多次 LLM step 的推理被合并为一个 ReasoningBlock。
+   * - 新实现每次调用都**强制关闭**上一个未 done 的 reasoning（写入 doneAt），
+   *   然后 push 独立的新 reasoning part（startedAt=Date.now(), done=false）。
+   *
+   * 这样多步骤推理会按时间轴展开为多个独立 ReasoningBlock，符合
+   * 「每个 LLM 推理 step 独立展示」的 UI 规范。
+   *
+   * 后端约定：每个 LLM step（AIMessage with tool_calls）yield 一次完整的
+   * reasoning event（content 一次性 yield），所以前端无需做流式 token 累积。
+   *
+   * 状态记忆：每个 reasoning part 独立 id，ReasoningBlock 的 sessionStorage
+   * 展开/折叠状态按 (messageId, partId) 隔离，不会跨 part 串扰。
+   */
+  appendReasoningStep: (messageId: string, content: string) => void;
+  /**
    * 向指定 message 添加新 part。
    */
   addPart: (messageId: string, part: MessagePart) => void;
@@ -274,6 +300,18 @@ export interface ChatState {
    * 触发前端自动收缩。
    */
   markReasoningDone: (messageId: string) => void;
+  /**
+   * 兜底：把指定 message 中所有仍 status="running" 的 tool-call 强制转为 status="complete"。
+   *
+   * 用途：SSE 流在异常中断（abort / timeout / 部分事件丢失）时，最后一个「运行中」
+   * 的 tool-call 卡在 running 态不会自动关闭。本 action 在 `done` / `error` /
+   * `paused` 等终态事件时调用，**仅清理仍 running 的项**——已经 complete/error
+   * 的 tool-call 不动，保持业务语义一致。
+   *
+   * 同时给完成兜底的 tool-call 写入 completedAt（=Date.now()），让耗时展示有值。
+   * 如果 status 已经是 complete/error 不会被改写。
+   */
+  markRunningToolCallsComplete: (messageId: string) => void;
   /** 兼容旧 API：等价于 appendPartText(messageId, "text", content)。 */
   appendMessageContent: (id: string, content: string) => void;
   clearMessages: () => void;
@@ -655,6 +693,51 @@ export const useChatStore = create<ChatState>()(
           });
         },
 
+        appendReasoningStep: (messageId, content) => {
+          set((s) => {
+            const targetCid = lookupSessionId(messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const now = Date.now();
+              // 防御性去重：若最后一条 reasoning part 的 text 与 incoming content
+              // 完全一致（后端 LangGraph astream 在 interrupt/resume 后会重发
+              // 相同 AIMessage），则跳过插入，避免重复展示。
+              const lastReasoning = m.parts
+                .slice()
+                .reverse()
+                .find((p) => p.type === "reasoning");
+              if (
+                lastReasoning &&
+                lastReasoning.text === content &&
+                !lastReasoning.done
+              ) {
+                // 内容完全相同且仍在 streaming → 是重复事件，忽略
+                return m;
+              }
+              // 1) 关闭所有未 done 的 reasoning
+              const parts = m.parts.map((p) =>
+                p.type === "reasoning" && !p.done
+                  ? { ...p, done: true, doneAt: now }
+                  : p,
+              );
+              // 2) 推入一个独立的 reasoning part
+              parts.push({
+                type: "reasoning",
+                id: crypto.randomUUID(),
+                text: content,
+                done: false,
+                startedAt: now,
+              });
+              return { ...m, parts };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
         addPart: (messageId, part) => {
           set((s) => {
             const targetCid = lookupSessionId(messageId);
@@ -663,6 +746,28 @@ export const useChatStore = create<ChatState>()(
             if (!sess) return s;
             const messages = sess.messages.map((m) => {
               if (m.id !== messageId) return m;
+              // chat-trace-dup-stream-dedup：tool-call / tool-result 类型按 id 去重。
+              //
+              // LangGraph astream(stream_mode="values") 在 interrupt_before 暂停 / 恢复时，
+              // 后端 _stream_agent_events 没有去重，会对同一 state 重新 yield 一次
+              // reasoning + tool_call 事件。本 store 的 addPart 之前是纯追加 → 同 id
+              // tool-call 会出现两份，第一份被 buildRenderItems 配对后无对应
+              // tool-result，导致 status 卡 running。
+              //
+              // 这里对 tool-call / tool-result 按 partId 唯一化：已存在同 id 的 part
+              // 直接 no-op（不重复插入、不修改状态），前端渲染那一份即可保持稳定。
+              // 其他类型（text / reasoning / delegation / classification / team）保持
+              // 原追加语义不变。
+              if (part.type === "tool-call" || part.type === "tool-result") {
+                const alreadyExists = m.parts.some(
+                  (p) => p.type === part.type && p.id === part.id,
+                );
+                if (alreadyExists) {
+                  return m;
+                }
+                const parts = [...m.parts, part];
+                return { ...m, parts };
+              }
               const parts = [...m.parts, part];
               return { ...m, parts };
             });
@@ -770,6 +875,29 @@ export const useChatStore = create<ChatState>()(
               const parts = m.parts.map((p) =>
                 p.type === "reasoning" && !p.done
                   ? { ...p, done: true, doneAt: Date.now() }
+                  : p,
+              );
+              return { ...m, parts };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        markRunningToolCallsComplete: (messageId) => {
+          // 与 markReasoningDone 同模式：按 messageId 跨会话定位（不依赖 currentId）
+          set((s) => {
+            const targetCid = lookupSessionId(messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const now = Date.now();
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              // 仅清理仍 running 的项；已 complete/error 不动
+              const parts = m.parts.map((p) =>
+                p.type === "tool-call" && p.status === "running"
+                  ? { ...p, status: "complete" as const, completedAt: now }
                   : p,
               );
               return { ...m, parts };

@@ -435,6 +435,95 @@ describe("chat store parts 模型", () => {
     expect(deriveContent(msg.parts)).toBe("前");
   });
 
+  // ----- chat-trace-dup-stream-dedup -----
+  // 后端 LangGraph astream 在 interrupt 前后会重 emit 同一 AIMessage，导致
+  // tool-call event 被前端收到多次。store.addPart 原实现是纯追加，同 id tool-call
+  // 出现多份会让 buildRenderItems 配对时只取 first 一份，且后续重复部分失去
+  // 对应 tool-result 而 status 永久 running。这里给 tool-call / tool-result 类型
+  // 加按 id 去重，保持 store 单一份。
+  it("addPart 对同 id 的 tool-call 不重复插入", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    const tc = {
+      type: "tool-call" as const,
+      id: "tc-dup",
+      toolName: "read_file",
+      args: { path: "/tmp" },
+      source: "code",
+      status: "running" as const,
+      startedAt: 1000,
+    };
+    useChatStore.getState().addPart("a1", tc);
+    useChatStore.getState().addPart("a1", tc);
+    useChatStore.getState().addPart("a1", tc);
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    // 同 id 只保留首份，后续两次是 no-op
+    const toolCalls = msg.parts.filter((p) => p.type === "tool-call");
+    expect(toolCalls).toHaveLength(1);
+  });
+
+  it("addPart 对同 id 的 tool-result 不重复插入", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    const tr = {
+      type: "tool-result" as const,
+      id: "tr-dup",
+      toolName: "read_file",
+      result: "content",
+      source: "code",
+      arrivedAt: 1500,
+    };
+    useChatStore.getState().addPart("a1", tr);
+    useChatStore.getState().addPart("a1", tr);
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    const toolResults = msg.parts.filter((p) => p.type === "tool-result");
+    expect(toolResults).toHaveLength(1);
+  });
+
+  it("addPart 对不同 id 的 tool-call 正常追加", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc-1",
+      toolName: "list_dir",
+      args: {},
+      source: "code",
+      status: "running",
+      startedAt: 1,
+    });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc-2",
+      toolName: "read_file",
+      args: {},
+      source: "code",
+      status: "running",
+      startedAt: 1,
+    });
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts.filter((p) => p.type === "tool-call")).toHaveLength(2);
+  });
+
+  it("addPart 对非 tool 类型保持原追加语义", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    // reasoning / classification / delegation 仍按追加
+    useChatStore.getState().addPart("a1", { type: "reasoning", id: "r1", text: "A", done: true, startedAt: 1 });
+    useChatStore.getState().addPart("a1", { type: "reasoning", id: "r1", text: "B", done: true, startedAt: 1 });
+    useChatStore.getState().addPart("a1", {
+      type: "classification",
+      id: "c1",
+      label: "CHAT",
+      reason: "test",
+    });
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    // reasoning 同 id 允许两份（不同 step 用不同 messageId 隔离是核心，
+    // single message 里同 id 重复不常见但保留追加语义避免破坏性改）
+    expect(msg.parts.filter((p) => p.type === "reasoning")).toHaveLength(2);
+    expect(msg.parts.filter((p) => p.type === "classification")).toHaveLength(1);
+  });
+
   it("addPart 添加 text part 时同步更新 content", async () => {
     const id = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({
@@ -542,6 +631,261 @@ describe("chat store parts 模型", () => {
     }
     // idB 不受影响
     expect(useChatStore.getState().sessions[idB].messages).toHaveLength(0);
+  });
+
+  // ----- markRunningToolCallsComplete（chat-trace-status-stuck-fallback）-----
+  // SSE 流中断 / tool_result 事件丢失时，最后一个运行中的 tool-call 卡在 running
+  // 不会自动关闭。本 action 在 done/error 终态调用，**仅清理仍 running 的项**，
+  // 已 complete/error 不动，写入 completedAt 让耗时展示有值。
+  it("markRunningToolCallsComplete 把仍 running 的 tool-call 改为 complete", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc1",
+      toolName: "list_dir",
+      args: { path: "/tmp" },
+      source: "code",
+      status: "running",
+      startedAt: 1000,
+    });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc2",
+      toolName: "read_file",
+      args: { path: "/tmp/x" },
+      source: "code",
+      status: "running",
+      startedAt: 1100,
+    });
+    const before = Date.now();
+    useChatStore.getState().markRunningToolCallsComplete("a1");
+    const after = Date.now();
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    const toolCalls = msg.parts.filter(
+      (p): p is { type: "tool-call"; id: string; status: string; completedAt?: number } =>
+        p.type === "tool-call",
+    );
+    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls.every((t) => t.status === "complete")).toBe(true);
+    // completedAt 在 before..after 之间
+    for (const tc of toolCalls) {
+      expect(tc.completedAt).toBeGreaterThanOrEqual(before);
+      expect(tc.completedAt).toBeLessThanOrEqual(after);
+    }
+  });
+
+  it("markRunningToolCallsComplete 不影响已 complete / error 的 tool-call", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc-ok",
+      toolName: "list_dir",
+      args: {},
+      source: "code",
+      status: "complete",
+      startedAt: 1,
+      completedAt: 100,
+    });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc-err",
+      toolName: "read_file",
+      args: {},
+      source: "code",
+      status: "error",
+      startedAt: 1,
+    });
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc-run",
+      toolName: "glob_files",
+      args: {},
+      source: "code",
+      status: "running",
+      startedAt: 1,
+    });
+    useChatStore.getState().markRunningToolCallsComplete("a1");
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    const byId = new Map<string, { status: string; completedAt?: number }>();
+    for (const p of msg.parts) {
+      if (p.type === "tool-call") byId.set(p.id, { status: p.status, completedAt: p.completedAt });
+    }
+    // 已 complete / error 不动
+    expect(byId.get("tc-ok")?.status).toBe("complete");
+    expect(byId.get("tc-ok")?.completedAt).toBe(100);
+    expect(byId.get("tc-err")?.status).toBe("error");
+    expect(byId.get("tc-err")?.completedAt).toBeUndefined();
+    // 仍 running 被强制 close
+    expect(byId.get("tc-run")?.status).toBe("complete");
+    expect(typeof byId.get("tc-run")?.completedAt).toBe("number");
+  });
+
+  it("markRunningToolCallsComplete 对无 running tool-call 的消息是空操作", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({
+      id: "a1",
+      role: "assistant",
+      ts: 1,
+      parts: [{ type: "text", id: "t1", text: "hello" }],
+    });
+    expect(() =>
+      useChatStore.getState().markRunningToolCallsComplete("a1"),
+    ).not.toThrow();
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts).toHaveLength(1);
+  });
+
+  it("markRunningToolCallsComplete 对未知 messageId 不报错", async () => {
+    await useChatStore.getState().createSession();
+    expect(() =>
+      useChatStore.getState().markRunningToolCallsComplete("unknown"),
+    ).not.toThrow();
+  });
+
+  // ----- appendReasoningStep（chat-trace-multi-reasoning）-----
+  // 多次 LLM step 的 reasoning event 必须各自独立展示为独立 ReasoningBlock，
+  // 因此前端 store action 不能沿用 appendPartText 的「累积合并」语义，而应
+  // 「关闭上一个未 done reasoning + 推入独立新 part」。
+  it("appendReasoningStep 关闭上一个未 done 的 reasoning 并推入独立新 part", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    // 第一次：新建独立 reasoning part（无上一个未 done 的 part）
+    useChatStore.getState().appendReasoningStep("a1", "step 1");
+    let msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts).toHaveLength(1);
+    expect(msg.parts[0]?.type).toBe("reasoning");
+    if (msg.parts[0]?.type === "reasoning") {
+      expect(msg.parts[0].text).toBe("step 1");
+      expect(msg.parts[0].done).toBe(false);
+      expect(msg.parts[0].startedAt).toBeGreaterThan(0);
+      expect(msg.parts[0].doneAt).toBeUndefined();
+    }
+
+    // 第二次：上一个 part 应 done，并推入**新**独立 reasoning part
+    useChatStore.getState().appendReasoningStep("a1", "step 2");
+    msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts).toHaveLength(2);
+    const [first, second] = msg.parts;
+    expect(first?.type).toBe("reasoning");
+    expect(second?.type).toBe("reasoning");
+    if (first?.type === "reasoning" && second?.type === "reasoning") {
+      // 关键断言：两个 part 必须有独立 id，不能合并文本
+      expect(first.id).not.toBe(second.id);
+      expect(first.text).toBe("step 1");
+      expect(second.text).toBe("step 2");
+      expect(first.done).toBe(true);
+      expect(first.doneAt).toBeGreaterThan(0);
+      expect(second.done).toBe(false);
+    }
+  });
+
+  it("appendReasoningStep 三次以上：每个 step 都是独立 part；中间 part 全部 done", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    useChatStore.getState().appendReasoningStep("a1", "A");
+    useChatStore.getState().appendReasoningStep("a1", "B");
+    useChatStore.getState().appendReasoningStep("a1", "C");
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts).toHaveLength(3);
+    // 全部是 reasoning
+    expect(msg.parts.every((p) => p.type === "reasoning")).toBe(true);
+    // 只有最后一个 done=false，前面都已 done
+    const reasoningParts = msg.parts.filter(
+      (p): p is { type: "reasoning"; id: string; text: string; done: boolean; startedAt: number; doneAt?: number } =>
+        p.type === "reasoning",
+    );
+    expect(reasoningParts.map((p) => p.text)).toEqual(["A", "B", "C"]);
+    expect(reasoningParts[0]?.done).toBe(true);
+    expect(reasoningParts[1]?.done).toBe(true);
+    expect(reasoningParts[2]?.done).toBe(false);
+    // 所有 id 独立
+    const ids = new Set(reasoningParts.map((p) => p.id));
+    expect(ids.size).toBe(3);
+  });
+
+  it("appendReasoningStep 防御性关闭上一未 done reasoning（即使有遗留）", async () => {
+    // 模拟边界：手动构造一个 done=false 的 reasoning part（理论上不应留，
+    // 但万一同步竞态导致），appendReasoningStep 应仍正确处理
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({
+      id: "a1",
+      role: "assistant",
+      ts: 1,
+      parts: [{ type: "reasoning", id: "legacy", text: "leftover", done: false, startedAt: 100 }],
+    });
+    useChatStore.getState().appendReasoningStep("a1", "new step");
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts).toHaveLength(2);
+    if (msg.parts[0]?.type === "reasoning" && msg.parts[1]?.type === "reasoning") {
+      // 遗留 part 被强制关闭
+      expect(msg.parts[0].id).toBe("legacy");
+      expect(msg.parts[0].done).toBe(true);
+      expect(msg.parts[0].doneAt).toBeGreaterThan(0);
+      // 新 part 是独立 id，未 done
+      expect(msg.parts[1].id).not.toBe("legacy");
+      expect(msg.parts[1].text).toBe("new step");
+      expect(msg.parts[1].done).toBe(false);
+    }
+  });
+
+  it("appendReasoningStep 与 tool_call 交错时 parts 顺序：r1 → tc → r2", async () => {
+    // 模拟实际执行轨迹：reasoning（step 1）→ tool_call → reasoning（step 2）
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    useChatStore.getState().appendReasoningStep("a1", "step 1");
+    useChatStore.getState().addPart("a1", {
+      type: "tool-call",
+      id: "tc1",
+      toolName: "read_file",
+      args: { path: "/tmp" },
+      source: "code",
+      status: "running",
+    });
+    useChatStore.getState().appendReasoningStep("a1", "step 2");
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts.map((p) => p.type)).toEqual(["reasoning", "tool-call", "reasoning"]);
+    // 两个 reasoning 都是独立 part
+    expect(msg.parts[0]).not.toBe(msg.parts[2]);
+  });
+
+  it("appendReasoningStep 对未知 messageId 不报错且不影响其它消息", async () => {
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({
+      id: "a1",
+      role: "assistant",
+      ts: 1,
+      parts: [{ type: "reasoning", id: "r1", text: "x", done: true }],
+    });
+    expect(() => useChatStore.getState().appendReasoningStep("unknown", "x")).not.toThrow();
+    expect(useChatStore.getState().sessions[id].messages[0].parts).toHaveLength(1);
+  });
+
+  it("appendReasoningStep 去重：相同内容且未 done 时跳过重复事件", async () => {
+    // 模拟后端 LangGraph astream 在 interrupt/resume 后重发相同 reasoning
+    const id = await useChatStore.getState().createSession();
+    useChatStore.getState().addMessage({ id: "a1", role: "assistant", ts: 1 });
+    useChatStore.getState().appendReasoningStep("a1", "duplicate reasoning");
+    // 再次推入完全相同内容 → 应被去重跳过，parts 数量不变
+    useChatStore.getState().appendReasoningStep("a1", "duplicate reasoning");
+    const msg = useChatStore.getState().sessions[id].messages[0];
+    expect(msg.parts).toHaveLength(1);
+    if (msg.parts[0]?.type === "reasoning") {
+      expect(msg.parts[0].text).toBe("duplicate reasoning");
+      expect(msg.parts[0].done).toBe(false);
+    }
+
+    // 不同内容 → 正常推入新 part
+    useChatStore.getState().appendReasoningStep("a1", "new reasoning");
+    const msg2 = useChatStore.getState().sessions[id].messages[0];
+    expect(msg2.parts).toHaveLength(2);
+    // 第一个 part 被关闭（done=true）
+    if (msg2.parts[0]?.type === "reasoning" && msg2.parts[1]?.type === "reasoning") {
+      expect(msg2.parts[0].done).toBe(true);
+      expect(msg2.parts[1].text).toBe("new reasoning");
+      expect(msg2.parts[1].done).toBe(false);
+    }
   });
 
   it("assistant turn 多 part 顺序：reasoning → tool-call → tool-result → text", async () => {

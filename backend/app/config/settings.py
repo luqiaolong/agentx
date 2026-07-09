@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     llm_temperature_orchestrator: float = Field(default=0.3, ge=0.0, le=2.0)
     # AgentTeam Aggregator/Orchestrator 汇总 LLM 默认温度（T-P4-1 外置）
     llm_temperature_aggregator: float = Field(default=0.5, ge=0.0, le=2.0)
+    # LLM API 调用超时（秒）；None = 不限制（默认 120s 防止网络波动导致无限阻塞）
+    llm_timeout: float | None = Field(default=120.0, ge=5.0)
 
     # ---- Embedding (BGE-M3 service on myserver:8093) ----
     embedding_url: str = "http://192.168.1.4:8093/v1/embeddings"

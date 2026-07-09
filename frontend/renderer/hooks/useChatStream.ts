@@ -72,7 +72,7 @@ export interface UseChatStreamArgs {
  *
  * 按 event.type 分发到 part 操作（chat-rendering-trace-v2 D3）：
  * - token → appendPartText(pending, "text", data)
- * - reasoning → appendPartText(pending, "reasoning", content)
+ * - reasoning → appendReasoningStep(pending, content)（每次独立成 part，多 step 不合并）
  * - tool_call → addPart(pending, {type:"tool-call", ...})
  * - tool_result → addPart(pending, {type:"tool-result", ...})
  * - delegation → addPart(pending, {type:"delegation", ...})
@@ -85,9 +85,11 @@ export function useChatStream(args: UseChatStreamArgs) {
   const { threadId, activeThreadIdRef, pendingIdRef, currentTaskIdRef, lastUserQueryRef, setTodos, setErrorMsg, setPaused } = args;
 
   const appendPartText = useChatStore((s) => s.appendPartText);
+  const appendReasoningStep = useChatStore((s) => s.appendReasoningStep);
   const addPart = useChatStore((s) => s.addPart);
   const upsertTeamNode = useChatStore((s) => s.upsertTeamNode);
   const markReasoningDone = useChatStore((s) => s.markReasoningDone);
+  const markRunningToolCallsComplete = useChatStore((s) => s.markRunningToolCallsComplete);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const enqueueApprovalRequest = useChatStore((s) => s.enqueueApprovalRequest);
@@ -155,8 +157,11 @@ export function useChatStream(args: UseChatStreamArgs) {
           break;
         }
         case "reasoning": {
+          // 多 LLM step 推理各自独立展示为独立 ReasoningBlock，
+          // 不再 appendPartText（会累积合并）；走 appendReasoningStep：
+          // 关闭上一个未 done 的 reasoning + push 独立新 part。
           if (pendingIdRef.current) {
-            appendPartText(pendingIdRef.current, "reasoning", e.content);
+            appendReasoningStep(pendingIdRef.current, e.content);
           }
           break;
         }
@@ -219,6 +224,9 @@ export function useChatStream(args: UseChatStreamArgs) {
           // 标记 reasoning parts 完成（触发自动收缩）
           if (pendingIdRef.current) {
             markReasoningDone(pendingIdRef.current);
+            // 兜底：流结束时仍有 status=running 的 tool-call（通常是 tool_result 事件
+            // 因连接中断等原因未送达），强制 close 为 complete，让 UI 不再卡在「运行中」
+            markRunningToolCallsComplete(pendingIdRef.current);
           }
           setStreaming(false);
           finishRunning(false);
@@ -248,6 +256,8 @@ export function useChatStream(args: UseChatStreamArgs) {
           finishRunning(false);
           if (pendingIdRef.current) {
             markReasoningDone(pendingIdRef.current);
+            // 兜底：error 时也清理残留的 running tool-call
+            markRunningToolCallsComplete(pendingIdRef.current);
             // error 时清理空 pending assistant 消息，避免留下空白气泡
             deleteMessage(pendingIdRef.current);
             pendingIdRef.current = null;

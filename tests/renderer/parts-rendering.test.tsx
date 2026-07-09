@@ -309,7 +309,7 @@ describe("ReasoningBlock", () => {
     expect(pre?.textContent).toContain("正在分析问题");
   });
 
-  it("完成状态（done=true）自动收缩显示「已思考 N 秒」", () => {
+  it("完成状态默认永远展开：显示完整 text 与「已思考 N 秒」标题（chat-trace-fixed-order）", () => {
     render(
       <ReasoningBlock
         partId="p1"
@@ -320,10 +320,10 @@ describe("ReasoningBlock", () => {
         doneAt={3500}
       />,
     );
-    // done=true 自动收缩，显示「已思考 N 秒」（(3500-1000)/1000=2.5→round=3，Math.max(1, 3)=3）
+    // 完成状态默认永远展开（不再按 done 自动收缩）
     expect(screen.getByText(/已思考 \d+ 秒/)).toBeTruthy();
-    // 收缩状态不显示完整文本
-    expect(screen.queryByText("完整思考内容")).toBeNull();
+    // 完整 text 立即可见（不再需要点击展开）
+    expect(screen.getByText("完整思考内容")).toBeTruthy();
   });
 
   it("elapsedSec 基于 startedAt/doneAt 计算（done 状态）", () => {
@@ -342,7 +342,7 @@ describe("ReasoningBlock", () => {
     expect(screen.getByText("已思考 3 秒")).toBeTruthy();
   });
 
-  it("完成状态点击展开后显示完整 text", () => {
+  it("完成状态点击收起后隐藏 text，再点击展开显示（chat-trace-fixed-order）", () => {
     render(
       <ReasoningBlock
         partId="p1"
@@ -353,17 +353,17 @@ describe("ReasoningBlock", () => {
         doneAt={2000}
       />,
     );
-    // 默认收缩
+    // 默认永远展开
+    expect(screen.getByText("完整的推理过程")).toBeTruthy();
+    // 点击收起
+    fireEvent.click(screen.getByRole("button"));
     expect(screen.queryByText("完整的推理过程")).toBeNull();
-    // 点击展开
+    // 再点击展开
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText("完整的推理过程")).toBeTruthy();
-    // 再点击收起
-    fireEvent.click(screen.getByRole("button"));
-    expect(screen.queryByText("完整的推理过程")).toBeNull();
   });
 
-  it("sessionStorage 记忆展开状态跨 mount 保持", () => {
+  it("sessionStorage 记忆主动折叠状态跨 mount 保持（chat-trace-fixed-order）", () => {
     const props = {
       partId: "p1",
       messageId: "m1",
@@ -373,39 +373,57 @@ describe("ReasoningBlock", () => {
       doneAt: 2000,
     } as const;
 
-    // 第一次挂载：默认收缩
+    // 第一次挂载：默认永远展开
     const { unmount } = render(<ReasoningBlock {...props} />);
-    expect(screen.queryByText("需要记忆的思考")).toBeNull();
-
-    // 点击展开 → sessionStorage 写入 "1"
-    fireEvent.click(screen.getByRole("button"));
     expect(screen.getByText("需要记忆的思考")).toBeTruthy();
-    expect(sessionStorage.getItem("reasoning-expanded:m1:p1")).toBe("1");
+
+    // 点击收起 → sessionStorage 写入 "0"
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByText("需要记忆的思考")).toBeNull();
+    expect(sessionStorage.getItem("reasoning-expanded:m1:p1")).toBe("0");
 
     // 卸载（messageId 仍在 store 中？测试环境 store 为空，best-effort 清理可能触发）
     unmount();
     cleanup();
 
-    // 第二次挂载：useEffect 从 sessionStorage 恢复展开状态
-    // 注意：由于 store 为空，卸载时可能已清理 sessionStorage，所以重新写入以保证测试稳定
-    sessionStorage.setItem("reasoning-expanded:m1:p1", "1");
+    // 重新写入以保证测试稳定（store 为空时 best-effort 会清掉）
+    sessionStorage.setItem("reasoning-expanded:m1:p1", "0");
     render(<ReasoningBlock {...props} />);
-    expect(screen.getByText("需要记忆的思考")).toBeTruthy();
+    // 二次挂载恢复折叠状态
+    expect(screen.queryByText("需要记忆的思考")).toBeNull();
   });
 
-  it("sessionStorage 无记录时默认收缩", () => {
+  it("sessionStorage 无记录时默认永远展开", () => {
     render(
       <ReasoningBlock
         partId="p2"
         messageId="m2"
-        text="不应自动展开"
+        text="默认展开的思考"
         done={true}
         startedAt={1000}
         doneAt={2000}
       />,
     );
-    expect(screen.queryByText("不应自动展开")).toBeNull();
-    expect(sessionStorage.getItem("reasoning-expanded:m2:p2")).toBeNull();
+    // 无 sessionStorage → 默认永远展开
+    expect(screen.getByText("默认展开的思考")).toBeTruthy();
+  });
+
+  it("流式状态默认展开并显示 caret 视觉提示（chat-trace-fixed-order）", () => {
+    render(
+      <ReasoningBlock
+        partId="p1"
+        messageId="m1"
+        text="正在分析问题"
+        done={false}
+        startedAt={Date.now()}
+      />,
+    );
+    // 流式状态默认也是展开（不再先收起到单行）
+    expect(screen.getByText("正在分析问题")).toBeTruthy();
+    // 流式 caret 视觉
+    expect(screen.getByTestId("reasoning-caret")).toBeTruthy();
+    // 标题应显示"思考中…"
+    expect(screen.getByText(/思考中… \d+s/)).toBeTruthy();
   });
 });
 
