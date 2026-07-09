@@ -692,75 +692,180 @@ agentx/
 - 见 [vite.config.ts](file:///d:/java/agentprojects/agentx/vite.config.ts) +
   [tsconfig.web.json](file:///d:/java/agentprojects/agentx/tsconfig.web.json)。
 
-### 14.7 重启前后端（踩坑沉淀）
+### 14.7 启动、重启前后端（踩坑沉淀）
 
-> 这套流程是 2026-07-04 反复实战出来的。
+> 这套流程是 2026-07-04 / 2026-07-09 反复实战出来的。
 
-- **入口：永远 `npm run dev`**（即 `tauri dev`），不要直接 `uv run python -m app.main`——
+#### 14.7.1 启动入口
+
+- **入口：永远 `pnpm tauri dev`**（即 `npm run tauri dev`），不要直接 `uv run python -m app.main`——
   后端依赖的 `AGENTX_*` 凭证 + 配置由 Rust 主进程通过
-  [backend/env.rs::build_env](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/env.rs) 注入，
+  [src-tauri/src/backend/env.rs](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/env.rs) 注入，
   直接起 uvicorn 会缺 key、缺 Milvus 密码、缺 tools / subagents config。
-- **dev_mode 切换即重启**：在 UI 切换开发模式后，前端自动 `setDevMode()` + `restartBackend()` 立即以新值 spawn。`wait_for_ready` 保证 mask 不卡。详见 §14.2。
-- **重启前必须两棵树一起端**。常见误区：以为只有 Tauri 进程在占端口，结果
-  `tauri dev` 退出后 **vite watcher + uv + python** 仍残留。两棵树并行使用：
+- `pnpm tauri dev` 启动顺序：vite renderer 构建 → Tauri 主进程编译启动 →
+  `setup()` hook → migration → `PythonHandle::start` 拉 uv → uvicorn 监听 8123 →
+  Tauri 桌面窗口出现。
+- **首次启动 Rust 编译**约 1-3 分钟（增量编译约 5-15s），看到
+  `Finished dev profile target(s) in ...` 表示 Rust 编译完成。
+- 看到 `AgentX Tauri shell started` 日志后再等 **8-10s** 再探测 8123。
+
+#### 14.7.2 单独启动场景（仅调试用）
+
+| 场景 | 命令 | 用途 |
+|---|---|---|
+| 仅调试前端 | `pnpm dev` 或 `npx vite --config vite.config.mjs --host 127.0.0.1` | 浏览器调试 UI（绕过 Tauri） |
+| 仅调试后端 | `.venv\Scripts\python.exe -m uvicorn backend.app.main:app --port 8123 --reload` | 跳过 Tauri 直接调试 Python |
+| 仅重启后端 | Ctrl+C 当前后端 → 重启上述 uvicorn | 不影响 Tauri 桌面窗口 |
+
+> ⚠️ 单独启动的后端需要自己注入环境变量（`AGENTX_*` 密钥），推荐还是用 `pnpm tauri dev`。
+
+#### 14.7.3 重启流程（标准 SOP）
+
+**步骤 1：清理两棵进程树**
+
+只 `Stop-Process -Id <pid>` 不够——uv→python 的父子链不杀干净会导致 Errno 10048。
+**必须两棵树并行端**（PowerShell 原生命令，禁止用 `taskkill`、`netstat`）：
+
+```powershell
+# Tauri 主进程 + WebView2 子进程（按 CommandLine 精准筛选，避免误杀其他项目的 python/node）
+Get-Process -Name python,node -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*agentx*' -or $_.CommandLine -like '*tauri*' -or $_.CommandLine -like '*vite*' } |
+    Stop-Process -Force
+
+# 也可按项目名/包名筛选（如 Hermes 等其他项目并行时）
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @('agentx','AgentX') } | Stop-Process -Force
+
+# 验证端口已释放（注意 TimeWait 状态需等待 1-2 分钟）
+Get-NetTCPConnection -LocalPort 8123,5173,5174 -ErrorAction SilentlyContinue |
+    Where-Object { $_.State -ne 'TimeWait' }
+# 返回空才算彻底清干净
+```
+
+**步骤 2：重新启动**
+
+```powershell
+cd d:/java/agentprojects/agentx
+pnpm tauri dev          # 完整启动（Tauri + Vite + Python）
+```
+
+或者分步启动（仅排查时）：
+
+```powershell
+# 1. 后端（端口 8123）
+.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8123 --reload
+
+# 2. 前端（默认端口 5173，被占用时自动找下一个空闲端口 5174+）
+npx vite --config vite.config.mjs --host 127.0.0.1
+```
+
+**步骤 3：健康探测**
+
+```powershell
+# 探测 8123 后端
+Invoke-RestMethod -Method GET -Uri 'http://127.0.0.1:8123/' -TimeoutSec 5
+Invoke-RestMethod -Method GET -Uri 'http://127.0.0.1:8123/api/health' -TimeoutSec 5
+
+# 探测前端端口
+Get-NetTCPConnection -LocalPort 5173,5174 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
+```
+
+#### 14.7.4 Windows 端口占用诊断与解决
+
+**症状 1：`[WinError 10013] 以一种访问权限不允许的方式做了一个访问套接字的尝试`**
+
+- 原因：端口 8123 / 5173 被其他进程占用
+- 诊断：
   ```powershell
-  taskkill /T /F /IM agentx.exe        # Tauri 主进程 + WebView2 子进程
-  Get-Process -Name python,uv -ErrorAction SilentlyContinue | Stop-Process -Force
-  netstat -ano | findstr ':8123 '          # 返回空串才算彻底清干净
+  Get-NetTCPConnection -LocalPort 8123 -ErrorAction SilentlyContinue |
+      Select-Object LocalPort, OwningProcess, State
   ```
-  只 `taskkill /F /PID xxxx` 单 PID 不够——uv→python 的父子链不杀干净就 Errno 10048。
+- 解决：
+  ```powershell
+  # 方法 A：精准杀掉占用进程（推荐）
+  Stop-Process -Id <OwningProcess> -Force
+
+  # 方法 B：等待 TimeWait 释放（1-2 分钟）
+  # 方法 C：换端口启动（仅限临时调试）
+  ```
+
+**症状 2：端口 5173 启动后 `Port 5173 is already in use`**
+
+- 原因：上次 `tauri dev` 残留 Vite watcher 进程
+- 解决：按 §14.7.3 步骤 1 清理所有相关 node 进程，或换端口 `npx vite --port 5174`
+
+**症状 3：Tauri 自动启动 Python 但端口冲突**
+
+- 现象：Tauri 主进程拉起 Python 时打印 `port 8123 被 PID xxx 占用，先行 kill`
+- 处理：Tauri 已自动 kill 占用进程，无需手动干预；如持续冲突，先按 §14.7.3 完全清理
+
+#### 14.7.5 健康探测规范
+
 - **`/api/health` 不是存活探针**。该端点同步串行调 TEI（myserver:8093）+ Milvus
   （myserver:19530），外部不通就耗时 5s+ 看起来像超时，但它**永远 200 兜底**。
   要做进程存活检测，用下面 4 个**轻量**端点任意一个：
   | 端点 | 用法 |
-  |---|
+  |---|---|
   | `GET /` | 返回 `{app, version, status}`，零依赖，< 50ms |
   | `GET /api/skills` | 验证技能文件加载链路 |
   | `GET /api/memory/checkpointer` | 验证 SQLite checkpoint |
   | `POST /api/sandbox/authorize` | 顺手验证沙箱授权链路 |
-- **时序**：`npm run dev` 后看到 `AgentX Tauri shell started` 日志后**再等 8-10s** 再探测
-  8123，否则会误判。launch 顺序：vite renderer 构建 → Tauri 主进程启动 →
-  `setup()` hook → migration → `PythonHandle::start` 拉 uv → uvicorn 监听。
-- **PowerShell inline -Command 的坑**：`$_` 在 `-Command` 字符串里会被序列化替换导致
-  解析失败。**探测脚本写 `.ps1` 文件用 `-File` 调用**，不要 inline `Invoke-RestMethod`。
-- **健康探测推荐脚本**（一次性，detached 启动后跑一次即可）：
-  ```powershell
-  # probe.ps1
-  $ErrorActionPreference = 'Continue'
-  $endpoints = @(
-      @{ method='GET';  url='http://127.0.0.1:8123/';                          label='root' },
-      @{ method='GET';  url='http://127.0.0.1:8123/api/skills';                label='skills' },
-      @{ method='GET';  url='http://127.0.0.1:8123/api/memory/checkpointer';   label='checkpointer' }
-  )
-  foreach ($e in $endpoints) {
-      try { Invoke-RestMethod -Method $e.method -Uri $e.url -TimeoutSec 5 | Out-Null
-           Write-Host ("OK  {0}" -f $e.label) }
-      catch { Write-Host ("ERR {0}: {1}" -f $e.label, $_.Exception.Message) }
-  }
-  # powershell -ExecutionPolicy Bypass -File .\probe.ps1  # 用完后删除
-  ```
-- **重启后看到 8123 端口占用 / 多份 Tauri 残留**，大概率上一次没
-  `taskkill /T /F` 干净的副作用，先按上方"两棵树一起端"重置再启。
-- **dev 是长进程**，启动后用 `CheckCommandStatus` 轮询日志观察 `AgentX Tauri shell started`
-  + uvicorn 监听即可，**不要等进程结束**。
 
----
+#### 14.7.6 重启常见错误
+
+| 错误 | 原因 | 解决 |
+|---|---|---|
+| `Errno 10048` | 上次端口未释放（uv→python 父子链残留） | 按 §14.7.3 步骤 1 完整清理 |
+| `[WinError 10013]` | 端口被其他应用占用 | `Get-NetTCPConnection` 诊断，`Stop-Process` |
+| `[WinError 10048]` | Tauri 内部 Socket 复用冲突 | 完全重启 Tauri |
+| Vite `@/` 路径解析失败 | 在 `frontend/renderer` 子目录启动而非项目根目录 | `cd d:/java/agentprojects/agentx` 后启动 |
+| Tauri 桌面窗口不出现 | Rust 首次编译未完成 / WebView2 缺失 | 等编译完成 / 安装 WebView2 Runtime |
+| 后端 `agent stuck in repeating tool-call loop` | LLM 陷入重复工具调用循环 | 已修复：见 `backend/app/deep/execution.py` 重复检测 + `asyncio.sleep(0.05)` |
+
+#### 14.7.7 dev 进程长存规范
+
+- **dev 是长进程**，启动后用 `CheckCommandStatus` / `GetTerminalOutput` 轮询日志观察
+  `AgentX Tauri shell started` + uvicorn 监听即可，**不要等进程结束**。
+- 重启前必须先关闭上一次 dev 进程（Ctrl+C 或上文的 Stop-Process），否则会端口冲突。
+
+#### 14.7.8 进程筛选规范（精准而非全杀）
+
+⚠️ **禁止** `Get-Process -Name python | Stop-Process -Force`——会误杀同机的其他项目（如 Hermes）。
+
+**推荐做法**（按 CommandLine 精准筛选）：
+
+```powershell
+# agentx 相关 python 进程
+Get-Process -Name python -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*agentx*' } |
+    Select-Object Id, ProcessName, CommandLine
+
+# agentx 相关 node 进程（Vite）
+Get-Process -Name node -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*vite*' -or $_.CommandLine -like '*agentx*' } |
+    Select-Object Id, ProcessName, CommandLine
+```
+
+> 此规范可沉淀为 [learned_skill_experience] "Windows下精准筛选并重启指定项目进程技能"。
+
+
 
 ## 15. 常用命令
 
 ### 前端 / Tauri
 
 ```bash
-npm run dev            # tauri dev（同时启动 vite renderer + Rust 主进程 + Python 后端）
-npm run build          # tauri build（生产构建，生成 NSIS 安装包）
-npm run typecheck      # tsc 严格模式（node + web 两套配置）
-npm test               # vitest（renderer 单测）
-npm run dist:win       # Windows NSIS 安装包（等价于 npm run build）
+pnpm tauri dev          # 推荐：同时启动 vite + Rust 主进程 + Python 后端（含凭证注入）
+pnpm exec vite dev      # 仅启动前端 Vite（端口 5173，被占用自动递增）
+pnpm tauri build        # 生产构建，生成 NSIS 安装包
+pnpm typecheck          # tsc 严格模式（node + web 两套配置）
+pnpm test               # vitest（renderer 单测）
+pnpm dist:win           # Windows NSIS 安装包（等价于 tauri build）
 ```
 
-> **重启前后端**一律走 `npm run dev`（由 [backend/env.rs::build_env](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/env.rs) 自动注入凭证 + 配置）。
+> **启动/重启前后端**一律走 `pnpm tauri dev`（由 [src-tauri/src/backend/env.rs::build_env](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/env.rs) 自动注入凭证 + 配置）。
 > 重启前的进程清理、8123 端口探测、健康验证脚本等完整 SOP 见 §14.7。
 > Rust 单测：`cd src-tauri && cargo test --lib`；冒烟脚本：`pwsh scripts/smoke-tauri.ps1`。
+> 单独调试某一端（仅前端或仅后端）时的命令与陷阱见 §14.7.2。
 
 ### 后端
 
@@ -847,7 +952,7 @@ ErrorBoundary 渲染错误恢复。
 | 调整沙箱/授权 | [backend/app/sandbox/](file:///d:/java/agentprojects/agentx/backend/app/sandbox/) + §14.3 |
 | 调整审批/安全策略 | [backend/app/security/](file:///d:/java/agentprojects/agentx/backend/app/security/) + §14.3 + §14.4 |
 | 写 ADR / 提案 | [openspec/changes/archive/](file:///d:/java/agentprojects/agentx/openspec/changes/archive/) 历史格式参考 |
-| 重启前后端 | §14.7（清理两棵树 → `npm run dev` → 健康验证脚本） |
+| 重启前后端 | §14.7（清理两棵树 → `pnpm tauri dev` → 健康验证脚本） |
 | 修改项目配置 | [backend/app/workspace/](file:///d:/java/agentprojects/agentx/backend/app/workspace/) + §16.1 `.agentx/` 项目级配置 |
 
 ---
