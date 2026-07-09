@@ -25,20 +25,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.security.approval import get_abort_event
 from app.config import get_settings
-from app.deep.agent import run_deep_path  # noqa: F401 — 供 scheduler 经 orchestrator.run_deep_path 访问（monkeypatch 兼容）
 from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
-from app.subagents import (  # noqa: F401 — 供 scheduler 经 orchestrator.run_xxx 访问（monkeypatch 兼容）
-    run_custom_agent,
-    run_rag_agent,
-    run_web_agent,
-)
-from app.agents.expert.coding import run_coding_expert  # noqa: F401 — 供 scheduler 经 orchestrator.run_coding_expert 访问
 from app.utils.sse_events import make_sse_event, make_team_event
 
 # 从子模块 re-export，保持 ``from app.team.orchestrator import X`` 向后兼容
@@ -80,6 +73,16 @@ if TYPE_CHECKING:
     from app.router.state import RouterState
 
 
+# T-P2-4: 仍保留 monkeypatch 兼容 re-export（向后兼容给测试用）。
+# 后续测试迁移到 subtask_runners dict 后删除这 5 行（见 T-P2-4 follow-up）。
+from app.deep.agent import run_deep_path  # noqa: F401
+from app.subagents import (  # noqa: F401
+    run_custom_agent,
+    run_rag_agent,
+    run_web_agent,
+)
+from app.agents.expert.coding import run_coding_expert  # noqa: F401
+
 async def run_team_path(
     message: str,
     thread_id: str,
@@ -90,6 +93,7 @@ async def run_team_path(
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    subtask_runners: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """AgentTeam 路径入口。
 
@@ -102,6 +106,9 @@ async def run_team_path(
             用于解析相对路径（避免被解到 PROJECT_ROOT）。
         chat_model: 可选注入的 ChatModel，透传到 ``_run_subtask`` 与 ``_run_aggregator``。
             None 时使用真实 LLM。
+        subtask_runners: 可选 ``{"code": callable, "rag": callable, ...}`` 字典，
+            透传到 ``_run_subtask``，测试注入 mock 替代 ``app.team.orchestrator`` 模块属性。
+            ``None`` 时使用 ``app.team.orchestrator`` 默认实现（向后兼容）。
     """
     settings = get_settings()
 

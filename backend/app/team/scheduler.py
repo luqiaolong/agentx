@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.security.approval import get_abort_event
 from app.config import get_settings
@@ -64,7 +64,15 @@ async def _run_subtask(
     task_index: int = 0,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    subtask_runners: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
+    """执行单个子任务。
+
+    Args:
+        subtask_runners: 可选 ``{"code": <callable>, "rag": <callable>, ...}``
+            字典，测试注入 mock 替代 orchestrator.run_xxx。``None`` 时使用
+            ``app.team.orchestrator`` 模块属性（默认行为，保留向后兼容）。
+    """
     """执行单个子任务，流式产出透传事件，最后产出 _subtask_done 哨兵。
 
     deep 子任务复用 DeepAgent 路径，其 approval_request / todo_update /
@@ -79,10 +87,29 @@ async def _run_subtask(
         chat_model: 可选注入的 ChatModel，透传到 ``run_deep_path`` /
             ``run_coding_expert`` / ``run_work_supervisor``。None 时使用真实 LLM。
     """
-    # 通过 orchestrator 模块属性访问 run_xxx 函数，
-    # 以便测试通过 monkeypatch app.team.orchestrator.run_xxx 替换。
+    # 通过 subtask_runners 参数注入 mock（推荐），
+    # 否则回退到 ``app.team.orchestrator`` 模块属性（向后兼容）。
     # 延迟 import 避免与 orchestrator.py 顶部的 import 形成循环。
-    from app.team import orchestrator
+    from app.team import orchestrator as _orchestrator_module
+
+    def _get_runner(name: str) -> Any:
+        # 映射关系（team 子代理 key → orchestrator 模块属性）：
+        # - "coding"  → run_coding_expert
+        # - "deep"    → run_deep_path
+        # - "rag"     → run_rag_agent
+        # - "web"     → run_web_agent
+        # - "custom"  → run_custom_agent
+        # - 测试注入 subtask_runners 时直接按 key 查找（推荐）
+        if subtask_runners and name in subtask_runners:
+            return subtask_runners[name]
+        attr_map = {
+            "coding": "run_coding_expert",
+            "deep": "run_deep_path",
+            "rag": "run_rag_agent",
+            "web": "run_web_agent",
+            "custom": "run_custom_agent",
+        }
+        return getattr(_orchestrator_module, attr_map.get(name, f"run_{name}"), None)
 
     agent_name = task.agent
     input_text = task.input
@@ -131,7 +158,7 @@ async def _run_subtask(
             "messages": [{"role": "user", "content": input_text}],
         }
         try:
-            async for event in orchestrator.run_deep_path(
+            async for event in _get_runner("deep")(
                 deep_state,
                 input_text,
                 profile_prompt=profile_prompt,
@@ -173,7 +200,7 @@ async def _run_subtask(
         code_thread_id = f"{thread_id}-team-code-{task_index}"
         await _inherit_workspace(code_thread_id)
         try:
-            async for event in orchestrator.run_coding_expert(
+            async for event in _get_runner("coding")(
                 input_text,
                 code_thread_id,
                 profile_prompt=profile_prompt,
@@ -207,12 +234,12 @@ async def _run_subtask(
             yield _done(False, f"coding Expert 子任务异常: {exc}")
             return
     elif agent_name == "rag":
-        async for event in orchestrator.run_rag_agent(
+        async for event in _get_runner("rag")(
             thread_id, input_text, history=history, workspace_path=workspace_path
         ):
             _collect_event(event, collected_text, tool_traces)
     elif agent_name == "web":
-        async for event in orchestrator.run_web_agent(
+        async for event in _get_runner("web")(
             thread_id, input_text, history=history, workspace_path=workspace_path
         ):
             _collect_event(event, collected_text, tool_traces)
@@ -254,7 +281,7 @@ async def _run_subtask(
             fallback_thread_id = f"{thread_id}-team-fallback-{task_index}"
             await _inherit_workspace(fallback_thread_id)
             try:
-                async for event in orchestrator.run_coding_expert(
+                async for event in _get_runner("coding_expert")(
                     input_text,
                     fallback_thread_id,
                     history=history,
@@ -288,7 +315,7 @@ async def _run_subtask(
                 return
     elif agent_name.startswith("custom-"):
         key = agent_name[len("custom-"):]
-        async for event in orchestrator.run_custom_agent(
+        async for event in _get_runner("custom")(
             key, thread_id, input_text, history=history, workspace_path=workspace_path
         ):
             _collect_event(event, collected_text, tool_traces)
