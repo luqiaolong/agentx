@@ -50,6 +50,7 @@ where = ["backend"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
+norecursedirs = ["manual", "diag"]
 asyncio_mode = "auto"
 pythonpath = ["backend"]
 markers = [
