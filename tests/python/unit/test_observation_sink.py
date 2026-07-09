@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -368,3 +369,78 @@ async def test_cleanup_old_preserves_feedback(sink: SqliteObservationSink) -> No
     with sqlite3.connect(str(sink._db_path)) as conn:
         cur = conn.execute("SELECT COUNT(*) FROM observation_feedback")
         assert cur.fetchone()[0] == 1
+
+
+# ============================================================
+# FR-11.1: start_observation_reaper 周期清理后台协程
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_start_observation_reaper_runs_periodically(monkeypatch) -> None:
+    """start_observation_reaper 启动后台 task，每隔 interval 调一次 cleanup_old_observations。
+
+    通过 monkeypatch ``asyncio.sleep`` 跳过真实等待，
+    monkeypatch ``cleanup_old_observations`` 计 call 次数。
+    """
+    from app.observability import observation as obs_mod
+
+    call_count = {"n": 0}
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds):  # noqa: ARG001
+        # 立即跳过等待
+        await real_sleep(0)
+
+    async def fake_cleanup():
+        call_count["n"] += 1
+        return 0
+
+    monkeypatch.setattr(obs_mod.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(obs_mod, "cleanup_old_observations", fake_cleanup)
+
+    task = obs_mod.start_observation_reaper(interval_hours=1000.0)
+    try:
+        # 让 fake_sleep + 多次循环跑一会儿
+        await real_sleep(0.05)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    assert call_count["n"] >= 1, f"reaper should call at least once, got {call_count['n']}"
+
+
+@pytest.mark.asyncio
+async def test_start_observation_reaper_isolates_exceptions(monkeypatch) -> None:
+    """reaper 周期内 cleanup 抛错 → 下一轮仍继续（最佳努力 + 异常隔离）。"""
+    from app.observability import observation as obs_mod
+
+    call_count = {"n": 0}
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(_seconds):
+        await real_sleep(0)
+
+    async def flaky_cleanup():
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("DB locked")
+        return 0
+
+    monkeypatch.setattr(obs_mod.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(obs_mod, "cleanup_old_observations", flaky_cleanup)
+
+    task = obs_mod.start_observation_reaper(interval_hours=1000.0)
+    try:
+        await real_sleep(0.05)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    assert call_count["n"] >= 2, f"reaper must retry past first exception, got {call_count['n']}"

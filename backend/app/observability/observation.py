@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Iterator, Protocol
 
 from langchain_core.callbacks import BaseCallbackHandler
+from loguru import logger
 
 from app.config import DATA_DIR, get_settings
 from app.observability.langsmith import redact
@@ -801,3 +802,41 @@ async def cleanup_old_observations(ttl_days: int | None = None) -> int:
         days = getattr(get_settings(), "observation_ttl_days", 30)
     sink = get_observation_sink()
     return await sink.cleanup_old(days)
+
+
+def start_observation_reaper(interval_hours: float = 6.0) -> asyncio.Task:
+    """FR-11.1: 启动 observation TTL reaper 后台协程。
+
+    每 ``interval_hours`` 小时执行一次 ``cleanup_old_observations``。
+    使用 ``asyncio.Task`` 实现幂等取消（lifespan shutdown 时 cancel）。
+
+    Args:
+        interval_hours: 清理间隔（小时），默认 6.0。
+
+    Returns:
+        ``asyncio.Task`` 实例，调用方负责 ``cancel()``。
+    """
+    interval_seconds = interval_hours * 3600
+
+    async def _loop() -> None:
+        try:
+            while True:
+                await asyncio.sleep(interval_seconds)
+                try:
+                    deleted = await cleanup_old_observations()
+                    if deleted > 0:
+                        logger.info(
+                            "observation TTL reaper removed rows",
+                            deleted=deleted,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    # 清理失败不阻塞下一轮（best-effort，异常隔离）
+                    logger.warning(
+                        "observation TTL reaper cycle failed", error=str(exc)
+                    )
+        except asyncio.CancelledError:
+            # 优雅退出
+            logger.debug("observation TTL reaper cancelled")
+            raise
+
+    return asyncio.create_task(_loop())
