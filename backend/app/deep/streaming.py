@@ -168,6 +168,12 @@ async def _stream_agent_events(
                 continue
 
             tc_list = getattr(output, "tool_calls", None) or []
+            logger.info(
+                "stream_agent_events: on_chat_model_end tc_count={tc_count} content_preview={preview}",
+                tc_count=len(tc_list),
+                preview=str(output.content)[:100] if output.content else "",
+                source=source,
+            )
             content = output.content
             if isinstance(content, list):
                 content = "".join(
