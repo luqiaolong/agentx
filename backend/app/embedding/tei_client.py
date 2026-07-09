@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Callable
 
 import httpx
@@ -165,8 +166,21 @@ class TeiClient:
         raise EmbeddingUnavailable("BGE-M3 嵌入服务不可用: 未知原因")
 
     async def aclose(self) -> None:
-        """关闭底层 ``httpx.AsyncClient``。"""
+        """关闭底层 ``httpx.AsyncClient``。（异步入口）"""
         await self._client.aclose()
+
+    def close(self) -> None:
+        """关闭底层 ``httpx.AsyncClient``。（同步入口；运行事件循环中请用 ``aclose()``）"""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.aclose())
+            return
+        logger.warning(
+            "%s.close() called inside a running event loop; "
+            "use aclose() instead. Connection may leak.",
+            self.__class__.__name__,
+        )
 
 
 # ---- 单例 ----

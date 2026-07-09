@@ -41,7 +41,7 @@ _DEFAULT_SUPERVISOR_TOOLS: list[str] = [
     "web_search", "rag_retrieve",
     "git_status", "git_diff", "git_log", "git_branches",
     "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
-    "cli_execute",
+    "execute",  # 修正：原 cli_execute 已废弃
 ]
 
 # coding Expert 默认工具集（与 Supervisor 一致，Expert 需要完整代码工具）

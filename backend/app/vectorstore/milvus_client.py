@@ -282,6 +282,23 @@ class MilvusClient:
         self._collection = None
         self._connected = False
 
+    async def aclose(self) -> None:
+        """``disconnect`` 的异步别名，统一双入口命名。"""
+        await self.disconnect()
+
+    def close(self) -> None:
+        """同步入口关闭 Milvus 连接；运行事件循环中请用 ``aclose()``/``disconnect()``。"""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.aclose())
+            return
+        logger.warning(
+            "%s.close() called inside a running event loop; "
+            "use aclose() instead. Connection may leak.",
+            self.__class__.__name__,
+        )
+
     def _ensure_collection(self) -> Any:
         """返回已加载的 Collection，未连接时抛 MilvusUnavailable。"""
         if self._collection is None:
