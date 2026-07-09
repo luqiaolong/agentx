@@ -29,6 +29,7 @@ from pathlib import Path
 
 from app.api.schemas import ProjectConfigInitRequest
 from app.observability.logger import logger
+from app.sandbox import PathNotAuthorized
 from app.workspace.config.generator import generate_agentx_dir
 from app.workspace.config.loader import load_project_config
 
