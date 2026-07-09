@@ -8,6 +8,11 @@
 - resolve_skills_dir: 解析 data/skills/ 路径
 - resolve_backend: 构建 SafeLocalShellBackend 启用 Context Offloading + execute 工具
 - create_agent: 主入口,封装 create_deep_agent
+
+注意: deepagents 0.6+ 的 FilesystemMiddleware 不支持在提供 command execution
+(SandboxBackendProtocol) 的 backend 上同时使用 permissions 参数。
+项目通过 SafeLocalShellBackend (blocklist+元字符过滤) + SessionSandbox (动态授权)
+替代框架级 permissions，因此 create_agent 不再传递 permissions。
 """
 
 from __future__ import annotations
@@ -16,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 from deepagents import (
-    FilesystemPermission,
     GeneralPurposeSubagentProfile,
     HarnessProfile,
     RubricMiddleware,
@@ -47,22 +51,6 @@ _EXCLUDED_BUILTIN_TOOLS: frozenset[str] = frozenset(
 
 # 已注册 profile key 集合，保证 register_harness_profile 幂等
 _registered_keys: set[str] = set()
-
-# 框架级静态安全基线：deny 写入系统敏感目录 + .git 目录。
-# 与 SessionSandbox（应用级动态授权）互补：FilesystemPermission = 框架级静态基线。
-# 注意：仅作用于 deepagents 内置 fs 工具层；项目自研 fs 工具由 SessionSandbox 管控。
-_DEFAULT_PERMISSIONS: list[FilesystemPermission] = [
-    FilesystemPermission(
-        operations=["write"],
-        paths=["/proc/**", "/sys/**", "/dev/**", "/etc/**"],
-        mode="deny",
-    ),
-    FilesystemPermission(
-        operations=["write"],
-        paths=["/**/.git/**"],
-        mode="deny",
-    ),
-]
 
 
 def ensure_harness_profile(model_name: str = "openai") -> None:
@@ -162,7 +150,6 @@ def create_agent(
     subagents: list | None = None,
     rubric: str | None = None,
     grader_model: Any | None = None,
-    permissions: list[FilesystemPermission] | None = None,
 ) -> Any:
     """主入口：封装 create_deep_agent。
 
@@ -180,8 +167,6 @@ def create_agent(
         subagents: 可选声明式子代理列表，透传给 create_deep_agent(subagents=...)。
         rubric: 可选 rubric 文本；非空时注入 RubricMiddleware 启用运行时自纠。
         grader_model: 可选 grader 模型；为空时调用 get_chat_model(temperature=0)。
-        permissions: 可选 FilesystemPermission 列表；为空时注入 _DEFAULT_PERMISSIONS
-            （deny 写入 /proc /sys /dev /etc + .git 目录）。与 SessionSandbox 互补。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -191,7 +176,6 @@ def create_agent(
     memory_paths = resolve_memory_paths(workspace_path)
     skills_dir = resolve_skills_dir()
     backend = resolve_backend(workspace_path)
-    effective_permissions = permissions if permissions is not None else _DEFAULT_PERMISSIONS
 
     middleware: list = []
     if rubric:
@@ -205,7 +189,6 @@ def create_agent(
         interrupt_on=interrupt_on,
         memory=memory_paths or None,
         skills=[skills_dir] if skills_dir else None,
-        permissions=effective_permissions,
         backend=backend,
         subagents=subagents,
         middleware=middleware,
