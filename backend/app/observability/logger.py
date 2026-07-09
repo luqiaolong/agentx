@@ -30,10 +30,16 @@ def _inject_trace_id(record) -> None:  # noqa: ANN001 — loguru patcher 签名
 
     调用方无需在 logger.info(key=value) 里手动传 trace_id——只要在
     ``with bind_trace(trace_id):`` 块内调用 logger.info，trace_id 自动出现。
+
+    没有活跃 trace 时写入 ``"-"``，保证 ``{extra[trace_id]}`` 占位符始终可解析。
     """
+    if "trace_id" in record["extra"]:
+        return  # 调用方已显式提供，尊重其值
     trace_id = current_trace_id()
-    if trace_id and "trace_id" not in record["extra"]:
-        record["extra"]["trace_id"] = trace_id
+    record["extra"]["trace_id"] = trace_id or "-"
+
+
+# 兼容历史 Logger 适配（其它模块若直接 ``logger.info(..., trace_id=...)`` 已足够）
 
 
 def setup_logger(level: str = "INFO") -> None:
