@@ -94,6 +94,7 @@
 | R15 | 手写 prompt 模板拼接 | LangChain `ChatPromptTemplate` / `MessagesPlaceholder` / `PipelinePromptTemplate` | 变量注入、消息角色、条件渲染有成熟方案 |
 | R16 | 手写 embedding / 向量检索客户端 | LangChain `Embeddings` 接口 + `VectorStore` 抽象（Milvus/TEI）| 批量嵌入、索引管理、查询参数由驱动处理 |
 | R17 | 手写 LangGraph 旧版兼容代码 | 使用最新稳定版 API（如 `astream_events` v2、`interrupt` 语义）| 旧版 API 已废弃，维护成本极高 |
+| R18 | 自研 trace 协议 / 自研 checkpoint 序列化 | LangChain `BaseCallbackHandler` + LangSmith SDK（`from langsmith import trace`） + LangGraph `SqliteSaver` | 已提供完整的钩子、remotability、序列化、断点恢复；自研协议会与 LangChain 生态脱节 |
 
 ---
 
@@ -349,7 +350,12 @@ agentx/
 │   ├── vectorstore/            ← Milvus 客户端
 │   ├── embedding/              ← TEI 客户端
 │   ├── mcp/                    ← MCP 客户端 + 配置
-│   ├── observability/          ← LangSmith + logger
+│   ├── observability/          ← LangSmith SDK + ObservationStore + logger
+│   │   ├── observation.py      ← SqliteObservationSink（4 表 + WAL）+ ObservationCallback（FR-1/2）
+│   │   ├── langsmith.py        ← LangSmith SDK trace_span + redact（FR-3）
+│   │   ├── langsmith_dual.py   ← dual_trace contextmanager（本地+remote 双写+降级，FR-3.3）
+│   │   ├── trace.py            ← bind_trace ContextVar（trace_id 透传 0-intrusion）
+│   │   └── feedback.py         ← 隐式信号 record_implicit_ok/bad（FR-9）
 │   └── utils/                  ← text(ThinkFilter) + chunks + sse_events + prompts + paths
 ├── frontend/
 │   ├── renderer/               ← React UI（chat/settings/workspace 组件）
