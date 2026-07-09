@@ -32,6 +32,7 @@ from app.observability.logger import logger
 from app.sandbox import PathNotAuthorized, is_critical
 from app.workspace.config.generator import generate_agentx_dir
 from app.workspace.config.loader import load_project_config
+from app.workspace.config.templates import TEMPLATE_FILE_NAMES
 
 
 # ============================================================
@@ -187,18 +188,10 @@ def register_routes(app: FastAPI) -> None:
                 "agents_md_preview": None,
             }
 
-        # 构建文件状态列表
+        # 构建文件状态列表（复用 templates.py 的 TEMPLATE_FILE_NAMES 作为 SSOT）
         agentx_dir = ws_path / ".agentx"
-        file_names = [
-            "AGENTS.md",
-            "mcp.json",
-            "subagents.json",
-            "tools.json",
-            "system_prompt.md",
-            "rules",
-        ]
         files = []
-        for name in file_names:
+        for name in TEMPLATE_FILE_NAMES:
             fpath = agentx_dir / name
             if fpath.exists():
                 if fpath.is_dir():
