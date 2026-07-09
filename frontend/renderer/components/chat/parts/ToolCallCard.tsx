@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { ChevronDown, Wrench, Check, X, Loader2, Copy } from "lucide-react";
 
 /** result JSON 截断阈值：超出显示「显示完整」按钮 */
@@ -122,7 +122,7 @@ function ToolCallCardImpl({
   // 复制文本到剪贴板，并展示 2s ✓ 反馈
   // LOW-6 修复：navigator.clipboard.writeText 返回 Promise，
   // try-catch 捕获不到 Promise rejection；改为 .then/.catch 显式处理
-  const handleCopy = (field: "args" | "result") => {
+  const handleCopy = useCallback((field: "args" | "result") => {
     const text = field === "args" ? formatJsonFull(args) : resultFullStr;
     try {
       const maybePromise = navigator.clipboard?.writeText(text);
@@ -141,7 +141,7 @@ function ToolCallCardImpl({
     } catch {
       // 同步异常（navigator.clipboard 访问抛错）：静默忽略
     }
-  };
+  }, [args, resultFullStr]);
 
   // source chip 样式：未知 source 用默认灰底
   const sourceChipClass = source
@@ -153,7 +153,7 @@ function ToolCallCardImpl({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5"
+        className="flex w-full cursor-pointer items-center gap-1.5 text-left transition-colors hover:bg-muted-c/5 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:ring-offset-1"
       >
         <Wrench className="h-2.5 w-2.5 shrink-0 text-muted-c/60" />
         <span className="font-mono text-muted-c/70">{toolName}</span>

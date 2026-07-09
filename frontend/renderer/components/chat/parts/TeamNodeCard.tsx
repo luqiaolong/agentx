@@ -1,6 +1,7 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Users, CheckCircle2, AlertCircle, Loader2, ChevronRight } from "lucide-react";
 import type { TeamAgentState } from "@/stores/chat";
+import { TraceCardHeader } from "./TraceCardHeader";
 
 interface TeamNodeCardProps {
   plan: { agent: string; input: string; purpose: string }[];
@@ -82,6 +83,8 @@ function TeamNodeCardImpl({
   status,
   doneAt,
 }: TeamNodeCardProps) {
+  const [expanded, setExpanded] = useState(false);
+
   const headerIcon =
     status === "running" ? (
       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -91,29 +94,37 @@ function TeamNodeCardImpl({
       <AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400" />
     );
 
+  const statusText = status === "running" ? "执行中" : status === "done" ? "已完成" : "失败";
+
   // 预先计算每个 agent 的稳定 key（重名时拼接 input 前缀）
   const agentKeys = buildAgentKeys(agents, plan);
 
   return (
-    <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-2 dark:border-indigo-900/50 dark:bg-indigo-950/20" style={{ fontSize: 'var(--fs-msg-assist)' }}>
-      <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-indigo-900 dark:text-indigo-200">
-        {headerIcon}
-        <Users className="h-3.5 w-3.5" />
-        Agent Team {status === "running" ? "执行中" : status === "done" ? "已完成" : "失败"}
-      </div>
-      {reasoning && (
-        <div className="mb-1.5 opacity-70 text-indigo-800 dark:text-indigo-300" style={{ fontSize: 'var(--fs-msg-tool)' }}>
-          {reasoning}
-        </div>
-      )}
-      <div className="space-y-0.5">
-        {agents.map((a, i) => (
-          <AgentRow key={agentKeys[i] ?? a.agent} agent={a} />
-        ))}
-      </div>
-      {status === "done" && doneAt && (
-        <div className="mt-1 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
-          完成于 {new Date(doneAt).toLocaleTimeString()}
+    <div className="w-full rounded-lg border border-indigo-200 bg-indigo-50/50 px-3 py-2 dark:border-indigo-900/50 dark:bg-indigo-950/20" style={{ fontSize: 'var(--fs-msg-assist)' }}>
+      <TraceCardHeader
+        icon={headerIcon}
+        title="Agent Team"
+        subtitle={statusText}
+        expanded={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+      />
+      {expanded && (
+        <div className="mt-1.5 border-t border-indigo-200/50 pt-1.5 dark:border-indigo-900/30">
+          {reasoning && (
+            <div className="mb-1.5 opacity-70 text-indigo-800 dark:text-indigo-300" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+              {reasoning}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {agents.map((a, i) => (
+              <AgentRow key={agentKeys[i] ?? a.agent} agent={a} />
+            ))}
+          </div>
+          {status === "done" && doneAt && (
+            <div className="mt-1 text-muted-c/60" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+              完成于 {new Date(doneAt).toLocaleTimeString()}
+            </div>
+          )}
         </div>
       )}
     </div>

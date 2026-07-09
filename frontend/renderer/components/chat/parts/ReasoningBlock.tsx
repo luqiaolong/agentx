@@ -1,6 +1,7 @@
-import { memo, useEffect, useState } from "react";
-import { ChevronDown, Brain } from "lucide-react";
+import { memo, useCallback, useEffect, useState } from "react";
+import { Brain } from "lucide-react";
 import { lookupSessionId } from "@/stores/chat/messageIndex";
+import { TraceCardHeader } from "./TraceCardHeader";
 
 /**
  * sessionStorage key 前缀：按 message id 隔离 reasoning part 的展开/折叠状态。
@@ -51,7 +52,7 @@ function isMessageStillInStore(messageId: string): boolean {
  *
  * - 流式且有文本（!done && text.length > 0）：展示**可滚动预览区**（max-height 120px + overflow-auto + monospace）
  * - 流式且无文本（!done && text.length === 0）：显示「思考中…」+ 三个跳动圆点
- * - 完成时（done）：自动收缩为单行「已思考 N 秒」，点击展开回看完整 reasoning
+ * - 完成时（done）：自动收缩为单行标题「已思考 N 秒」，点击展开回看完整 reasoning
  * - 状态记忆到 sessionStorage（按 message id 隔离）
  * - 组件卸载时（useEffect cleanup）best-effort 清理 sessionStorage：
  *   若 messageId 已不在 store（消息被删除），清除对应 key
@@ -117,14 +118,14 @@ function ReasoningBlockImpl({
     Math.round(((done ? (doneAt ?? Date.now()) : nowTick) - startedAt) / 1000),
   );
 
-  // 自动收缩：done=true 时默认收缩；用户手动操作后以 manualExpanded 为准
+  // 自动收缩：done=true 时默认折叠；用户手动操作后以 manualExpanded 为准
   const expanded = manualExpanded ?? !done;
 
-  const toggleExpanded = () => {
+  const toggleExpanded = useCallback(() => {
     const next = !expanded;
     setManualExpanded(next);
     setStoredExpanded(messageId, partId, next);
-  };
+  }, [expanded, messageId, partId]);
 
   // 流式时（!done && text.length === 0）显示「思考中…」+ 跳动圆点
   if (!done && text.length === 0) {
@@ -159,26 +160,18 @@ function ReasoningBlockImpl({
     );
   }
 
-  // 完成时：折叠为「已思考 N 秒」，点击展开回看完整 reasoning
+  // 完成时：折叠为标题行「已思考 N 秒」，点击展开回看完整 reasoning
   return (
     <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
-      <button
-        type="button"
-        onClick={toggleExpanded}
-        className="flex w-full items-center gap-1.5 text-left text-muted-c/60 transition-colors hover:bg-muted-c/5"
-        style={{ fontSize: 'var(--fs-msg-tool)' }}
-      >
-        <Brain className="h-2.5 w-2.5 shrink-0" />
-        <span className="flex-1">
-          已思考 {elapsedSec} 秒
-        </span>
-        <ChevronDown
-          className={`h-2.5 w-2.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
-        />
-      </button>
+      <TraceCardHeader
+        icon={<Brain className="h-2.5 w-2.5" />}
+        title={`已思考 ${elapsedSec} 秒`}
+        expanded={expanded}
+        onToggle={toggleExpanded}
+      />
       {expanded && text.length > 0 && (
         <div
-          className="mt-1 overflow-auto bg-muted-c/5 p-1 font-mono text-muted-c/70"
+          className="mt-1 overflow-auto border-t border-default pt-1.5 bg-muted-c/5 p-1 font-mono text-muted-c/70"
           style={{ maxHeight: "240px", fontSize: 'var(--fs-msg-code)' }}
         >
           <pre className="whitespace-pre-wrap">{text}</pre>

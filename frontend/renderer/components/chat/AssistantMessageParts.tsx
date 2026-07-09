@@ -215,7 +215,8 @@ function SubAgentGroup({
   groupIdx: number;
   messageId: string;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  // delegation 卡片现在默认折叠，SubAgentGroup 同步默认折叠
+  const [expanded, setExpanded] = useState(false);
 
   const delegationItem = group.items[0];
   const traceItems = group.items.slice(1);
@@ -462,17 +463,14 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
               }
             });
           })}
+          {/*
+           * 观测中心：消息最下方反馈按钮。
+           * - 消息容器 hover 时浮现（feedback 内 own hover-reveal 自带）
+           * - 流式中 isStreamingLast=true → 按钮 disabled（MessageFeedback 自己处理）
+           * - runId 缺失（已完成的旧消息迁移数据）→ 按钮 disabled
+           */}
+          <MessageFeedback runId={message.traceId} isStreaming={isStreamingLast} />
         </div>
-      </div>
-      {/*
-       * 观测中心：消息末尾右侧反馈按钮。
-       * - 消息容器 hover 时整条浮现（feedback 内 own hover-reveal 自带）
-       * - 流式中 isStreamingLast=true → 按钮 disabled（MessageFeedback 自己处理）
-       * - runId 缺失（已完成的旧消息迁移数据）→ 按钮 disabled
-       * mt-1.5 对齐 UserMessageBubble 编辑按钮 (UserMessageBubble.tsx L121)
-       */}
-      <div className="mt-1.5">
-        <MessageFeedback runId={message.traceId} isStreaming={isStreamingLast} />
       </div>
     </div>
   );
