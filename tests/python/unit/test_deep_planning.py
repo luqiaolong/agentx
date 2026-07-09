@@ -25,6 +25,45 @@ class _FakeAgent:
         for state in self._states:
             yield state
 
+    async def astream_events(
+        self, inputs: Any, *, version: str = "v2", config: dict | None = None
+    ) -> AsyncIterator[dict]:
+        """模拟 astream_events v2，将旧的 state-based 数据转换为事件流。
+
+        每个 state 中的 messages 最后一条消息被转换为：
+        - AIMessage without tool_calls → on_chat_model_end 事件
+        - AIMessage with tool_calls → on_chat_model_end 事件
+        - ToolMessage → on_tool_end 事件
+        """
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        for state in self._states:
+            messages = state.get("messages", [])
+            if not messages:
+                continue
+            last_msg = messages[-1]
+            if isinstance(last_msg, AIMessage):
+                yield {
+                    "event": "on_chat_model_end",
+                    "name": "agent",
+                    "data": {"output": last_msg},
+                    "run_id": "run-" + str(id(last_msg)),
+                }
+            elif isinstance(last_msg, ToolMessage):
+                yield {
+                    "event": "on_tool_end",
+                    "name": last_msg.name or "unknown",
+                    "data": {"output": last_msg.content},
+                    "run_id": getattr(last_msg, "tool_call_id", "") or "run-" + str(id(last_msg)),
+                }
+        # 最终 on_chain_end
+        yield {
+            "event": "on_chain_end",
+            "name": "LangGraph",
+            "data": {},
+            "run_id": "run-final",
+        }
+
 
 def test_extract_plan_or_update_raw_json() -> None:
     """纯 JSON plan 被正确识别。"""

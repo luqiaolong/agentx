@@ -3,13 +3,13 @@
 从 ``app.deep.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
-- ``_stream_agent_events``：驱动 ``agent.astream(stream_mode="values")``，
-  尊重 ``interrupt_before``，把 LangGraph state 转换为前端 SSE 事件。
+- ``_stream_agent_events``：驱动 ``agent.astream_events(version="v2")``，
+  尊重 ``interrupt_before``，把 LangGraph 事件转换为前端 SSE 事件。
 
 SSE 事件映射:
-- ``AIMessage`` with ``tool_calls`` → ``tool_call`` + ``reasoning`` + ``todo_update``
-- ``AIMessage`` without ``tool_calls`` → ``token``（最终回复）
-- ``ToolMessage`` → ``tool_result`` + ``todo_update``（标记完成）
+- ``on_chat_model_stream`` → 实时 ``reasoning`` / ``token`` 流（逐 token）
+- ``on_tool_start`` → ``tool_call`` + ``todo_update``
+- ``on_tool_end`` → ``tool_result`` + ``todo_update``（标记完成）
 
 导入方向：``agent.py`` → ``streaming.py``（单向，无循环）。
 """
@@ -44,24 +44,41 @@ def _extract_plan_or_update(text: str) -> tuple[str, Any] | None:
     return _shared(text)
 
 
+def _extract_chunk_text(chunk: Any) -> str:
+    """从 AIMessageChunk 中提取文本内容。"""
+    if chunk is None:
+        return ""
+    content = getattr(chunk, "content", chunk)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "".join(parts)
+    return ""
+
+
 async def _stream_agent_events(
     agent: Any, inputs: Any, config: dict, source: str = "deep"
 ) -> AsyncIterator[dict[str, str]]:
-    """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_before``。
+    """驱动 ``agent.astream_events(version="v2")``，尊重 ``interrupt_before``。
 
-    ``astream_events`` 不尊重 ``interrupt_before``（会直接执行工具），
-    MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
+    使用 ``astream_events`` 替代 ``astream(stream_mode="values")``，实现：
+    - LLM 生成阶段逐 token 流式输出 reasoning/token（不再等完整 AIMessage）
+    - 工具调用/结果事件通过 ``on_tool_start`` / ``on_tool_end`` 实时产出
+    - ``interrupt_before`` 仍有效（LangGraph 1.2+ 已支持）
 
-    SSE 事件映射（spec D1 + T5 扩展）:
-    - AIMessage with tool_calls → ``tool_call`` SSE（含 id/name/args/source）
-      + ``todo_update``（任务级进度，与 tool_call 事件并存，语义不同）
-    - AIMessage without tool_calls → ``token``（最终回复，strip_think 后一次性 yield）
-      或 ``plan`` / ``plan_update``（结构化任务计划/更新）
-    - ToolMessage → ``tool_result`` SSE（含 id/name/result/source）
-      + ``todo_update``（标记完成）
+    SSE 事件映射:
+    - on_chat_model_stream → 逐 chunk 提取文本，通过 ThinkFilter 实时分离
+      think 块内容 → ``reasoning`` 事件；非 think 内容 → ``token`` 事件
+    - on_tool_start → ``tool_call`` SSE + ``todo_update``
+    - on_tool_end → ``tool_result`` SSE + ``todo_update``（标记完成）
 
-    在 ``interrupt_before=["tools"]`` 处暂停时，最后一个 state 的 messages[-1]
-    是 AIMessage（含 tool_calls），此处 yield tool_call + todo_update 后流结束，
+    在 ``interrupt_before=["tools"]`` 处暂停时，流自然结束，
     调用方 ``_is_interrupted`` 返回 True 进入审批流程。
 
     Args:
@@ -71,46 +88,87 @@ async def _stream_agent_events(
         source: SSE 事件 source 标识，默认 "deep"（DeepAgent）。
             Supervisor 传 "work"，Expert 传 "coding" 等。
     """
-    from langchain_core.messages import AIMessage, ToolMessage
-    from app.utils.text import strip_think
+    from app.utils.text import ThinkFilter, split_think, strip_think, strip_tool_call_xml
 
     thread_id = config.get("configurable", {}).get("thread_id", "")
     abort_event = await get_abort_event(thread_id)
 
     logger.info(
-        "stream_agent_events: start streaming",
+        "stream_agent_events: start streaming (astream_events v2)",
         thread_id=thread_id,
         inputs_type=type(inputs).__name__,
         source=source,
     )
-    async for state in agent.astream(inputs, config=config, stream_mode="values"):
+
+    # ThinkFilter 用于跨 chunk 跟踪 开启...结束 块，实时分离 reasoning 和 visible
+    think_filter = ThinkFilter(retain_think=True)
+    # 标记当前 AIMessage 是否包含 tool_calls（由 on_chat_model_end 确认）
+    _current_msg_has_tool_calls = False
+    # 标记当前是否已 emit 过 tool_call（防止重复）
+    _tool_calls_emitted = False
+    # 累积当前 AIMessage 的完整内容（用于 on_chat_model_end 兜底处理）
+    _current_msg_content = ""
+
+    astream_kwargs: dict[str, Any] = {"version": "v2"}
+    if config is not None:
+        astream_kwargs["config"] = config
+
+    async for event in agent.astream_events(inputs, **astream_kwargs):
         if abort_event.is_set():
             raise asyncio.CancelledError("aborted")
-        messages = state.get("messages", []) if hasattr(state, "get") else []
-        if not messages:
-            logger.debug("stream_agent_events: empty messages, skipping")
-            continue
-        last_msg = messages[-1]
-        msg_type = type(last_msg).__name__
-        logger.debug(
-            "stream_agent_events: msg_type={msg_type} msg_count={msg_count} source={source}",
-            msg_type=msg_type,
-            msg_count=len(messages),
-            source=source,
-        )
 
-        if isinstance(last_msg, ToolMessage):
-            # 工具执行完成 → tool_result SSE + todo_update（任务级进度）
-            tool_name = getattr(last_msg, "name", "") or ""
-            tool_call_id = getattr(last_msg, "tool_call_id", "") or str(uuid4())
-            content = getattr(last_msg, "content", "")
-            logger.debug(
-                "stream_agent_events: ToolMessage name={tool_name} tool_call_id={tool_call_id} content_len={content_len} source={source}",
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                content_len=len(content) if isinstance(content, str) else 0,
-                source=source,
-            )
+        kind = event.get("event", "")
+        name = event.get("name", "")
+        data = event.get("data", {}) or {}
+        run_id = event.get("run_id", "") or str(uuid4())
+
+        if kind == "on_chat_model_stream":
+            chunk = data.get("chunk")
+            chunk_text = _extract_chunk_text(chunk)
+            if not chunk_text:
+                continue
+
+            _current_msg_content += chunk_text
+
+            # 检测 chunk 是否携带 tool_calls 信号
+            chunk_obj = data.get("chunk")
+            if chunk_obj is not None:
+                tc = getattr(chunk_obj, "tool_calls", None)
+                if tc:
+                    _current_msg_has_tool_calls = True
+
+            # 用 ThinkFilter 实时处理 think 块
+            cleaned = think_filter.feed(chunk_text)
+            think_chunk = think_filter.take_think()
+
+            # 实时 yield think 块内容作为 reasoning
+            if think_chunk:
+                think_chunk = strip_tool_call_xml(think_chunk)
+                if think_chunk.strip():
+                    yield make_sse_event(
+                        "reasoning",
+                        {"content": think_chunk, "source": source},
+                    )
+
+            # 非 think 内容：如果当前消息最终会包含 tool_calls，
+            # 则不输出 visible 内容（避免计划文本泄露到最终回复）
+            if cleaned and not _current_msg_has_tool_calls:
+                cleaned = strip_tool_call_xml(cleaned)
+                if cleaned.strip():
+                    yield make_sse_event("token", cleaned)
+
+        elif kind == "on_chat_model_end":
+            output = data.get("output")
+            if output is None:
+                continue
+
+            from langchain_core.messages import AIMessage
+
+            if not isinstance(output, AIMessage):
+                continue
+
+            tc_list = getattr(output, "tool_calls", None) or []
+            content = output.content
             if isinstance(content, list):
                 content = "".join(
                     block if isinstance(block, str)
@@ -118,53 +176,38 @@ async def _stream_agent_events(
                     else ""
                     for block in content
                 )
-            yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
-            yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
-            logger.info(
-                "stream_agent_events: yielded tool_result",
-                thread_id=thread_id,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                source=source,
-            )
+            content_str = str(content) if content else ""
 
-        elif isinstance(last_msg, AIMessage):
-            tc_count = len(getattr(last_msg, "tool_calls", []) or [])
-            content_preview = str(last_msg.content)[:100] if last_msg.content else ""
-            logger.debug(
-                "stream_agent_events: AIMessage tc_count={tc_count} content_preview={content_preview} source={source}",
-                tc_count=tc_count,
-                content_preview=content_preview,
-                source=source,
-            )
-            if getattr(last_msg, "tool_calls", None):
-                # AIMessage with tool_calls → 先展示思考计划，再 yield tool_call
-                # LLM 的 content 通常包含 💧... 计划 ...</think> 或纯文本计划
-                content = last_msg.content
-                if isinstance(content, list):
-                    content = "".join(
-                        block if isinstance(block, str)
-                        else block.get("text", "") if isinstance(block, dict)
-                        else ""
-                        for block in content
-                    )
-                plan_text = str(content) if content else ""
-                # 防御性剥离：部分 OpenAI 兼容推理模型（典型如 MiniMax-M3）在
-                # tool_calls 字段已正确填充时，仍会在 content 中重复输出 XML 格式
-                # 工具调用文本。剥离后再 split_think，避免 XML 块泄露到 reasoning 事件。
-                from app.utils.text import split_think, strip_tool_call_xml
-                plan_text = strip_tool_call_xml(plan_text)
+            if tc_list and not _tool_calls_emitted:
+                # AIMessage with tool_calls → flush 剩余 think + yield tool_call
+                _tool_calls_emitted = True
+
+                # flush 剩余 think 缓冲（跨 chunk 未闭合的 think 内容）
+                tail = think_filter.flush()
+                if tail:
+                    tail = strip_tool_call_xml(tail)
+                    if tail.strip():
+                        yield make_sse_event(
+                            "reasoning",
+                            {"content": tail, "source": source},
+                        )
+
+                # 如果 ThinkFilter 没有产出过任何 reasoning（比如模型没用 开启/结束 标签），
+                # 从完整内容提取非 think 部分作为 reasoning 兜底展示
+                # 但只在之前没有产出过 reasoning 时才输出，避免重复
+                plan_text = strip_tool_call_xml(content_str)
                 reasoning, visible = split_think(plan_text)
-                # 优先展示 reasoning（think 块内），其次展示 visible（非 think 内容）
                 display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
+                # 简单判断：如果之前没有 reasoning 输出且 display_plan 非空，兜底输出一次
+                # 注意：这里不做精确去重，因为实时流式场景下重复一次比漏掉好
                 if display_plan:
-                    # yield reasoning 事件供前端展示思考过程
                     yield make_sse_event(
                         "reasoning",
                         {"content": display_plan, "source": source},
                     )
-                # 再 yield 每个 tool_call
-                for tc in last_msg.tool_calls:
+
+                # yield 每个 tool_call
+                for tc in tc_list:
                     if isinstance(tc, dict):
                         tc_name = tc.get("name", tc.get("tool", "unknown"))
                         tc_args = tc.get("args", {}) or {}
@@ -175,26 +218,86 @@ async def _stream_agent_events(
                         tc_id = getattr(tc, "id", None) or str(uuid4())
                     yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
                     yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
-            elif getattr(last_msg, "content", ""):
+
+            elif content_str and not tc_list:
                 # AIMessage without tool_calls → 最终回复
-                content = last_msg.content
-                if isinstance(content, list):
-                    # 兼容 list 内容块
-                    content = "".join(
-                        block if isinstance(block, str)
-                        else block.get("text", "") if isinstance(block, dict)
-                        else ""
-                        for block in content
-                    )
-                text = strip_think(content if isinstance(content, str) else str(content))
-                # 防御性剥离：避免 XML 格式工具调用文本泄露到最终回复 token 流。
-                from app.utils.text import strip_tool_call_xml
+                # flush 剩余 think 缓冲
+                tail = think_filter.flush()
+                if tail:
+                    tail = strip_tool_call_xml(tail)
+                    if tail.strip():
+                        yield make_sse_event(
+                            "reasoning",
+                            {"content": tail, "source": source},
+                        )
+
+                text = strip_think(content_str)
                 text = strip_tool_call_xml(text)
                 if text:
-                    # 检测结构化任务计划/更新
                     plan_info = _extract_plan_or_update(text)
                     if plan_info is not None:
-                        kind, plan_data = plan_info
-                        yield make_sse_event(kind, plan_data)
+                        kind_ev, plan_data = plan_info
+                        yield make_sse_event(kind_ev, plan_data)
                     else:
                         yield make_sse_event("token", text)
+
+            # 重置状态，准备下一条消息
+            _current_msg_has_tool_calls = False
+            _tool_calls_emitted = False
+            _current_msg_content = ""
+            think_filter = ThinkFilter(retain_think=True)
+
+        elif kind == "on_tool_start":
+            logger.debug(
+                "stream_agent_events: on_tool_start name={name} run_id={run_id} source={source}",
+                name=name,
+                run_id=run_id,
+                source=source,
+            )
+
+        elif kind == "on_tool_end":
+            tool_output = data.get("output")
+            tool_name = name or "unknown"
+            result = ""
+            if tool_output is not None:
+                if isinstance(tool_output, str):
+                    result = tool_output
+                else:
+                    try:
+                        result = str(tool_output)
+                    except Exception:
+                        result = ""
+            yield make_tool_result_event(run_id, tool_name, result, source=source)
+            yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
+            logger.info(
+                "stream_agent_events: yielded tool_result",
+                thread_id=thread_id,
+                tool_call_id=run_id,
+                tool_name=tool_name,
+                source=source,
+            )
+
+        elif kind == "on_chain_end":
+            logger.debug(
+                "stream_agent_events: on_chain_end source={source}",
+                source=source,
+            )
+
+    # 流结束，flush 任何剩余缓冲（防御性）
+    # flush 返回 buf 残留：在 think 块内的是 think 内容（已清空），不在 think 块内的是 visible 内容
+    if not think_filter._in_think:
+        # visible 残留 → token（经 strip_tool_call_xml 防御性剥离）
+        tail = think_filter.flush()
+        if tail:
+            tail = strip_tool_call_xml(tail)
+            if tail.strip():
+                yield make_sse_event("token", tail)
+    else:
+        # think 块未闭合：丢弃（防推理泄露），不输出
+        think_filter.flush()
+
+    logger.info(
+        "stream_agent_events: streaming finished",
+        thread_id=thread_id,
+        source=source,
+    )
