@@ -411,7 +411,7 @@ def build_builtin_subagent(
         thread_id: 会话 ID。
         checkpointer: 可选的 LangGraph checkpointer。
     """
-    from app.deep.harness import create_agent
+    from app.deepagent.factory import create_agent
 
     settings = get_settings()
     cfg = settings.subagents[name]

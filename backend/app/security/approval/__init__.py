@@ -1,7 +1,16 @@
-"""安全审批层：决策类型 + 跨请求状态管理。
+"""安全审批层：决策类型 + 跨请求状态管理 + 审批流辅助函数。
 
 从 ``app.approval`` 迁移并升级（Enum 化 + TTL reaper + 原子原语），
 与 ``app.approval`` 平行存在（Phase 5 统一迁移 import 后可删除旧包）。
+
+审批流辅助函数（路径提取 / 审批事件构造 / 审批等待 / 目录越界扩展授权）
+原位于 ``app.security.approval_flow``，现合并到 ``app.security.approval.flow``。
+
+注意：``flow`` 模块不在 ``__init__`` 中 re-export，因为 ``flow.py`` 依赖
+``app.config`` / ``app.sandbox`` / ``app.sse.events`` 等重型模块，若经
+``__init__`` 导入会在 ``app.config`` 加载阶段触发循环依赖
+（``app.config`` → ``app.security`` → ``approval.__init__`` → ``flow`` → ``app.config``）。
+调用方应直接 ``from app.security.approval.flow import X``。
 """
 
 from app.security.approval.decision import ApprovalDecision, ApprovalResult

@@ -1,9 +1,9 @@
 """DeepAgent 路径（路径 C）：deepagents 0.6+ harness，带危险工具中断。
 
-- 用 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建 DeepAgent
+- 用 ``app.deepagent.factory.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建 DeepAgent
 - 工具集: filesystem 全部 + rag_retrieve + web_search
 - ``interrupt_on``：仅危险工具触发中断，只读工具自动放行
-- 审批恢复统一交给 ``app.deep.execution.run_agent_with_approval``
+- 审批恢复统一交给 ``app.deepagent.approval_runner.run_agent_with_approval``
 - 使用共享的 ``AsyncSqliteSaver`` 作为 agent checkpointer
 - deepagents 0.6+ ``PatchToolCallsMiddleware`` 在中间件层自动修复悬空 tool_calls
 """
@@ -14,9 +14,9 @@ import asyncio
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.config import get_settings
-from app.deep.execution import run_agent_with_approval
-from app.deep.harness import create_agent
-from app.deep.tools import (
+from app.deepagent.approval_runner import run_agent_with_approval
+from app.deepagent.factory import create_agent
+from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
     _load_mcp_tools,

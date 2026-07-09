@@ -1,6 +1,6 @@
 """DeepAgent SSE 流式事件驱动。
 
-从 ``app.deep.agent`` 拆出（Phase 2.3），保持公共 API 不变。
+从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
 - ``_stream_agent_events``：驱动 ``agent.astream(stream_mode="values")``，

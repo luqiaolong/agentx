@@ -91,7 +91,7 @@ def test_make_approval_event_includes_thread_id():
     前端 ApprovalRequest.threadId 为空字符串，approve 提交后后端无法匹配，
     DeepAgent _await_approval 永远收不到决定 → 危险操作链路彻底断开。
     """
-    from app.security.approval_flow import _make_approval_event
+    from app.security.approval.flow import _make_approval_event
 
     tool_call = {
         "name": "write_file",
@@ -117,7 +117,7 @@ def test_make_approval_event_includes_thread_id():
 
 def test_make_approval_event_redacts_edit_file_content():
     """edit_file 的 old_text/new_text 应被 redacted。"""
-    from app.security.approval_flow import _make_approval_event
+    from app.security.approval.flow import _make_approval_event
 
     tool_call = {
         "name": "edit_file",

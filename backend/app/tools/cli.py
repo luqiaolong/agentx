@@ -24,7 +24,7 @@ from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox import PathNotAuthorized, get_sandbox, is_critical
 from app.security.command_filter import has_forbidden_args, is_command_blocked
-from app.utils.paths import normalize_path
+from app.sandbox.path_guard import normalize_path
 
 __all__ = ["LLM_CLI_TOOL_NAME", "cli_execute"]
 

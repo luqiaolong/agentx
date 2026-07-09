@@ -1,6 +1,6 @@
 """DeepAgent / Supervisor / Expert 公共审批执行层。
 
-把原本分散在 ``deep/agent.py``、``agents/supervisor/work_supervisor.py``、
+把原本分散在 ``deepagent/agent.py``、``agents/supervisor/work_supervisor.py``、
 ``agents/expert/coding.py`` 中的审批循环提取为统一函数
 ``run_agent_with_approval``，供所有 ReAct 路径复用。
 """
@@ -18,7 +18,7 @@ from app.security.approval import (
     is_paused,
     wait_for_resume,
 )
-from app.security.approval_flow import (
+from app.security.approval.flow import (
     _APPROVAL_POLL_INTERVAL,
     _READONLY_TOOLS,
     _ExtensionResult,
@@ -37,8 +37,8 @@ __all__ = ["run_agent_with_approval"]
 async def _stream_default(
     agent: Any, inputs: Any, config: dict, source: str = "deep"
 ) -> AsyncIterator[dict[str, str]]:
-    """默认 stream_fn：委托到 ``app.deep.streaming._stream_agent_events``。"""
-    from app.deep.streaming import _stream_agent_events
+    """默认 stream_fn：委托到 ``app.deepagent.streaming._stream_agent_events``。"""
+    from app.deepagent.streaming import _stream_agent_events
 
     async for sse in _stream_agent_events(agent, inputs, config, source=source):
         yield sse

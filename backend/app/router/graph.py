@@ -25,9 +25,9 @@ import re
 from langchain_core.messages import trim_messages
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from app.agents.expert import run_coding_expert
-from app.agents.supervisor import run_work_supervisor
-from app.agents.team import run_coding_team
+from app.scenarios.coding import run_coding_expert
+from app.scenarios.work import run_work_supervisor
+from app.scenarios.coding_team import run_coding_team
 from app.config import get_settings
 from app.memory.profile_store import build_profile_prompt
 from app.memory.skills_loader import SkillDef, _parse_frontmatter, _tools_from_meta

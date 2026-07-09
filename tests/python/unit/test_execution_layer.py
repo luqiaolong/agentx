@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.deep.execution import run_agent_with_approval
+from app.deepagent.approval_runner import run_agent_with_approval
 
 
 @pytest.mark.asyncio
@@ -18,8 +18,8 @@ async def test_run_agent_with_approval_yields_events_and_breaks_when_done() -> N
     async def _fake_stream(agent, inputs, config, source):
         yield {"event": "token", "data": "hello"}
 
-    with patch("app.deep.execution._stream_default", _fake_stream):
-        with patch("app.deep.execution._is_interrupted", new=AsyncMock(return_value=False)):
+    with patch("app.deepagent.approval_runner._stream_default", _fake_stream):
+        with patch("app.deepagent.approval_runner._is_interrupted", new=AsyncMock(return_value=False)):
             events = []
             async for evt in run_agent_with_approval(
                 agent,
@@ -64,11 +64,11 @@ async def test_run_agent_with_approval_handles_interrupt_and_resumes() -> None:
     async def _get_pending(agent, config):
         return [{"name": "read_file", "args": {"path": "/tmp/x"}, "id": "tc1"}]
 
-    with patch("app.deep.execution._stream_default", _fake_stream):
-        with patch("app.deep.execution._is_interrupted", _is_interrupted):
-            with patch("app.deep.execution._get_pending_tool_calls", _get_pending):
+    with patch("app.deepagent.approval_runner._stream_default", _fake_stream):
+        with patch("app.deepagent.approval_runner._is_interrupted", _is_interrupted):
+            with patch("app.deepagent.approval_runner._get_pending_tool_calls", _get_pending):
                 with patch(
-                    "app.deep.execution._handle_directory_extension",
+                    "app.deepagent.approval_runner._handle_directory_extension",
                     new=AsyncMock(return_value=MagicMock(events=[], denied=False, timed_out=False)),
                 ):
                     events = []
@@ -107,10 +107,10 @@ async def test_run_agent_with_approval_full_trust_skips_approval() -> None:
         # 第一次检测为 True，进入中断循环；恢复后再次检测为 False
         return call_idx <= 1
 
-    with patch("app.deep.execution._stream_default", _fake_stream):
-        with patch("app.deep.execution._is_interrupted", _is_interrupted):
+    with patch("app.deepagent.approval_runner._stream_default", _fake_stream):
+        with patch("app.deepagent.approval_runner._is_interrupted", _is_interrupted):
             with patch(
-                "app.deep.execution._get_pending_tool_calls",
+                "app.deepagent.approval_runner._get_pending_tool_calls",
                 new=AsyncMock(return_value=[{"name": "write_file", "id": "tc1"}]),
             ):
                 events = []
@@ -146,15 +146,15 @@ async def test_run_agent_with_approval_readonly_streak_forces_stop() -> None:
     async def _get_pending(agent, config):
         return [{"name": "read_file", "args": {"path": "/tmp/x"}, "id": "tc1"}]
 
-    with patch("app.deep.execution._stream_default", _fake_stream):
-        with patch("app.deep.execution._is_interrupted", _is_interrupted):
-            with patch("app.deep.execution._get_pending_tool_calls", _get_pending):
+    with patch("app.deepagent.approval_runner._stream_default", _fake_stream):
+        with patch("app.deepagent.approval_runner._is_interrupted", _is_interrupted):
+            with patch("app.deepagent.approval_runner._get_pending_tool_calls", _get_pending):
                 with patch(
-                    "app.deep.execution._inject_tool_error_for_call",
+                    "app.deepagent.approval_runner._inject_tool_error_for_call",
                     new=AsyncMock(),
                 ) as mock_inject:
                     with patch(
-                        "app.deep.execution._handle_directory_extension",
+                        "app.deepagent.approval_runner._handle_directory_extension",
                         new=AsyncMock(
                             return_value=MagicMock(
                                 events=[], denied=False, timed_out=False

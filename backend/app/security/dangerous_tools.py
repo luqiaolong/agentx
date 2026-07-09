@@ -1,6 +1,6 @@
 """危险工具分类与运行时危险集合计算。
 
-从 ``app.deep.tools`` 提取 ``DANGEROUS_TOOLS``，从 ``app.config.subagents``
+从 ``app.deepagent.tool_assembly`` 提取 ``DANGEROUS_TOOLS``，从 ``app.config.subagents``
 提取 ``FORBIDDEN_SUBAGENT_TOOLS``，统一迁移至 ``app.security`` 包。
 
 变更：

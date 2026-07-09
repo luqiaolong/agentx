@@ -8,7 +8,7 @@
   ``pop_approval`` / ``set_abort`` / ``is_aborted`` / ``clear_abort`` / ``wait_for_abort`` /
   ``set_pause`` / ``clear_pause`` / ``wait_for_resume`` / ``start_reaper``
 
-与 ``app.approval`` / ``app.deep.tools`` / ``app.tools.cli`` / ``app.config.subagents``
+与 ``app.approval`` / ``app.deepagent.tool_assembly`` / ``app.tools.cli`` / ``app.config.subagents``
 平行存在，Phase 5 统一迁移 import 后旧定义可删除。
 """
 

@@ -63,9 +63,9 @@ graph LR
 
 | `agent_mode` | 执行体 | SSE source | 文件 |
 |---|---|---|---|
-| `"work"` | `run_work_supervisor`（全能 Supervisor，可委派 Expert / 子代理） | `work` | [agents/supervisor/work_supervisor.py](file:///d:/java/agentprojects/agentx/backend/app/agents/supervisor/work_supervisor.py) |
-| `"coding"` | `run_coding_expert`（基于 `build_deep_agent` + 审批） | `coding` | [agents/expert/coding.py](file:///d:/java/agentprojects/agentx/backend/app/agents/expert/coding.py) |
-| `"coding_team"` | `run_coding_team`（Orchestrator + 并行 Expert + Blackboard + Aggregator） | `coding_team` | [agents/team/coding_team.py](file:///d:/java/agentprojects/agentx/backend/app/agents/team/coding_team.py) |
+| `"work"` | `run_work_supervisor`（全能 Supervisor，可委派 Expert / 子代理） | `work` | [scenarios/work/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/work/agent.py) |
+| `"coding"` | `run_coding_expert`（基于 `build_deep_agent` + 审批） | `coding` | [scenarios/coding/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/coding/agent.py) |
+| `"coding_team"` | `run_coding_team`（Orchestrator + 并行 Expert + Blackboard + Aggregator） | `coding_team` | [scenarios/coding_team/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/coding_team/agent.py) |
 
 `run_router` 八步流程：
 
@@ -80,19 +80,19 @@ graph LR
 
 ### 三种执行体
 
-**Work Supervisor** — 全能 ReAct Agent（[agents/supervisor/work_supervisor.py](file:///d:/java/agentprojects/agentx/backend/app/agents/supervisor/work_supervisor.py)）
+**Work Supervisor** — 全能 ReAct Agent（[scenarios/work/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/work/agent.py)）
 
 - **工具集**：fs（读 + 写）+ git + cli + rag + web + **委派** + **`@mention` 强制委派**
 - **委派能力**：`delegate_to_expert`（仅 `coding`）+ `delegate_to_subagent`（`{rag, web}` ∪ 自定义子代理）
 - **审批**：`interrupt_before=["tools"]` 触发；`full_trust` 模式临时切换跳过审批
 
-**Coding Expert** — 编码专家（[agents/expert/coding.py](file:///d:/java/agentprojects/agentx/backend/app/agents/expert/coding.py)）
+**Coding Expert** — 编码专家（[scenarios/coding/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/coding/agent.py)）
 
 - **工具集**：fs（读 + 写）+ git + cli + rag + web + **`delegate_to_subagent`**（不可委派 Expert）
 - **`runtime_dangerous`** = `(DANGEROUS_TOOLS ∩ enabled) ∪ mcp_untrusted`
 - **防过度探索**：`readonly_streak_threshold=10` 强制中断只读工具连续调用
 
-**Coding Team** — 场景级 AgentTeam（[agents/team/coding_team.py](file:///d:/java/agentprojects/agentx/backend/app/agents/team/coding_team.py) 薄壳 → [team/orchestrator.py::run_team_path](file:///d:/java/agentprojects/agentx/backend/app/team/orchestrator.py)）
+**Coding Team** — 场景级 AgentTeam（[scenarios/coding_team/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/coding_team/agent.py) 薄壳 → [team/orchestrator.py::run_team_path](file:///d:/java/agentprojects/agentx/backend/app/team/orchestrator.py)）
 
 - Orchestrator 拆任务 → Scheduler 并行调度 → Blackboard 共享结果 → Aggregator 综合输出
 - 涉及写 / 编辑 / shell 的任务强制拆为 `agent=deep` 子任务由 Coding Expert 执行
@@ -109,7 +109,7 @@ graph LR
 
 公共工具构造见 [subagents/base.py](file:///d:/java/agentprojects/agentx/backend/app/subagents/base.py)，闭包绑定 `thread_id` 隔离上下文。
 
-Supervisor 委派工具（[agents/supervisor/delegation.py](file:///d:/java/agentprojects/agentx/backend/app/agents/supervisor/delegation.py)）：
+Supervisor 委派工具（[scenarios/work/agent.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/work/agent.py)）：
 
 - `delegate_to_expert(expert_name, task, context="")` — 委派 Coding Expert
 - `delegate_to_subagent(agent_name, task)` — 委派 rag / web / 自定义子代理

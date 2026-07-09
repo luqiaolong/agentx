@@ -47,13 +47,13 @@ def _clear_pause_state() -> None:
 def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """打桩 run_deep_path 依赖。
 
-    注意：``run_agent_with_approval`` 实际位于 ``app.deep.execution``，
+    注意：``run_agent_with_approval`` 实际位于 ``app.deepagent.approval_runner``，
     因此可注入函数（_is_interrupted / _get_pending_tool_calls /
-    _handle_directory_extension）必须 patch 在 ``app.deep.execution``
-    而非 ``app.deep.agent`` 的 re-export 上。
+    _handle_directory_extension）必须 patch 在 ``app.deepagent.approval_runner``
+    而非 ``app.deepagent.agent`` 的 re-export 上。
     """
-    import app.deep.agent as agent_module
-    import app.deep.execution as exec_module
+    import app.deepagent.agent as agent_module
+    import app.deepagent.approval_runner as exec_module
 
     monkeypatch.setattr(
         agent_module,
@@ -94,8 +94,8 @@ async def test_deep_path_pause_resume(
     _patch_deep_dependencies: dict[str, Any],
 ) -> None:
     """pause 后阻塞并 yield paused，resume 后 yield resumed 并继续。"""
-    from app.deep.agent import run_deep_path
-    import app.deep.execution as exec_module
+    from app.deepagent.agent import run_deep_path
+    import app.deepagent.approval_runner as exec_module
     from app.security.approval import set_pause, clear_pause, is_aborted, set_abort
 
     # 迭代 1 有非危险待执行工具，迭代 2 检测到 pause，resume 后图完成
@@ -158,8 +158,8 @@ async def test_clear_pause_before_wait_does_not_block(
     _patch_deep_dependencies: dict[str, Any],
 ) -> None:
     """若 clear_pause 在 wait 前已调用，不应永久阻塞。"""
-    from app.deep.agent import run_deep_path
-    import app.deep.execution as exec_module
+    from app.deepagent.agent import run_deep_path
+    import app.deepagent.approval_runner as exec_module
     from app.security.approval import set_pause, clear_pause
 
     monkeypatch.setattr(

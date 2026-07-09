@@ -37,14 +37,14 @@ async def _empty_stream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, st
 def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """打桩 run_deep_path 依赖，隔离 LLM / 沙箱 / 工具加载。
 
-    注意：``run_agent_with_approval`` 实际位于 ``app.deep.execution``，
+    注意：``run_agent_with_approval`` 实际位于 ``app.deepagent.approval_runner``，
     因此所有可注入函数（_is_interrupted / _get_pending_tool_calls /
     _stream_default / _await_approval / _handle_directory_extension）
-    都必须 patch 在 ``app.deep.execution`` 而非 ``app.deep.agent`` 的
+    都必须 patch 在 ``app.deepagent.approval_runner`` 而非 ``app.deepagent.agent`` 的
     re-export 上。
     """
-    import app.deep.agent as agent_module
-    import app.deep.execution as exec_module
+    import app.deepagent.agent as agent_module
+    import app.deepagent.approval_runner as exec_module
 
     # 工具加载：包含测试中会用到的所有危险工具，确保 runtime_dangerous 命中
     monkeypatch.setattr(
@@ -83,7 +83,7 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         lambda: fake_sandbox,
     )
 
-    # 流式事件：直接 patch ``app.deep.execution._stream_default``，避免
+    # 流式事件：直接 patch ``app.deepagent.approval_runner._stream_default``，避免
     # 对 ``_stream_agent_events`` 局部 import 的间接寻址
     monkeypatch.setattr(exec_module, "_stream_default", _empty_stream)
 
@@ -99,8 +99,8 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
     _patch_deep_dependencies: dict[str, Any],
 ) -> None:
     """两个危险工具调用时，应 yield 两个 approval_request，然后一个 decision 批准。"""
-    from app.deep.agent import run_deep_path
-    import app.deep.execution as exec_module
+    from app.deepagent.agent import run_deep_path
+    import app.deepagent.approval_runner as exec_module
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
@@ -153,8 +153,8 @@ async def test_deny_multiple_dangerous_tools_injects_errors(
     _patch_deep_dependencies: dict[str, Any],
 ) -> None:
     """用户拒绝时，为每个危险 tool_call 注入 ToolMessage 错误并 yield error。"""
-    from app.deep.agent import run_deep_path
-    import app.deep.execution as exec_module
+    from app.deepagent.agent import run_deep_path
+    import app.deepagent.approval_runner as exec_module
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},
@@ -213,8 +213,8 @@ async def test_timeout_dangerous_tools_injects_errors(
     _patch_deep_dependencies: dict[str, Any],
 ) -> None:
     """审批超时视为未批准，同样注入错误。"""
-    from app.deep.agent import run_deep_path
-    import app.deep.execution as exec_module
+    from app.deepagent.agent import run_deep_path
+    import app.deepagent.approval_runner as exec_module
 
     pending_calls = [
         {"id": "tc-1", "name": "write_file", "args": {"path": "/tmp/a.txt"}},

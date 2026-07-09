@@ -128,7 +128,7 @@ Get-NetTCPConnection -LocalPort 5173,5174 -ErrorAction SilentlyContinue | Select
 | `[WinError 10048]` | Tauri 内部 Socket 复用冲突 | 完全重启 Tauri |
 | Vite `@/` 路径解析失败 | 在 `frontend/renderer` 子目录启动而非项目根目录 | `cd d:/java/agentprojects/agentx` 后启动 |
 | Tauri 桌面窗口不出现 | Rust 首次编译未完成 / WebView2 缺失 | 等编译完成 / 安装 WebView2 Runtime |
-| 后端 `agent stuck in repeating tool-call loop` | LLM 陷入重复工具调用循环 | 已修复：见 `backend/app/deep/execution.py` 重复检测 + `asyncio.sleep(0.05)` |
+| 后端 `agent stuck in repeating tool-call loop` | LLM 陷入重复工具调用循环 | 已修复：见 `backend/app/deepagent/approval_runner.py` 重复检测 + `asyncio.sleep(0.05)` |
 
 ## §14.7.7 dev 进程长存规范
 

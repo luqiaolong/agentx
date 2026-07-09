@@ -1,6 +1,6 @@
 """公共审批执行流：审批循环辅助函数。
 
-为 ``app.deep.execution.run_agent_with_approval`` 提供底层审批辅助函数：
+为 ``app.deepagent.approval_runner.run_agent_with_approval`` 提供底层审批辅助函数：
 路径提取、审批事件构造、审批等待、目录越界扩展授权等。
 
 集中修复 6 个 bug：
@@ -369,7 +369,7 @@ async def _handle_directory_extension(
 
 
 # ============================================================
-# 审批循环辅助函数（供 app.deep.execution.run_agent_with_approval 使用）
+# 审批循环辅助函数（供 app.deepagent.approval_runner.run_agent_with_approval 使用）
 # ============================================================
 
 
@@ -399,7 +399,7 @@ async def _inject_tool_error_for_call(
         await agent.aupdate_state(config, {"messages": [tool_msg]})
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "approval_flow.inject_tool_error_for_call failed",
+            "approval.flow.inject_tool_error_for_call failed",
             thread_id=config.get("configurable", {}).get("thread_id", ""),
             tool=tool_call.get("name"),
             error=str(exc),

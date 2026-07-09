@@ -101,11 +101,11 @@ agentx/
 │   ├── mcp/                    ← MCP 客户端 + 配置
 │   ├── observability/          ← LangSmith SDK + ObservationStore + logger
 │   │   ├── observation.py      ← SqliteObservationSink（4 表 + WAL）+ ObservationCallback（FR-1/2）
-│   │   ├── langsmith.py        ← LangSmith SDK trace_span + redact（FR-3）
-│   │   ├── langsmith_dual.py   ← dual_trace contextmanager（本地+remote 双写+降级，FR-3.3）
+│   │   ├── langsmith.py        ← LangSmith SDK trace_span + redact + dual_trace contextmanager（本地+remote 双写+降级，FR-3/3.3）
 │   │   ├── trace.py            ← bind_trace ContextVar（trace_id 透传 0-intrusion）
-│   │   └── feedback.py         ← 隐式信号 record_implicit_ok/bad（FR-9）
-│   └── utils/                  ← text(ThinkFilter) + chunks + sse_events + prompts + paths
+│   │   └── feedback.py         ← 隐式信号 record_implicit_ok/bad（FR-9)
+│   ├── sse/                    ← SSE 事件协议层（make_sse_event 等 7 个工厂函数）
+│   └── utils/                  ← text(ThinkFilter) + chunks + prompts
 ├── frontend/
 │   ├── renderer/               ← React UI（chat/settings/workspace 组件）
 │   │   ├── lib/

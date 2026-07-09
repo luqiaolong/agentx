@@ -67,31 +67,31 @@ class TestResolveMaxWait:
 
     def test_zero_returns_absolute_max(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """approval_max_wait=0 → _ABSOLUTE_MAX_WAIT (3600)。"""
-        from app.security.approval_flow import _ABSOLUTE_MAX_WAIT, _resolve_max_wait
+        from app.security.approval.flow import _ABSOLUTE_MAX_WAIT, _resolve_max_wait
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 0
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         assert _resolve_max_wait() == _ABSOLUTE_MAX_WAIT
 
     def test_positive_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """approval_max_wait=300 → 300。"""
-        from app.security.approval_flow import _resolve_max_wait
+        from app.security.approval.flow import _resolve_max_wait
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         assert _resolve_max_wait() == 300.0
 
     def test_exceeds_absolute_max_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """approval_max_wait=99999 → 截断到 3600。"""
-        from app.security.approval_flow import _ABSOLUTE_MAX_WAIT, _resolve_max_wait
+        from app.security.approval.flow import _ABSOLUTE_MAX_WAIT, _resolve_max_wait
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 99999
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         assert _resolve_max_wait() == _ABSOLUTE_MAX_WAIT
 
@@ -108,14 +108,14 @@ class TestDangerousToolApproval:
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         """打桩 run_agent_with_approval 依赖的模块级函数。"""
         # is_paused / is_aborted / get_pause_event
-        monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
         # wait_for_resume is used; no separate pause event stub needed
 
         # get_settings
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         # sandbox
         sandbox = MagicMock()
@@ -132,19 +132,19 @@ class TestDangerousToolApproval:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """危险工具被批准后恢复执行。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = _common_mocks["sandbox"]
         pending_calls = [_fake_tool_call("tc-1", "write_file", {"path": "/external/file"})]
 
         # _await_approval 返回批准
         monkeypatch.setattr(
-            "app.deep.execution._await_approval",
+            "app.deepagent.approval_runner._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
         )
         # _handle_directory_extension 不应被调用（有 dangerous_calls）
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension",
+            "app.deepagent.approval_runner._handle_directory_extension",
             AsyncMock(return_value=_FakeExtensionResult()),
         )
 
@@ -188,14 +188,14 @@ class TestDangerousToolApproval:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """危险工具被拒绝后注入错误并终止。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = _common_mocks["sandbox"]
         pending_calls = [_fake_tool_call("tc-1", "write_file", {"path": "/external/file"})]
 
         inject_call_fn = AsyncMock()
         monkeypatch.setattr(
-            "app.deep.execution._await_approval",
+            "app.deepagent.approval_runner._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=False, decision="deny")),
         )
 
@@ -237,14 +237,14 @@ class TestDangerousToolApproval:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """审批超时返回 None → 注入错误并终止。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = _common_mocks["sandbox"]
         pending_calls = [_fake_tool_call("tc-1", "write_file", {"path": "/external/file"})]
 
         inject_call_fn = AsyncMock()
         monkeypatch.setattr(
-            "app.deep.execution._await_approval",
+            "app.deepagent.approval_runner._await_approval",
             AsyncMock(return_value=None),  # timeout
         )
 
@@ -288,13 +288,13 @@ class TestDirectoryExtension:
 
     @pytest.fixture
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-        monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
         # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         sandbox = MagicMock()
         sandbox.is_path_authorized = AsyncMock(return_value=False)
@@ -309,7 +309,7 @@ class TestDirectoryExtension:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """非危险工具越界 → _handle_directory_extension 返回 events → yield。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = _common_mocks["sandbox"]
         # read_file 不是危险工具
@@ -317,7 +317,7 @@ class TestDirectoryExtension:
 
         ext_event = {"event": "approval_request", "data": "{}"}
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension",
+            "app.deepagent.approval_runner._handle_directory_extension",
             AsyncMock(return_value=_FakeExtensionResult(events=[ext_event])),
         )
 
@@ -353,14 +353,14 @@ class TestDirectoryExtension:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """directory_extension 被拒绝 → yield error 并终止。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = _common_mocks["sandbox"]
         pending_calls = [_fake_tool_call("tc-1", "read_file", {"path": "/external/dir"})]
 
         ext_event = {"event": "approval_request", "data": "{}"}
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension",
+            "app.deepagent.approval_runner._handle_directory_extension",
             AsyncMock(return_value=_FakeExtensionResult(events=[ext_event], denied=True)),
         )
 
@@ -402,13 +402,13 @@ class TestFullTrustSkip:
 
     @pytest.fixture
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-        monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
         # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         sandbox = MagicMock()
         sandbox.is_path_authorized = AsyncMock(return_value=False)
@@ -421,7 +421,7 @@ class TestFullTrustSkip:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """full_trust 模式下危险工具不弹审批框，直接恢复执行。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = _common_mocks["sandbox"]
         pending_calls = [_fake_tool_call("tc-1", "write_file", {"path": "/external/file"})]
@@ -429,7 +429,7 @@ class TestFullTrustSkip:
         # _handle_directory_extension 不应被调用
         handle_ext_fn = AsyncMock(return_value=_FakeExtensionResult())
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension", handle_ext_fn
+            "app.deepagent.approval_runner._handle_directory_extension", handle_ext_fn
         )
 
         call_count = 0
@@ -483,13 +483,13 @@ class TestParentThreadIdInheritance:
 
     @pytest.fixture
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-        monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
         # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         return {}
 
@@ -498,18 +498,18 @@ class TestParentThreadIdInheritance:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """危险工具路径检查传 parent_thread_id 到 sandbox.is_path_authorized。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = MagicMock()
         sandbox.is_path_authorized = AsyncMock(return_value=False)
         sandbox.clear_temp = AsyncMock()
 
         monkeypatch.setattr(
-            "app.deep.execution._await_approval",
+            "app.deepagent.approval_runner._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
         )
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension",
+            "app.deepagent.approval_runner._handle_directory_extension",
             AsyncMock(return_value=_FakeExtensionResult()),
         )
 
@@ -551,7 +551,7 @@ class TestParentThreadIdInheritance:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """directory_extension 传 parent_thread_id 到 _handle_directory_extension。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = MagicMock()
         sandbox.is_path_authorized = AsyncMock(return_value=False)
@@ -559,7 +559,7 @@ class TestParentThreadIdInheritance:
 
         handle_ext_fn = AsyncMock(return_value=_FakeExtensionResult())
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension", handle_ext_fn
+            "app.deepagent.approval_runner._handle_directory_extension", handle_ext_fn
         )
 
         # read_file 非危险工具 → 走 directory_extension 路径
@@ -604,13 +604,13 @@ class TestPathBaseConsistency:
 
     @pytest.fixture
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-        monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
         # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         return {}
 
@@ -619,18 +619,18 @@ class TestPathBaseConsistency:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """危险工具路径检查传 base=workspace_path。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = MagicMock()
         sandbox.is_path_authorized = AsyncMock(return_value=False)
         sandbox.clear_temp = AsyncMock()
 
         monkeypatch.setattr(
-            "app.deep.execution._await_approval",
+            "app.deepagent.approval_runner._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
         )
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension",
+            "app.deepagent.approval_runner._handle_directory_extension",
             AsyncMock(return_value=_FakeExtensionResult()),
         )
 
@@ -677,13 +677,13 @@ class TestCliExecuteAlwaysApproval:
 
     @pytest.fixture
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-        monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
         # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         return {}
 
@@ -692,7 +692,7 @@ class TestCliExecuteAlwaysApproval:
         self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """execute 即使 workspace 已授权仍需审批。"""
-        from app.deep.execution import run_agent_with_approval
+        from app.deepagent.approval_runner import run_agent_with_approval
 
         sandbox = MagicMock()
         # workspace 已授权（is_path_authorized 返回 True）
@@ -700,11 +700,11 @@ class TestCliExecuteAlwaysApproval:
         sandbox.clear_temp = AsyncMock()
 
         monkeypatch.setattr(
-            "app.deep.execution._await_approval",
+            "app.deepagent.approval_runner._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
         )
         monkeypatch.setattr(
-            "app.deep.execution._handle_directory_extension",
+            "app.deepagent.approval_runner._handle_directory_extension",
             AsyncMock(return_value=_FakeExtensionResult()),
         )
 
@@ -752,19 +752,19 @@ class TestExtractPathsMigration:
     """验证辅助函数从 deep/approval.py 迁移到 approval_flow.py 后行为一致。"""
 
     def test_extract_paths_read_file(self) -> None:
-        from app.security.approval_flow import _extract_paths_from_tool_call
+        from app.security.approval.flow import _extract_paths_from_tool_call
 
         tc = {"name": "read_file", "args": {"path": "/tmp/a.txt"}}
         assert _extract_paths_from_tool_call(tc) == ["/tmp/a.txt"]
 
     def test_extract_paths_cli_execute_with_cwd(self) -> None:
-        from app.security.approval_flow import _extract_paths_from_tool_call
+        from app.security.approval.flow import _extract_paths_from_tool_call
 
         tc = {"name": "cli_execute", "args": {"command": "git", "cwd": "/proj"}}
         assert _extract_paths_from_tool_call(tc) == ["/proj"]
 
     def test_extract_paths_cli_execute_falls_back_to_workspace(self) -> None:
-        from app.security.approval_flow import _extract_paths_from_tool_call
+        from app.security.approval.flow import _extract_paths_from_tool_call
 
         tc = {"name": "cli_execute", "args": {"command": "git"}}
         assert _extract_paths_from_tool_call(tc, workspace_path="/workspace") == ["/workspace"]
@@ -783,7 +783,7 @@ class TestHandleDirectoryExtensionBugs:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """bug #1 #2: is_path_authorized 传 base=workspace_path + parent_thread_id。"""
-        from app.security.approval_flow import _handle_directory_extension
+        from app.security.approval.flow import _handle_directory_extension
 
         sandbox = MagicMock()
         sandbox.is_path_authorized = AsyncMock(return_value=False)
@@ -791,9 +791,9 @@ class TestHandleDirectoryExtensionBugs:
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
         monkeypatch.setattr(
-            "app.security.approval_flow._await_approval",
+            "app.security.approval.flow._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=True, decision="once")),
         )
 
@@ -817,7 +817,7 @@ class TestHandleDirectoryExtensionBugs:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """bug #4: all_under_workspace 用 writable=False（只读工具仅需读权限）。"""
-        from app.security.approval_flow import _handle_directory_extension
+        from app.security.approval.flow import _handle_directory_extension
 
         sandbox = MagicMock()
         # 第一次检查（收集越界路径）：返回 False
@@ -827,9 +827,9 @@ class TestHandleDirectoryExtensionBugs:
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
         monkeypatch.setattr(
-            "app.security.approval_flow._await_approval",
+            "app.security.approval.flow._await_approval",
             AsyncMock(return_value=_FakeApprovalDecision(approved=True, decision="once")),
         )
 
@@ -853,7 +853,7 @@ class TestHandleDirectoryExtensionBugs:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """bug #4: 所有越界路径位于已授权目录下 → 自动放行（无审批事件）。"""
-        from app.security.approval_flow import _handle_directory_extension
+        from app.security.approval.flow import _handle_directory_extension
 
         sandbox = MagicMock()
         # 第一次检查（收集越界）：返回 False
@@ -863,7 +863,7 @@ class TestHandleDirectoryExtensionBugs:
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
-        monkeypatch.setattr("app.security.approval_flow.get_settings", lambda: fake_settings)
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
 
         pending = [_fake_tool_call("tc-1", "read_file", {"path": "/workspace/sub/dir"})]
 

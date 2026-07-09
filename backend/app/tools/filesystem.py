@@ -17,8 +17,8 @@ from typing import Any
 
 from app.config import PROJECT_ROOT, WORKSPACE_DIR
 from app.observability.logger import logger
-from app.utils.paths import normalize_path
 from app.sandbox import PathNotAuthorized, get_sandbox
+from app.sandbox.path_guard import normalize_path
 
 # 读权限缺失时的统一错误信息（与 SessionSandbox.check_read 一致）
 _UNAUTHORIZED_READ = "路径 {path} 未授权，请通过 dialog 选择目录后重试"

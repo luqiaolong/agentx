@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from app.observability.langsmith_dual import dual_trace
+from app.observability.langsmith import dual_trace
 from app.observability.observation import SqliteObservationSink, reset_observation_sink
 
 
@@ -23,7 +23,7 @@ def tmp_sink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SqliteObservati
     """临时 sink + patch get_observation_sink 返回它。"""
     sink = SqliteObservationSink(db_path=tmp_path / "dual_test.db")
     # patch 模块级 get_observation_sink，使 dual_trace 用临时 sink
-    import app.observability.langsmith_dual as mod
+    import app.observability.langsmith as mod
 
     monkeypatch.setattr(mod, "get_observation_sink", lambda: sink)
     monkeypatch.setattr(
@@ -117,7 +117,7 @@ def test_dual_trace_remote_enabled(
     remote_calls: list[str] = []
 
     # mock trace_span 记录 remote 调用
-    import app.observability.langsmith_dual as mod
+    import app.observability.langsmith as mod
 
     @contextmanager
     def mock_trace_span(name, **kwargs):
@@ -160,7 +160,7 @@ def test_dual_trace_degrade_warning(
 
     get_settings.cache_clear()
 
-    import app.observability.langsmith_dual as mod
+    import app.observability.langsmith as mod
 
     warning_calls: list[str] = []
 
@@ -196,7 +196,7 @@ def test_dual_trace_remote_failure_preserves_local(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """remote trace_span 抛异常时，本地 observation_run 数据不丢。"""
-    import app.observability.langsmith_dual as mod
+    import app.observability.langsmith as mod
 
     @contextmanager
     def mock_trace_span_raising(name, **kwargs):

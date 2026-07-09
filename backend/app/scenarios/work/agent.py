@@ -1,6 +1,6 @@
 """work 场景 Supervisor（全能 agent）实现。
 
-基于 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建，
+基于 ``app.deepagent.factory.create_agent`` 封装 ``deepagents.create_deep_agent`` 构建，
 与 DeepAgent 共享 streaming/approval 基础设施，但有以下区别：
 1. 使用 Supervisor 专用 system prompt（``_DEFAULT_SUPERVISOR_SYSTEM_PROMPT``）
 2. 通过 deepagents ``SubAgentMiddleware`` 注入 ``task`` 委派工具，暴露
@@ -15,7 +15,7 @@
 1. 解析 @mention：若命中 Expert 则直接运行 Expert；若命中子代理则运行后回注 Supervisor
 2. 构建 Supervisor agent（含标准工具 + delegate_to_expert + task 子代理 + interrupt_on 危险工具审批）
 3. ``astream_events`` 驱动图执行，流式产出 token / tool_call / tool_result 事件
-4. 危险工具中断 → 公共审批执行层 ``app.deep.execution.run_agent_with_approval`` 处理
+4. 危险工具中断 → 公共审批执行层 ``app.deepagent.approval_runner.run_agent_with_approval`` 处理
 5. 循环直至图完成
 """
 
@@ -25,11 +25,11 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from deepagents import CompiledSubAgent
 
-from app.agents.supervisor.mention import parse_mention
+from app.scenarios.work.mention import parse_mention
 from app.config import get_settings
-from app.deep.execution import run_agent_with_approval
-from app.deep.harness import create_agent
-from app.deep.tools import (
+from app.deepagent.approval_runner import run_agent_with_approval
+from app.deepagent.factory import create_agent
+from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
     _TOOL_NAME_MAP,
     _load_mcp_tools,
@@ -170,7 +170,7 @@ def make_expert_delegation_tool(
             task_len=len(task),
         )
 
-        from app.agents.expert.coding import run_coding_expert
+        from app.scenarios.coding.agent import run_coding_expert
 
         parts: list[str] = []
         async for event in run_coding_expert(
@@ -203,7 +203,7 @@ async def build_work_supervisor(
 ) -> Any:
     """构造 work 场景 Supervisor agent。
 
-    用 ``app.deep.harness.create_agent`` 封装 ``deepagents.create_deep_agent``，
+    用 ``app.deepagent.factory.create_agent`` 封装 ``deepagents.create_deep_agent``，
     通过 ``interrupt_on`` 配置仅危险工具中断（只读工具自动放行）。
 
     Args:
@@ -309,7 +309,7 @@ async def run_work_supervisor(
             "source": expert_name,
             "message": f"@mention 强制委派给 {expert_name} Expert",
         })
-        from app.agents.expert.coding import run_coding_expert
+        from app.scenarios.coding.agent import run_coding_expert
 
         async for sse in _convert_expert_events(
             run_coding_expert(
@@ -406,7 +406,7 @@ async def run_work_supervisor(
         if workspace_path:
             runtime_dangerous = runtime_dangerous | {"execute"}
 
-        # ---- 3. 公共审批执行层（app.deep.execution.run_agent_with_approval）----
+        # ---- 3. 公共审批执行层（app.deepagent.approval_runner.run_agent_with_approval）----
         # 由统一执行层负责 _is_interrupted、中断循环、危险工具判定等逻辑，
         # work_supervisor 不再重复实现。
         async for sse in run_agent_with_approval(
