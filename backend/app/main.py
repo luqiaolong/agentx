@@ -235,27 +235,31 @@ class UTF8JSONBodyMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         content_type = (request.headers.get("content-type") or "").lower()
-        if content_type.startswith("application/json"):
-            raw = await request.body()
-            if raw:
-                # 1. 优先 UTF-8
-                try:
-                    text = raw.decode("utf-8")
-                except UnicodeDecodeError:
-                    # 2. 回退 GBK（Windows cmd / Git Bash 默认）
-                    try:
-                        text = raw.decode("gbk")
-                    except UnicodeDecodeError:
-                        from starlette.responses import JSONResponse
-                        return JSONResponse(
-                            {"detail": "request body is not valid UTF-8 or GBK"},
-                            status_code=400,
-                        )
-                    # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
-                    request._body = text.encode("utf-8")  # noqa: SLF001
-                else:
-                    # UTF-8 合法，按原样放回
-                    request._body = raw  # noqa: SLF001
+        if not content_type.startswith("application/json"):
+            return await call_next(request)
+
+        raw = await request.body()
+        if not raw:
+            return await call_next(request)
+
+        # 1. 优先 UTF-8
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # 2. 回退 GBK（Windows cmd / Git Bash 默认）
+            try:
+                text = raw.decode("gbk")
+            except UnicodeDecodeError:
+                from starlette.responses import JSONResponse
+                return JSONResponse(
+                    {"detail": "request body is not valid UTF-8 or GBK"},
+                    status_code=400,
+                )
+            # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
+            request._body = text.encode("utf-8")  # noqa: SLF001
+        else:
+            # UTF-8 合法，按原样放回
+            request._body = raw  # noqa: SLF001
         return await call_next(request)
 
 
