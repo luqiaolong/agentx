@@ -123,6 +123,11 @@ async def _stream_agent_events(
     _astream_start = asyncio.get_event_loop().time()
     _first_state_seen = False
 
+    # 追踪已处理的消息数量，避免 LangGraph astream 一次 emit 多个新消息时
+    # 只处理 messages[-1] 而遗漏前面的 tool_result（典型：并行工具调用后
+    # state 同时包含多个 ToolMessage，只处理最后一条会导致前面工具卡「运行中」）。
+    _processed_count = 0
+
     async for state in agent.astream(inputs, config=config, stream_mode="values"):
         if not _first_state_seen:
             _first_state_seen = True
@@ -139,68 +144,55 @@ async def _stream_agent_events(
         if not messages:
             logger.debug("stream_agent_events: empty messages, skipping")
             continue
-        last_msg = messages[-1]
-        sig = _msg_signature(last_msg)
-        if sig in _seen_signatures:
+
+        # 处理所有新增消息（从 _processed_count 开始），而不是只处理 messages[-1]。
+        # 防御性：若 _processed_count >= len(messages)（如测试用的 _FakeAgent
+        # 每次只返回单条消息的 state，非 LangGraph 的累积 messages），则回退到
+        # 处理 messages[-1] 以保持兼容。
+        if _processed_count >= len(messages):
+            new_messages = [messages[-1]]
+        else:
+            new_messages = messages[_processed_count:]
+        _processed_count = len(messages)
+
+        if not new_messages:
             logger.debug(
-                "stream_agent_events: duplicate message skipped sig={sig} msg_type={msg_type}",
-                sig=sig,
-                msg_type=type(last_msg).__name__,
+                "stream_agent_events: no new messages msg_count={msg_count} source={source}",
+                msg_count=len(messages),
+                source=source,
             )
             continue
-        _seen_signatures.add(sig)
-        msg_type = type(last_msg).__name__
-        logger.info(
-            "stream_agent_events: msg_type={msg_type} msg_count={msg_count} source={source}",
-            msg_type=msg_type,
-            msg_count=len(messages),
-            source=source,
-        )
 
-        if isinstance(last_msg, ToolMessage):
-            # 工具执行完成 → tool_result SSE + todo_update（任务级进度）
-            tool_name = getattr(last_msg, "name", "") or ""
-            tool_call_id = getattr(last_msg, "tool_call_id", "") or str(uuid4())
-            content = getattr(last_msg, "content", "")
-            logger.debug(
-                "stream_agent_events: ToolMessage name={tool_name} tool_call_id={tool_call_id} content_len={content_len} source={source}",
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                content_len=len(content) if isinstance(content, str) else 0,
-                source=source,
-            )
-            if isinstance(content, list):
-                content = "".join(
-                    block if isinstance(block, str)
-                    else block.get("text", "") if isinstance(block, dict)
-                    else ""
-                    for block in content
+        for msg in new_messages:
+            sig = _msg_signature(msg)
+            if sig in _seen_signatures:
+                logger.debug(
+                    "stream_agent_events: duplicate message skipped sig={sig} msg_type={msg_type}",
+                    sig=sig,
+                    msg_type=type(msg).__name__,
                 )
-            await _obs("tool_result", {"id": tool_call_id, "name": tool_name, "result": content, "source": source})
-            yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
-            await _obs("todo_update", {"todos": [{"text": f"工具 {tool_name} 完成", "done": True, "task_id": thread_id}]})
-            yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
+                continue
+            _seen_signatures.add(sig)
+            msg_type = type(msg).__name__
             logger.info(
-                "stream_agent_events: yielded tool_result",
-                thread_id=thread_id,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
+                "stream_agent_events: msg_type={msg_type} msg_count={msg_count} source={source}",
+                msg_type=msg_type,
+                msg_count=len(messages),
                 source=source,
             )
 
-        elif isinstance(last_msg, AIMessage):
-            tc_count = len(getattr(last_msg, "tool_calls", []) or [])
-            content_preview = str(last_msg.content)[:100] if last_msg.content else ""
-            logger.debug(
-                "stream_agent_events: AIMessage tc_count={tc_count} content_preview={content_preview} source={source}",
-                tc_count=tc_count,
-                content_preview=content_preview,
-                source=source,
-            )
-            if getattr(last_msg, "tool_calls", None):
-                # AIMessage with tool_calls → 先展示思考计划，再 yield tool_call
-                # LLM 的 content 通常包含 💧... 计划 ...</think> 或纯文本计划
-                content = last_msg.content
+            if isinstance(msg, ToolMessage):
+                # 工具执行完成 → tool_result SSE + todo_update（任务级进度）
+                tool_name = getattr(msg, "name", "") or ""
+                tool_call_id = getattr(msg, "tool_call_id", "") or str(uuid4())
+                content = getattr(msg, "content", "")
+                logger.debug(
+                    "stream_agent_events: ToolMessage name={tool_name} tool_call_id={tool_call_id} content_len={content_len} source={source}",
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    content_len=len(content) if isinstance(content, str) else 0,
+                    source=source,
+                )
                 if isinstance(content, list):
                     content = "".join(
                         block if isinstance(block, str)
@@ -208,58 +200,90 @@ async def _stream_agent_events(
                         else ""
                         for block in content
                     )
-                plan_text = str(content) if content else ""
-                # 防御性剥离：部分 OpenAI 兼容推理模型（典型如 MiniMax-M3）在
-                # tool_calls 字段已正确填充时，仍会在 content 中重复输出 XML 格式
-                # 工具调用文本。剥离后再 split_think，避免 XML 块泄露到 reasoning 事件。
-                from app.utils.text import split_think, strip_tool_call_xml
-                plan_text = strip_tool_call_xml(plan_text)
-                reasoning, visible = split_think(plan_text)
-                # 优先展示 reasoning（think 块内），其次展示 visible（非 think 内容）
-                display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
-                if display_plan:
-                    # yield reasoning 事件供前端展示思考过程
-                    await _obs("reasoning", {"content": display_plan, "source": source})
-                    yield make_sse_event(
-                        "reasoning",
-                        {"content": display_plan, "source": source},
-                    )
-                # 再 yield 每个 tool_call
-                for tc in last_msg.tool_calls:
-                    if isinstance(tc, dict):
-                        tc_name = tc.get("name", tc.get("tool", "unknown"))
-                        tc_args = tc.get("args", {}) or {}
-                        tc_id = tc.get("id") or str(uuid4())
-                    else:
-                        tc_name = getattr(tc, "name", "unknown")
-                        tc_args = getattr(tc, "args", {}) or {}
-                        tc_id = getattr(tc, "id", None) or str(uuid4())
-                    await _obs("tool_call", {"id": tc_id, "name": tc_name, "args": tc_args, "source": source})
-                    yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
-                    await _obs("todo_update", {"todos": [{"text": f"调用工具: {tc_name}", "done": False, "task_id": thread_id}]})
-                    yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
-            elif getattr(last_msg, "content", ""):
-                # AIMessage without tool_calls → 最终回复
-                content = last_msg.content
-                if isinstance(content, list):
-                    # 兼容 list 内容块
-                    content = "".join(
-                        block if isinstance(block, str)
-                        else block.get("text", "") if isinstance(block, dict)
-                        else ""
-                        for block in content
-                    )
-                text = strip_think(content if isinstance(content, str) else str(content))
-                # 防御性剥离：避免 XML 格式工具调用文本泄露到最终回复 token 流。
-                from app.utils.text import strip_tool_call_xml
-                text = strip_tool_call_xml(text)
-                if text:
-                    # 检测结构化任务计划/更新
-                    plan_info = extract_plan_or_update(text)
-                    if plan_info is not None:
-                        kind, plan_data = plan_info
-                        await _obs(kind, plan_data if isinstance(plan_data, dict) else {"data": plan_data})
-                        yield make_sse_event(kind, plan_data)
-                    else:
-                        await _obs("token", {"content": text})
-                        yield make_sse_event("token", text)
+                await _obs("tool_result", {"id": tool_call_id, "name": tool_name, "result": content, "source": source})
+                yield make_tool_result_event(tool_call_id, tool_name, content, source=source)
+                await _obs("todo_update", {"todos": [{"text": f"工具 {tool_name} 完成", "done": True, "task_id": thread_id}]})
+                yield make_todo_event(f"工具 {tool_name} 完成", done=True, task_id=thread_id)
+                logger.info(
+                    "stream_agent_events: yielded tool_result",
+                    thread_id=thread_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    source=source,
+                )
+
+            elif isinstance(msg, AIMessage):
+                tc_count = len(getattr(msg, "tool_calls", []) or [])
+                content_preview = str(msg.content)[:100] if msg.content else ""
+                logger.debug(
+                    "stream_agent_events: AIMessage tc_count={tc_count} content_preview={content_preview} source={source}",
+                    tc_count=tc_count,
+                    content_preview=content_preview,
+                    source=source,
+                )
+                if getattr(msg, "tool_calls", None):
+                    # AIMessage with tool_calls → 先展示思考计划，再 yield tool_call
+                    # LLM 的 content 通常包含 💧... 计划 ... 或纯文本计划
+                    content = msg.content
+                    if isinstance(content, list):
+                        content = "".join(
+                            block if isinstance(block, str)
+                            else block.get("text", "") if isinstance(block, dict)
+                            else ""
+                            for block in content
+                        )
+                    plan_text = str(content) if content else ""
+                    # 防御性剥离：部分 OpenAI 兼容推理模型（典型如 MiniMax-M3）在
+                    # tool_calls 字段已正确填充时，仍会在 content 中重复输出 XML 格式
+                    # 工具调用文本。剥离后再 split_think，避免 XML 块泄露到 reasoning 事件。
+                    from app.utils.text import split_think, strip_tool_call_xml
+                    plan_text = strip_tool_call_xml(plan_text)
+                    reasoning, visible = split_think(plan_text)
+                    # 优先展示 reasoning（think 块内），其次展示 visible（非 think 内容）
+                    display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
+                    if display_plan:
+                        # yield reasoning 事件供前端展示思考过程
+                        await _obs("reasoning", {"content": display_plan, "source": source})
+                        yield make_sse_event(
+                            "reasoning",
+                            {"content": display_plan, "source": source},
+                        )
+                    # 再 yield 每个 tool_call
+                    for tc in msg.tool_calls:
+                        if isinstance(tc, dict):
+                            tc_name = tc.get("name", tc.get("tool", "unknown"))
+                            tc_args = tc.get("args", {}) or {}
+                            tc_id = tc.get("id") or str(uuid4())
+                        else:
+                            tc_name = getattr(tc, "name", "unknown")
+                            tc_args = getattr(tc, "args", {}) or {}
+                            tc_id = getattr(tc, "id", None) or str(uuid4())
+                        await _obs("tool_call", {"id": tc_id, "name": tc_name, "args": tc_args, "source": source})
+                        yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
+                        await _obs("todo_update", {"todos": [{"text": f"调用工具: {tc_name}", "done": False, "task_id": thread_id}]})
+                        yield make_todo_event(f"调用工具: {tc_name}", done=False, task_id=thread_id)
+                elif getattr(msg, "content", ""):
+                    # AIMessage without tool_calls → 最终回复
+                    content = msg.content
+                    if isinstance(content, list):
+                        # 兼容 list 内容块
+                        content = "".join(
+                            block if isinstance(block, str)
+                            else block.get("text", "") if isinstance(block, dict)
+                            else ""
+                            for block in content
+                        )
+                    text = strip_think(content if isinstance(content, str) else str(content))
+                    # 防御性剥离：避免 XML 格式工具调用文本泄露到最终回复 token 流。
+                    from app.utils.text import strip_tool_call_xml
+                    text = strip_tool_call_xml(text)
+                    if text:
+                        # 检测结构化任务计划/更新
+                        plan_info = extract_plan_or_update(text)
+                        if plan_info is not None:
+                            kind, plan_data = plan_info
+                            await _obs(kind, plan_data if isinstance(plan_data, dict) else {"data": plan_data})
+                            yield make_sse_event(kind, plan_data)
+                        else:
+                            await _obs("token", {"content": text})
+                            yield make_sse_event("token", text)
