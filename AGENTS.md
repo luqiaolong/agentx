@@ -399,9 +399,6 @@ agentx/
 │   │   ├── classifier.py       ← 规则前置 + LLM 分类
 │   │   ├── graph.py            ← Router 图 + run_router（主入口）+ _parse_skill_tag
 │   │   └── state.py            ← RouterState TypedDict
-│   ├── chat/                   ← 路径 A：LLM 直答
-│   │   ├── __init__.py
-│   │   └── run.py              ← run_chat_path（ThinkFilter 流式 token）
 │   ├── deep/                   ← 路径 C：DeepAgent + interrupt_before 审批
 │   │   ├── __init__.py
 │   │   ├── agent.py            ← run_deep_path / build_deep_agent（主入口，~200 行）
@@ -424,13 +421,12 @@ agentx/
 │   │   ├── commands.py        ← CommandResult + handle_command + _cmd_*（全部 await）
 │   │   ├── renderer.py        ← EventRenderer SSE 事件终端渲染
 │   │   └── store.py           ← Tauri store 配置读取 + 凭证解密（DPAPI/AES-GCM）
-│   ├── subagents/              ← code / rag / web 子代理 + 路径 B 分发
+│   ├── subagents/              ← code / rag / web 子代理 + 自定义子代理
 │   │   ├── base.py             ← make_fs_tools / make_rag_tools / make_web_tools + extract_text
 │   │   ├── code_agent.py       ← code 子代理（ReAct）
 │   │   ├── rag_agent.py        ← rag 子代理（ReAct）
 │   │   ├── web_agent.py        ← web 子代理（ReAct）
-│   │   ├── custom_agent.py     ← 自定义子代理工厂
-│   │   └── dispatch.py         ← run_tool_path（路径 B）+ select_subagent + 事件转换
+│   │   └── custom_agent.py     ← 自定义子代理工厂
 │   ├── tools/                  ← filesystem + rag_retrieve
 │   ├── memory/                 ← skills / profile / checkpointer
 │   │   ├── profile_extractor.py ← LLM 画像抽取（extract_profile_via_llm）
@@ -504,7 +500,7 @@ agentx/
 
 > **关键重构**：`backend/app/paths/` 包已删除（见
 > [openspec/2026-07-06-paths-refactor](file:///d:/java/agentprojects/agentx/openspec/changes/2026-07-06-paths-refactor/proposal.md)），
-> 各路径按能力域拆分为 `chat/` / `deep/` / `team/` / `subagents/`。**禁止**重新创建 `backend/app/paths/` 目录。
+> 各路径按能力域拆分为 `deep/` / `team/` / `subagents/`。**禁止**重新创建 `backend/app/paths/` 目录。
 
 ---
 
@@ -592,7 +588,7 @@ agentx/
 | `team_result` | JSON `{"agent": str, "summary": str}` | AgentTeam 子任务结果摘要 |
 | `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
 | `done` | `"{}"` | 流结束 |
-| `error` | 错误消息字符串 | 错误 |
+| `error` | JSON `{"message": str, "code?": str}` | 结构化错误事件（message 必填；code 可选） |
 
 **`source` 字段标识**（reasoning / tool_call / tool_result / delegation 事件携带）：
 
@@ -680,8 +676,8 @@ agentx/
 
 `2026-07-06-paths-refactor` 重构后 `graph.py` 与路径模块**无循环导入**：
 
-- `graph.py` 顶层单向 import `app.chat.run` / `app.deep.agent` /
-  `app.subagents.dispatch` / `app.team.orchestrator`。
+- `graph.py` 顶层单向 import `app.agents.supervisor`（`run_work_supervisor`）/
+  `app.agents.expert`（`run_coding_expert`）/ `app.agents.team`（`run_coding_team`）。
 - `deep/agent.py` 用 `TYPE_CHECKING` 延迟导入 `RouterState`，**禁止**改为运行时导入。
 - `team/orchestrator.py` 回退路径 A 时在函数内延迟 import `run_chat_path`（保持 lazy）。
 - `app.paths` 包已删除，**禁止**重新创建 `backend/app/paths/` 目录。

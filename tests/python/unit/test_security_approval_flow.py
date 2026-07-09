@@ -110,7 +110,7 @@ class TestDangerousToolApproval:
         # is_paused / is_aborted / get_pause_event
         monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
         monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.get_pause_event", AsyncMock())
+        # wait_for_resume is used; no separate pause event stub needed
 
         # get_settings
         fake_settings = MagicMock()
@@ -290,7 +290,7 @@ class TestDirectoryExtension:
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
         monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.get_pause_event", AsyncMock())
+        # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
@@ -404,7 +404,7 @@ class TestFullTrustSkip:
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
         monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.get_pause_event", AsyncMock())
+        # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
@@ -485,7 +485,7 @@ class TestParentThreadIdInheritance:
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
         monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.get_pause_event", AsyncMock())
+        # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
@@ -606,7 +606,7 @@ class TestPathBaseConsistency:
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
         monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.get_pause_event", AsyncMock())
+        # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300
@@ -679,7 +679,7 @@ class TestCliExecuteAlwaysApproval:
     def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         monkeypatch.setattr("app.deep.execution.is_paused", AsyncMock(return_value=False))
         monkeypatch.setattr("app.deep.execution.is_aborted", AsyncMock(return_value=False))
-        monkeypatch.setattr("app.deep.execution.get_pause_event", AsyncMock())
+        # wait_for_resume is used; no separate pause event stub needed
 
         fake_settings = MagicMock()
         fake_settings.approval_max_wait = 300

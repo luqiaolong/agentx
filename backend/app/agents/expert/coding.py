@@ -32,7 +32,7 @@ from app.deep.tools import (
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.subagents.base import THINK_PROMPT_SUFFIX, make_rag_tools, make_web_tools
-from app.utils.sse_events import make_error_event, make_sse_event
+from app.utils.sse_events import make_error_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
