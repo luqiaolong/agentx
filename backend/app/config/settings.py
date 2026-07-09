@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     langsmith_project: str = "agentx"
     langsmith_tracing: bool = False
 
+    # ---- 观测中心（agent-observation-store）----
+    # observation TTL（天）：超过 TTL 的 run/event/tool_call 自动清理，feedback 永久保留
+    observation_ttl_days: int = Field(default=30, ge=1)
+
     # ---- 沙箱 ----
     # 跨会话保留授权目录开关（默认开启：/reset 写 checkpoint 保留，删除会话才 clear）
     persist_authorized_dirs: bool = True
