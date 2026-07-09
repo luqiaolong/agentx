@@ -20,9 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 
 from app.api import chat as chat_api
-from app.api.schemas import ChatRequest
 from app.observability.logger import logger, _LOG_FILE
-from app.observability.trace import bind_trace, current_trace_id, new_trace_id
 
 
 def _fake_run_router(
@@ -132,16 +130,16 @@ def main() -> None:
                 if et == "done":
                     # done 事件按设计不带 trace_id（payload 是固定的 "{}"）
                     assert dt == "{}", f"done event data changed: {dt}"
-                    print(f"    OK done 事件 payload 保持不变")
+                    print("    OK done 事件 payload 保持不变")
                 if et == "token":
                     # token 事件 data 是纯字符串，按设计不带 trace_id
                     assert frontend_trace not in dt, (
                         f"token event should NOT contain trace_id: {dt}"
                     )
-                    print(f"    OK token 事件 data 不含 trace_id（按设计）")
+                    print("    OK token 事件 data 不含 trace_id（按设计）")
 
         # ---- case 2: 前端不传 trace_id（后端自生成） ----
-        print(f"\n[case 2] no frontend trace_id, backend should generate")
+        print("\n[case 2] no frontend trace_id, backend should generate")
         with client.stream(
             "POST",
             "/api/chat",

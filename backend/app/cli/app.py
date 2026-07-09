@@ -139,7 +139,7 @@ def _config_get(key: str) -> int:
 
     config = read_config_json()
     if not config:
-        print(f"[无法读取配置]")
+        print("[无法读取配置]")
         return 1
 
     # 支持点号分隔的嵌套 key，如 "models.activeId"
