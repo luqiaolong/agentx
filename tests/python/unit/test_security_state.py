@@ -139,6 +139,32 @@ async def test_wait_for_resume_timeout() -> None:
     assert result is False
 
 
+async def test_wait_for_resume_recovers_when_event_evicted() -> None:
+    """wait_for_resume 在 reaper 清理 event 后仍能正确恢复。
+
+    场景：reaper 在 waiter 等待期间把 _pause_events 清理掉，但 pause flag 仍
+    为 True。随后 clear_pause 清除 flag（此时 dict 中已没有 event 可 set）。
+    旧实现若事件引用丢失会永久挂起；新实现通过轮询重新创建 event 并在 pause
+    解除后返回 True。
+    """
+    await set_pause("t1")
+
+    async def _evict_and_clear() -> None:
+        # 等 waiter 进入等待
+        await asyncio.sleep(0.2)
+        # 模拟 reaper 只清理 event，不清理 flag
+        async with security_state._state_lock:
+            security_state._pause_events.pop("t1", None)
+        await asyncio.sleep(0.2)
+        # 恢复：此时 dict 中没有 event，waiter 应通过轮询检测到 flag 清除
+        await clear_pause("t1")
+
+    task = asyncio.create_task(_evict_and_clear())
+    result = await wait_for_resume("t1", timeout=2.0)
+    await task
+    assert result is True
+
+
 async def test_wait_for_resume_no_race_deadlock() -> None:
     """验证 wait_for_resume 无竞态死锁。
 
@@ -282,3 +308,48 @@ async def test_reaper_preserves_thread_with_mixed_activity() -> None:
     # mixed 在 _abort_flags 中有新 timestamp，不应被清理
     assert "mixed" in security_state._abort_flags
     assert "mixed" in security_state._pending_approvals  # 也保留（因为整体仍活跃）
+# ============================================================
+# 6. pause/reaper 竞态
+# ============================================================
+
+
+async def test_wait_for_resume_recreates_event_if_reaper_evicts_it() -> None:
+    """wait_for_resume 在事件被 reaper 清理后仍能恢复，不永久挂起。"""
+    await set_pause("t1")
+
+    # 模拟 reaper 在 wait_for_resume 持有 event 引用期间清理 _pause_events
+    async def _evict_event_after_delay() -> None:
+        await asyncio.sleep(0.05)
+        security_state._pause_events.pop("t1", None)
+
+    async def _resume_after_evict() -> None:
+        # 等 evict 完成并多等一会，确保 wait_for_resume 进入/完成一轮等待
+        await asyncio.sleep(0.15)
+        await clear_pause("t1")
+
+    evict_task = asyncio.create_task(_evict_event_after_delay())
+    resume_task = asyncio.create_task(_resume_after_evict())
+
+    result = await wait_for_resume("t1", timeout=2.0)
+
+    await evict_task
+    await resume_task
+
+    assert result is True
+
+
+async def test_wait_for_resume_polls_through_stale_event() -> None:
+    """若 _pause_events 被提前清空，wait_for_resume 应通过轮询重新发现恢复。"""
+    await set_pause("t1")
+    # 直接清空事件，模拟 reaper 已清理
+    security_state._pause_events.pop("t1", None)
+
+    async def _resume_after_delay() -> None:
+        await asyncio.sleep(0.15)
+        await clear_pause("t1")
+
+    resume_task = asyncio.create_task(_resume_after_delay())
+    result = await wait_for_resume("t1", timeout=2.0)
+    await resume_task
+
+    assert result is True
