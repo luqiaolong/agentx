@@ -20,8 +20,11 @@ import type {
   AgentMode,
   PermissionMode,
   CompactResult,
+  FeedbackRequest,
+  FeedbackResponse,
 } from "../../../shared/api-types";
 import { API_BASE } from "../api-constants";
+import { apiPost } from "./request";
 
 const eventHandlers = new Set<(e: ChatEvent) => void>();
 const approvalHandlers = new Set<(req: ApprovalRequest) => void>();
@@ -247,4 +250,27 @@ function onApprovalRequest(handler: (req: ApprovalRequest) => void): () => void 
   return () => approvalHandlers.delete(handler);
 }
 
-export const chat = { send, abort, pause, resume, compact, onEvent, onApprovalRequest };
+/**
+ * 观测中心：提交显式反馈（FR-7.1 + FR-8.1）。
+ *
+ * - 👍 → kind=thumb_up，无 comment / categories
+ * - 👎 → kind=thumb_down，可选 categories（fact_error/tone/speed/wrong_tool/other）
+ *   + comment（写入前 backend redact）
+ *
+ * 后端 redis 写盘可能失败（DB lock / disk full），apiPost 抛 ApiError；
+ * 上层 MessageFeedback 应捕获并 fallback 到 toast 提示，不阻塞 UI。
+ */
+async function submitFeedback(req: FeedbackRequest): Promise<FeedbackResponse> {
+  return apiPost<FeedbackResponse>("/api/observation/feedback", req);
+}
+
+export const chat = {
+  send,
+  abort,
+  pause,
+  resume,
+  compact,
+  onEvent,
+  onApprovalRequest,
+  submitFeedback,
+};

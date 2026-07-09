@@ -97,6 +97,16 @@ export interface ChatMessage {
   role: "user" | "assistant" | "tool";
   parts: MessagePart[];
   ts: number;
+  /**
+   * 观测中心 run_id（= trace_id，16 字符 hex）。
+   * - assistant 消息：创建 pending 消息时由 ChatView 从 getCurrentTraceId() 写入，
+   *   后端 SSE 事件若带回 trace_id 会被 useChatStream 覆盖为后端值（前后端一致）。
+   * - user / tool 消息：不设置。
+   * - 旧消息（迁移）：可能为 undefined，MessageFeedback 此时禁用反馈按钮。
+   *
+   * 用途：MessageFeedback 组件读此字段作为 POST /api/observation/feedback 的 run_id。
+   */
+  traceId?: string;
 }
 
 // 复用 shared/api-types.ts 的 ApprovalRequest（含 kind/requestedPath/writable），
@@ -211,8 +221,18 @@ export interface ChatState {
       ts: number;
       parts?: MessagePart[];
       content?: string;
+      /** 观测中心 run_id（assistant 消息创建时由 ChatView 写入，见 ChatMessage.traceId） */
+      traceId?: string;
     },
   ) => void;
+  /**
+   * 设置指定 message 的 traceId（观测中心 run_id）。
+   *
+   * 用途：useChatStream 收到首个带 trace_id 的 SSE 事件时，把后端确认的 trace_id
+   * 回写到 pending assistant 消息（覆盖前端预生成的值，保证前后端一致）。
+   * 消息不存在时 no-op（流式已结束 / 用户切换会话）。
+   */
+  setMessageTraceId: (messageId: string, traceId: string) => void;
   /**
    * 追加文本到指定 message 的最后一个指定 type 的 part（text/reasoning 通用）。
    * 若无对应 part 则新建 text part 或 reasoning part。
@@ -537,6 +557,7 @@ export const useChatStore = create<ChatState>()(
               role: msg.role,
               parts,
               ts: msg.ts,
+              ...(msg.traceId ? { traceId: msg.traceId } : {}),
             };
             // 同步维护 messageIndex 反向索引
             indexMessage(msg.id, cid);
@@ -559,6 +580,23 @@ export const useChatStore = create<ChatState>()(
             const sessions = {
               ...s.sessions,
               [cid]: { ...sess, messages, title },
+            };
+            return { sessions };
+          });
+        },
+
+        setMessageTraceId: (messageId, traceId) => {
+          set((s) => {
+            const cid = s.currentId;
+            if (!cid || !s.sessions[cid]) return s;
+            const sess = s.sessions[cid];
+            const idx = sess.messages.findIndex((m) => m.id === messageId);
+            if (idx === -1) return s;
+            const messages = [...sess.messages];
+            messages[idx] = { ...messages[idx]!, traceId };
+            const sessions = {
+              ...s.sessions,
+              [cid]: { ...sess, messages },
             };
             return { sessions };
           });

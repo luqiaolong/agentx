@@ -25,8 +25,10 @@ from app.security.approval import (
 )
 from app.config import get_settings
 from app.observability.langsmith import mark_redacted, trace_span
+from app.observability.langsmith_dual import dual_trace
 from app.observability.logger import logger
-from app.observability.trace import bind_trace, current_trace_id, new_trace_id
+from app.observability.observation import get_observation_sink
+from app.observability.trace import bind_trace, new_trace_id
 
 
 async def _clear_thread_state(thread_id: str) -> None:
@@ -116,25 +118,53 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             effective_agent_mode = req.agent_mode
             if req.agent_mode == "coding_team" and not settings.agents.coding_team_enabled:
                 effective_agent_mode = "coding"
-            async for event in run_router(
-                req.message,
-                req.thread_id,
-                checkpointer=checkpointer,
-                permission_mode=req.permission_mode,
+
+            # FR-4.3/4.4/4.5: dual_trace 包裹 run_router，自动写 observation_run.start/end
+            assistant_content_parts: list[str] = []
+            with dual_trace(
+                thread_id=req.thread_id,
                 agent_mode=effective_agent_mode,
+                user_message=req.message,
+                permission_mode=req.permission_mode,
                 workspace_path=req.workspace_path,
-                revoked_paths=req.revoked_paths,
-            ):
-                # 检查中止标志
-                if await is_aborted(req.thread_id):
-                    # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
-                    yield {
-                        "event": "error",
-                        "data": f"用户已中止 | trace={trace_id}",
-                    }
-                    await clear_abort(req.thread_id)
-                    return
-                yield event
+                run_id=trace_id,
+            ) as obs_ctx:
+                try:
+                    async for event in run_router(
+                        req.message,
+                        req.thread_id,
+                        checkpointer=checkpointer,
+                        permission_mode=req.permission_mode,
+                        agent_mode=effective_agent_mode,
+                        workspace_path=req.workspace_path,
+                        revoked_paths=req.revoked_paths,
+                    ):
+                        # 检查中止标志
+                        if await is_aborted(req.thread_id):
+                            # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
+                            obs_ctx.add_metadata("error_type", "aborted")
+                            obs_ctx.add_metadata("error_message", "user aborted")
+                            yield {
+                                "event": "error",
+                                "data": f"用户已中止 | trace={trace_id}",
+                            }
+                            await clear_abort(req.thread_id)
+                            return
+                        if event.get("event") == "token":
+                            assistant_content_parts.append(str(event.get("data", "")))
+                        yield event
+                    # FR-4.4: 正常出口写 result_text + token_count
+                    obs_ctx.add_metadata(
+                        "result_text", "".join(assistant_content_parts).strip()
+                    )
+                    obs_ctx.add_metadata(
+                        "result_token_count", len(assistant_content_parts)
+                    )
+                except Exception as inner_exc:
+                    # FR-4.5: 异常分支写 error_type + error_message（在 dual_trace 退出前设置）
+                    obs_ctx.add_metadata("error_type", type(inner_exc).__name__)
+                    obs_ctx.add_metadata("error_message", str(inner_exc))
+                    raise
 
         except Exception as exc:  # noqa: BLE001 — SSE 兜底，避免连接挂起
             logger.exception("SSE chat error", thread_id=req.thread_id)
@@ -200,6 +230,36 @@ def register_chat_routes(app: FastAPI) -> None:
         ):
             pass
 
+        # FR-6.1/6.2: 回填 observation_tool_call.approval_decision
+        if req.run_id:
+            try:
+                sink = get_observation_sink()
+                tc_id = req.tool_call_id
+                if not tc_id:
+                    tc_id = sink.find_pending_approval_tool_call_sync(req.run_id)
+                if tc_id:
+                    sink.update_tool_call_approval_sync(
+                        tool_call_id=tc_id,
+                        approval_decision=req.decision,
+                        approved=req.approval,
+                    )
+            except Exception as exc:  # noqa: BLE001 — 回填失败不阻塞审批
+                logger.warning(
+                    "observation approval backfill failed",
+                    run_id=req.run_id,
+                    error=str(exc),
+                )
+
+        # FR-9.1: 隐式反馈信号 — 审批 deny → implicit_bad
+        if req.run_id and not req.approval:
+            from app.observability.feedback import record_implicit_bad
+
+            await record_implicit_bad(req.run_id, reason="rejected_dangerous_tool")
+        elif req.run_id and auto_approved:
+            from app.observability.feedback import record_implicit_ok
+
+            await record_implicit_ok(req.run_id, reason="auto_approved")
+
         logger.info(
             "approval submitted",
             thread_id=req.thread_id,
@@ -214,6 +274,11 @@ def register_chat_routes(app: FastAPI) -> None:
         """设置中止标志，SSE handler 在下一轮迭代退出。"""
         await set_abort(req.thread_id)
         logger.info("abort flag set", thread_id=req.thread_id)
+        # FR-9.1: 隐式反馈信号 — 用户 abort → implicit_bad
+        if req.run_id:
+            from app.observability.feedback import record_implicit_bad
+
+            await record_implicit_bad(req.run_id, reason="aborted")
         return {"ok": True}
 
     @app.post("/api/chat/pause")

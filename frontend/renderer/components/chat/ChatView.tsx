@@ -18,7 +18,7 @@ import {
   findBuiltinCommand,
   type BuiltinCommand,
 } from "@/stores/commands";
-import { chat } from "@/lib/api/chat";
+import { chat, getCurrentTraceId } from "@/lib/api/chat";
 import { parseMentions, buildMentionPayload, stripMentions } from "@/lib/mention";
 import { useMentionPickerStore } from "@/stores/mention";
 import { getVersion, reloadBackendConfig, initAgentsMd } from "@/lib/api/app";
@@ -400,7 +400,10 @@ export function ChatView() {
     addMessage({ id: crypto.randomUUID(), role: "user", content: sendContent, ts: Date.now() });
     const pendingId = `pending-${crypto.randomUUID()}`;
     pendingIdRef.current = pendingId;
-    addMessage({ id: pendingId, role: "assistant", content: "", ts: Date.now() });
+    // 观测中心：pending assistant 消息创建时预填 traceId（前端生成，后端应沿用）。
+    // 后端 SSE 事件若带回 trace_id，useChatStream 会用 setMessageTraceId 覆盖为后端确认值。
+    const initialTraceId = getCurrentTraceId() ?? undefined;
+    addMessage({ id: pendingId, role: "assistant", content: "", ts: Date.now(), traceId: initialTraceId });
 
     // 新一轮发送：重置任务追踪状态，让 todo_update 创建新任务而非更新旧任务
     currentTaskIdRef.current = null;

@@ -70,6 +70,11 @@ from app.memory import (
     get_checkpointer,
 )
 from app.observability.logger import logger
+from app.observability.observation import (
+    cleanup_old_observations,
+    get_observation_sink,
+    start_observation_reaper,
+)
 from app.vectorstore import MilvusUnavailable, get_milvus_client
 
 # ---- 以下 import 仅为向后兼容 re-export（测试 monkeypatch app.main.<name>） ----
@@ -136,6 +141,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.warning("Milvus credentials not configured, running degraded")
 
+    # 3. Observation sink：预热单例（建表 + WAL）+ 启动 TTL 清理
+    #    失败不阻塞启动（观测降级，agent 主流程不受影响）
+    observation_sink = None
+    observation_reaper_task = None
+    try:
+        observation_sink = get_observation_sink()
+        deleted = await cleanup_old_observations()
+        if deleted > 0:
+            logger.info("observation cleanup removed {} rows on startup", deleted)
+        # FR-11.1: 启动后台 6h 周期 reaper，lifespan 关闭时 cancel
+        observation_reaper_task = start_observation_reaper(interval_hours=6.0)
+        logger.info("observation sink initialized on startup")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("observation sink init failed on startup: {}", exc)
+
     try:
         yield
     finally:
@@ -145,6 +165,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await reaper_task
         except asyncio.CancelledError:
             pass
+        if observation_reaper_task is not None:
+            observation_reaper_task.cancel()
+            try:
+                await observation_reaper_task
+            except asyncio.CancelledError:
+                pass
         if milvus._connected:  # noqa: SLF001 — 单例内部状态检查
             try:
                 await milvus.disconnect()
@@ -167,6 +193,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.info("MCP client closed on shutdown")
         except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
             logger.warning("MCP client close failed on shutdown: {}", exc)
+        # Observation sink：关闭（仅标记 closed，SQLite 短连接无需释放）
+        if observation_sink is not None:
+            try:
+                await observation_sink.close()
+                logger.info("observation sink closed on shutdown")
+            except Exception as exc:  # noqa: BLE001 — 关闭阶段兜底
+                logger.warning("observation sink close failed on shutdown: {}", exc)
 
 
 app = FastAPI(

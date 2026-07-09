@@ -1,4 +1,4 @@
-"""eval CLI 子命令：``agentx eval run|list|show``。
+"""eval CLI 子命令：``agentx eval run|list|show|export-feedback``。
 
 由 ``app.cli.main`` 在 ``args.command == "eval"`` 时调用 ``run_eval_command`` 分发。
 退出码（FR-7.8）：全部通过=0，有失败=1，suite 不存在=2。
@@ -16,9 +16,12 @@ import yaml
 
 from app.eval.judges import AssertJudge, RubricJudge
 from app.eval.mocks.llm import MockChatModel
-from app.eval.models import EvalResult, EvalSuite
+from app.eval.models import EvalCase, EvalResult, EvalSuite
 from app.eval.reporters import ConsoleReporter, JsonReporter, MarkdownReporter
 from app.eval.runner import EvalRunner
+
+# 默认 rubric：当用户点 👎 但未填写 comment 时填的兜底期望（FR-10.5）
+_DEFAULT_RUBRIC = "回复应满足用户期望"
 
 # suites 目录：worktree root 下的 tests/eval/suites/
 # __file__ = backend/app/eval/cli.py → parents[3] = worktree root
@@ -209,10 +212,82 @@ def _cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export_feedback(args: argparse.Namespace) -> int:
+    """执行 ``agentx eval export-feedback``（FR-10）。
+
+    把最近 N 天的 thumb_down 反馈导成 EvalSuite YAML 写到
+    ``tests/eval/suites/feedback-YYYYMMDD.yaml``，可直接被
+    ``agentx eval run --suite feedback-YYYYMMDD --mock`` 消费。
+
+    数据流：
+    1. ``get_observation_sink().list_thumb_down_feedback_sync(days)``
+       → JOIN observation_feedback + observation_run
+    2. 每条 feedback 转 EvalCase：user_message / agent_mode / expect.rubric
+       （rubric 优先用 feedback.comment，缺失时 _DEFAULT_RUBRIC）
+    3. cases 数 == 0 时退出码 0 但不写文件（无 👎 可导出）
+    """
+    days = args.days
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 延迟 import：避免 cli 启动时强制加载 observation sink（可能需要 lifespan）
+    from app.observability.observation import get_observation_sink
+    sink = get_observation_sink()
+
+    # list_thumb_down_feedback_sync 是同步方法，避免在 cli 中混入 asyncio.run
+    rows = sink.list_thumb_down_feedback_sync(days=days)
+    if not rows:
+        print(f"最近 {days} 天无 thumb_down 反馈可导出。", file=sys.stderr)
+        return 0
+
+    cases: list[EvalCase] = []
+    for row in rows:
+        feedback_id = row.get("feedback_id")
+        run_id = row.get("run_id", "unknown")
+        user_message = row.get("user_message") or ""
+        agent_mode = row.get("agent_mode") or "work"
+        comment = (row.get("comment") or "").strip()
+        rubric = comment if comment else _DEFAULT_RUBRIC
+        cases.append(
+            EvalCase(
+                id=f"feedback-{feedback_id}-{run_id[:8]}",
+                user_message=user_message,
+                agent_mode=str(agent_mode),
+                workspace_path=row.get("workspace_path"),
+                expect={"rubric": rubric},
+                tags=["feedback", "thumb_down"],
+                timeout=120.0,
+            )
+        )
+
+    suite = EvalSuite(
+        id=f"feedback-{datetime.now().strftime('%Y%m%d')}",
+        name=f"用户反馈（最近 {days} 天 thumb_down）",
+        description=(
+            f"由 agentx eval export-feedback 自动生成；"
+            f"{len(cases)} 个 case，对应 observation_feedback 表中 "
+            f"kind=thumb_down 且 created_at >= now()-{days} days 的行。"
+        ),
+        cases=cases,
+    )
+
+    yaml_path = output_dir / f"{suite.id}.yaml"
+    with yaml_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(
+            suite.model_dump(mode="json"),
+            f,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    print(f"已导出 {len(cases)} 个 case 到 {yaml_path}")
+    return 0
+
+
 def run_eval_command(args: argparse.Namespace) -> int:
     """eval 子命令分发入口（由 ``app.cli.main`` 调用）。
 
-    根据 ``args.eval_command`` 分发到 ``_cmd_run`` / ``_cmd_list`` / ``_cmd_show``。
+    根据 ``args.eval_command`` 分发到 ``_cmd_run`` / ``_cmd_list`` /
+    ``_cmd_show`` / ``_cmd_export_feedback``。
     未指定子命令时打印用法并返回 2。
     """
     if args.eval_command == "run":
@@ -221,6 +296,8 @@ def run_eval_command(args: argparse.Namespace) -> int:
         return _cmd_list()
     if args.eval_command == "show":
         return _cmd_show(args)
+    if args.eval_command == "export-feedback":
+        return _cmd_export_feedback(args)
     print(f"错误：未知 eval 子命令 '{args.eval_command}'", file=sys.stderr)
-    print("用法：agentx eval run|list|show ...", file=sys.stderr)
+    print("用法：agentx eval run|list|show|export-feedback ...", file=sys.stderr)
     return 2

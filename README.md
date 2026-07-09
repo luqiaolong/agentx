@@ -155,3 +155,38 @@ Supervisor 委派工具（[agents/supervisor/delegation.py](file:///d:/java/agen
 - **skills**（[memory/skills_loader.py](file:///d:/java/agentprojects/agentx/backend/app/memory/skills_loader.py) + [memory/skills_store.py](file:///d:/java/agentprojects/agentx/backend/app/memory/skills_store.py)）— YAML frontmatter + Markdown body，目录 `data/skills/<name>/SKILL.md`，由 deepagents `skills=` 参数自动接管
 - **profile**（[memory/profile_store.py](file:///d:/java/agentprojects/agentx/backend/app/memory/profile_store.py)）— 持久化用户画像到 `data/config/profile.json`，按 `updated_at` 降序取前 30 条
 - **summarizer**（[memory/summarizer.py](file:///d:/java/agentprojects/agentx/backend/app/memory/summarizer.py)）— 摘要中间件控制 token 预算
+
+### 观测 / 反馈 / 复盘
+
+围绕 `trace_id`（16 字符 hex）贯穿的 Agent Observation Store，提供 4 维度全链路可观测能力：
+
+| 维度 | 内容 | 存储表 |
+|---|---|---|
+| **Run** | 一次 chat 请求的元数据（thread_id / agent_mode / user_message / final_prompt / result_text / duration_ms / error） | `observation_run` |
+| **Event** | 每条 SSE 事件的 payload（含 tool_call args / LLM 输入输出） | `observation_event` |
+| **Tool call** | 危险工具审批回填（auto_approve / user_approved / user_rejected） | `observation_tool_call` |
+| **Feedback** | 显式 👍/👎 + 评论 + 隐式信号（auto_approve+success / abort / 审批 deny） | `observation_feedback` |
+
+**前端 SSE 兼容性**：所有 JSON 事件 `data` 字段新增可选 `_tid`（与现有 `trace_id` 同值），旧前端忽略未知字段即可平滑升级。
+
+**REST API（5 个端点，base path `/api/observation`）**：
+| Method | Path | 用途 |
+|---|---|---|
+| `POST` | `/feedback` | 写 feedback（kind=thumb_up/thumb_down/rating/note/implicit_*），comment 写入前自动 redact |
+| `GET` | `/feedback?run_id=` | 查指定 run 的 feedback 列表 |
+| `GET` | `/runs?thread_id=&limit=` | 列 run（按 started_at 降序） |
+| `GET` | `/runs/{run_id}` | 单 run 详情 + state_snapshot |
+| `GET` | `/runs/{run_id}/events` | 按 seq 升序的事件流 |
+
+**复盘 → 评测闭环**：
+```bash
+# 用户积累 30 天 👎 → 一键导出为 EvalSuite YAML
+agentx eval export-feedback --days=30 --output-dir=tests/eval/suites/
+
+# 自动写出 feedback-YYYYMMDD.yaml（每条 👎 → EvalCase with rubric = user comment）
+
+# Replay (mock 模式离线)
+agentx eval run --suite feedback-YYYYMMDD --mock
+```
+
+**TTL 自动清理**：超 `AGENTX_OBSERVATION_TTL_DAYS`（默认 30）的 run/event/tool_call 自动清理；`observation_feedback` 永久保留（与 run 解耦）。
