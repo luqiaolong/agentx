@@ -29,7 +29,7 @@ from app.security.approval_flow import (
     _make_approval_event,
     _resolve_max_wait,
 )
-from app.utils.sse_events import make_error_event, make_sse_event
+from app.sse.events import make_error_event, make_sse_event
 
 __all__ = ["run_agent_with_approval"]
 

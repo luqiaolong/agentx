@@ -40,7 +40,7 @@ from app.config import get_settings
 from app.observability.logger import logger
 from app.sandbox import SessionSandbox
 from app.security.command_filter import redact_args
-from app.utils.sse_events import make_approval_event
+from app.sse.events import make_approval_event
 
 __all__ = [
     "_extract_paths_from_tool_call",

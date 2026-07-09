@@ -16,9 +16,8 @@ from pathlib import Path
 import pytest
 
 from app.sandbox import get_sandbox
-from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args
+from app.security.command_filter import DEFAULT_BLOCKLIST, has_forbidden_args, is_command_blocked
 from app.tools.cli import (
-    _is_command_blocked,
     cli_execute,
 )
 
@@ -52,12 +51,12 @@ def test_default_blocklist_contains_dangerous_commands() -> None:
 
 def test_is_command_blocked() -> None:
     """黑名单命令被阻止（不区分大小写）。"""
-    assert _is_command_blocked("rm")
-    assert _is_command_blocked("RM")
-    assert _is_command_blocked("Format")
-    assert not _is_command_blocked("git")
-    assert not _is_command_blocked("npm")
-    assert not _is_command_blocked("python")
+    assert is_command_blocked("rm")
+    assert is_command_blocked("RM")
+    assert is_command_blocked("Format")
+    assert not is_command_blocked("git")
+    assert not is_command_blocked("npm")
+    assert not is_command_blocked("python")
 
 
 # ============================================================

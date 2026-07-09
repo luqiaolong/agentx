@@ -26,7 +26,7 @@ from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.security.approval import get_abort_event
 from app.utils.plan_extraction import extract_plan_or_update
-from app.utils.sse_events import (
+from app.sse.events import (
     make_sse_event,
     make_todo_event,
     make_tool_call_event,

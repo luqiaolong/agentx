@@ -23,7 +23,7 @@ from app.team.orchestrator import (
     TeamPlanItem,
     run_team_path,
 )
-from app.utils.sse_events import make_team_event
+from app.sse.events import make_team_event
 
 
 def _make_fake_llm(plan: TeamPlan) -> MagicMock:

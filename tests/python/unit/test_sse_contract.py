@@ -142,7 +142,7 @@ def test_make_todo_event_produces_todos_json():
     前端 preload 解析: JSON 对象 payload → 展开到 ChatEvent 顶层 →
     ChatView 读 e.todos（不是 e.data）。
     """
-    from app.utils.sse_events import make_todo_event
+    from app.sse.events import make_todo_event
 
     event = make_todo_event("调用工具: read_file", done=False)
 
@@ -161,7 +161,7 @@ def test_make_todo_event_produces_todos_json():
 
 def test_make_todo_event_done_true():
     """done=True 的 todo 事件。"""
-    from app.utils.sse_events import make_todo_event
+    from app.sse.events import make_todo_event
 
     event = make_todo_event("工具 read_file 完成", done=True)
     payload = json.loads(event["data"])
@@ -179,7 +179,7 @@ def test_sse_token_uses_plain_string():
     前端 preload: 纯字符串不以 { 或 [ 开头 → 不 JSON.parse → payload 保持字符串 →
     走 {data: payload} 分支 → ChatView 读 e.data。
     """
-    from app.utils.sse_events import make_sse_event
+    from app.sse.events import make_sse_event
 
     event = make_sse_event("token", "hello world")
     assert event == {"event": "token", "data": "hello world"}
@@ -190,7 +190,7 @@ def test_sse_token_uses_plain_string():
 
 def test_sse_done_data_is_empty_json():
     """done 事件 data 必须是 "{}"。"""
-    from app.utils.sse_events import make_sse_event
+    from app.sse.events import make_sse_event
 
     event = make_sse_event("done", "{}")
     assert event == {"event": "done", "data": "{}"}
@@ -198,7 +198,7 @@ def test_sse_done_data_is_empty_json():
 
 def test_sse_error_is_structured_json():
     """error 事件 data 是结构化 JSON，至少包含 message。"""
-    from app.utils.sse_events import make_error_event
+    from app.sse.events import make_error_event
 
     event = make_error_event("LLM 不可用")
     assert event["event"] == "error"
@@ -208,7 +208,7 @@ def test_sse_error_is_structured_json():
 
 def test_sse_error_with_code():
     """error 事件可携带 code 字段。"""
-    from app.utils.sse_events import make_error_event
+    from app.sse.events import make_error_event
 
     event = make_error_event("something went wrong", code="E123")
     assert event["event"] == "error"
@@ -219,7 +219,7 @@ def test_sse_error_with_code():
 
 def test_sse_todo_update_serializes_dict():
     """todo_update 事件接收 dict 时用 json.dumps 序列化。"""
-    from app.utils.sse_events import make_sse_event
+    from app.sse.events import make_sse_event
 
     data = {"todos": [{"text": "test", "done": True}]}
     event = make_sse_event("todo_update", data)

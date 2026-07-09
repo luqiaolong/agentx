@@ -43,7 +43,7 @@ async def _async_fake_run_router(
 ):
     """测试用 router：async generator，直接 yield 几个事件。"""
     logger.info("fake_router.start", thread_id=thread_id, message_len=len(message))
-    from app.utils.sse_events import (
+    from app.sse.events import (
         make_sse_event,
         make_tool_call_event,
         make_approval_event,

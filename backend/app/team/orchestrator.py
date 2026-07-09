@@ -35,7 +35,7 @@ from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.security.approval import get_abort_event
-from app.utils.sse_events import make_sse_event, make_team_event
+from app.sse.events import make_sse_event, make_team_event
 
 from app.team.blackboard import (
     Blackboard,

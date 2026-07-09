@@ -16,6 +16,7 @@ import re
 __all__ = [
     "DEFAULT_BLOCKLIST",
     "FORBIDDEN_ARG_PATTERN",
+    "effective_blocklist",
     "is_command_blocked",
     "has_forbidden_args",
     "redact_args",
@@ -67,13 +68,23 @@ _CREDENTIALS_PATTERN = re.compile(r"\S+?:\S+?@\S+")
 _REDACTED = "***REDACTED***"
 
 
-def is_command_blocked(command: str) -> bool:
-    """命令名是否在黑名单内（不区分大小写）。
+def effective_blocklist() -> frozenset[str]:
+    """合并默认黑名单与用户配置黑名单。"""
+    # 延迟导入：app.config → subagents → app.security → 本模块，顶层导入会成环。
+    from app.config import get_settings
 
-    注意：本函数仅检查默认黑名单 ``DEFAULT_BLOCKLIST``，不合并用户配置。
-    如需合并用户配置，请在 ``app.tools.cli`` 中调用本函数后再叠加配置。
-    """
-    return command.strip().lower() in DEFAULT_BLOCKLIST
+    cfg = get_settings().cli_tool_blocklist
+    if not cfg:
+        return DEFAULT_BLOCKLIST
+    user_blocked = frozenset(
+        cmd.strip().lower() for cmd in cfg if isinstance(cmd, str) and cmd.strip()
+    )
+    return DEFAULT_BLOCKLIST | user_blocked
+
+
+def is_command_blocked(command: str) -> bool:
+    """命令名是否在黑名单内（含用户配置合并，不区分大小写）。"""
+    return command.strip().lower() in effective_blocklist()
 
 
 def has_forbidden_args(value: str) -> bool:
@@ -142,6 +153,9 @@ def redact_args(tool_name: str, args: dict | list | str) -> dict:
     Returns:
         脱敏后的 dict。
     """
+    # 字面量集合，与 dangerous_tools.SHELL_CLI_TOOL_NAME ("execute") 和
+    # tools.cli.LLM_CLI_TOOL_NAME ("cli_execute") 对应。刻意不 import 那两个
+    # 常量以避免循环依赖（dangerous_tools 反向依赖 security 包）。
     _CLI_TOOL_NAMES = frozenset({"execute", "cli_execute"})
 
     if isinstance(args, dict):

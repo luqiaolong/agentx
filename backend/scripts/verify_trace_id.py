@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.observability.logger import logger, _LOG_FILE
 from app.observability.trace import bind_trace, current_trace_id, new_trace_id
-from app.utils.sse_events import make_tool_call_event, make_approval_event
+from app.sse.events import make_tool_call_event, make_approval_event
 
 
 def main() -> None:

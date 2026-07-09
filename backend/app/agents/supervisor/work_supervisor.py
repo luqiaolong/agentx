@@ -40,7 +40,7 @@ from app.memory.checkpointer import get_async_checkpointer
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.utils.prompts import build_workspace_prompt_suffix, resolve_system_prompt
-from app.utils.sse_events import make_error_event, make_sse_event
+from app.sse.events import make_error_event, make_sse_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel

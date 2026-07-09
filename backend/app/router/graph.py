@@ -37,7 +37,7 @@ from app.observability.logger import logger
 from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.workspace.config import load_project_config, merge_configs
-from app.utils.sse_events import make_sse_event
+from app.sse.events import make_sse_event
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
