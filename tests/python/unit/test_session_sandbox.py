@@ -374,7 +374,7 @@ def store_sandbox(tmp_path: Path) -> SessionSandbox:
 async def test_authorize_persists_to_db(store_sandbox: SessionSandbox) -> None:
     """authorize 写入内存同时写 DB。"""
     await store_sandbox.authorize("t1", "d:/docs", writable=True)
-    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    entries = await store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
     assert len(entries) == 1
     assert entries[0].source == "manual"
 
@@ -384,7 +384,7 @@ async def test_revoke_deletes_from_db(store_sandbox: SessionSandbox) -> None:
     """revoke 内存同时删 DB。"""
     await store_sandbox.authorize("t1", "d:/docs", writable=True)
     await store_sandbox.revoke("t1", "d:/docs")
-    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    entries = await store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
     assert len(entries) == 0
 
 
@@ -394,7 +394,7 @@ async def test_clear_deletes_thread_from_db(store_sandbox: SessionSandbox) -> No
     await store_sandbox.authorize("t1", "d:/docs", writable=True)
     await store_sandbox.authorize("t1", "d:/book", writable=False)
     await store_sandbox.clear("t1")
-    entries = store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
+    entries = await store_sandbox._store.list_by_thread("t1")  # noqa: SLF001
     assert len(entries) == 0
 
 
@@ -402,8 +402,8 @@ async def test_clear_deletes_thread_from_db(store_sandbox: SessionSandbox) -> No
 async def test_bootstrap_restores_from_db(tmp_path: Path) -> None:
     """bootstrap 从 DB 恢复授权到内存。"""
     store = SandboxStore(db_path=tmp_path / "test.db")
-    store.upsert("t1", "d:/docs", writable=True, source="manual")
-    store.upsert("t1", "d:/book", writable=False, source="chip")
+    await store.upsert("t1", "d:/docs", writable=True, source="manual")
+    await store.upsert("t1", "d:/book", writable=False, source="chip")
 
     sandbox = SessionSandbox(store=store)
     await sandbox.bootstrap_from_store()
@@ -425,7 +425,7 @@ async def test_persistence_disabled_no_db_write(tmp_path: Path) -> None:
         store = SandboxStore(db_path=tmp_path / "test.db")
         sandbox = SessionSandbox(store=store)
         await sandbox.authorize("t1", "d:/docs", writable=True)
-        entries = store.list_by_thread("t1")
+        entries = await store.list_by_thread("t1")
         assert len(entries) == 0  # DB 未写入
     finally:
         settings.sandbox_persistence_enabled = original
