@@ -7,6 +7,7 @@ import { DelegationCard } from "./parts/DelegationCard";
 import { ClassificationCard } from "./parts/ClassificationCard";
 import { TeamNodeCard } from "./parts/TeamNodeCard";
 import { ToolCallGroup } from "./parts/ToolCallGroup";
+import { MessageFeedback } from "./MessageFeedback";
 
 /**
  * tool-call part 与 tool-result part 按 id 配对后的合并视图。
@@ -316,7 +317,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
   // 空状态：独立加载卡片
   if (items.length === 0 && !hasContent && isStreamingLast) {
     return (
-      <div className="flex justify-start">
+      <div className="group flex justify-start items-start gap-1">
         <div className="flex w-[95%]">
           <div className="flex w-full items-center gap-1.5 rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
             <span className="flex gap-0.5">
@@ -367,7 +368,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
   }, [items]);
 
   return (
-    <div className="flex justify-start">
+    <div className="group flex justify-start items-start gap-1">
       <div className="flex w-[95%]">
         <div className="flex w-full flex-col gap-3">
           {groups.map((group, groupIdx) => {
@@ -462,6 +463,16 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
             });
           })}
         </div>
+      </div>
+      {/*
+       * 观测中心：消息末尾右侧反馈按钮。
+       * - 消息容器 hover 时整条浮现（feedback 内 own hover-reveal 自带）
+       * - 流式中 isStreamingLast=true → 按钮 disabled（MessageFeedback 自己处理）
+       * - runId 缺失（已完成的旧消息迁移数据）→ 按钮 disabled
+       * mt-1.5 对齐 UserMessageBubble 编辑按钮 (UserMessageBubble.tsx L121)
+       */}
+      <div className="mt-1.5">
+        <MessageFeedback runId={message.traceId} isStreaming={isStreamingLast} />
       </div>
     </div>
   );

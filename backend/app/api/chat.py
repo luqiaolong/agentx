@@ -250,6 +250,16 @@ def register_chat_routes(app: FastAPI) -> None:
                     error=str(exc),
                 )
 
+        # FR-9.1: 隐式反馈信号 — 审批 deny → implicit_bad
+        if req.run_id and not req.approval:
+            from app.observability.feedback import record_implicit_bad
+
+            await record_implicit_bad(req.run_id, reason="rejected_dangerous_tool")
+        elif req.run_id and auto_approved:
+            from app.observability.feedback import record_implicit_ok
+
+            await record_implicit_ok(req.run_id, reason="auto_approved")
+
         logger.info(
             "approval submitted",
             thread_id=req.thread_id,
@@ -264,6 +274,11 @@ def register_chat_routes(app: FastAPI) -> None:
         """设置中止标志，SSE handler 在下一轮迭代退出。"""
         await set_abort(req.thread_id)
         logger.info("abort flag set", thread_id=req.thread_id)
+        # FR-9.1: 隐式反馈信号 — 用户 abort → implicit_bad
+        if req.run_id:
+            from app.observability.feedback import record_implicit_bad
+
+            await record_implicit_bad(req.run_id, reason="aborted")
         return {"ok": True}
 
     @app.post("/api/chat/pause")

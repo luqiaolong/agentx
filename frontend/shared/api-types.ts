@@ -21,7 +21,7 @@
  * - token 事件 data 是纯字符串，不携带 trace_id；前端从 token 事件之前的
  *   第一个 JSON 事件（如 tool_call / approval_request）中拿 trace_id。
  */
-export type ChatEvent =
+export type ChatEvent = (
   // token 事件：data 是纯字符串（不变）
   | { type: "token"; data: string; trace_id?: string }
   // reasoning 事件：thinking 流式 chunk
@@ -74,7 +74,20 @@ export type ChatEvent =
   // done 事件：流式结束
   | { type: "done"; data?: unknown; trace_id?: string }
   // error 事件：流式出错（data 和 error 字段均可能携带信息）
-  | { type: "error"; data?: unknown; error?: string; trace_id?: string };
+  | { type: "error"; data?: unknown; error?: string; trace_id?: string }
+) & { _tid?: string };
+
+/**
+ * FR-4.2 / NFR-8：SSE 事件 data 字段新增可选 `_tid`（trace_id 锚点）。
+ *
+ * 后端现行实现把 trace_id 注入到 JSON 事件 data 顶层（字段名 `trace_id`，
+ * 见 backend/app/utils/sse_events.py::_inject_trace）。spec FR-4.2 要求正式版
+ * 补 `_tid` 字段名。此处用交集类型给所有 ChatEvent 变体追加可选 `_tid`，
+ * 与现有 `trace_id` 并存（向后兼容，旧前端忽略未知字段）。
+ *
+ * 后端可选择性在 data 中同时写入 `_tid`（值同 `trace_id`）；前端读取时优先
+ * `trace_id`，`_tid` 作为 forward-compatible 别名。
+ */
 
 export type ApprovalKind = "dangerous_tool" | "directory_extension";
 
@@ -439,4 +452,115 @@ export interface ProjectConfigStatus {
   exists: boolean;
   files: ProjectConfigFileStatus[];
   agents_md_preview: string | null;
+}
+
+// ---- 观测中心（agent-observation-store）----
+// 对应 backend/app/api/observation.py 5 个端点 + backend/app/observability/observation.py 4 张表。
+
+/**
+ * FR-7.1: 反馈类型。
+ * - thumb_up / thumb_down — 显式 👍/👎（MessageFeedback 按钮）
+ * - rating — 1-5 评分（暂未在 UI 暴露）
+ * - note — 文字备注（暂未在 UI 暴露）
+ * - implicit_ok / implicit_bad — 隐式信号（FR-9，后端自动写入，前端不直接用）
+ */
+export type FeedbackKind =
+  | "thumb_up"
+  | "thumb_down"
+  | "rating"
+  | "note"
+  | "implicit_ok"
+  | "implicit_bad";
+
+/**
+ * FR-8.1: 👎 时的分类标签（popover 下拉选项）。
+ * 与 backend FeedbackRequest.categories 字段对齐。
+ */
+export type FeedbackCategory =
+  | "fact_error"
+  | "tone"
+  | "speed"
+  | "wrong_tool"
+  | "other";
+
+/** FR-7.1: POST /api/observation/feedback 请求体。 */
+export interface FeedbackRequest {
+  run_id: string;
+  kind: FeedbackKind;
+  score?: number;
+  comment?: string;
+  categories?: FeedbackCategory[];
+}
+
+/** FR-7.1: POST /api/observation/feedback 响应体。 */
+export interface FeedbackResponse {
+  ok: boolean;
+  feedback_id: number;
+}
+
+/** FR-7.2: GET /api/observation/feedback?run_id= 响应中的单条 feedback。 */
+export interface ObservationFeedback {
+  feedback_id: number;
+  run_id: string;
+  kind: string;
+  score: number | null;
+  comment: string | null;
+  categories_json: string | null;
+  created_at: string;
+}
+
+/** FR-7.2: GET /api/observation/feedback 响应体。 */
+export interface ListFeedbackResponse {
+  ok: boolean;
+  feedback: ObservationFeedback[];
+}
+
+/** FR-7.3: GET /api/observation/runs?thread_id= 响应中的单条 run。 */
+export interface ObservationRun {
+  run_id: string;
+  trace_id: string;
+  thread_id: string;
+  agent_mode: string;
+  permission_mode: string | null;
+  user_message: string;
+  workspace_path: string | null;
+  final_prompt: string | null;
+  history_preview: string | null;
+  state_snapshots_json: string | null;
+  result_text: string | null;
+  result_token_count: number | null;
+  duration_ms: number | null;
+  started_at: string;
+  ended_at: string | null;
+  error_type: string | null;
+  error_message: string | null;
+}
+
+/** FR-7.3: GET /api/observation/runs 响应体。 */
+export interface ListRunsResponse {
+  ok: boolean;
+  runs: ObservationRun[];
+}
+
+/** FR-7.4: GET /api/observation/runs/{run_id} 响应体。 */
+export interface GetRunResponse {
+  ok: boolean;
+  run?: ObservationRun;
+  error?: string;
+}
+
+/** FR-7.5: GET /api/observation/runs/{run_id}/events 响应中的单条 event。 */
+export interface ObservationEvent {
+  event_id: number;
+  run_id: string;
+  seq: number;
+  ts: string;
+  event_type: string;
+  payload_json: string;
+}
+
+/** FR-7.5: GET /api/observation/runs/{run_id}/events 响应体。 */
+export interface ListEventsResponse {
+  ok: boolean;
+  events: ObservationEvent[];
 }

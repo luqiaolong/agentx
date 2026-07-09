@@ -92,6 +92,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const setStreaming = useChatStore((s) => s.setStreaming);
   const enqueueApprovalRequest = useChatStore((s) => s.enqueueApprovalRequest);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
+  const setMessageTraceId = useChatStore((s) => s.setMessageTraceId);
   const addTask = useTasksStore((s) => s.addTask);
   const updateTask = useTasksStore((s) => s.updateTask);
   const currentId = useChatStore((s) => s.currentId);
@@ -116,6 +117,23 @@ export function useChatStream(args: UseChatStreamArgs) {
   /** 获取 SSE 事件应归属的 thread id：优先使用发送时固定的 activeThreadIdRef。 */
   const targetThreadId = () => activeThreadIdRef?.current ?? threadIdRef.current;
 
+  /**
+   * 观测中心：把 SSE 事件携带的 trace_id 同步到 pending assistant 消息。
+   *
+   * - 后端沿用前端预生成的 trace_id（chat.ts::send()）→ 值相同，无变化；
+   * - 后端自行生成 → 回写覆盖前端值，保证后续 feedback 写入与后端 observation_run.run_id 一致。
+   *
+   * token 事件 data 是纯字符串不携带 trace_id，故不调用；其余 JSON 事件
+   * （reasoning / tool_call / tool_result / delegation 等）均通过 `_tid ?? trace_id`
+   * 字段读取。
+   */
+  const syncTraceId = (e: ChatEvent) => {
+    const tid = e._tid ?? e.trace_id;
+    if (tid && pendingIdRef.current) {
+      setMessageTraceId(pendingIdRef.current, tid);
+    }
+  };
+
   const finishRunning = (running: boolean) => {
     const cid = targetThreadId();
     if (cid) {
@@ -125,6 +143,8 @@ export function useChatStream(args: UseChatStreamArgs) {
 
   useEffect(() => {
     const unsubEvents = chat.onEvent((e: ChatEvent) => {
+      // 观测中心：先把可能的 trace_id 同步到 pending 消息（每个事件都跑一次，幂等）。
+      syncTraceId(e);
       switch (e.type) {
         case "token": {
           // token 事件 data 是纯字符串

@@ -47,6 +47,10 @@ class ApproveRequest(BaseModel):
 
 class AbortRequest(BaseModel):
     thread_id: str = Field(..., description="会话 ID")
+    run_id: str | None = Field(
+        default=None,
+        description="观测中心 run_id（=trace_id），用于写 implicit_bad 反馈",
+    )
 
 
 class ChatRequest(BaseModel):
