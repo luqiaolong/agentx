@@ -24,6 +24,7 @@ from app.config.agents import (
     ExpertSettings,
     ScenarioTeamSettings,
     SupervisorSettings,
+    _DEFAULT_SUPERVISOR_TOOLS,
     _default_agents_config,
     _parse_agents_config,
 )
@@ -49,7 +50,7 @@ class TestSupervisorSettings:
         assert s.system_prompt == ""
         assert "read_file" in s.tools
         assert "write_file" in s.tools
-        assert "cli_execute" in s.tools
+        assert "execute" in s.tools
         assert "git_commit" in s.tools
         assert "rag_retrieve" in s.tools
         assert "web_search" in s.tools
@@ -187,7 +188,8 @@ class TestDefaultAgentsConfig:
         # fs
         assert {"read_file", "list_dir", "glob", "grep", "write_file", "edit_file"} <= tools
         # cli
-        assert "cli_execute" in tools
+        assert "execute" in tools
+        assert "cli_execute" not in tools
         # git
         assert {
             "git_status",
@@ -202,6 +204,22 @@ class TestDefaultAgentsConfig:
         } <= tools
         # rag + web
         assert {"rag_retrieve", "web_search"} <= tools
+
+    def test_supervisor_tools_align_with_dangerous_tools(self) -> None:
+        """Supervisor 默认工具集与 DANGEROUS_TOOLS 命名一致。"""
+        from app.security.dangerous_tools import DANGEROUS_TOOLS
+
+        tools = set(_DEFAULT_SUPERVISOR_TOOLS)
+        assert DANGEROUS_TOOLS & tools == {
+            "execute",
+            "write_file",
+            "edit_file",
+            "git_clone",
+            "git_pull",
+            "git_checkout",
+            "git_stage",
+            "git_commit",
+        }
 
     def test_coding_expert_tools_complete(self) -> None:
         """coding Expert 默认工具集与 Supervisor 一致。"""
