@@ -1,5 +1,7 @@
-import { memo, useCallback, useState } from "react";
-import { ChevronDown, Wrench, Check, X, Loader2, Copy } from "lucide-react";
+import { memo, useCallback, useState, useEffect, useRef } from "react";
+import { ChevronDown, Wrench, Check, X, Loader2, Copy, ShieldCheck, ChevronRight } from "lucide-react";
+import type { ApprovalRequest, ApprovalDecision } from "../../../../shared/api-types";
+import { approve } from "@/lib/api/http";
 
 /** result JSON 截断阈值：超出显示「显示完整」按钮 */
 const RESULT_MAX_CHARS = 1000;
@@ -85,6 +87,8 @@ export interface ToolCallCardProps {
   completedAt?: number;
   /** tool-result 到达时间（毫秒），completedAt 缺失时回退用此计算耗时 */
   arrivedAt?: number;
+  /** 关联的审批请求（内联授权场景） */
+  approvalRequest?: ApprovalRequest;
 }
 
 function ToolCallCardImpl({
@@ -97,13 +101,32 @@ function ToolCallCardImpl({
   startedAt,
   completedAt,
   arrivedAt,
+  approvalRequest,
 }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
   // result 是否展开为完整内容（无截断）
   const [showFull, setShowFull] = useState(false);
   // 当前已复制的字段标识："args" | "result" | null；2s 后自动清空
   const [copiedField, setCopiedField] = useState<"args" | "result" | null>(null);
+  // 下拉菜单展开状态
+  const [menuOpen, setMenuOpen] = useState(false);
+  // 提交中状态
+  const [submitting, setSubmitting] = useState(false);
+  // 下拉菜单 ref，用于点击外部关闭
+  const menuRef = useRef<HTMLDivElement>(null);
   const argsPreview = getArgsPreview(args);
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
 
   // result 完整字符串（用于判断长度 + 复制 + 展示）
   const resultFullStr = result != null ? formatJsonFull(result) : "";
@@ -147,6 +170,30 @@ function ToolCallCardImpl({
   const sourceChipClass = source
     ? SOURCE_CHIP_STYLE[source] ?? "bg-muted-c/10 text-muted-c/70"
     : "";
+
+  // 内联授权提交
+  const handleApprove = useCallback(
+    async (decision: ApprovalDecision) => {
+      if (!approvalRequest || submitting) return;
+      setSubmitting(true);
+      try {
+        await approve.submit(
+          approvalRequest.threadId,
+          true,
+          decision,
+          approvalRequest.requestedPath,
+          approvalRequest.writable ?? false,
+          approvalRequest.toolCallId,
+        );
+      } catch {
+        // 提交失败：静默忽略，用户可重试
+      } finally {
+        setSubmitting(false);
+        setMenuOpen(false);
+      }
+    },
+    [approvalRequest, submitting],
+  );
 
   return (
     <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft" style={{ fontSize: 'var(--fs-msg-tool)' }}>
@@ -276,6 +323,52 @@ function ToolCallCardImpl({
               </pre>
             </div>
           )}
+          {/* 内联授权按钮：仅当存在 approvalRequest 时展示 */}
+          {approvalRequest && (
+            <div className="mt-1 flex items-center justify-end gap-1">
+              <div className="relative" ref={menuRef}>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="inline-flex items-center gap-0.5 rounded-lg bg-amber-600 px-2 py-1 font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
+                  style={{ fontSize: 'var(--fs-msg-tool)' }}
+                >
+                  <ShieldCheck className="h-2.5 w-2.5" />
+                  允许沙箱执行
+                  <ChevronRight className={`h-2.5 w-2.5 transition-transform ${menuOpen ? "rotate-90" : ""}`} />
+                </button>
+                {menuOpen && (
+                  <div className="absolute right-0 z-10 mt-0.5 w-40 rounded-lg border border-default bg-surface shadow-pop">
+                    <button
+                      type="button"
+                      className="flex w-full items-center px-2 py-1 text-left text-muted-c hover:bg-hover-soft"
+                      style={{ fontSize: 'var(--fs-msg-tool)' }}
+                      onClick={() => handleApprove("approve")}
+                    >
+                      本次允许
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center px-2 py-1 text-left text-muted-c hover:bg-hover-soft"
+                      style={{ fontSize: 'var(--fs-msg-tool)' }}
+                      onClick={() => handleApprove("session")}
+                    >
+                      会话内允许
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center px-2 py-1 text-left text-amber-600 hover:bg-hover-soft"
+                      style={{ fontSize: 'var(--fs-msg-tool)' }}
+                      onClick={() => handleApprove("full_trust")}
+                    >
+                      允许所有操作
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -298,7 +391,9 @@ function areEqual(prev: ToolCallCardProps, next: ToolCallCardProps): boolean {
     prev.completedAt === next.completedAt &&
     prev.arrivedAt === next.arrivedAt &&
     prev.args === next.args &&
-    prev.result === next.result
+    prev.result === next.result &&
+    // approvalRequest: 按存在性比较（布尔值），避免对象引用变化导致不必要的重渲
+    !!prev.approvalRequest === !!next.approvalRequest
   );
 }
 

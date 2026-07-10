@@ -1,5 +1,6 @@
 import { Fragment, memo, useMemo, useState } from "react";
 import type { ChatMessage, MessagePart } from "@/stores/chat";
+import type { ApprovalRequest } from "../../../shared/api-types";
 import { TextPartView } from "./parts/TextPartView";
 import { ReasoningBlock } from "./parts/ReasoningBlock";
 import { ToolCallCard } from "./parts/ToolCallCard";
@@ -32,6 +33,8 @@ export type PairedToolCall = {
   startedAt?: number;
   /** 配对的 tool-result 到达时间（毫秒），用于计算耗时 */
   arrivedAt?: number;
+  /** 关联的审批请求（内联授权场景） */
+  approvalRequest?: ApprovalRequest;
 };
 
 /** 孤儿 tool-result（无配对 tool-call）的回退渲染。 */
@@ -119,6 +122,7 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
           error: result?.error,
           startedAt: p.startedAt,
           arrivedAt: result?.arrivedAt,
+          approvalRequest: p.approvalRequest,
         };
         items.push({ kind: "tool-call", part: paired });
         break;
@@ -265,6 +269,7 @@ function SubAgentGroup({
                       source={item.part.source}
                       startedAt={item.part.startedAt}
                       arrivedAt={item.part.arrivedAt}
+                      approvalRequest={item.part.approvalRequest}
                     />
                   </div>
                 );
@@ -421,6 +426,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
                       source={item.part.source}
                       startedAt={item.part.startedAt}
                       arrivedAt={item.part.arrivedAt}
+                      approvalRequest={item.part.approvalRequest}
                     />
                   );
                 case "tool-call-group":

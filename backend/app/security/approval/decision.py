@@ -32,6 +32,7 @@ class ApprovalDecision(str, Enum):
     APPROVE = "approve"
     ONCE = "once"
     SESSION = "session"
+    FULL_TRUST = "full_trust"
     DENY = "deny"
 
 

@@ -63,6 +63,7 @@ export function ApprovalDialog() {
         decision,
         approvalRequest.requestedPath,
         approvalRequest.writable ?? false,
+        approvalRequest.toolCallId,
       );
       dequeueApprovalRequest();
     } catch (err) {

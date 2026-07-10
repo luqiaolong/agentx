@@ -18,6 +18,8 @@ deepagents 的 ``LocalShellBackend`` 提供 ``execute`` 工具用 ``subprocess.r
 
 from __future__ import annotations
 
+import os
+
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 
@@ -29,6 +31,45 @@ __all__ = ["SafeLocalShellBackend"]
 
 # 模块级标志：控制沙箱权限升级功能是否启用（可通过环境变量或配置覆盖）
 _SANDBOX_ESCALATION_ENABLED = True
+
+# Windows 系统命令必需的环境变量白名单（始终保留，不受过滤影响）
+_REQUIRED_ENV_KEYS = frozenset(
+    {"PATH", "PATHEXT", "SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"}
+)
+# 敏感前缀：这些前缀的变量一律排除（如 AGENTX_OPENAI_API_KEY）
+_SENSITIVE_ENV_PREFIXES = ("AGENTX_",)
+# 敏感子串：变量名包含任一即排除（高置信度敏感标识）
+_SENSITIVE_ENV_SUBSTRINGS = ("api_key", "token", "password", "secret", "credential")
+# 需要两个及以上敏感子串才排除的宽松子串（避免误杀如 "keychain"、"tokenize"）
+_SENSITIVE_LOOSE_SUBSTRINGS = ("auth",)
+
+
+def _build_safe_env() -> dict[str, str]:
+    """构建脱敏后的最小环境变量字典，供 SafeLocalShellBackend 使用。
+
+    继承父进程 PATH / SystemRoot / WINDIR / COMSPEC 等 Windows 必需变量，
+    同时过滤掉敏感凭证（AGENTX_* / token / password / key 等）。
+    """
+    safe: dict[str, str] = {}
+    for key, value in os.environ.items():
+        # 白名单变量始终保留（大小写不敏感匹配）
+        if key.upper() in _REQUIRED_ENV_KEYS:
+            safe[key] = value
+            continue
+        # 跳过敏感前缀（如 AGENTX_*）
+        if any(key.upper().startswith(p) for p in _SENSITIVE_ENV_PREFIXES):
+            continue
+        # 跳过包含高置信度敏感子串的变量名（如 api_key / token / password / secret / credential）
+        key_lower = key.lower()
+        if any(sub in key_lower for sub in _SENSITIVE_ENV_SUBSTRINGS):
+            continue
+        # 跳过包含两个及以上宽松敏感子串的变量名（如 "auth_token" 同时含 auth + token）
+        loose_hits = sum(1 for sub in _SENSITIVE_LOOSE_SUBSTRINGS if sub in key_lower)
+        if loose_hits >= 2:
+            continue
+        # 保留其他非敏感变量
+        safe[key] = value
+    return safe
 
 
 class SafeLocalShellBackend(LocalShellBackend):
@@ -46,6 +87,8 @@ class SafeLocalShellBackend(LocalShellBackend):
     - root_dir: 父类 ``LocalShellBackend`` 限制工作目录
     - 审批: execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension
       机制处理（workspace 之外未授权时触发审批）。
+    - 环境变量: 构造函数注入脱敏后的最小环境变量集合（保留 PATH/SystemRoot 等
+      Windows 系统命令必需变量，过滤 AGENTX_*/token/password/key 等敏感凭证）。
 
     契约：
     - ``execute`` 必须返回 ``ExecuteResponse``，下游 ``FilesystemMiddleware.async_execute``
@@ -54,6 +97,13 @@ class SafeLocalShellBackend(LocalShellBackend):
       否则触发 ``AttributeError: 'str' object has no attribute 'output'``，并导致
       ``run_agent_with_approval`` 的初始流崩溃（trace 案例 ``ace5a9740dd543bd``）。
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        """初始化时注入脱敏环境变量，避免空环境导致 Windows 系统命令找不到。"""
+        # 若调用方未显式传入 env，则注入脱敏后的最小环境变量
+        if "env" not in kwargs:
+            kwargs["env"] = _build_safe_env()
+        super().__init__(*args, **kwargs)
 
     def execute(self, command: str, **kwargs) -> ExecuteResponse:
         """执行 shell 命令，带 blocklist + 元字符过滤 + Git 写操作拦截。

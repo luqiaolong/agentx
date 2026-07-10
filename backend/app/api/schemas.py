@@ -29,9 +29,9 @@ __all__ = [
 class ApproveRequest(BaseModel):
     thread_id: str = Field(..., description="会话 ID")
     approval: bool = Field(..., description="True=批准 / False=拒绝")
-    decision: Literal["approve", "deny", "once", "session"] = Field(
+    decision: Literal["approve", "deny", "once", "session", "full_trust"] = Field(
         default="approve",
-        description='审批决策类型：approve/deny（dangerous_tool）或 once/session/deny（directory_extension）',
+        description='审批决策类型：approve/deny（dangerous_tool）或 once/session/deny/full_trust（directory_extension）',
     )
     path: str | None = Field(default=None, description="directory_extension 目标路径")
     writable: bool = Field(default=False, description="directory_extension 是否允许写入")

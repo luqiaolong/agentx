@@ -190,6 +190,7 @@ def _make_approval_event(
         "args": redacted_args,
         "preview": preview,
         "kind": kind,
+        "tool_call_id": tool_call.get("id", ""),
     }
     if kind == "directory_extension":
         data["requestedPath"] = requested_path or ""

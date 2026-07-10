@@ -79,6 +79,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const enqueueApprovalRequest = useChatStore((s) => s.enqueueApprovalRequest);
+  const attachApprovalToToolCall = useChatStore((s) => s.attachApprovalToToolCall);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const setMessageTraceId = useChatStore((s) => s.setMessageTraceId);
   const addTask = useTasksStore((s) => s.addTask);
@@ -384,6 +385,11 @@ export function useChatStream(args: UseChatStreamArgs) {
     });
 
     const unsubApproval = chat.onApprovalRequest(threadId, (req) => {
+      // 内联授权：若 approval_request 携带 toolCallId，关联到对应 tool-call part
+      if (req.toolCallId && pendingIdRef.current) {
+        attachApprovalToToolCall(pendingIdRef.current, req.toolCallId, req);
+      }
+      // 同时入队，保留弹窗兜底（ApprovalDialog 仍可按 currentId 过滤展示）
       enqueueApprovalRequest(req);
     });
 

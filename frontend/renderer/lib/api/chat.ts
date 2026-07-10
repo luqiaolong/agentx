@@ -226,6 +226,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
             requestedPath: typeof obj.requestedPath === "string" ? obj.requestedPath : undefined,
             writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
             traceId: typeof obj.trace_id === "string" ? obj.trace_id : undefined,
+            toolCallId: typeof obj.tool_call_id === "string" ? obj.tool_call_id : undefined,
           };
           conn.approvalHandlers.forEach((h) => h(req));
         }

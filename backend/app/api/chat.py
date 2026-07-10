@@ -187,17 +187,36 @@ def register_chat_routes(app: FastAPI) -> None:
         支持两种审批场景：
         - dangerous_tool：approval=True/False，decision="approve"/"deny"
         - directory_extension：decision="once"/"session"/"deny"，path/writable 描述目标
+        - full_trust：decision="full_trust"，设置会话为 full_trust 模式（跳过所有审批）
         """
         # approval=False → 强制 deny（覆盖 decision 默认值 "approve"）
         effective_decision = "deny" if not req.approval else req.decision
-        await submit_approval(
-            req.thread_id,
-            ApprovalResult(
-                decision=ApprovalDecision(effective_decision),
-                path=req.path,
-                writable=req.writable,
-            ),
-        )
+
+        # full_trust 决策：设置会话为 full_trust 模式，同时提交一个 approve 决策
+        if effective_decision == "full_trust":
+            from app.main import get_sandbox
+
+            sandbox = get_sandbox()
+            await sandbox.set_full_trust(req.thread_id, True)
+            logger.info("full_trust enabled", thread_id=req.thread_id)
+            # 提交 approve 决策让当前审批流继续
+            await submit_approval(
+                req.thread_id,
+                ApprovalResult(
+                    decision=ApprovalDecision.APPROVE,
+                    path=req.path,
+                    writable=req.writable,
+                ),
+            )
+        else:
+            await submit_approval(
+                req.thread_id,
+                ApprovalResult(
+                    decision=ApprovalDecision(effective_decision),
+                    path=req.path,
+                    writable=req.writable,
+                ),
+            )
 
         # LangSmith trace：区分用户批准 / 拒绝
         if req.approval:

@@ -69,6 +69,12 @@ export type MessagePart =
        * - 仍在 running：未定义
        */
       completedAt?: number;
+      /**
+       * 关联的审批请求（内联授权场景）。
+       * 当后端对该 tool-call 发出 approval_request 时，将请求信息写入对应 part，
+       * 前端 ToolCallCard 据此展示内联授权按钮。
+       */
+      approvalRequest?: ApprovalRequest;
     }
   | {
       type: "tool-result";
@@ -346,6 +352,15 @@ export interface ChatState {
   dequeueApprovalRequest: () => void;
   /** 获取指定会话的待审批请求队列（按 threadId 过滤）。 */
   getSessionApprovalQueue: (threadId: string) => ApprovalRequest[];
+  /**
+   * 将审批请求关联到指定 message 的对应 tool-call part（内联授权场景）。
+   * 按 toolCallId 匹配，找到对应 tool-call part 并写入 approvalRequest 字段。
+   */
+  attachApprovalToToolCall: (
+    messageId: string,
+    toolCallId: string,
+    req: ApprovalRequest,
+  ) => void;
   /** 设置指定会话的执行状态。 */
   setSessionRunning: (id: string, running: boolean) => void;
   /** 清除指定会话的新结果标记。 */
@@ -1056,6 +1071,26 @@ export const useChatStore = create<ChatState>()(
         getSessionApprovalQueue: (threadId) => {
           const { approvalQueue } = get();
           return approvalQueue.filter((req) => req.threadId === threadId);
+        },
+        attachApprovalToToolCall: (messageId, toolCallId, req) => {
+          set((s) => {
+            const targetCid = lookupSessionId(messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              const parts = m.parts.map((p) => {
+                if (p.type === "tool-call" && p.id === toolCallId) {
+                  return { ...p, approvalRequest: req } as MessagePart;
+                }
+                return p;
+              });
+              return { ...m, parts };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
         },
 
         setSessionRunning: (id, running) =>
