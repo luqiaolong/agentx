@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Query
@@ -64,6 +65,8 @@ _TRACE_SUMMARY_LIMIT = 12000
 _PROJECT_SUMMARY_LIMIT = 12000
 # 单文件内容截断
 _FILE_CONTENT_LIMIT = 1500
+# 长轨迹分段：单段最大字符数
+_TRACE_CHUNK_LIMIT = 5000
 
 
 def _build_trace_summary(
@@ -106,6 +109,99 @@ def _build_trace_summary(
             lines.append("…(后续事件截断，已达摘要上限)")
             break
     return "\n".join(lines)
+
+
+def _format_event_line(ev: dict[str, Any]) -> str:
+    """把单条 event 格式化为 trace summary 中的一行。"""
+    et = ev.get("event_type", "")
+    seq = ev.get("seq", "")
+    payload_str = ev.get("payload_json", "")
+    if len(payload_str) > _EVENT_PAYLOAD_LIMIT:
+        payload_str = payload_str[:_EVENT_PAYLOAD_LIMIT] + "…(截断)"
+    return f"[{seq}] {et}: {payload_str}\n"
+
+
+def _chunk_events(events: list[dict[str, Any]], max_chars: int) -> list[list[dict[str, Any]]]:
+    """按字符上限把 events 切成若干段，避免一次性塞进超长 prompt。"""
+    chunks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_len = 0
+    for ev in events:
+        line = _format_event_line(ev)
+        # 单个 event 就超限也允许单独成段，避免死循环
+        if current and current_len + len(line) > max_chars:
+            chunks.append(current)
+            current = [ev]
+            current_len = len(line)
+        else:
+            current.append(ev)
+            current_len += len(line)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def _stream_with_think_parse(
+    text_stream: AsyncIterator[str],
+    trace_id: str,
+) -> AsyncIterator[dict[str, str]]:
+    """解析 LLM token 流中的 <think>...</think>，分别输出 reasoning / token 事件。
+
+    - `<think>` 内部内容作为 reasoning 事件输出，前端渲染为 Think/Reasoning 模块。
+    - `</think>` 之后的内容作为 token 事件输出，渲染为正式复盘正文。
+    """
+    buffer = ""
+    in_think = False
+    think_content = ""
+    think_open = "<think>"
+    think_close = "</think>"
+
+    async def _emit_reasoning(content: str) -> dict[str, str]:
+        return {
+            "event": "reasoning",
+            "data": json.dumps(
+                {"content": content.strip(), "source": "review", "trace_id": trace_id},
+                ensure_ascii=False,
+            ),
+        }
+
+    async def _emit_token(text: str) -> dict[str, str]:
+        return {"event": "token", "data": text}
+
+    async for text in text_stream:
+        buffer += text
+        while buffer:
+            if in_think:
+                end = buffer.find(think_close)
+                if end == -1:
+                    think_content += buffer
+                    buffer = ""
+                    break
+                think_content += buffer[:end]
+                yield await _emit_reasoning(think_content)
+                in_think = False
+                think_content = ""
+                buffer = buffer[end + len(think_close) :]
+            else:
+                start = buffer.find(think_open)
+                if start == -1:
+                    if buffer:
+                        yield await _emit_token(buffer)
+                        buffer = ""
+                    break
+                if start > 0:
+                    yield await _emit_token(buffer[:start])
+                in_think = True
+                think_content = ""
+                buffer = buffer[start + len(think_open) :]
+
+    # 流结束：未闭合的 think 也作为 reasoning 输出，剩余 buffer 作为 token 输出
+    if in_think:
+        if think_content or buffer:
+            yield await _emit_reasoning(think_content + buffer)
+    else:
+        if buffer:
+            yield await _emit_token(buffer)
 
 
 def _collect_project_summary() -> str:
@@ -180,6 +276,23 @@ def _collect_project_summary() -> str:
     return "\n".join(lines)
 
 
+def _extract_chunk_text(chunk: Any) -> str:
+    """从 LangChain chunk 中提取文本内容。"""
+    text = getattr(chunk, "content", chunk)
+    if isinstance(text, str):
+        return text
+    if isinstance(text, list):
+        parts: list[str] = []
+        for item in text:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return str(text) if text is not None else ""
+
+
 async def _stream_llm_analysis(
     prompt: str, trace_id: str
 ) -> AsyncIterator[dict[str, str]]:
@@ -190,9 +303,9 @@ async def _stream_llm_analysis(
     - token: LLM 正文增量
     - done: 流结束
     - error: 异常（含 message）
-    """
-    import json
 
+    额外支持 <think>...</think> 解析：内部内容走 reasoning 事件，前端进入 Think 模块。
+    """
     # 延迟导入：避免 top-level 依赖 + 测试可 monkeypatch
     from app.llm import get_chat_model
     from langchain_core.messages import HumanMessage
@@ -207,15 +320,192 @@ async def _stream_llm_analysis(
                 ensure_ascii=False,
             ),
         }
-        async for chunk in model.astream([HumanMessage(content=prompt)]):
-            text = chunk.content
-            if isinstance(text, str) and text:
-                yield {"event": "token", "data": text}
+
+        async def _text_stream() -> AsyncIterator[str]:
+            async for chunk in model.astream([HumanMessage(content=prompt)]):
+                text = _extract_chunk_text(chunk)
+                if text:
+                    yield text
+
+        async for event in _stream_with_think_parse(_text_stream(), trace_id):
+            yield event
         yield {"event": "done", "data": "{}"}
     except Exception as exc:  # noqa: BLE001 — SSE 必须兜底
         logger.warning("trace analysis LLM stream failed", error=str(exc), trace_id=trace_id)
         yield make_error_event(str(exc), trace_id=trace_id)
         yield {"event": "done", "data": "{}"}
+
+
+# ============================================================
+# 复盘 / 自进化 prompt 构建
+# ============================================================
+
+def _build_review_prompt(trace_summary: str) -> str:
+    """短轨迹：一次性复盘的 prompt。"""
+    return (
+        "你是一名资深 AI Agent 复盘专家。请对以下执行轨迹进行结构化复盘。\n\n"
+        "## 输出格式要求\n"
+        "1. 先使用 `<think>` 标签输出你的内部推理过程（分析思路、关键观察）。\n"
+        "2. 在 `</think>` 之后，使用 Markdown 输出正式复盘报告，包含以下章节：\n"
+        "   - 用户意图\n"
+        "   - 执行路径\n"
+        "   - 结果评估\n"
+        "   - 问题诊断\n"
+        "   - 改进建议\n"
+        "复盘报告应条理清晰、结论明确，不要简单罗列事件。\n\n"
+        f"## 执行轨迹数据\n\n{trace_summary}"
+    )
+
+
+def _build_review_segment_prompt(trace_summary: str, idx: int, total: int) -> str:
+    """长轨迹分段：单段分析的 prompt。"""
+    return (
+        f"你正在复盘一段较长的执行轨迹（第 {idx + 1}/{total} 段）。"
+        "请仅针对本段内容进行分析，输出简洁要点，供后续汇总成完整复盘报告。\n\n"
+        "## 输出要求\n"
+        "- 关键操作与观察\n"
+        "- 明显问题或低效之处\n"
+        "- 改进建议\n"
+        "用 Markdown bullet，控制在 400 字以内。\n\n"
+        f"## 第 {idx + 1}/{total} 段轨迹数据\n\n{trace_summary}"
+    )
+
+
+def _build_review_synthesis_prompt(segment_reviews: list[str]) -> str:
+    """长轨迹分段：汇总各段分析，输出最终复盘报告。"""
+    sections = "\n\n".join(
+        f"### 第 {i + 1} 段分析\n{review}" for i, review in enumerate(segment_reviews)
+    )
+    return (
+        "你已完成对执行轨迹的分段分析。请综合以下各段分析结果，"
+        "输出一份完整、结构化、无冗余的最终复盘报告。\n\n"
+        f"## 分段分析摘要\n\n{sections}\n\n"
+        "## 输出格式要求\n"
+        "1. 先使用 `<think>` 标签输出你的综合推理过程。\n"
+        "2. 在 `</think>` 之后，使用 Markdown 输出正式报告，包含：\n"
+        "   - 用户意图\n"
+        "   - 执行路径\n"
+        "   - 结果评估\n"
+        "   - 问题诊断\n"
+        "   - 改进建议\n"
+        "去重并结构化，避免简单拼接各段内容。"
+    )
+
+
+def _build_self_evolve_prompt(trace_summary: str, project_summary: str) -> str:
+    """短轨迹：自进化一次性分析的 prompt。"""
+    return (
+        "你是 AgentX 项目的架构师，负责系统的自我进化。"
+        "请结合以下执行轨迹与项目代码，分析系统存在的问题与优化方向。\n\n"
+        "## 输出格式要求\n"
+        "1. 先使用 `<think>` 标签输出你的内部推理过程。\n"
+        "2. 在 `</think>` 之后，使用 Markdown 输出正式报告，包含：\n"
+        "   - 轨迹问题\n"
+        "   - 代码层面原因（具体到模块/文件）\n"
+        "   - 优化建议（短期 / 中期 / 长期）\n"
+        "   - 优先级排序\n"
+        "具体、可执行，避免空泛。\n\n"
+        f"## 执行轨迹数据\n\n{trace_summary}\n\n"
+        f"## AgentX 项目代码概览\n\n{project_summary}"
+    )
+
+
+def _build_self_evolve_segment_prompt(trace_summary: str, idx: int, total: int) -> str:
+    """长轨迹分段：自进化单段分析的 prompt。"""
+    return (
+        f"你正在分析 AgentX 执行轨迹的第 {idx + 1}/{total} 段，以找出系统问题与优化方向。\n\n"
+        "## 输出要求\n"
+        "- 本段暴露的问题（路由、工具、上下文、错误处理、性能等）\n"
+        "- 可能涉及的代码模块/文件\n"
+        "- 优化建议\n"
+        "用 Markdown bullet，控制在 400 字以内。\n\n"
+        f"## 第 {idx + 1}/{total} 段轨迹数据\n\n{trace_summary}"
+    )
+
+
+def _build_self_evolve_synthesis_prompt(
+    segment_reviews: list[str], project_summary: str
+) -> str:
+    """长轨迹分段：自进化汇总 prompt。"""
+    sections = "\n\n".join(
+        f"### 第 {i + 1} 段分析\n{review}" for i, review in enumerate(segment_reviews)
+    )
+    return (
+        "你已完成对执行轨迹的分段分析。请结合 AgentX 项目代码，"
+        "综合以下各段分析，输出一份完整、结构化、可执行的自我进化报告。\n\n"
+        f"## AgentX 项目代码概览\n\n{project_summary}\n\n"
+        f"## 分段分析摘要\n\n{sections}\n\n"
+        "## 输出格式要求\n"
+        "1. 先使用 `<think>` 标签输出你的综合推理过程。\n"
+        "2. 在 `</think>` 之后，使用 Markdown 输出正式报告，包含：\n"
+        "   - 轨迹问题\n"
+        "   - 代码层面原因（具体到模块/文件）\n"
+        "   - 优化建议（短期 / 中期 / 长期）\n"
+        "   - 优先级排序\n"
+        "具体、可执行，避免空泛，避免简单拼接。"
+    )
+
+
+async def _stream_segmented_analysis(
+    run: dict[str, Any] | None,
+    events: list[dict[str, Any]],
+    trace_id: str,
+    *,
+    single_prompt_builder: Any | None = None,
+    segment_prompt_builder: Any,
+    synthesis_prompt_builder: Any,
+) -> AsyncIterator[dict[str, str]]:
+    """长轨迹 map-reduce 分析：分段 → 汇总 → 流式输出最终结果。
+
+    - 短轨迹（单段）：直接走一次性分析（使用 single_prompt_builder）。
+    - 长轨迹（多段）：逐段调用 LLM 收集要点，最后汇总成完整报告并流式输出。
+    分段过程中每完成一段会 emit 一个 reasoning 进度事件，让用户感知到"正在分段处理"。
+    """
+    chunks = _chunk_events(events, _TRACE_CHUNK_LIMIT)
+
+    if len(chunks) <= 1:
+        trace_summary = _build_trace_summary(run, events)
+        if single_prompt_builder is not None:
+            prompt = single_prompt_builder(trace_summary)
+        else:
+            prompt = segment_prompt_builder(trace_summary, 0, 1)
+        async for event in _stream_llm_analysis(prompt, trace_id):
+            yield event
+        return
+
+    # 多段：先收集各段要点
+    segment_reviews: list[str] = []
+    for idx, chunk in enumerate(chunks):
+        trace_summary = _build_trace_summary(run, chunk)
+        prompt = segment_prompt_builder(trace_summary, idx, len(chunks))
+
+        # 进度感知：告知用户当前在分析第几段
+        yield {
+            "event": "reasoning",
+            "data": json.dumps(
+                {
+                    "content": f"执行轨迹较长，正在分段分析（第 {idx + 1}/{len(chunks)} 段）…",
+                    "source": "review",
+                    "trace_id": trace_id,
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+        segment_text_parts: list[str] = []
+        async for event in _stream_llm_analysis(prompt, trace_id):
+            if event["event"] == "error":
+                yield event
+                return
+            if event["event"] == "token":
+                segment_text_parts.append(event["data"])
+            # reasoning / done 不对外输出，避免中间段的 think 内容混入最终报告
+        segment_reviews.append("".join(segment_text_parts).strip())
+
+    # 汇总：流式输出最终报告
+    synthesis_prompt = synthesis_prompt_builder(segment_reviews)
+    async for event in _stream_llm_analysis(synthesis_prompt, trace_id):
+        yield event
 
 
 def register_observation_routes(app: FastAPI) -> None:
@@ -297,25 +587,26 @@ def register_observation_routes(app: FastAPI) -> None:
             return EventSourceResponse(_empty())
 
         trace_summary = _build_trace_summary(run, events)
-        prompt = (
-            "你是一名资深 AI Agent 复盘专家。请对以下执行轨迹进行复盘，"
-            "输出复盘过程与结果。\n\n"
-            "## 复盘要求\n"
-            "1. **用户意图**：用户原本想达成什么\n"
-            "2. **执行路径**：agent 实际做了哪些操作（工具调用、推理步骤）\n"
-            "3. **结果评估**：是否达成目标，效果如何\n"
-            "4. **问题诊断**：执行中有哪些问题（工具选错、推理偏差、效率低、冗余调用等）\n"
-            "5. **改进建议**：针对每个问题给出可执行的改进方向\n\n"
-            "用 Markdown 输出，条理清晰。\n\n"
-            f"## 执行轨迹数据\n\n{trace_summary}"
-        )
         logger.info(
             "trace review started",
             run_id=req.run_id,
             thread_id=req.thread_id,
             events_count=len(events),
+            summary_len=len(trace_summary),
         )
-        return EventSourceResponse(_stream_llm_analysis(prompt, req.run_id))
+
+        async def _review_stream() -> AsyncIterator[dict[str, str]]:
+            async for event in _stream_segmented_analysis(
+                run,
+                events,
+                req.run_id,
+                single_prompt_builder=_build_review_prompt,
+                segment_prompt_builder=_build_review_segment_prompt,
+                synthesis_prompt_builder=_build_review_synthesis_prompt,
+            ):
+                yield event
+
+        return EventSourceResponse(_review_stream())
 
     @app.post("/api/observation/self-evolve")
     async def self_evolve_trace(req: SelfEvolveRequest) -> EventSourceResponse:
@@ -339,30 +630,30 @@ def register_observation_routes(app: FastAPI) -> None:
 
         trace_summary = _build_trace_summary(run, events)
         project_summary = await _async(_collect_project_summary)
-        prompt = (
-            "你是 AgentX 项目的架构师，负责系统的自我进化。请结合以下执行轨迹"
-            "与 AgentX 项目代码，分析系统存在的问题与优化方向。\n\n"
-            "## 分析要求\n"
-            "1. **轨迹问题**：这次执行暴露了哪些具体问题（路由决策、工具选择、"
-            "上下文管理、错误处理、性能等）\n"
-            "2. **代码问题**：结合 AgentX 代码，指出导致这些问题的代码层面原因"
-            "（具体到模块/文件）\n"
-            "3. **优化建议**：给出可落地的优化方案，包括：\n"
-            "   - 短期修复（快速止血）\n"
-            "   - 中期改进（架构优化）\n"
-            "   - 长期演进（方向性建议）\n"
-            "4. **优先级排序**：按影响×成本给出实施优先级\n\n"
-            "用 Markdown 输出，具体且可执行，避免空泛。\n\n"
-            f"## 执行轨迹数据\n\n{trace_summary}\n\n"
-            f"## AgentX 项目代码概览\n\n{project_summary}"
-        )
         logger.info(
             "trace self-evolve started",
             run_id=req.run_id,
             thread_id=req.thread_id,
             events_count=len(events),
+            summary_len=len(trace_summary),
         )
-        return EventSourceResponse(_stream_llm_analysis(prompt, req.run_id))
+
+        async def _evolve_stream() -> AsyncIterator[dict[str, str]]:
+            async for event in _stream_segmented_analysis(
+                run,
+                events,
+                req.run_id,
+                single_prompt_builder=lambda summary: _build_self_evolve_prompt(
+                    summary, project_summary
+                ),
+                segment_prompt_builder=_build_self_evolve_segment_prompt,
+                synthesis_prompt_builder=lambda reviews: _build_self_evolve_synthesis_prompt(
+                    reviews, project_summary
+                ),
+            ):
+                yield event
+
+        return EventSourceResponse(_evolve_stream())
 
 
 async def _async(fn: Any, *args: Any) -> Any:
