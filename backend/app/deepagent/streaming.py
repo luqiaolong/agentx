@@ -99,6 +99,8 @@ async def _stream_agent_events(
         thread_id=thread_id,
         inputs_type=type(inputs).__name__,
         source=source,
+        is_resume=inputs is None,
+        seen_signatures_count=len(seen_signatures) if seen_signatures else 0,
     )
 
     # 去重集合：基于消息签名避免 LangGraph astream 在 interrupt/resume 后
@@ -300,3 +302,13 @@ async def _stream_agent_events(
                     if text:
                         await _obs("token", {"content": text})
                         yield make_sse_event("token", text)
+
+    logger.info(
+        "stream_agent_events: streaming completed",
+        thread_id=thread_id,
+        source=source,
+        is_resume=inputs is None,
+        first_state_seen=_first_state_seen,
+        processed_count=_processed_count,
+        seen_signatures_count=len(_seen_signatures),
+    )

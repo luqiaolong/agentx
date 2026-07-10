@@ -125,6 +125,8 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   const decoder = new TextDecoder();
   let buffer = "";
   let receivedDone = false;
+  let lastPingTime = Date.now();
+  const PING_TIMEOUT = 90000; // 90 秒未收到 ping 则判定连接断开（后端 30 秒发一次）
 
   try {
     for (;;) {
@@ -147,6 +149,11 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         }
         const dataStr = dataParts.join("\n");
         if (!dataStr && eventType === "message") continue;
+        // 处理心跳 ping 事件
+        if (eventType === "ping") {
+          lastPingTime = Date.now();
+          continue;
+        }
         // data 可能是 JSON 或纯字符串（token 事件常用纯字符串）
         let payload: unknown = dataStr;
         const trimmed = dataStr.trim();
@@ -187,6 +194,10 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
           };
           approvalHandlers.forEach((h) => h(req));
         }
+      }
+      // 检查 ping 超时：长时间未收到 ping 说明连接可能已断开
+      if (Date.now() - lastPingTime > PING_TIMEOUT) {
+        throw new Error("SSE 连接超时：长时间未收到服务器心跳");
       }
     }
   } catch (err) {

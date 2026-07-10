@@ -423,6 +423,12 @@ async def run_agent_with_approval(
             return
 
         # 恢复执行
+        logger.info(
+            "agent resume execution",
+            thread_id=thread_id,
+            source=source,
+            pending_tools=[tc.get("name") for tc in pending_calls],
+        )
         try:
             async for sse in _stream(agent, None, config, source):
                 yield await _forward(sse)
@@ -431,6 +437,12 @@ async def run_agent_with_approval(
             await _inject_msgs(agent, config, f"恢复失败: {exc}")
             yield await _forward(make_error_event( f"恢复失败: {exc}"))
             return
+
+        logger.info(
+            "agent resume completed",
+            thread_id=thread_id,
+            source=source,
+        )
 
         # 刷新已 yield 基线（root cause: trace=64851677fced422c）。
         # 每次 stream 完成后记录最新 state.messages 数量，重复检测据此判断

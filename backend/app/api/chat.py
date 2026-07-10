@@ -281,7 +281,12 @@ def register_chat_routes(app: FastAPI) -> None:
         - ``token`` / ``reasoning`` / ``tool_call`` / ``tool_result`` / ``delegation``
         - ``todo_update`` / ``approval_request`` / ``done`` / ``error``
         """
-        return EventSourceResponse(_event_generator(req))
+        # SSE 心跳：每 30 秒发送一次 ping 事件，防止代理/浏览器在审批等待期间断开连接
+        return EventSourceResponse(
+            _event_generator(req),
+            ping=30,
+            ping_message_factory=lambda: {"event": "ping", "data": "{}"},
+        )
 
     @app.post("/api/chat/compact")
     async def chat_compact(req: CompactRequest) -> dict[str, Any]:
