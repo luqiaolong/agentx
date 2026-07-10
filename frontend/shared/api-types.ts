@@ -32,8 +32,12 @@ export type TodoStatus = "pending" | "in_progress" | "completed";
 export type ChatEvent = (
   // token 事件：data 是纯字符串（不变）
   | { type: "token"; data: string; trace_id?: string }
-  // reasoning 事件：thinking 流式 chunk
+  // token_rollback 事件：撤回当前 text part（模型把计划文本误推为 token 后撤回）
+  | { type: "token_rollback"; trace_id?: string }
+  // reasoning 事件：thinking 流式 chunk（完整内容，常用于 observation/team 路径）
   | { type: "reasoning"; content: string; source: string; trace_id?: string }
+  // reasoning_delta 事件：thinking 实时增量 token（主 agent 路径）
+  | { type: "reasoning_delta"; delta: string; source: string; trace_id?: string }
   // tool_call 事件：子代理/主 agent 调用工具
   | { type: "tool_call"; id: string; name: string; args: unknown; source: string; trace_id?: string }
   // tool_result 事件：工具返回结果（error 时带 error 字段）

@@ -48,9 +48,10 @@ def make_sse_event(
 
     - token: data 为纯字符串（前端直接拼接，不做 JSON.parse），trace_id 不注入
       （保持 token 事件 payload 为纯字符串，避免前端解析器额外处理）。
-    - todo_update / approval_request / reasoning / tool_call / tool_result /
-      delegation / classification / team_* / plan / error / _subtask_done:
-      data 为 JSON 字符串（dict 会被 json 序列化）；若传 trace_id 则注入 data 顶层。
+    - todo_update / approval_request / reasoning / reasoning_delta / tool_call /
+      tool_result / delegation / classification / team_* / plan / error /
+      _subtask_done: data 为 JSON 字符串（dict 会被 json 序列化）；若传 trace_id
+      则注入 data 顶层。
     - done: data 为 "{}"；不注入 trace_id（前端在事件流最开始就拿到 trace_id，
       显式注入 done 事件无意义）。
 
@@ -66,6 +67,8 @@ def make_sse_event(
         "todo_update",
         "approval_request",
         "reasoning",
+        "reasoning_delta",
+        "token_rollback",
         "tool_call",
         "tool_result",
         "delegation",

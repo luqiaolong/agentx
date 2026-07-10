@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { Brain } from "lucide-react";
 import { lookupSessionId } from "@/stores/chat/messageIndex";
 import { TraceCardHeader } from "./TraceCardHeader";
@@ -61,6 +61,7 @@ function isMessageStillInStore(messageId: string): boolean {
  * - 仅保留 **用户手动 toggle**（点击标题行右侧 chevron）收起内容。
  * - 默认无卡片背景、无圆角、无阴影；视觉上接近普通文字。
  * - 思考过程中在文本末尾追加**流式光标 caret**（CSS 闪烁动画），从视觉上传达"仍在思考中"。
+ * - 内容直接显示完整 text（后端已实时增量推送，不再做前端打字机动画），避免延迟。
  * - 思考步骤间由外层 AssistantMessageParts 的 gap-3 间距 + 左侧细线视觉分隔
  *   （border-l border-default），保证每个 step 的顺序与独立性。
  *
@@ -93,12 +94,6 @@ function ReasoningBlockImpl({
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
   // 用于流式时持续刷新耗时的 tick（完成时停止）
   const [nowTick, setNowTick] = useState(Date.now());
-  // 打字机效果：当前已显示的字符数
-  const [displayedCount, setDisplayedCount] = useState(0);
-  // 用于跳过打字机效果（如用户主动展开时）
-  const skipTypewriterRef = useRef(false);
-  // 标记是否首次挂载（首次挂载时若 text 已有内容直接显示全部，不从头打字）
-  const isFirstMountRef = useRef(true);
 
   // 初始化：从 sessionStorage 恢复手动展开/折叠状态（写入过才覆盖默认）
   useEffect(() => {
@@ -116,35 +111,6 @@ function ReasoningBlockImpl({
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [done]);
-
-  // 打字机效果：流式中（!done）逐字显示 text
-  useEffect(() => {
-    if (done) {
-      // 完成时直接显示全部
-      setDisplayedCount(text.length);
-      return;
-    }
-    // 如果用户主动操作（如展开）则跳过打字机，直接显示全部
-    if (skipTypewriterRef.current) {
-      setDisplayedCount(text.length);
-      return;
-    }
-    // 流式中：若 text 比已显示的多，启动逐字动画
-    // 即使首次挂载 text 已有内容，也从头开始打字（模拟流式效果）
-    if (text.length > 0 && displayedCount < text.length) {
-      const timer = window.setInterval(() => {
-        setDisplayedCount((prev) => {
-          if (prev >= text.length) {
-            window.clearInterval(timer);
-            return prev;
-          }
-          // 每 15ms 显示一个字符，约 66 字符/秒
-          return Math.min(prev + 1, text.length);
-        });
-      }, 15);
-      return () => window.clearInterval(timer);
-    }
-  }, [text, done, displayedCount]);
 
   // 卸载时清理 sessionStorage：若 messageId 已不在 store，best-effort 清除 key
   useEffect(() => {
@@ -173,12 +139,7 @@ function ReasoningBlockImpl({
     const nextCollapsed = !userCollapsed;
     setManualExpanded(!nextCollapsed);
     setStoredExpanded(messageId, partId, !nextCollapsed);
-    // 用户主动展开时跳过打字机效果，直接显示全部
-    if (nextCollapsed === false) {
-      skipTypewriterRef.current = true;
-      setDisplayedCount(text.length);
-    }
-  }, [userCollapsed, messageId, partId, text.length]);
+  }, [userCollapsed, messageId, partId]);
 
   // 流式时（!done && text.length === 0）：单行内联「思考中…」+ 跳动圆点（无卡片背景）
   if (!done && text.length === 0) {
@@ -224,7 +185,7 @@ function ReasoningBlockImpl({
           }}
         >
           <pre className="whitespace-pre-wrap">
-            {text.slice(0, displayedCount)}
+            {text}
             {!done && (
               <span
                 className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-current align-middle"

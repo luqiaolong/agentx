@@ -8,6 +8,8 @@
 [frontend/renderer/lib/api/chat.ts::send](file:///d:/java/agentprojects/agentx/frontend/renderer/lib/api/chat.ts#L36-L111)
 + [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts) 共同实现。
 
+主 agent 路径（work / coding）已开启 `stream_mode="messages"`，`<think>` 块以 `reasoning_delta` 事件实时增量推送；`reasoning` 事件保留给 observation / team 等需要一次性推送完整 thinking 内容的路径。
+
 ## 聊天相关 REST 端点（除 SSE 外）
 
 - `POST /api/chat` — SSE 流式聊天，请求体 `ChatRequest`。
@@ -23,8 +25,10 @@
 
 | event | data 类型 | 说明 |
 |---|---|---|
-| `token` | 纯字符串 | 增量 token（visible text，已剥离 think 块） |
-| `reasoning` | JSON `{"content": str, "source": str}` | 思考过程 chunk（由 ThinkFilter retain_think 模式从 token 流分离） |
+| `token` | 纯字符串 | 增量 token（visible text，已剥离 think 块；messages 模式下实时推送） |
+| `token_rollback` | JSON `{}` | 撤回当前 text part（模型把计划文本误推为 token 后撤回，随后发 reasoning + tool_call） |
+| `reasoning_delta` | JSON `{"delta": str, "source": str}` | 思考过程实时增量 token（主 agent 路径 `<think>` 块实时推送） |
+| `reasoning` | JSON `{"content": str, "source": str}` | 思考过程完整 chunk（observation / team 等一次性推送路径；主 agent 路径仅推送非 think 的计划文本） |
 | `tool_call` | JSON `{"id","name","args","source"}` | 工具调用开始（id 供前端配对 tool_result；subagent 用 astream_events v2 run_id） |
 | `tool_result` | JSON `{"id","name","result","source","error?"}` | 工具调用结束 |
 | `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
@@ -51,6 +55,7 @@
 ## 同步约束
 
 > 修改任一事件类型或字段名，**必须**同步更新
-> [chat.py](file:///d:/java/agentprojects/agentx/backend/app/api/chat.py)、
-> [lib/api/chat.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/lib/api/chat.ts)、
-> [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts) 三处。
+> [backend/app/sse/events.py](file:///d:/java/agentprojects/agentx/backend/app/sse/events.py)、
+> [frontend/shared/api-types.ts](file:///d:/java/agentprojects/agentx/frontend/shared/api-types.ts)、
+> [useChatStream.ts](file:///d:/java/agentprojects/agentx/frontend/renderer/hooks/useChatStream.ts)、
+> 以及本事件契约文档。

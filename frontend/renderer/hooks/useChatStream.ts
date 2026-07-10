@@ -58,7 +58,9 @@ export interface UseChatStreamArgs {
  *
  * 按 event.type 分发到 part 操作（chat-rendering-trace-v2 D3）：
  * - token → appendPartText(pending, "text", data)
- * - reasoning → appendReasoningStep(pending, content)（每次独立成 part，多 step 不合并）
+ * - token_rollback → removeLastTextPart(pending)（撤回误推为 token 的计划文本）
+ * - reasoning_delta → appendPartText(pending, "reasoning", delta)（实时追加到当前 thinking block）
+ * - reasoning → appendReasoningStep(pending, content)（完整内容，独立成 part）
  * - tool_call → addPart(pending, {type:"tool-call", ...})
  * - tool_result → addPart(pending, {type:"tool-result", ...})
  * - delegation → addPart(pending, {type:"delegation", ...})
@@ -76,6 +78,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const upsertTeamNode = useChatStore((s) => s.upsertTeamNode);
   const markReasoningDone = useChatStore((s) => s.markReasoningDone);
   const markRunningToolCallsComplete = useChatStore((s) => s.markRunningToolCallsComplete);
+  const removeLastTextPart = useChatStore((s) => s.removeLastTextPart);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const enqueueApprovalRequest = useChatStore((s) => s.enqueueApprovalRequest);
@@ -143,6 +146,20 @@ export function useChatStream(args: UseChatStreamArgs) {
             appendPartText(pendingIdRef.current, "text", String(e.data ?? ""));
           }
           callbacksRef.current.setPaused?.(false);
+          break;
+        }
+        case "token_rollback": {
+          // 模型把计划文本误推为 token 后撤回：删除当前最后一个 text part
+          if (pendingIdRef.current) {
+            removeLastTextPart(pendingIdRef.current);
+          }
+          break;
+        }
+        case "reasoning_delta": {
+          // 主 agent 路径的实时 thinking token：追加到当前未 done 的 reasoning part
+          if (pendingIdRef.current) {
+            appendPartText(pendingIdRef.current, "reasoning", String(e.delta ?? ""));
+          }
           break;
         }
         case "reasoning": {

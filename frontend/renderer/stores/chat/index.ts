@@ -331,6 +331,11 @@ export interface ChatState {
    * 如果 status 已经是 complete/error 不会被改写。
    */
   markRunningToolCallsComplete: (messageId: string) => void;
+  /**
+   * 删除指定 message 的最后一个 text part（用于 token_rollback 撤回误推的 token）。
+   * 若不存在 text part 则 no-op。
+   */
+  removeLastTextPart: (messageId: string) => void;
   /** 兼容旧 API：等价于 appendPartText(messageId, "text", content)。 */
   appendMessageContent: (id: string, content: string) => void;
   clearMessages: () => void;
@@ -808,7 +813,13 @@ export const useChatStore = create<ChatState>()(
                 if (alreadyExists) {
                   return m;
                 }
-                const parts = [...m.parts, part];
+                const now = Date.now();
+                const parts = m.parts.map((p) =>
+                  p.type === "reasoning" && !p.done
+                    ? { ...p, done: true, doneAt: now }
+                    : p,
+                );
+                parts.push(part);
                 return { ...m, parts };
               }
               const parts = [...m.parts, part];
@@ -943,6 +954,29 @@ export const useChatStore = create<ChatState>()(
                   ? { ...p, status: "complete" as const, completedAt: now }
                   : p,
               );
+              return { ...m, parts };
+            });
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
+
+        removeLastTextPart: (messageId) => {
+          set((s) => {
+            const targetCid = lookupSessionId(messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) => {
+              if (m.id !== messageId) return m;
+              // 从末尾找到第一个 text part 并删除
+              const parts = [...m.parts];
+              for (let i = parts.length - 1; i >= 0; i--) {
+                if (parts[i]?.type === "text") {
+                  parts.splice(i, 1);
+                  break;
+                }
+              }
               return { ...m, parts };
             });
             const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };

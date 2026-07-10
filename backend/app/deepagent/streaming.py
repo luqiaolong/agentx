@@ -3,15 +3,19 @@
 从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
-- ``_stream_agent_events``：驱动 ``agent.astream(stream_mode=["custom", "values"])``，
+- ``_stream_agent_events``：驱动 ``agent.astream(stream_mode=["custom", "values", "messages"])``，
   尊重 ``interrupt_on``，把 LangGraph state 转换为前端 SSE 事件。
   ``custom`` 模式用于透传工具节点内部通过 ``get_stream_writer()`` 写入的事件
   （如 Supervisor ``delegate_to_expert`` 透传的 Expert approval_request 等）。
+  ``messages`` 模式用于实时消费 LLM 的 ``AIMessageChunk``，把 ``<think>...</think>`` 块
+  以 ``reasoning_delta`` 事件实时推给前端。
 
 SSE 事件映射:
 - ``state.todos`` 变化 → ``todo_update``（原生 deepagents ``{content, status}`` schema）
-- ``AIMessage`` with ``tool_calls`` → ``reasoning`` + ``tool_call``
-- ``AIMessage`` without ``tool_calls`` → ``token``（最终回复）
+- ``AIMessageChunk`` 中的 ``<think>`` 块 → ``reasoning_delta``（实时增量）
+- ``AIMessageChunk`` 中的可见文本 → ``token``（实时增量）
+- ``AIMessage`` with ``tool_calls`` → ``token_rollback``（撤回误推 token）+ ``reasoning`` + ``tool_call``
+- ``AIMessage`` without ``tool_calls`` → flush 残留可见文本为 ``token``
 - ``ToolMessage`` → ``tool_result``
 - ``custom`` stream 事件 → 直接透传 yield（工具节点内部写入的 SSE 事件）
 
@@ -26,6 +30,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from app.config import get_settings
 from app.observability.observation import get_observation_sink
 from app.observability.trace import current_trace_id
 from app.security.approval import get_abort_event
@@ -35,6 +40,7 @@ from app.sse.events import (
     make_tool_call_event,
     make_tool_result_event,
 )
+from app.utils.text import ThinkFilter, extract_chunk_text
 
 __all__ = ["_stream_agent_events"]
 
@@ -47,15 +53,18 @@ async def _stream_agent_events(
     *,
     seen_signatures: set[str] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """驱动 ``agent.astream(stream_mode=["custom", "values"])``，尊重 ``interrupt_on``。
+    """驱动 ``agent.astream(stream_mode=["custom", "values", "messages"])``，尊重 ``interrupt_on``。
 
     ``astream_events`` 不尊重 ``interrupt_on``（会直接执行工具），
-    MUST 用 ``astream`` + ``stream_mode=["custom", "values"]`` 才能在 tools 节点前暂停。
+    MUST 用 ``astream`` 才能在 tools 节点前暂停。
+    额外开启 ``messages`` 模式以实时消费 ``AIMessageChunk``，把 ``<think>`` 块以
+    ``reasoning_delta`` 事件增量推给前端。
 
     SSE 事件映射:
     - ``state.todos`` 变化 → ``todo_update``（原生 ``{content, status}`` schema，
       由 deepagents ``TodoListMiddleware`` 维护）
-    - AIMessage with ``tool_calls`` → ``reasoning`` + ``tool_call`` SSE
+    - ``AIMessageChunk`` 中的 ``<think>`` 块 → ``reasoning_delta``（实时增量）
+    - AIMessage with ``tool_calls`` → ``reasoning``（非 think 的计划文本）+ ``tool_call`` SSE
     - AIMessage without ``tool_calls`` → ``token``（最终回复，``strip_think`` 后一次性 yield）
     - ToolMessage → ``tool_result`` SSE
 
@@ -74,8 +83,8 @@ async def _stream_agent_events(
             共享"已 yield 的消息签名"，避免 astream resume 时重发历史消息
             被重复 yield（root cause: trace=64851677fced422c）。
     """
-    from langchain_core.messages import AIMessage, ToolMessage
-    from app.utils.text import strip_think
+    from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+    from app.utils.text import split_think, strip_think, strip_tool_call_xml
 
     thread_id = config.get("configurable", {}).get("thread_id", "")
     abort_event = await get_abort_event(thread_id)
@@ -136,6 +145,57 @@ async def _stream_agent_events(
             )
         return f"{msg_type}:{content_hash}:{tc_ids}"
 
+    async def _process_message_chunk(payload: Any) -> None:
+        """处理 ``stream_mode="messages"`` 的实时 token 块。
+
+        用 ``ThinkFilter`` 实时拆分 ``<think>`` 块和可见文本：
+        - think 块内容 → ``reasoning_delta`` 事件（实时增量）
+        - 可见文本 → ``token`` 事件（实时增量）
+
+        可见文本有 ``max_hold`` 字符的缓冲延迟（防 ``<think>`` 标签前缀跨 chunk），
+        残留部分在完整 ``AIMessage`` 到达后由 ``flush`` 补发。
+
+        若最终 ``AIMessage`` 带 ``tool_calls``，说明误把计划文本当 token 推了，
+        由 values 模式发 ``token_rollback`` 撤回，再以 ``reasoning`` 事件重发。
+        """
+        nonlocal _content_filter, _messages_mode_seen, _token_pushed
+        _messages_mode_seen = True
+
+        # LangGraph messages 模式 payload 通常为 (message_chunk, metadata)
+        if isinstance(payload, tuple) and len(payload) >= 1:
+            msg_chunk = payload[0]
+        else:
+            msg_chunk = payload
+        if not isinstance(msg_chunk, AIMessageChunk):
+            return
+
+        raw_text = extract_chunk_text(msg_chunk, strip=False)
+        if not raw_text:
+            return
+
+        if _content_filter is None:
+            _content_filter = ThinkFilter(
+                max_hold=get_settings().think_filter_max_hold,
+                retain_think=True,
+            )
+
+        # feed 返回当前可安全输出的可见文本（已剥离 think 块）
+        visible_delta = _content_filter.feed(raw_text)
+        reasoning_delta = _content_filter.take_think()
+        if reasoning_delta:
+            await _obs(
+                "reasoning_delta",
+                {"delta": reasoning_delta, "source": source},
+            )
+            yield make_sse_event(
+                "reasoning_delta",
+                {"delta": reasoning_delta, "source": source},
+            )
+        if visible_delta:
+            _token_pushed = True
+            await _obs("token", {"content": visible_delta, "live": True})
+            yield make_sse_event("token", visible_delta)
+
     # 诊断：记录 astream 首次 state 到达的耗时，帮助定位 LLM 调用阻塞
     _astream_start = asyncio.get_event_loop().time()
     _first_state_seen = False
@@ -148,11 +208,23 @@ async def _stream_agent_events(
     # 追踪 state.todos 快照，diff 检测 deepagents TodoListMiddleware 更新
     _last_todos: list[dict] = []
 
-    # stream_mode=["custom", "values"]：
+    # 实时 think 块解析器：只处理 AIMessageChunk，跨 chunk 拼接 <think> 块。
+    # 在完整的 AIMessage 到达后（values 模式）重置，供下一条消息复用。
+    _content_filter: ThinkFilter | None = None
+    _messages_mode_seen = False
+    # 追踪当前 AIMessage 是否已通过 messages 模式推送过 token 事件。
+    # 若最终 AIMessage 带 tool_calls，需发 token_rollback 撤回误推的 token。
+    _token_pushed = False
+
+    # stream_mode=["custom", "values", "messages"]：
     # - custom: 工具节点内部通过 get_stream_writer() 写入的 passthrough 事件
     #   （如 delegate_to_expert 透传的 Expert approval_request / tool_call 等）
     # - values: 每次 state 更新的完整快照（用于 todos diff + messages 处理）
-    async for chunk in agent.astream(inputs, config=config, stream_mode=["custom", "values"]):
+    # - messages: LLM 实时 token 流（AIMessageChunk），用于提取 <think> 块并
+    #   以 reasoning_delta 事件实时推送
+    async for chunk in agent.astream(
+        inputs, config=config, stream_mode=["custom", "values", "messages"]
+    ):
         if abort_event.is_set():
             raise asyncio.CancelledError("aborted")
 
@@ -163,6 +235,11 @@ async def _stream_agent_events(
                 # 工具节点内部透传的 SSE 事件，直接 yield 给前端
                 if isinstance(payload, dict) and "event" in payload:
                     yield payload
+                continue
+            if mode == "messages":
+                # 实时 LLM token 流：只处理 AIMessageChunk，提取 think 块
+                async for event in _process_message_chunk(payload):
+                    yield event
                 continue
             # mode == "values"
             state = payload
@@ -271,7 +348,7 @@ async def _stream_agent_events(
                 )
                 if getattr(msg, "tool_calls", None):
                     # AIMessage with tool_calls → 先展示思考计划，再 yield tool_call
-                    # LLM 的 content 通常包含 💧... 计划 ... 或纯文本计划
+                    # LLM 的 content 通常包含 <think>...</think> 或纯文本计划
                     content = msg.content
                     if isinstance(content, list):
                         content = "".join(
@@ -284,11 +361,22 @@ async def _stream_agent_events(
                     # 防御性剥离：部分 OpenAI 兼容推理模型（典型如 MiniMax-M3）在
                     # tool_calls 字段已正确填充时，仍会在 content 中重复输出 XML 格式
                     # 工具调用文本。剥离后再 split_think，避免 XML 块泄露到 reasoning 事件。
-                    from app.utils.text import split_think, strip_tool_call_xml
                     plan_text = strip_tool_call_xml(plan_text)
                     reasoning, visible = split_think(plan_text)
-                    # 优先展示 reasoning（think 块内），其次展示 visible（非 think 内容）
-                    display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
+                    if _messages_mode_seen:
+                        # <think> 块已通过 reasoning_delta 实时推送，可见文本已通过
+                        # token 事件实时推送。若 token 被误推（模型在 tool_calls 前
+                        # 先输出了可见文本），发 token_rollback 撤回，再以 reasoning
+                        # 事件重发可见计划文本。
+                        if _token_pushed:
+                            await _obs("token_rollback", {})
+                            yield make_sse_event("token_rollback", {})
+                            _token_pushed = False
+                        display_plan = visible.strip()
+                    else:
+                        # 无 messages 模式（测试桩或旧模型）时保持原行为：优先展示
+                        # think 块内容，否则展示可见计划文本。
+                        display_plan = reasoning.strip() if reasoning.strip() else visible.strip()
                     if display_plan:
                         # yield reasoning 事件供前端展示思考过程
                         await _obs("reasoning", {"content": display_plan, "source": source})
@@ -310,22 +398,34 @@ async def _stream_agent_events(
                         yield make_tool_call_event(tc_id, tc_name, tc_args, source=source)
                 elif getattr(msg, "content", ""):
                     # AIMessage without tool_calls → 最终回复
-                    content = msg.content
-                    if isinstance(content, list):
-                        # 兼容 list 内容块
-                        content = "".join(
-                            block if isinstance(block, str)
-                            else block.get("text", "") if isinstance(block, dict)
-                            else ""
-                            for block in content
-                        )
-                    text = strip_think(content if isinstance(content, str) else str(content))
-                    # 防御性剥离：避免 XML 格式工具调用文本泄露到最终回复 token 流。
-                    from app.utils.text import strip_tool_call_xml
-                    text = strip_tool_call_xml(text)
-                    if text:
-                        await _obs("token", {"content": text})
-                        yield make_sse_event("token", text)
+                    if _messages_mode_seen and _content_filter is not None:
+                        # messages 模式已实时推送了大部分可见文本，
+                        # 此处只需 flush ThinkFilter 残留（max_hold 缓冲的几个字符）
+                        tail = _content_filter.flush()
+                        if tail:
+                            tail = strip_tool_call_xml(tail)
+                            if tail:
+                                await _obs("token", {"content": tail, "live": False})
+                                yield make_sse_event("token", tail)
+                    else:
+                        # 无 messages 模式（测试桩或旧模型）：从完整 content 一次性 yield
+                        content = msg.content
+                        if isinstance(content, list):
+                            content = "".join(
+                                block if isinstance(block, str)
+                                else block.get("text", "") if isinstance(block, dict)
+                                else ""
+                                for block in content
+                            )
+                        text = strip_think(content if isinstance(content, str) else str(content))
+                        text = strip_tool_call_xml(text)
+                        if text:
+                            await _obs("token", {"content": text})
+                            yield make_sse_event("token", text)
+
+                # 完整的 AIMessage 已处理完毕，重置 think 解析器供下一条消息使用
+                _content_filter = None
+                _token_pushed = False
 
     logger.info(
         "stream_agent_events: streaming completed",

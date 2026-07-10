@@ -14,7 +14,7 @@ import json
 from typing import Any, AsyncIterator
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 
 class _FakeAgent:
@@ -221,3 +221,184 @@ def test_make_todo_update_event_no_task_id() -> None:
     payload = json.loads(event["data"])
     assert "task_id" not in payload
     assert payload["todos"] == todos
+
+
+class _FakeStreamingAgent:
+    """模拟支持 stream_mode="messages" 的 LangGraph agent。"""
+
+    def __init__(self, chunks: list[tuple[str, Any]]):
+        self._chunks = chunks
+
+    async def astream(
+        self, inputs: Any, config: dict, stream_mode: str | list
+    ) -> AsyncIterator[tuple[str, Any] | dict]:
+        for chunk in self._chunks:
+            if isinstance(stream_mode, list):
+                yield chunk
+            else:
+                # 单模式测试兼容性：只返回 payload
+                yield chunk[1] if isinstance(chunk, tuple) else chunk
+
+
+@pytest.mark.asyncio
+async def test_think_block_streaming_yields_reasoning_delta() -> None:
+    """<think> 块在 messages 模式下以 reasoning_delta 实时增量推送。"""
+    from app.deepagent.streaming import _stream_agent_events
+
+    _clear_approval_state()
+
+    chunks: list[tuple[str, Any]] = [
+        ("messages", (AIMessageChunk(content="<think>"), {"langgraph_node": "agent"})),
+        ("messages", (AIMessageChunk(content="hello "), {"langgraph_node": "agent"})),
+        ("messages", (AIMessageChunk(content="world"), {"langgraph_node": "agent"})),
+        ("messages", (AIMessageChunk(content="</think>"), {"langgraph_node": "agent"})),
+        (
+            "values",
+            {
+                "messages": [
+                    AIMessage(
+                        content="<think>hello world</think>plan",
+                        tool_calls=[
+                            {"id": "tc-1", "name": "read_file", "args": {"path": "/tmp/a.txt"}}
+                        ],
+                    )
+                ]
+            },
+        ),
+    ]
+    agent = _FakeStreamingAgent(chunks)
+    config = {"configurable": {"thread_id": "t-think-1"}}
+
+    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+
+    delta_events = [e for e in events if e.get("event") == "reasoning_delta"]
+    # <think> 标签本身不产生 delta，hello 和 world 分两次到达
+    assert len(delta_events) == 2
+    assert json.loads(delta_events[0]["data"])["delta"] == "hello "
+    assert json.loads(delta_events[1]["data"])["delta"] == "world"
+
+    reasoning_events = [e for e in events if e.get("event") == "reasoning"]
+    # 完整 AIMessage 处只把非 think 的可见文本作为 reasoning 推送
+    assert len(reasoning_events) == 1
+    assert json.loads(reasoning_events[0]["data"])["content"] == "plan"
+
+    tool_call_events = [e for e in events if e.get("event") == "tool_call"]
+    assert len(tool_call_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_messages_mode_keeps_original_reasoning_behavior() -> None:
+    """不支持 messages 模式时（如测试桩），仍从完整 AIMessage 发射 reasoning。"""
+    from app.deepagent.streaming import _stream_agent_events
+
+    _clear_approval_state()
+
+    agent = _FakeAgent([
+        {
+            "messages": [
+                AIMessage(
+                    content="<think>hello</think>plan",
+                    tool_calls=[
+                        {"id": "tc-1", "name": "read_file", "args": {"path": "/tmp/a.txt"}}
+                    ],
+                )
+            ]
+        },
+    ])
+    config = {"configurable": {"thread_id": "t-think-2"}}
+
+    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+
+    delta_events = [e for e in events if e.get("event") == "reasoning_delta"]
+    assert len(delta_events) == 0
+
+    reasoning_events = [e for e in events if e.get("event") == "reasoning"]
+    assert len(reasoning_events) == 1
+    assert json.loads(reasoning_events[0]["data"])["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_visible_text_streaming_with_tool_calls_emits_token_rollback() -> None:
+    """messages 模式下可见文本被推为 token，AIMessage 带 tool_calls 时发 token_rollback 撤回。"""
+    from app.deepagent.streaming import _stream_agent_events
+
+    _clear_approval_state()
+
+    chunks: list[tuple[str, Any]] = [
+        # 模型先输出可见计划文本，然后发起 tool_calls
+        ("messages", (AIMessageChunk(content="Let me read "), {"langgraph_node": "agent"})),
+        ("messages", (AIMessageChunk(content="the file."), {"langgraph_node": "agent"})),
+        (
+            "values",
+            {
+                "messages": [
+                    AIMessage(
+                        content="Let me read the file.",
+                        tool_calls=[
+                            {"id": "tc-1", "name": "read_file", "args": {"path": "/tmp/a.txt"}}
+                        ],
+                    )
+                ]
+            },
+        ),
+    ]
+    agent = _FakeStreamingAgent(chunks)
+    config = {"configurable": {"thread_id": "t-rollback-1"}}
+
+    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+
+    token_events = [e for e in events if e.get("event") == "token"]
+    # 可见文本被推为 token（具体切分取决于 ThinkFilter max_hold 缓冲，尾部缓冲在 rollback 时丢失）
+    assert len(token_events) >= 1
+    full_token_text = "".join(e["data"] for e in token_events)
+    assert "Let me" in full_token_text
+
+    rollback_events = [e for e in events if e.get("event") == "token_rollback"]
+    assert len(rollback_events) == 1
+
+    reasoning_events = [e for e in events if e.get("event") == "reasoning"]
+    assert len(reasoning_events) == 1
+    assert json.loads(reasoning_events[0]["data"])["content"] == "Let me read the file."
+
+    tool_call_events = [e for e in events if e.get("event") == "tool_call"]
+    assert len(tool_call_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_final_answer_streaming_emits_token_without_duplicate() -> None:
+    """messages 模式下最终答案以 token 实时推送，values 模式不再重复 yield。"""
+    from app.deepagent.streaming import _stream_agent_events
+
+    _clear_approval_state()
+
+    chunks: list[tuple[str, Any]] = [
+        ("messages", (AIMessageChunk(content="Hello "), {"langgraph_node": "agent"})),
+        ("messages", (AIMessageChunk(content="world!"), {"langgraph_node": "agent"})),
+        (
+            "values",
+            {
+                "messages": [
+                    AIMessage(content="Hello world!"),
+                ]
+            },
+        ),
+    ]
+    agent = _FakeStreamingAgent(chunks)
+    config = {"configurable": {"thread_id": "t-answer-1"}}
+
+    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+
+    token_events = [e for e in events if e.get("event") == "token"]
+    token_texts = [e["data"] for e in token_events]
+    # "Hello " 在 messages 模式推，"world!" 因 max_hold 缓冲可能在 flush 时推
+    full_text = "".join(token_texts)
+    assert "Hello" in full_text
+    assert "world!" in full_text
+    # 不应该有重复（完整 AIMessage 不再从 content 一次性 yield）
+    assert full_text.count("Hello") == 1
+
+    rollback_events = [e for e in events if e.get("event") == "token_rollback"]
+    assert len(rollback_events) == 0
+
+    reasoning_events = [e for e in events if e.get("event") == "reasoning"]
+    assert len(reasoning_events) == 0
