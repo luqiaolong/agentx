@@ -490,7 +490,7 @@ async def run_work_supervisor(
             await sandbox.set_full_trust(thread_id, False)
 
     # 异步触发画像提取（与 deep/coding 路径一致）
-    trigger_profile_auto_extract(agent, config, cleaned_message)
+    trigger_profile_auto_extract(agent, config, cleaned_message, workspace_path=workspace_path)
 
 
 async def _run_subagent_for_mention(

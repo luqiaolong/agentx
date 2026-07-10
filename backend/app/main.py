@@ -160,7 +160,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # 关闭：先 reaper，再 Milvus 后 embedding 后 checkpointer（逆序）
+        # 关闭：先 drain 画像抽取任务，再 reaper，再 Milvus 后 embedding 后 checkpointer（逆序）
+        # 画像抽取是 fire-and-forget，关闭前给它们 5s 完成窗口，避免数据丢失
+        try:
+            from app.deepagent.agent import drain_extract_tasks
+
+            await drain_extract_tasks(timeout=5.0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("drain extract tasks failed on shutdown: {}", exc)
         reaper_task.cancel()
         try:
             await reaper_task

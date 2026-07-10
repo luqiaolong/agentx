@@ -2,6 +2,9 @@
 
 用 ``tmp_path`` + ``monkeypatch`` 隔离 ``DATA_DIR``，避免污染真实 ``data/config/profile.json``。
 LLM 抽取用 mock，不调真实服务。
+
+注意：``add`` / ``update`` / ``delete`` / ``upsert_from_llm`` 为 async 函数（持锁防并发）。
+``get`` / ``get_all`` / ``build_profile_prompt`` 为同步函数（只读）。
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from app.memory.profile_store import (
 
 @pytest.fixture(autouse=True)
 def _isolate_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """每个测试隔离 ``DATA_DIR`` 与 ``_PROFILE_DIR`` / ``_PROFILE_FILE``。"""
+    """每个测试隔离 ``DATA_DIR`` 与 ``_PROFILE_FILE``。"""
     monkeypatch.setattr(ps_module, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ps_module, "_PROFILE_DIR", tmp_path / "config")
     monkeypatch.setattr(ps_module, "_PROFILE_FILE", tmp_path / "config" / "profile.json")
@@ -59,13 +62,14 @@ def _make_entry(
 # ============================================================
 
 
-def test_add_creates_entry(tmp_path: Path) -> None:
+async def test_add_creates_entry(tmp_path: Path) -> None:
     """add 写入 profile.json 并返回带时间戳的 entry。"""
-    entry = add(_make_entry())
+    entry = await add(_make_entry())
     assert entry.key == "prefers_concise"
     assert entry.created_at  # 自动填充
     assert entry.updated_at
     assert entry.source == "manual"
+    assert entry.scope == "global"
 
     # 文件已写入
     assert (tmp_path / "config" / "profile.json").exists()
@@ -76,41 +80,41 @@ def test_add_creates_entry(tmp_path: Path) -> None:
     assert all_entries[0].key == "prefers_concise"
 
 
-def test_add_duplicate_key_raises_value_error(tmp_path: Path) -> None:
+async def test_add_duplicate_key_raises_value_error(tmp_path: Path) -> None:
     """key 重复抛 ValueError（端点层映射为 409）。"""
-    add(_make_entry(key="dup"))
+    await add(_make_entry(key="dup"))
     with pytest.raises(ValueError, match="key 已存在"):
-        add(_make_entry(key="dup"))
+        await add(_make_entry(key="dup"))
 
 
-def test_add_invalid_key() -> None:
+async def test_add_invalid_key() -> None:
     """key 非法抛 ProfileKeyInvalid。"""
     with pytest.raises(ProfileKeyInvalid):
-        add(_make_entry(key="../etc"))
+        await add(_make_entry(key="../etc"))
 
 
-def test_add_content_too_long() -> None:
+async def test_add_content_too_long() -> None:
     """content 超 500 字符抛 ProfileContentTooLong。"""
     long_content = "x" * 501
     with pytest.raises(ProfileContentTooLong):
-        add(_make_entry(content=long_content))
+        await add(_make_entry(content=long_content))
 
 
-def test_add_invalid_category() -> None:
+async def test_add_invalid_category() -> None:
     """category 非法抛 ProfileCategoryInvalid。"""
     with pytest.raises(ProfileCategoryInvalid):
-        add(_make_entry(category="invalid_cat"))
+        await add(_make_entry(category="invalid_cat"))
 
 
-def test_get_returns_entry(tmp_path: Path) -> None:
+async def test_get_returns_entry(tmp_path: Path) -> None:
     """get 按 key 查找。"""
-    add(_make_entry(key="find_me", content="hello"))
+    await add(_make_entry(key="find_me", content="hello"))
     entry = get("find_me")
     assert entry is not None
     assert entry.content == "hello"
 
 
-def test_get_returns_none_when_not_exists(tmp_path: Path) -> None:
+async def test_get_returns_none_when_not_exists(tmp_path: Path) -> None:
     """get 不存在返回 None。"""
     assert get("nonexistent") is None
 
@@ -120,33 +124,33 @@ def test_get_returns_none_when_not_exists(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_update_modifies_content(tmp_path: Path) -> None:
+async def test_update_modifies_content(tmp_path: Path) -> None:
     """update 修改 content 与 updated_at，source 保持原值。"""
-    original = add(_make_entry(key="up", content="old", source="manual"))
-    updated = update("up", "new content")
+    original = await add(_make_entry(key="up", content="old", source="manual"))
+    updated = await update("up", "new content")
     assert updated.content == "new content"
     assert updated.source == "manual"  # source 保持
     assert updated.updated_at >= original.updated_at
 
 
-def test_update_category(tmp_path: Path) -> None:
+async def test_update_category(tmp_path: Path) -> None:
     """update 同时修改 category。"""
-    add(_make_entry(key="cat", category="preference"))
-    updated = update("cat", "new content", category="fact")
+    await add(_make_entry(key="cat", category="preference"))
+    updated = await update("cat", "new content", category="fact")
     assert updated.category == "fact"
 
 
-def test_update_nonexistent_raises_key_error(tmp_path: Path) -> None:
+async def test_update_nonexistent_raises_key_error(tmp_path: Path) -> None:
     """update 不存在抛 KeyError（端点层映射为 404）。"""
     with pytest.raises(KeyError):
-        update("nonexistent", "content")
+        await update("nonexistent", "content")
 
 
-def test_update_content_too_long(tmp_path: Path) -> None:
+async def test_update_content_too_long(tmp_path: Path) -> None:
     """update content 越界抛 ProfileContentTooLong。"""
-    add(_make_entry(key="long"))
+    await add(_make_entry(key="long"))
     with pytest.raises(ProfileContentTooLong):
-        update("long", "x" * 501)
+        await update("long", "x" * 501)
 
 
 # ============================================================
@@ -154,22 +158,22 @@ def test_update_content_too_long(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_delete_removes_entry(tmp_path: Path) -> None:
+async def test_delete_removes_entry(tmp_path: Path) -> None:
     """delete 移除条目。"""
-    add(_make_entry(key="del"))
-    assert delete("del") is True
+    await add(_make_entry(key="del"))
+    assert await delete("del") is True
     assert get("del") is None
 
 
-def test_delete_nonexistent_returns_false(tmp_path: Path) -> None:
+async def test_delete_nonexistent_returns_false(tmp_path: Path) -> None:
     """delete 不存在返回 False。"""
-    assert delete("nonexistent") is False
+    assert await delete("nonexistent") is False
 
 
-def test_delete_invalid_key() -> None:
+async def test_delete_invalid_key() -> None:
     """delete 非法 key 抛 ProfileKeyInvalid。"""
     with pytest.raises(ProfileKeyInvalid):
-        delete("../etc")
+        await delete("../etc")
 
 
 # ============================================================
@@ -202,12 +206,12 @@ def test_build_profile_prompt_empty_when_no_file(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_upsert_from_llm_creates_new(tmp_path: Path) -> None:
+async def test_upsert_from_llm_creates_new(tmp_path: Path) -> None:
     """LLM 抽取条目新建。"""
     entries = [
         {"key": "uses_typescript", "category": "project", "content": "用户用 TypeScript"}
     ]
-    written = upsert_from_llm(entries)
+    written = await upsert_from_llm(entries)
     assert written == 1
     saved = get("uses_typescript")
     assert saved is not None
@@ -215,13 +219,13 @@ def test_upsert_from_llm_creates_new(tmp_path: Path) -> None:
     assert saved.content == "用户用 TypeScript"
 
 
-def test_upsert_from_llm_updates_existing(tmp_path: Path) -> None:
+async def test_upsert_from_llm_updates_existing(tmp_path: Path) -> None:
     """key 重复时更新 content 与 source=llm_extracted。"""
-    add(_make_entry(key="uses_ts", content="old", source="manual"))
+    await add(_make_entry(key="uses_ts", content="old", source="manual"))
     entries = [
         {"key": "uses_ts", "category": "project", "content": "new TS usage"}
     ]
-    written = upsert_from_llm(entries)
+    written = await upsert_from_llm(entries)
     assert written == 1
     updated = get("uses_ts")
     assert updated is not None
@@ -229,27 +233,30 @@ def test_upsert_from_llm_updates_existing(tmp_path: Path) -> None:
     assert updated.source == "llm_extracted"  # source 被覆盖
 
 
-def test_upsert_from_llm_skips_invalid_entries(tmp_path: Path) -> None:
+async def test_upsert_from_llm_skips_invalid_entries(tmp_path: Path) -> None:
     """非法条目跳过，不写入。"""
     entries = [
         {"key": "../invalid", "category": "fact", "content": "bad"},  # key 非法
         {"key": "valid", "category": "fact", "content": "good"},
         {"key": "too_long", "category": "fact", "content": "x" * 501},  # content 越界
     ]
-    written = upsert_from_llm(entries)
+    written = await upsert_from_llm(entries)
     assert written == 1
     assert get("valid") is not None
-    assert get("../invalid") is None
+    # 非法 key 在 get 时也会校验抛异常
+    with pytest.raises(ProfileKeyInvalid):
+        get("../invalid")
+    # too_long 的 content 越界，upsert 跳过，key 本身合法所以 get 不抛但返回 None
     assert get("too_long") is None
 
 
-def test_upsert_from_llm_empty_list(tmp_path: Path) -> None:
+async def test_upsert_from_llm_empty_list(tmp_path: Path) -> None:
     """空列表不写入。"""
-    assert upsert_from_llm([]) == 0
-    assert upsert_from_llm(None) == 0  # type: ignore[arg-type]
+    assert await upsert_from_llm([]) == 0
+    assert await upsert_from_llm(None) == 0  # type: ignore[arg-type]
 
 
-def test_upsert_from_llm_truncates_over_limit(tmp_path: Path) -> None:
+async def test_upsert_from_llm_truncates_over_limit(tmp_path: Path) -> None:
     """超出 ``_MAX_LLM_EXTRACT_ENTRIES`` 的条目被截断，只写前 20 条。"""
     import app.memory.profile_store as ps
 
@@ -257,7 +264,7 @@ def test_upsert_from_llm_truncates_over_limit(tmp_path: Path) -> None:
         {"key": f"k{i:02d}", "category": "fact", "content": f"v{i}"}
         for i in range(ps._MAX_LLM_EXTRACT_ENTRIES + 5)
     ]
-    written = upsert_from_llm(entries)
+    written = await upsert_from_llm(entries)
     assert written == ps._MAX_LLM_EXTRACT_ENTRIES
     # 前 20 条已写入
     assert get("k00") is not None
@@ -272,10 +279,10 @@ def test_upsert_from_llm_truncates_over_limit(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_build_profile_prompt_format(tmp_path: Path) -> None:
+async def test_build_profile_prompt_format(tmp_path: Path) -> None:
     """画像注入 prompt 格式正确。"""
-    add(_make_entry(key="pref1", category="preference", content="简洁回复"))
-    add(_make_entry(key="proj1", category="project", content="用 FastAPI"))
+    await add(_make_entry(key="pref1", category="preference", content="简洁回复"))
+    await add(_make_entry(key="proj1", category="project", content="用 FastAPI"))
 
     prompt = build_profile_prompt()
     assert "用户画像（请遵循以下偏好与约定）:" in prompt
@@ -283,25 +290,25 @@ def test_build_profile_prompt_format(tmp_path: Path) -> None:
     assert "- [project] 用 FastAPI" in prompt
 
 
-def test_build_profile_prompt_truncates_to_30(tmp_path: Path) -> None:
+async def test_build_profile_prompt_truncates_to_30(tmp_path: Path) -> None:
     """超 30 条截断到前 30 条。"""
     # 写 35 条
     for i in range(35):
-        add(_make_entry(key=f"k{i:02d}", content=f"content_{i}"))
+        await add(_make_entry(key=f"k{i:02d}", content=f"content_{i}"))
     prompt = build_profile_prompt()
     # 1 行前缀 + 30 行条目 = 31 行
     lines = prompt.split("\n")
     assert len(lines) == 31
 
 
-def test_build_profile_prompt_orders_by_updated_at_desc(tmp_path: Path) -> None:
+async def test_build_profile_prompt_orders_by_updated_at_desc(tmp_path: Path) -> None:
     """按 updated_at 降序排列（最近更新优先）。"""
     import time
 
-    add(_make_entry(key="old", content="old content"))
+    await add(_make_entry(key="old", content="old content"))
     time.sleep(0.01)  # 确保时间戳不同
     # 直接 update 一个 entry 让它成为最新
-    add(_make_entry(key="new", content="new content"))
+    await add(_make_entry(key="new", content="new content"))
 
     prompt = build_profile_prompt()
     lines = prompt.split("\n")
@@ -450,7 +457,7 @@ def test_get_all_empty_when_entry_missing_required_field(
 # ============================================================
 
 
-def test_upsert_from_llm_skips_non_dict_entries(tmp_path: Path) -> None:
+async def test_upsert_from_llm_skips_non_dict_entries(tmp_path: Path) -> None:
     """非 dict 条目（字符串、列表等）跳过。"""
     entries: list[Any] = [
         "not a dict",
@@ -458,15 +465,15 @@ def test_upsert_from_llm_skips_non_dict_entries(tmp_path: Path) -> None:
         None,
         {"key": "valid", "category": "fact", "content": "ok"},
     ]
-    written = upsert_from_llm(entries)  # type: ignore[arg-type]
+    written = await upsert_from_llm(entries)  # type: ignore[arg-type]
     assert written == 1
     assert get("valid") is not None
 
 
-def test_upsert_from_llm_default_category_is_custom(tmp_path: Path) -> None:
+async def test_upsert_from_llm_default_category_is_custom(tmp_path: Path) -> None:
     """LLM 抽取条目缺 category 时默认 custom。"""
     entries = [{"key": "k_no_cat", "content": "no category given"}]
-    written = upsert_from_llm(entries)
+    written = await upsert_from_llm(entries)
     assert written == 1
     assert get("k_no_cat").category == "custom"
 
@@ -476,9 +483,9 @@ def test_upsert_from_llm_default_category_is_custom(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_build_profile_prompt_with_single_entry(tmp_path: Path) -> None:
+async def test_build_profile_prompt_with_single_entry(tmp_path: Path) -> None:
     """单条画像也正确格式化。"""
-    add(_make_entry(key="only", content="only one"))
+    await add(_make_entry(key="only", content="only one"))
     prompt = build_profile_prompt()
     assert prompt == "用户画像（请遵循以下偏好与约定）:\n- [preference] only one"
 
@@ -488,13 +495,101 @@ def test_build_profile_prompt_with_single_entry(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_update_invalid_key_format_raises_first(tmp_path: Path) -> None:
+async def test_update_invalid_key_format_raises_first(tmp_path: Path) -> None:
     """update 非法 key 抛 ProfileKeyInvalid（不抛 KeyError）。"""
     with pytest.raises(ProfileKeyInvalid):
-        update("../bad", "content")
+        await update("../bad", "content")
 
 
-def test_delete_invalid_key_format_raises_first(tmp_path: Path) -> None:
+async def test_delete_invalid_key_format_raises_first(tmp_path: Path) -> None:
     """delete 非法 key 抛 ProfileKeyInvalid。"""
     with pytest.raises(ProfileKeyInvalid):
-        delete("../bad")
+        await delete("../bad")
+
+
+# ============================================================
+# 工作区级画像隔离
+# ============================================================
+
+
+async def test_add_to_workspace(tmp_path: Path) -> None:
+    """workspace_path 非空时写入工作区画像。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+    entry = await add(_make_entry(key="ws_pref"), workspace_path=str(ws_path))
+    assert entry.scope == "workspace"
+    # 工作区画像文件存在
+    assert (ws_path / ".agentx" / "profile.json").exists()
+    # 全局画像文件不存在
+    assert not (tmp_path / "config" / "profile.json").exists()
+
+
+async def test_get_all_merges_workspace_and_global(tmp_path: Path) -> None:
+    """get_all 合并工作区 + 全局，同 key 工作区覆盖全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+    # 全局写入
+    await add(_make_entry(key="shared", content="global value"))
+    await add(_make_entry(key="global_only", content="only in global"))
+    # 工作区写入（覆盖 shared）
+    await add(
+        _make_entry(key="shared", content="workspace value"),
+        workspace_path=str(ws_path),
+    )
+    await add(
+        _make_entry(key="ws_only", content="only in workspace"),
+        workspace_path=str(ws_path),
+    )
+
+    # 不传 workspace_path → 仅全局
+    global_entries = {e.key: e for e in get_all()}
+    assert "shared" in global_entries
+    assert global_entries["shared"].content == "global value"
+    assert "global_only" in global_entries
+    assert "ws_only" not in global_entries
+
+    # 传 workspace_path → 合并
+    merged_entries = {e.key: e for e in get_all(workspace_path=str(ws_path))}
+    assert merged_entries["shared"].content == "workspace value"  # 工作区覆盖
+    assert merged_entries["global_only"].content == "only in global"  # 全局保留
+    assert merged_entries["ws_only"].content == "only in workspace"  # 工作区独有
+
+
+async def test_build_profile_prompt_merges_workspace(tmp_path: Path) -> None:
+    """build_profile_prompt 合并工作区 + 全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+    await add(_make_entry(key="g_pref", content="全局偏好"))
+    await add(
+        _make_entry(key="w_pref", content="工作区偏好"),
+        workspace_path=str(ws_path),
+    )
+
+    # 仅全局
+    prompt_global = build_profile_prompt()
+    assert "全局偏好" in prompt_global
+    assert "工作区偏好" not in prompt_global
+
+    # 合并
+    prompt_merged = build_profile_prompt(workspace_path=str(ws_path))
+    assert "全局偏好" in prompt_merged
+    assert "工作区偏好" in prompt_merged
+
+
+async def test_update_fallback_to_global(tmp_path: Path) -> None:
+    """update 工作区无此 key 时回退全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+    await add(_make_entry(key="g_key", content="old"))
+    updated = await update("g_key", "new", workspace_path=str(ws_path))
+    assert updated.content == "new"
+    assert updated.scope == "global"  # 实际更新了全局
+
+
+async def test_delete_fallback_to_global(tmp_path: Path) -> None:
+    """delete 工作区无此 key 时回退全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+    await add(_make_entry(key="g_key"))
+    assert await delete("g_key", workspace_path=str(ws_path)) is True
+    assert get("g_key") is None

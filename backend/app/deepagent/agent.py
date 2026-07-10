@@ -50,6 +50,7 @@ _extract_tasks: set[asyncio.Task] = set()
 __all__ = [
     "DANGEROUS_TOOLS",
     "build_deep_agent",
+    "drain_extract_tasks",
     "run_deep_path",
     "trigger_profile_auto_extract",
 ]
@@ -101,6 +102,7 @@ def trigger_profile_auto_extract(
     agent: Any,
     config: dict,
     message: str,
+    workspace_path: str | None = None,
 ) -> None:
     """异步触发用户画像自动提取（fire-and-forget）。
 
@@ -113,6 +115,7 @@ def trigger_profile_auto_extract(
         agent: 已编译的 LangGraph agent（含 checkpointer，可通过 aget_state 读取 messages）。
         config: LangGraph config，含 ``{"configurable": {"thread_id": ...}}``。
         message: 用户原始消息（用于画像提取的上下文）。
+        workspace_path: 工作区路径；非空 → 写入工作区画像，None → 写入全局画像。
     """
     if not get_settings().profile_auto_extract:
         return
@@ -128,14 +131,40 @@ def trigger_profile_auto_extract(
             assistant_reply = await extract_last_assistant_reply(agent, config)
             if assistant_reply:
                 entries = await extract_profile_via_llm(message, assistant_reply)
-                upsert_from_llm(entries)
-                logger.info("profile auto extracted", count=len(entries))
+                await upsert_from_llm(entries, workspace_path=workspace_path)
+                logger.info(
+                    "profile auto extracted",
+                    count=len(entries),
+                    scope="workspace" if workspace_path else "global",
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("profile auto extract failed", error=str(exc))
 
     task = asyncio.create_task(_do_extract())
     _extract_tasks.add(task)
     task.add_done_callback(_extract_tasks.discard)
+
+
+async def drain_extract_tasks(timeout: float = 5.0) -> None:
+    """等待所有 pending 的画像抽取任务完成（lifespan 关闭时调用）。
+
+    Args:
+        timeout: 最大等待时间（秒），超时后强制取消剩余任务。
+    """
+    if not _extract_tasks:
+        return
+    logger.info("draining profile extract tasks", count=len(_extract_tasks))
+    done, pending = await asyncio.wait(
+        list(_extract_tasks),
+        timeout=timeout,
+    )
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("profile extract tasks drained", done=len(done), cancelled=len(pending))
 
 
 async def run_deep_path(
@@ -219,4 +248,4 @@ async def run_deep_path(
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
 
-    trigger_profile_auto_extract(agent, config, message)
+    trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)

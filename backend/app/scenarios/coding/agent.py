@@ -290,4 +290,4 @@ async def run_coding_expert(
             await sandbox.set_full_trust(thread_id, False)
 
     # 异步触发画像提取（与 deep 路径一致）
-    trigger_profile_auto_extract(agent, config, message)
+    trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)

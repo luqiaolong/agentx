@@ -1,4 +1,4 @@
-"""技能文件 CRUD 单元测试：list / get / save / delete + 名称校验 + 路径逃逸。
+"""技能文件 CRUD 单元测试：list / get / save / delete + 名称校验 + 路径逃逸 + 工作区隔离。
 
 用 ``tmp_path`` + ``monkeypatch`` 隔离 ``DATA_DIR``，避免污染真实 ``data/`` 目录。
 技能加载已由 deepagents ``skills=`` 参数接管，本模块不再测试缓存刷新。
@@ -56,6 +56,7 @@ def test_list_skills_files_returns_metadata(tmp_path: Path) -> None:
     assert f.size == len(content.encode("utf-8"))
     assert isinstance(f.mtime, str)
     assert f.content_preview == content
+    assert f.scope == "global"
 
 
 def test_list_skills_files_preview_truncated(tmp_path: Path) -> None:
@@ -207,3 +208,113 @@ def test_save_skill_file_path_escape_via_mocked_resolve(
 
     with pytest.raises(SkillPathEscape):
         save_skill_file("escape", "content")
+
+
+# ============================================================
+# 工作区级技能隔离
+# ============================================================
+
+
+def test_save_skill_file_to_workspace(tmp_path: Path) -> None:
+    """workspace_path 非空时写入工作区级技能。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+    content = "---\nname: ws_skill\n---\n# 工作区技能"
+    save_skill_file("ws_skill", content, workspace_path=str(ws_path))
+
+    # 工作区技能文件存在
+    ws_target = ws_path / ".agentx" / "skills" / "ws_skill" / "SKILL.md"
+    assert ws_target.exists()
+    assert ws_target.read_text(encoding="utf-8") == content
+
+    # 全局技能文件不存在
+    assert not (tmp_path / "skills" / "ws_skill" / "SKILL.md").exists()
+
+
+def test_list_skills_files_merges_workspace_and_global(tmp_path: Path) -> None:
+    """list_skills_files 合并工作区 + 全局，同 name 工作区覆盖全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+
+    # 全局技能
+    save_skill_file("shared", "global content")
+    save_skill_file("global_only", "only global")
+
+    # 工作区技能（覆盖 shared）
+    save_skill_file("shared", "workspace content", workspace_path=str(ws_path))
+    save_skill_file("ws_only", "only workspace", workspace_path=str(ws_path))
+
+    # 不传 workspace_path → 仅全局
+    global_files = {f.name: f for f in list_skills_files()}
+    assert "shared" in global_files
+    assert global_files["shared"].content_preview == "global content"
+    assert global_files["shared"].scope == "global"
+    assert "global_only" in global_files
+    assert "ws_only" not in global_files
+
+    # 传 workspace_path → 合并
+    merged_files = {f.name: f for f in list_skills_files(workspace_path=str(ws_path))}
+    assert merged_files["shared"].content_preview == "workspace content"
+    assert merged_files["shared"].scope == "workspace"
+    assert merged_files["global_only"].scope == "global"
+    assert merged_files["ws_only"].scope == "workspace"
+
+
+def test_get_skill_file_workspace_priority(tmp_path: Path) -> None:
+    """get_skill_file 工作区优先查找。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+
+    # 全局和工作区都有 shared
+    save_skill_file("shared", "global content")
+    save_skill_file("shared", "workspace content", workspace_path=str(ws_path))
+
+    # 不传 workspace_path → 全局
+    assert get_skill_file("shared") == "global content"
+
+    # 传 workspace_path → 工作区优先
+    assert get_skill_file("shared", workspace_path=str(ws_path)) == "workspace content"
+
+
+def test_get_skill_file_fallback_to_global(tmp_path: Path) -> None:
+    """get_skill_file 工作区无此技能时回退全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+
+    save_skill_file("g_skill", "global content")
+
+    # 工作区无此技能，回退全局
+    assert get_skill_file("g_skill", workspace_path=str(ws_path)) == "global content"
+
+
+def test_delete_skill_file_workspace_priority(tmp_path: Path) -> None:
+    """delete_skill_file 优先删除工作区技能。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+
+    # 全局和工作区都有 shared
+    save_skill_file("shared", "global content")
+    save_skill_file("shared", "workspace content", workspace_path=str(ws_path))
+
+    # 删除工作区技能
+    assert delete_skill_file("shared", workspace_path=str(ws_path)) is True
+
+    # 工作区技能已删
+    ws_target = ws_path / ".agentx" / "skills" / "shared" / "SKILL.md"
+    assert not ws_target.exists()
+
+    # 全局技能仍在
+    assert get_skill_file("shared") == "global content"
+
+
+def test_delete_skill_file_fallback_to_global(tmp_path: Path) -> None:
+    """delete_skill_file 工作区无此技能时回退全局。"""
+    ws_path = tmp_path / "myproject"
+    ws_path.mkdir()
+
+    save_skill_file("g_skill", "global content")
+
+    # 工作区无此技能，回退全局
+    assert delete_skill_file("g_skill", workspace_path=str(ws_path)) is True
+    with pytest.raises(FileNotFoundError):
+        get_skill_file("g_skill")

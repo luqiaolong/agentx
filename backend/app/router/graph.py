@@ -234,10 +234,10 @@ async def run_router(
                         error=str(exc),
                     )
 
-        # ---- 4. 读取用户画像 + 项目级 system_prompt ----
+        # ---- 4. 读取用户画像（合并工作区 + 全局）+ 项目级 system_prompt ----
         # build_profile_prompt 失败时返回空字符串，不影响主流程
         try:
-            profile_prompt = build_profile_prompt()
+            profile_prompt = build_profile_prompt(workspace_path=effective_workspace)
         except Exception as exc:  # noqa: BLE001 — 画像读取兜底
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
