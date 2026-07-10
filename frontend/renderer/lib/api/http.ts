@@ -295,6 +295,18 @@ export const memory = {
     });
     return (await r.json()) as { deleted: number };
   },
+  rewindThread: async (
+    threadId: string,
+    keepMessagesCount: number,
+  ): Promise<{ ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null }> => {
+    const r = await fetch(
+      `${API_BASE}/api/memory/checkpointer/${encodeURIComponent(threadId)}/rewind?keep_messages_count=${keepMessagesCount}`,
+      {
+        method: "POST",
+      },
+    );
+    return (await r.json()) as { ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null };
+  },
   getProfile: async (category?: ProfileCategory | string): Promise<{ entries: ProfileEntry[] }> => {
     const url = category
       ? `${API_BASE}/api/memory/profile?category=${encodeURIComponent(category)}`

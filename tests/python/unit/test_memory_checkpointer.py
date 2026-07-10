@@ -1,4 +1,4 @@
-"""Checkpointer 视图单元测试：list_threads / get_db_size / delete_thread + thread_id 校验。
+"""Checkpointer 视图单元测试：list_threads / get_db_size / delete_thread / rewind_thread + thread_id 校验。
 
 直接用 aiosqlite 在 tmp_path 创建测试数据库，绕过真实 SqliteSaver 单例。
 """
@@ -17,6 +17,7 @@ from app.memory.checkpointer_view import (
     delete_thread,
     get_db_size,
     list_threads,
+    rewind_thread,
 )
 
 
@@ -301,3 +302,157 @@ async def test_delete_thread_async(tmp_path: Path) -> None:
 
     deleted = await delete_thread("t_async_del")
     assert deleted == 1
+
+
+# ============================================================
+# rewind_thread
+# ============================================================
+
+
+def test_rewind_thread_keeps_early_checkpoints(tmp_path: Path) -> None:
+    """回退保留早期的 checkpoints，删除后期的。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(
+        db_path,
+        [
+            ("thread_rw", "cp1", b"blob1"),
+            ("thread_rw", "cp2", b"blob2"),
+            ("thread_rw", "cp3", b"blob3"),
+            ("thread_rw", "cp4", b"blob4"),
+            ("thread_rw", "cp5", b"blob5"),
+            ("thread_rw", "cp6", b"blob6"),
+        ],
+    )
+
+    import asyncio
+
+    # 保留前 2 条消息 ≈ 保留 2*2+1=5 个 checkpoints
+    result = asyncio.run(rewind_thread("thread_rw", 2))
+    assert result["deleted"] == 1
+    assert result["kept"] == 5
+    assert result["cutoff_checkpoint_id"] == "cp5"
+
+    # 验证数据库
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.execute("SELECT checkpoint_id FROM checkpoints WHERE thread_id = 'thread_rw' ORDER BY rowid")
+    ids = [r[0] for r in cur.fetchall()]
+    assert ids == ["cp1", "cp2", "cp3", "cp4", "cp5"]
+    conn.close()
+
+
+def test_rewind_thread_keep_more_than_total(tmp_path: Path) -> None:
+    """保留数量超过总数时不删除。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(
+        db_path,
+        [
+            ("thread_rw", "cp1", b"blob1"),
+            ("thread_rw", "cp2", b"blob2"),
+        ],
+    )
+
+    import asyncio
+
+    result = asyncio.run(rewind_thread("thread_rw", 10))
+    assert result["deleted"] == 0
+    assert result["kept"] == 2
+    assert result["cutoff_checkpoint_id"] == "cp2"
+
+
+def test_rewind_thread_empty_thread(tmp_path: Path) -> None:
+    """回退不存在的 thread 返回零值。"""
+    import asyncio
+
+    result = asyncio.run(rewind_thread("nonexistent", 2))
+    assert result["deleted"] == 0
+    assert result["kept"] == 0
+    assert result["cutoff_checkpoint_id"] is None
+
+
+def test_rewind_thread_invalid_id() -> None:
+    """thread_id 非法抛 ThreadIdInvalid。"""
+    import asyncio
+
+    with pytest.raises(ThreadIdInvalid):
+        asyncio.run(rewind_thread("../etc", 2))
+
+
+def test_rewind_thread_zero_keep_messages(tmp_path: Path) -> None:
+    """keep_messages_count=0 时保留 1 个初始 checkpoint。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(
+        db_path,
+        [
+            ("thread_rw", "cp1", b"blob1"),
+            ("thread_rw", "cp2", b"blob2"),
+            ("thread_rw", "cp3", b"blob3"),
+        ],
+    )
+
+    import asyncio
+
+    # keep=0 → keep_checkpoints = max(1, 0*2+1) = 1
+    result = asyncio.run(rewind_thread("thread_rw", 0))
+    assert result["deleted"] == 2
+    assert result["kept"] == 1
+    assert result["cutoff_checkpoint_id"] == "cp1"
+
+
+def test_rewind_thread_also_clears_writes(tmp_path: Path) -> None:
+    """rewind_thread 同时清理 writes 表。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(
+        db_path,
+        [
+            ("thread_rw", "cp1", b"blob1"),
+            ("thread_rw", "cp2", b"blob2"),
+            ("thread_rw", "cp3", b"blob3"),
+        ],
+    )
+
+    # 手动插入 writes 记录（关联不同 checkpoints）
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel) "
+        "VALUES ('thread_rw', '', 'cp1', 'task1', 0, 'chan')"
+    )
+    conn.execute(
+        "INSERT INTO writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel) "
+        "VALUES ('thread_rw', '', 'cp2', 'task1', 1, 'chan')"
+    )
+    conn.execute(
+        "INSERT INTO writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel) "
+        "VALUES ('thread_rw', '', 'cp3', 'task1', 2, 'chan')"
+    )
+    conn.commit()
+    conn.close()
+
+    import asyncio
+
+    result = asyncio.run(rewind_thread("thread_rw", 0))
+    assert result["deleted"] == 2
+
+    # 验证 writes 表也已清理（只保留 cp1 的）
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.execute("SELECT checkpoint_id FROM writes WHERE thread_id = 'thread_rw' ORDER BY idx")
+    ids = [r[0] for r in cur.fetchall()]
+    assert ids == ["cp1"]
+    conn.close()
+
+
+async def test_rewind_thread_async(tmp_path: Path) -> None:
+    """异步回退。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(
+        db_path,
+        [
+            ("t_async_rw", "cp1", b"x"),
+            ("t_async_rw", "cp2", b"x"),
+            ("t_async_rw", "cp3", b"x"),
+            ("t_async_rw", "cp4", b"x"),
+        ],
+    )
+
+    result = await rewind_thread("t_async_rw", 1)
+    assert result["deleted"] == 1
+    assert result["kept"] == 3

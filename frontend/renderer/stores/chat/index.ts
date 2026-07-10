@@ -973,12 +973,15 @@ export const useChatStore = create<ChatState>()(
         deleteMessagesAfter: (messageId) => {
           let lastUserContent: string | null = null;
           const cid = get().currentId;
+          let keepMessagesCount = 0;
           set((s) => {
             if (!cid || !s.sessions[cid]) return s;
             const sess = s.sessions[cid];
             const idx = sess.messages.findIndex((m) => m.id === messageId);
             if (idx === -1) return s;
             const kept = sess.messages.slice(0, idx);
+            // 记录保留的消息数量（用于后端 checkpoint 精准回退）
+            keepMessagesCount = kept.length;
             // 记录被删除段中最后一条 user 消息的 text parts 拼接（用于回填输入框）
             const removed = sess.messages.slice(idx);
             const lastUser = removed.reverse().find((m) => m.role === "user");
@@ -996,11 +999,12 @@ export const useChatStore = create<ChatState>()(
             const sessions = { ...s.sessions, [cid]: { ...sess, messages: kept } };
             return { sessions };
           });
-          // 同步清空后端 checkpoint，防止重新编辑后历史消息中的 tool_calls 残留
-          // 导致 LangGraph INVALID_CHAT_HISTORY（best-effort，失败不阻塞前端）
-          if (cid) {
+          // 同步回退后端 checkpoint 到编辑点之前的状态，保留编辑点之前的上下文
+          // 防止重新编辑后历史消息中的 tool_calls 残留导致 LangGraph INVALID_CHAT_HISTORY
+          // best-effort，失败不阻塞前端
+          if (cid && keepMessagesCount > 0) {
             try {
-              memory.deleteThread(cid).catch(() => {
+              memory.rewindThread(cid, keepMessagesCount).catch(() => {
                 /* 后端不可用或 thread 不存在时静默忽略 */
               });
             } catch {

@@ -27,6 +27,7 @@ from .checkpointer_view import (
     delete_thread,
     get_db_size,
     list_threads,
+    rewind_thread,
 )
 from .profile_store import (
     ProfileCategoryInvalid,
@@ -72,6 +73,7 @@ __all__ = [
     "list_skills",
     "list_skills_files",
     "list_threads",
+    "rewind_thread",
     "save_skill_file",
     "summarize_messages",
 ]

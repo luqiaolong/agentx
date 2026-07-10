@@ -1,7 +1,8 @@
-"""Checkpointer 只读视图 + 单会话清理。
+"""Checkpointer 只读视图 + 单会话清理 + 精准回退。
 
 直接查 ``data/agentx.db``（LangGraph SqliteSaver 创建的 ``checkpoints`` 表），
-提供 thread 列表与按 thread_id 删除能力，供「记忆」tab 的 Checkpointer 子模块使用。
+提供 thread 列表、按 thread_id 删除、以及精准回退（rewind）能力，供「记忆」tab 的
+Checkpointer 子模块与「编辑历史消息」功能使用。
 
 安全约束：
 - ``thread_id`` 严格校验正则 ``^[a-zA-Z0-9_-]+$``，防 SQL 注入
@@ -185,9 +186,112 @@ async def delete_thread(thread_id: str) -> int:
     return deleted
 
 
+async def rewind_thread(thread_id: str, keep_messages_count: int) -> dict[str, Any]:
+    """回退指定 thread 的 checkpoint，保留编辑点之前的状态。
+
+    用于「编辑历史消息」场景：用户编辑第 N 条消息后重新发送，需要回退到
+    第 N 条消息之前的状态（保留前 N-1 条消息的上下文）。
+
+    实现策略：
+    - 查询该 thread 的所有 checkpoints，按 rowid 升序（时间顺序）
+    - 估算保留的 checkpoint 数量 = keep_messages_count * 2（安全余量）
+    - 找到 cutoff checkpoint（第 N 个），删除 rowid 更大的所有 checkpoints 和 writes
+
+    Args:
+        thread_id: 会话 ID。
+        keep_messages_count: 保留前多少条消息对应的状态（即编辑点之前的消息数）。
+            例如编辑第 3 条消息，则传 2（保留前 2 条消息的上下文）。
+
+    Returns:
+        {"deleted": int, "kept": int, "cutoff_checkpoint_id": str | None}
+
+    Raises:
+        ThreadIdInvalid: thread_id 非法。
+        sqlite3.Error: 数据库错误。
+    """
+    _validate_thread_id(thread_id)
+    if keep_messages_count < 0:
+        keep_messages_count = 0
+
+    db_path = _get_db_path()
+    if not db_path.exists():
+        return {"deleted": 0, "kept": 0, "cutoff_checkpoint_id": None}
+
+    try:
+        async with aiosqlite.connect(str(db_path)) as conn:
+            # 1. 查询该 thread 的所有 checkpoints 按 rowid 升序
+            cur = await conn.execute(
+                "SELECT rowid, checkpoint_id FROM checkpoints "
+                "WHERE thread_id = ? AND checkpoint_ns = ? "
+                "ORDER BY rowid ASC",
+                (thread_id, _MAIN_NS),
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+
+            total = len(rows)
+            if total == 0:
+                return {"deleted": 0, "kept": 0, "cutoff_checkpoint_id": None}
+
+            # 2. 估算保留的 checkpoint 数量
+            # 经验值：每条消息大约产生 2 个 checkpoints（input + loop）
+            # 加 1 个安全余量（保留初始状态）
+            keep_checkpoints = max(1, keep_messages_count * 2 + 1)
+            if keep_checkpoints >= total:
+                # 保留数量 >= 总数，无需删除
+                return {
+                    "deleted": 0,
+                    "kept": total,
+                    "cutoff_checkpoint_id": rows[-1][1] if rows else None,
+                }
+
+            # 3. 找到 cutoff checkpoint（第 keep_checkpoints 个，0-indexed）
+            cutoff_rowid = rows[keep_checkpoints - 1][0]
+            cutoff_checkpoint_id = rows[keep_checkpoints - 1][1]
+
+            # 4. 删除 cutoff 之后的所有 writes
+            await conn.execute(
+                "DELETE FROM writes WHERE thread_id = ? AND rowid > ?",
+                (thread_id, cutoff_rowid),
+            )
+            # 5. 删除 cutoff 之后的所有 checkpoints
+            del_cur = await conn.execute(
+                "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND rowid > ?",
+                (thread_id, _MAIN_NS, cutoff_rowid),
+            )
+            deleted = del_cur.rowcount or 0
+            await del_cur.close()
+            await conn.commit()
+
+            logger.info(
+                "thread checkpoint 已回退",
+                thread_id=thread_id,
+                keep_messages_count=keep_messages_count,
+                keep_checkpoints=keep_checkpoints,
+                total_checkpoints=total,
+                deleted=deleted,
+                cutoff_checkpoint_id=cutoff_checkpoint_id,
+            )
+            return {
+                "deleted": deleted,
+                "kept": total - deleted,
+                "cutoff_checkpoint_id": cutoff_checkpoint_id,
+            }
+    except sqlite3.Error as exc:
+        logger.warning(
+            "rewind_thread DB 错误",
+            thread_id=thread_id,
+            keep_messages_count=keep_messages_count,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+
+
 __all__ = [
     "ThreadIdInvalid",
     "delete_thread",
     "get_db_size",
     "list_threads",
+    "rewind_thread",
 ]
