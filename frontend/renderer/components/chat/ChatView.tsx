@@ -495,15 +495,34 @@ export function ChatView() {
   const handleResume = async () => {
     const tid = activeThreadIdRef.current ?? currentId;
     if (!tid) return;
-    try {
-      await chat.resume(tid);
-    } catch {
-      /* ignore */
-    }
-    // 恢复执行：同步标记会话为运行中（sidebar 圆点继续转动），
-    // 与 handlePause 的 setSessionRunning(false) 对称。
-    setSessionRunning(tid, true);
+
+    // 方案C：恢复 = 重新发送上一条用户消息，让 LangGraph 从 checkpoint 自动恢复
+    // 从 messages 中找最后一条 user 消息的 text content
+    const sess = useChatStore.getState().sessions[tid];
+    const lastUserMsg = sess?.messages
+      .slice()
+      .reverse()
+      .find((m) => m.role === "user");
+    const resumeContent = lastUserMsg?.parts
+      ?.filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("") ?? "";
+
+    // 清除暂停标记，让 handleSend 可以执行
     setIsPaused(false);
+
+    if (resumeContent.trim()) {
+      // 复用 handleSend 走完整发送流程（创建 pending、SSE 流式、checkpointer 恢复）
+      await handleSend(resumeContent);
+    } else {
+      // 无历史消息时回退到旧 resume API（兜底）
+      try {
+        await chat.resume(tid);
+      } catch {
+        /* ignore */
+      }
+      setSessionRunning(tid, true);
+    }
   };
 
   const completedTodos = todos.filter((t) => t.status === "completed").length;

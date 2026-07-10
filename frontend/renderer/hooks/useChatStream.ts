@@ -206,6 +206,16 @@ export function useChatStream(args: UseChatStreamArgs) {
         }
         case "paused": {
           callbacksRef.current.setPaused?.(true);
+          // 方案C：后端已结束 SSE 流，前端模拟 done 事件完成当前消息
+          if (pendingIdRef.current) {
+            markReasoningDone(pendingIdRef.current);
+            markRunningToolCallsComplete(pendingIdRef.current);
+          }
+          if (threadId) {
+            setSessionRunning(threadId, false);
+          }
+          pendingIdRef.current = null;
+          // 任务保持 running 状态（恢复后会继续更新）
           break;
         }
         case "done": {

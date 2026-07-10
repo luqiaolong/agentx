@@ -108,6 +108,14 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 yield {"event": "done", "data": "{}"}
                 return
 
+            # /resume：清除暂停标志，让后续消息正常执行（配合方案C：前端重发消息触发恢复）
+            if req.message.startswith("/resume"):
+                from app.security.approval import clear_pause
+                await clear_pause(req.thread_id)
+                yield {"event": "token", "data": "已恢复执行"}
+                yield {"event": "done", "data": "{}"}
+                return
+
             # 其他消息：走 Router 场景分发（传入 checkpointer 加载历史）
             checkpointer = await get_async_checkpointer()
             # coding_team 模式受 agents.teams.coding.enabled 开关控制

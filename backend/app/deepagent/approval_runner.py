@@ -263,11 +263,12 @@ async def run_agent_with_approval(
         # 最小延迟：防止 CPU 占满和日志风暴
         await asyncio.sleep(0.05)
 
-        # 暂停/恢复检查
+        # 暂停检查：若已暂停，yield paused 事件后结束当前流
+        # 恢复由前端重新发送消息触发，LangGraph 从 checkpoint 自动恢复
         if await is_paused(thread_id):
             yield await _forward(make_sse_event("paused", {}))
-            await wait_for_resume(thread_id, timeout=_resolve_max_wait())
-            # 恢复后继续执行；不发送已废弃的 resumed 事件
+            # 结束 SSE 流，不 wait_for_resume；恢复走重新发送消息路径
+            return
 
         # abort 检查
         if await is_aborted(thread_id):

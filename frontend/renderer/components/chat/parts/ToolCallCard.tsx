@@ -323,52 +323,66 @@ function ToolCallCardImpl({
               </pre>
             </div>
           )}
-          {/* 内联授权按钮：仅当存在 approvalRequest 时展示 */}
-          {approvalRequest && (
-            <div className="mt-1 flex items-center justify-end gap-1">
-              <div className="relative" ref={menuRef}>
+        </div>
+      )}
+      {/* 内联授权按钮：折叠/展开状态均可见 */}
+      {approvalRequest && (
+        <div className="flex items-center justify-end gap-1 px-3 py-1.5">
+          <div className="relative" ref={menuRef}>
+            <div className="inline-flex items-center overflow-hidden rounded-lg border border-default bg-surface shadow-soft">
+              {/* 主按钮：点击直接执行「本次允许」 */}
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleApprove("approve")}
+                className="inline-flex items-center gap-0.5 px-2 py-1 font-medium text-primary-c transition-colors hover:bg-primary-c/5 disabled:opacity-50"
+                style={{ fontSize: 'var(--fs-msg-tool)' }}
+                title="本次允许"
+              >
+                <ShieldCheck className="h-2.5 w-2.5 text-primary-c/70" />
+                允许沙箱执行
+              </button>
+              {/* 下拉箭头：展开更多选项 */}
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setMenuOpen((v) => !v)}
+                className="inline-flex items-center border-l border-default px-1 py-1 text-muted-c/60 transition-colors hover:bg-primary-c/5 hover:text-primary-c disabled:opacity-50"
+                title="更多选项"
+                aria-label="更多选项"
+              >
+                <ChevronRight className={`h-2.5 w-2.5 transition-transform ${menuOpen ? "rotate-90" : ""}`} />
+              </button>
+            </div>
+            {menuOpen && (
+              <div className="absolute right-0 z-10 mt-0.5 w-40 rounded-lg border border-default bg-surface shadow-pop">
                 <button
                   type="button"
-                  disabled={submitting}
-                  onClick={() => setMenuOpen((v) => !v)}
-                  className="inline-flex items-center gap-0.5 rounded-lg bg-amber-600 px-2 py-1 font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
+                  className="flex w-full items-center px-2 py-1 text-left text-muted-c hover:bg-hover-soft"
                   style={{ fontSize: 'var(--fs-msg-tool)' }}
+                  onClick={() => handleApprove("approve")}
                 >
-                  <ShieldCheck className="h-2.5 w-2.5" />
-                  允许沙箱执行
-                  <ChevronRight className={`h-2.5 w-2.5 transition-transform ${menuOpen ? "rotate-90" : ""}`} />
+                  本次允许
                 </button>
-                {menuOpen && (
-                  <div className="absolute right-0 z-10 mt-0.5 w-40 rounded-lg border border-default bg-surface shadow-pop">
-                    <button
-                      type="button"
-                      className="flex w-full items-center px-2 py-1 text-left text-muted-c hover:bg-hover-soft"
-                      style={{ fontSize: 'var(--fs-msg-tool)' }}
-                      onClick={() => handleApprove("approve")}
-                    >
-                      本次允许
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center px-2 py-1 text-left text-muted-c hover:bg-hover-soft"
-                      style={{ fontSize: 'var(--fs-msg-tool)' }}
-                      onClick={() => handleApprove("session")}
-                    >
-                      会话内允许
-                    </button>
-                    <button
-                      type="button"
-                      className="flex w-full items-center px-2 py-1 text-left text-amber-600 hover:bg-hover-soft"
-                      style={{ fontSize: 'var(--fs-msg-tool)' }}
-                      onClick={() => handleApprove("full_trust")}
-                    >
-                      允许所有操作
-                    </button>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  className="flex w-full items-center px-2 py-1 text-left text-muted-c hover:bg-hover-soft"
+                  style={{ fontSize: 'var(--fs-msg-tool)' }}
+                  onClick={() => handleApprove("session")}
+                >
+                  会话内允许
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center px-2 py-1 text-left text-primary-c hover:bg-hover-soft"
+                  style={{ fontSize: 'var(--fs-msg-tool)' }}
+                  onClick={() => handleApprove("full_trust")}
+                >
+                  允许所有操作
+                </button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
