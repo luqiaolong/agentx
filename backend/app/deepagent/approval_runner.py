@@ -344,6 +344,7 @@ async def run_agent_with_approval(
             continue
 
         # standard 模式：危险工具判定
+        decision = None
         dangerous_calls: list[dict] = []
         for tc in pending_calls:
             name = tc.get("name", "")
@@ -451,6 +452,37 @@ async def run_agent_with_approval(
         # 是否有新 LLM 消息生成（仅在 current_count > _yielded_msg_count 时
         # 才进入循环检测，避免 astream resume 重放历史误触发）。
         _yielded_msg_count = await _state_msg_count()
+
+        # 防御性检查：若 resume 后 state 未推进（msg_count 未增长）
+        # 且仍被中断，说明 LangGraph interrupt 可能 stuck（如
+        # HumanInTheLoopMiddleware 的 interrupt 未被正确消费）。
+        # 此时强制 break 避免无限循环（root cause: trace=7c742e6f60dc4d96）。
+        # 注意：msg_count < 0 表示无法读取 state（如测试 mock），跳过此检查。
+        # current_msg_count = 本轮开始时的值（旧），_yielded_msg_count = resume 后的值（新）。
+        # state 推进 → _yielded > current → 条件 False；state 未推进 → _yielded <= current → 条件 True。
+        _state_stalled = (
+            current_msg_count >= 0
+            and _yielded_msg_count >= 0
+            and _yielded_msg_count <= current_msg_count
+        )
+        if _state_stalled and await _is_int(agent, config):
+            logger.warning(
+                "agent resume did not clear interrupt, possible stuck state",
+                thread_id=thread_id,
+                source=source,
+                iteration=iteration,
+            )
+            await _inject_msgs(
+                agent,
+                config,
+                "执行流程中断状态未正常解除，已强制终止。请重试或联系支持。",
+            )
+            yield await _forward(
+                make_error_event(
+                    "执行流程中断状态未正常解除，已强制终止。请重试或联系支持。"
+                )
+            )
+            return
 
         await _sandbox.clear_temp(thread_id)
 

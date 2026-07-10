@@ -501,7 +501,7 @@ async def run_team_path(
     state: RouterState,
     profile_prompt: str = "",
     history: list | None = None,
-    permission_mode: str = "workspace",
+    permission_mode: str = "standard",
     scene_prompt: str | None = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,

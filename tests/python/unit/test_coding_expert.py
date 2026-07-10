@@ -290,10 +290,20 @@ class TestReadonlyStreakProtection:
 
             return _gen()
 
+        # mock agent.aget_state 返回递增 messages，使防御性检查判断 state 有推进
+        _msg_counter = {"n": 0}
+
+        async def _aget_state(config):
+            _msg_counter["n"] += 1
+            return SimpleNamespace(values={"messages": [{}] * _msg_counter["n"]})
+
+        _mock_agent = AsyncMock()
+        _mock_agent.aget_state = _aget_state
+
         with ExitStack() as stack:
             stack.enter_context(patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]))
             stack.enter_context(patch("app.scenarios.coding.agent._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
-            stack.enter_context(patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock))
+            stack.enter_context(patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock, return_value=_mock_agent))
             stack.enter_context(patch("app.scenarios.coding.agent._stream_agent_events", side_effect=_stream_side_effect))
             stack.enter_context(patch("app.deepagent.approval_runner._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
             stack.enter_context(patch("app.scenarios.coding.agent.get_sandbox", return_value=AsyncMock()))
@@ -343,7 +353,16 @@ class TestReadonlyStreakProtection:
         with ExitStack() as stack:
             stack.enter_context(patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]))
             stack.enter_context(patch("app.scenarios.coding.agent._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())))
-            stack.enter_context(patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock))
+            # mock agent.aget_state 返回递增 messages，使防御性检查判断 state 有推进
+            _msg_counter2 = {"n": 0}
+
+            async def _aget_state2(config):
+                _msg_counter2["n"] += 1
+                return SimpleNamespace(values={"messages": [{}] * _msg_counter2["n"]})
+
+            _mock_agent2 = AsyncMock()
+            _mock_agent2.aget_state = _aget_state2
+            stack.enter_context(patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock, return_value=_mock_agent2))
             stack.enter_context(patch("app.scenarios.coding.agent._stream_agent_events", side_effect=_stream_side_effect))
             stack.enter_context(patch("app.deepagent.approval_runner._is_interrupted", new_callable=AsyncMock, side_effect=interrupted_values))
             stack.enter_context(patch("app.scenarios.coding.agent.get_sandbox", return_value=AsyncMock()))

@@ -24,10 +24,14 @@ class _FakeAgent:
         self._states = states
 
     async def astream(
-        self, inputs: Any, config: dict, stream_mode: str
+        self, inputs: Any, config: dict, stream_mode: str | list
     ) -> AsyncIterator[dict]:
         for state in self._states:
-            yield state
+            # stream_mode 为 list 时返回 (mode, payload) tuple，与 LangGraph 一致
+            if isinstance(stream_mode, list):
+                yield ("values", state)
+            else:
+                yield state
 
 
 def _clear_approval_state() -> None:

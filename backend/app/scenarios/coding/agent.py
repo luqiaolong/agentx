@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
 from deepagents import SubAgent
 
@@ -190,6 +190,8 @@ async def run_coding_expert(
     workspace_path: str | None = None,
     parent_thread_id: str | None = None,
     chat_model: BaseChatModel | None = None,
+    checkpointer: Any | None = None,
+    yield_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> AsyncIterator[dict]:
     """运行 coding 场景 Expert，yield SSE 事件。
 
@@ -206,6 +208,11 @@ async def run_coding_expert(
         workspace_path: 可选当前工作区绝对路径。
         parent_thread_id: 父 thread_id（Team 模式下子任务继承父 thread 的沙箱授权）。
         chat_model: 可选注入的 ChatModel，透传到 ``build_coding_expert``。
+        checkpointer: 可选的隔离 checkpointer（如 ``InMemorySaver``）。
+            传入时 Expert 使用独立 checkpointer，避免污染调用方的 checkpoint。
+            None 时 ``build_coding_expert`` 内部获取全局 checkpointer。
+        yield_event: 可选的异步回调，每 yield 一个事件时同步调用。
+            用于 Supervisor ``delegate_to_expert`` 工具透传 Expert 事件到外层 SSE 流。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -242,6 +249,7 @@ async def run_coding_expert(
                 thread_id,
                 tools=agent_tools,
                 profile_prompt=profile_prompt,
+                checkpointer=checkpointer,
                 workspace_path=workspace_path,
                 chat_model=chat_model,
             )
@@ -282,6 +290,7 @@ async def run_coding_expert(
             parent_thread_id=parent_thread_id,
             stream_fn=_stream_agent_events,
             readonly_streak_threshold=settings.readonly_streak_threshold,
+            yield_event=yield_event,
         ):
             yield sse
     finally:

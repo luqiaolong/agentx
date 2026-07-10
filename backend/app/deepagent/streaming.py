@@ -145,7 +145,27 @@ async def _stream_agent_events(
     # 追踪 state.todos 快照，diff 检测 deepagents TodoListMiddleware 更新
     _last_todos: list[dict] = []
 
-    async for state in agent.astream(inputs, config=config, stream_mode="values"):
+    # stream_mode=["custom", "values"]：
+    # - custom: 工具节点内部通过 get_stream_writer() 写入的 passthrough 事件
+    #   （如 delegate_to_expert 透传的 Expert approval_request / tool_call 等）
+    # - values: 每次 state 更新的完整快照（用于 todos diff + messages 处理）
+    async for chunk in agent.astream(inputs, config=config, stream_mode=["custom", "values"]):
+        if abort_event.is_set():
+            raise asyncio.CancelledError("aborted")
+
+        # 兼容：非 tuple chunk（如测试桩直接 yield state）作为 values 处理
+        if isinstance(chunk, tuple) and len(chunk) == 2:
+            mode, payload = chunk
+            if mode == "custom":
+                # 工具节点内部透传的 SSE 事件，直接 yield 给前端
+                if isinstance(payload, dict) and "event" in payload:
+                    yield payload
+                continue
+            # mode == "values"
+            state = payload
+        else:
+            state = chunk
+
         if not _first_state_seen:
             _first_state_seen = True
             elapsed = asyncio.get_event_loop().time() - _astream_start
@@ -155,8 +175,6 @@ async def _stream_agent_events(
                 elapsed=elapsed,
                 source=source,
             )
-        if abort_event.is_set():
-            raise asyncio.CancelledError("aborted")
 
         # 读取 deepagents 原生 state.todos（TodoListMiddleware 维护），
         # diff 检测变化后 yield todo_update 事件（原生 {content, status} schema）。

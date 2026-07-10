@@ -127,15 +127,28 @@ def _build_subagent_runnables(
 def make_expert_delegation_tool(
     thread_id: str,
     workspace_path: str | None = None,
+    profile_prompt: str = "",
+    permission_mode: str = "standard",
+    chat_model: BaseChatModel | None = None,
 ) -> Any:
     """构建 coding Expert 委派工具 ``delegate_to_expert``。
 
-    coding Expert 通过项目原有的 ``run_coding_expert`` 异步生成器运行，
-    其内部仍保留自己的 interrupt/审批闭环，因此不适合直接作为 compiled subagent
-    嵌入 ``SubAgentMiddleware``。这里保留一个专用工具，供 Supervisor LLM
-    在需要代码专家能力时调用。
+    coding Expert 通过 ``run_coding_expert`` 异步生成器运行，其内部仍保留自己的
+    interrupt/审批闭环，因此不适合直接作为 compiled subagent 嵌入
+    ``SubAgentMiddleware``。
+
+    修复要点（Bug 1/2/3）：
+    - **checkpointer 隔离**：传入 ``InMemorySaver`` 作为 Expert 的 checkpointer，
+      避免 Expert 的 tool_call / tool_result 写入 Supervisor 的 checkpoint 污染上下文。
+    - **参数透传**：完整传递 ``profile_prompt`` / ``permission_mode`` / ``chat_model``，
+      确保 Expert 与 Supervisor 的权限模式一致（full_trust 不丢失）。
+    - **事件透传**：非 token 事件（``approval_request`` / ``error`` / ``tool_call`` /
+      ``tool_result`` 等）通过 ``get_stream_writer()`` 写入 Supervisor 图的 custom stream，
+      由 ``_stream_agent_events`` 消费后 yield 给前端，避免审批流挂死。
+    - **full_trust 恢复**：Expert 的 ``finally`` 会清除 ``full_trust``，工具返回前恢复。
     """
     from langchain_core.tools import tool
+    from langgraph.checkpoint.memory import InMemorySaver
 
     settings = get_settings()
     experts = settings.agents.experts
@@ -174,20 +187,56 @@ def make_expert_delegation_tool(
             task_len=len(task),
         )
 
-        from app.scenarios.coding.agent import run_coding_expert
+        # 获取 Supervisor 图的 stream writer（在 ToolNode 上下文中可用）。
+        # Expert 的非 token 事件通过此 writer 写入 Supervisor 图的 custom stream，
+        # 由 _stream_agent_events(stream_mode=["custom","values"]) 消费后 yield 给前端。
+        supervisor_writer = None
+        try:
+            from langgraph.config import get_stream_writer
+            supervisor_writer = get_stream_writer()
+        except Exception:  # noqa: BLE001 — 非图上下文（如直接调用）降级
+            logger.debug("delegate_to_expert: get_stream_writer unavailable")
 
         parts: list[str] = []
+
+        async def _expert_yield_event(event: dict) -> None:
+            """Expert 非 token 事件透传到 Supervisor SSE 流。
+
+            token 事件从 generator yield 直接收集（见下方循环），
+            此回调只负责把 approval_request / error / tool_call / tool_result
+            等事件写入 Supervisor 图的 custom stream。
+            """
+            if event.get("event") != "token" and supervisor_writer is not None:
+                supervisor_writer(event)
+
+        from app.scenarios.coding.agent import run_coding_expert
+
+        # Bug 3 修复：InMemorySaver 隔离 Expert 的 checkpoint，避免污染 Supervisor 上下文。
+        # thread_id 保持原始值（沙箱授权 / approval / pause / abort 都基于原始 thread_id）。
+        expert_checkpointer = InMemorySaver()
+
         async for event in run_coding_expert(
             task,
             thread_id,
+            profile_prompt=profile_prompt,
             history=None,
+            permission_mode=permission_mode,
             workspace_path=workspace_path,
+            chat_model=chat_model,
+            checkpointer=expert_checkpointer,
+            yield_event=_expert_yield_event,
         ):
-            # 收集 Expert 最终输出 token；工具调用/审批请求等事件对 Supervisor 不可见
+            # token 从 generator yield 直接收集；
+            # 非 token 事件已通过 _expert_yield_event 回调透传到 Supervisor custom stream。
             if event.get("event") == "token":
                 content = event.get("data", "")
                 if content:
                     parts.append(content)
+
+        # Bug 2 修复：Expert 的 finally 可能清除了 full_trust，恢复 Supervisor 的状态。
+        if permission_mode == "full_trust":
+            sandbox = get_sandbox()
+            await sandbox.set_full_trust(thread_id, True)
 
         return "".join(parts).strip() or f"Expert '{expert_name}' 未返回结果"
 
@@ -317,17 +366,14 @@ async def run_work_supervisor(
         })
         from app.scenarios.coding.agent import run_coding_expert
 
-        async for sse in _convert_expert_events(
-            run_coding_expert(
-                cleaned_message,
-                thread_id,
-                profile_prompt=profile_prompt,
-                history=history,
-                workspace_path=workspace_path,
-                permission_mode=permission_mode,
-                chat_model=chat_model,
-            ),
-            source=expert_name,
+        async for sse in run_coding_expert(
+            cleaned_message,
+            thread_id,
+            profile_prompt=profile_prompt,
+            history=history,
+            workspace_path=workspace_path,
+            permission_mode=permission_mode,
+            chat_model=chat_model,
         ):
             yield sse
         return
@@ -380,7 +426,13 @@ async def run_work_supervisor(
                     count=len(mcp_tools),
                     untrusted=len(mcp_untrusted_names),
                 )
-            expert_tool = make_expert_delegation_tool(thread_id, workspace_path)
+            expert_tool = make_expert_delegation_tool(
+                thread_id,
+                workspace_path,
+                profile_prompt=profile_prompt,
+                permission_mode=permission_mode,
+                chat_model=chat_model,
+            )
             all_tools = [*agent_tools, expert_tool]
 
             subagents = _build_subagent_runnables(thread_id, workspace_path, chat_model=chat_model)
@@ -468,17 +520,3 @@ async def _run_subagent_for_mention(
                 parts.append(event.get("content", ""))
 
     return "".join(parts).strip()
-
-
-async def _convert_expert_events(
-    expert_stream: AsyncIterator[dict],
-    source: str,
-) -> AsyncIterator[dict]:
-    """将 Expert 事件流转换为 SSE 事件（source 标识为 Expert）。
-
-    Expert 内部使用与 DeepAgent 相同的事件格式（token/tool_call/tool_result/
-    approval_request 等），此处透传并补充 source 字段。
-    """
-    async for event in expert_stream:
-        # Expert 事件已经是 SSE 格式（make_sse_event），直接透传
-        yield event
