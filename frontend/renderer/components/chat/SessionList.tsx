@@ -29,10 +29,9 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 export function SessionList() {
   const sessionsMap = useChatStore((s) => s.sessions);
   const currentId = useChatStore((s) => s.currentId);
-  const isStreaming = useChatStore((s) => s.isStreaming);
-  // 暂停状态下用户已表达“中断”意图（后端 SSE 冻结在 wait_for_resume），
-  // 允许切换/新建会话，避免 “当前会话正在流式输出” 弹窗阻断。
-  const isPaused = useChatStore((s) => s.isPaused);
+  const currentSession = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId] ?? null : null,
+  );
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
   const createSession = useChatStore((s) => s.createSession);
   const switchSession = useChatStore((s) => s.switchSession);
@@ -164,11 +163,7 @@ export function SessionList() {
   };
 
   const handleSwitch = (id: string) => {
-    // 暂停状态下允许切换（后端 SSE 已冻结在 wait_for_resume，不会再 yield 事件）
-    if (isStreaming && !isPaused) {
-      window.alert("当前会话正在流式输出，请等待完成或中止后再切换");
-      return;
-    }
+    // 多会话并行：切换不再被流式状态阻断
     // 切换到该会话时清除新结果标记
     clearSessionNewResult(id);
     switchSession(id);
@@ -176,19 +171,11 @@ export function SessionList() {
 
   // 默认：总是新建到 Home（按用户需求）
   const handleCreateInHome = async () => {
-    if (isStreaming && !isPaused) {
-      window.alert("当前会话正在流式输出，请等待完成或中止后再新建会话");
-      return;
-    }
     await createSession(null);
   };
 
   // workspace 分组的 + 按钮：在该 workspace 下新建会话
   const handleCreateInWorkspace = async (workspacePath: string) => {
-    if (isStreaming && !isPaused) {
-      window.alert("当前会话正在流式输出，请等待完成或中止后再新建会话");
-      return;
-    }
     await createSession(workspacePath);
   };
 
@@ -201,7 +188,6 @@ export function SessionList() {
         <button
           type="button"
           onClick={handleCreateInHome}
-          disabled={isStreaming && !isPaused}
           className="btn-ghost p-1"
           aria-label="在 Home 新建会话"
           title="在 Home 新建会话"
@@ -217,8 +203,6 @@ export function SessionList() {
           subtitle={homeWorkspacePath ?? "默认（桌面）"}
           items={groups.homeItems}
           currentId={currentId}
-          isStreaming={isStreaming}
-          isPaused={isPaused}
           onSwitch={handleSwitch}
           onRename={handleRename}
           onDelete={handleDelete}
@@ -234,8 +218,6 @@ export function SessionList() {
             subtitle={w.path}
             items={w.items}
             currentId={currentId}
-            isStreaming={isStreaming}
-            isPaused={isPaused}
             onSwitch={handleSwitch}
             onRename={handleRename}
             onDelete={handleDelete}
@@ -314,8 +296,6 @@ export function SessionList() {
 interface SessionItemProps {
   session: Session;
   active: boolean;
-  isStreaming: boolean;
-  isPaused: boolean;
   onSwitch: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
@@ -324,19 +304,15 @@ interface SessionItemProps {
 const SessionItem = memo(function SessionItem({
   session: s,
   active,
-  isStreaming,
-  isPaused,
   onSwitch,
   onRename,
   onDelete,
 }: SessionItemProps) {
-  // 暂停状态下可切换（后端 SSE 冻结）；仅“流中未暂停”时锁定
-  const locked = isStreaming && !isPaused;
   return (
     <li>
       <div
         role="button"
-        tabIndex={locked ? -1 : 0}
+        tabIndex={0}
         onClick={() => onSwitch(s.id)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -344,15 +320,11 @@ const SessionItem = memo(function SessionItem({
             onSwitch(s.id);
           }
         }}
-        className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-0 pr-1 transition-colors ${
-          locked
-            ? "cursor-not-allowed opacity-60"
-            : "hover:bg-hover-soft"
-        } ${active ? "bg-subtle" : ""}`}
+        className={`group relative flex cursor-pointer items-center gap-1 rounded-md py-0.5 pl-0 pr-1 transition-colors hover:bg-hover-soft ${active ? "bg-subtle" : ""}`}
       >
         {/* 12px spacer (= Chevron 宽度) + 4px gap-1 = 16px，让小圆点和 icon 左边缘严格对齐 */}
         <span className="h-3.5 w-3 shrink-0" aria-hidden />
-        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-start">
+        <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
           {s.isRunning ? (
             <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
           ) : s.hasNewResult ? (
@@ -410,8 +382,6 @@ interface SessionGroupProps {
   subtitle?: string;
   items: Session[];
   currentId: string | null;
-  isStreaming: boolean;
-  isPaused: boolean;
   onSwitch: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
@@ -425,8 +395,6 @@ function SessionGroup({
   subtitle,
   items,
   currentId,
-  isStreaming,
-  isPaused,
   onSwitch,
   onRename,
   onDelete,
@@ -472,8 +440,7 @@ function SessionGroup({
         <button
           type="button"
           onClick={onCreate}
-          disabled={isStreaming && !isPaused}
-          className="shrink-0 rounded p-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-50"
+          className="shrink-0 rounded p-0.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c"
           aria-label={`在 ${label} 新建会话`}
           title={`在 ${label} 新建会话`}
         >
@@ -487,8 +454,6 @@ function SessionGroup({
               key={s.id}
               session={s}
               active={s.id === currentId}
-              isStreaming={isStreaming}
-              isPaused={isPaused}
               onSwitch={onSwitch}
               onRename={onRename}
               onDelete={onDelete}

@@ -497,8 +497,8 @@ export function installDefaultTauriInternals(): void {
  * ```
  */
 export interface ChatMockState {
-  eventHandlers: Set<(e: unknown) => void>;
-  approvalHandlers: Set<(req: unknown) => void>;
+  eventHandlers: Map<string, Set<(e: unknown) => void>>;
+  approvalHandlers: Map<string, Set<(req: unknown) => void>>;
   chat: {
     onEvent: ReturnType<typeof vi.fn>;
     onApprovalRequest: ReturnType<typeof vi.fn>;
@@ -507,6 +507,7 @@ export interface ChatMockState {
     pause: ReturnType<typeof vi.fn>;
     resume: ReturnType<typeof vi.fn>;
     compact: ReturnType<typeof vi.fn>;
+    getCurrentTraceId?: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -518,13 +519,13 @@ export interface ChatMockState {
  */
 export function mockChatModule(state: ChatMockState): {
   chat: ChatMockState["chat"];
-  emitEvent: (e: unknown) => void;
-  emitApproval: (req: unknown) => void;
+  emitEvent: (threadId: string, e: unknown) => void;
+  emitApproval: (threadId: string, req: unknown) => void;
 } {
   return {
     chat: state.chat,
-    emitEvent: (e: unknown) => state.eventHandlers.forEach((h) => h(e)),
-    emitApproval: (req: unknown) => state.approvalHandlers.forEach((h) => h(req)),
+    emitEvent: (threadId: string, e: unknown) => state.eventHandlers.get(threadId)?.forEach((h) => h(e)),
+    emitApproval: (threadId: string, req: unknown) => state.approvalHandlers.get(threadId)?.forEach((h) => h(req)),
   };
 }
 

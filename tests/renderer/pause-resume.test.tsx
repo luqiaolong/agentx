@@ -31,13 +31,18 @@ vi.hoisted(() => {
 });
 
 const chatMock = vi.hoisted(() => {
-  const eventHandlers = new Set<(e: unknown) => void>();
+  const eventHandlers = new Map<string, Set<(e: unknown) => void>>();
   return {
     eventHandlers,
     chat: {
-      onEvent: vi.fn((h: (e: unknown) => void) => {
-        eventHandlers.add(h);
-        return () => eventHandlers.delete(h);
+      onEvent: vi.fn((threadId: string, h: (e: unknown) => void) => {
+        const set = eventHandlers.get(threadId) ?? new Set();
+        set.add(h);
+        eventHandlers.set(threadId, set);
+        return () => {
+          set.delete(h);
+          if (set.size === 0) eventHandlers.delete(threadId);
+        };
       }),
       onApprovalRequest: vi.fn(() => () => {}),
       send: vi.fn().mockResolvedValue(undefined),
@@ -56,7 +61,10 @@ import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useChatStore } from "@/stores/chat";
 import { installApiMock } from "./api-mock";
 
-const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
+const emitEvent = (e: unknown) => {
+  const cid = useChatStore.getState().currentId;
+  if (cid) chatMock.eventHandlers.get(cid)?.forEach((h) => h(e));
+};
 
 installApiMock({
   sandbox: { authorize: vi.fn().mockResolvedValue(undefined) },
@@ -118,6 +126,8 @@ beforeEach(() => {
     isStreaming: false,
     approvalQueue: [],
   });
+  // Create a default session for tests that need a threadId
+  useChatStore.getState().createSession();
 });
 
 describe("pause/resume UI", () => {
@@ -247,15 +257,16 @@ describe("useChatStream paused 事件", () => {
       const currentTaskIdRef = useRef<string | null>(null);
       const lastUserQueryRef = useRef<string>("");
       const [, setTodos] = useState<TodoItem[]>([]);
-      useChatStream({
-        threadId: "t1",
-        pendingIdRef,
-        currentTaskIdRef,
-        lastUserQueryRef,
-        setTodos,
-        setErrorMsg: () => {},
-        setPaused: (v) => pausedLog.push(v),
-      });
+      const currentId = useChatStore((s) => s.currentId);
+    useChatStream({
+      threadId: currentId ?? undefined,
+      pendingIdRef,
+      currentTaskIdRef,
+      lastUserQueryRef,
+      setTodos,
+      setErrorMsg: () => {},
+      setPaused: (v) => pausedLog.push(v),
+    });
       return null;
     }
 

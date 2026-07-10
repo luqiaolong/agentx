@@ -19,13 +19,25 @@ import type { ApprovalDecision } from "../../../shared/api-types";
  * - 工具名+路径 单行展示（无独立头部双行）
  */
 export function ApprovalDialog() {
-  const approvalRequest = useChatStore((s) => s.approvalQueue[0] ?? null);
+  const currentId = useChatStore((s) => s.currentId);
+  const approvalQueue = useChatStore((s) => s.approvalQueue);
   const dequeueApprovalRequest = useChatStore((s) => s.dequeueApprovalRequest);
   const [error, setError] = useState<string | null>(null);
   const submittingRef = useRef(false);
+
+  // 只展示当前激活会话的审批请求
+  const sessionQueue = currentId
+    ? approvalQueue.filter((req) => req.threadId === currentId)
+    : [];
+  const approvalRequest = sessionQueue[0] ?? null;
+
   const { closeBtnRef, dialogRef } = useModalDialog({
     open: !!approvalRequest,
-    onClose: () => dequeueApprovalRequest(),
+    onClose: () => {
+      if (approvalRequest) {
+        dequeueApprovalRequest();
+      }
+    },
   });
 
   if (!approvalRequest) return null;

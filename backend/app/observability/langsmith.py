@@ -18,6 +18,7 @@ T2.1: ``trace_span`` 内部切换为 ``langsmith.trace`` 真实调用（凭证�
 
 from __future__ import annotations
 
+import os
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -34,6 +35,17 @@ _current_span: ContextVar[dict[str, Any] | None] = ContextVar("current_span", de
 
 # 需 redaction 的字段名后缀/子串
 _REDACT_SUFFIXES = ("PASSWORD", "KEY", "SECRET", "TOKEN", "CREDENTIAL")
+
+# 模块导入时一次性桥接：settings.py 读 AGENTX_LANGSMITH_* (pydantic-settings env_prefix=AGENTX_)，
+# langsmith SDK 读 LANGCHAIN_* / LANGSMITH_*。env.rs 同时注入两套 env，本段把 settings 字段
+# 同步到 SDK 期望的环境变量，避免 SDK 默认 fallback 到 LangChain SaaS endpoint。
+# 用 setdefault 不覆盖已有 env（便于手动 export 调试）。
+_module_settings = get_settings()
+if _module_settings.langsmith_endpoint:
+    os.environ.setdefault("LANGCHAIN_ENDPOINT", _module_settings.langsmith_endpoint)
+    os.environ.setdefault("LANGSMITH_ENDPOINT", _module_settings.langsmith_endpoint)
+if _module_settings.langsmith_api_key:
+    os.environ.setdefault("LANGSMITH_API_KEY", _module_settings.langsmith_api_key)
 
 
 def redact(metadata: dict[str, Any]) -> dict[str, Any]:

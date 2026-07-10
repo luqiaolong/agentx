@@ -182,6 +182,7 @@ export interface ChatState {
    * 审批请求队列（FIFO）。后端批量 yield 多个 approval_request 事件时，
    * 逐条入队，用户审批完队首后 shift 出队，展示下一条。
    * 队首元素（approvalQueue[0]）即当前展示的审批请求。
+   * 每个 ApprovalRequest 含 threadId 字段，ApprovalDialog 按 currentId 过滤展示。
    */
   approvalQueue: ApprovalRequest[];
   // 会话管理
@@ -343,6 +344,8 @@ export interface ChatState {
   enqueueApprovalRequest: (req: ApprovalRequest) => void;
   /** 移除并返回队首审批请求（用户审批完当前条后调用，展示下一条）。 */
   dequeueApprovalRequest: () => void;
+  /** 获取指定会话的待审批请求队列（按 threadId 过滤）。 */
+  getSessionApprovalQueue: (threadId: string) => ApprovalRequest[];
   /** 设置指定会话的执行状态。 */
   setSessionRunning: (id: string, running: boolean) => void;
   /** 清除指定会话的新结果标记。 */
@@ -1046,16 +1049,26 @@ export const useChatStore = create<ChatState>()(
           set((s) => ({ approvalQueue: [...s.approvalQueue, req] })),
         dequeueApprovalRequest: () =>
           set((s) => ({ approvalQueue: s.approvalQueue.slice(1) })),
+        getSessionApprovalQueue: (threadId) => {
+          const { approvalQueue } = get();
+          return approvalQueue.filter((req) => req.threadId === threadId);
+        },
 
         setSessionRunning: (id, running) =>
           set((s) => {
             const sess = s.sessions[id];
             if (!sess) return s;
+            const updatedSessions = {
+              ...s.sessions,
+              [id]: { ...sess, isRunning: running },
+            };
+            // 全局 isStreaming 反映是否有任何会话仍在运行
+            const anyRunning = Object.values(updatedSessions).some(
+              (session) => session.isRunning
+            );
             return {
-              sessions: {
-                ...s.sessions,
-                [id]: { ...sess, isRunning: running },
-              },
+              sessions: updatedSessions,
+              isStreaming: anyRunning,
             };
           }),
 

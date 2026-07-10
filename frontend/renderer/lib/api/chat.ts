@@ -1,5 +1,5 @@
 /**
- * Chat 域 API：SSE 流式对话 + 事件分发。
+ * Chat 域 API：SSE 流式对话 + 事件分发（多连接池版本）。
  *
  * 对应原 preload `window.api.chat.*`。`send()` 直连后端 `/api/chat` SSE 流，
  * 解析后分发给 `onEvent` / `onApprovalRequest` 注册的 handler。
@@ -12,7 +12,7 @@
  * - 后端 SSE 入口生成 16 字符 hex，注入到每个 JSON 事件 data 顶层。
  * - 本文件解析 SSE 时把 trace_id 提到 ChatEvent 顶层字段（payload 展开时自动带入）。
  * - token 事件 data 是纯字符串，单独从 token 之前的 JSON 事件读 trace_id。
- * - 模块级 currentTraceId 变量持有"最近一次"trace_id，供 token 事件补充。
+ * - 每个连接独立维护 currentTraceId，供对应会话的 useChatStream 读取。
  */
 import type {
   ChatEvent,
@@ -26,30 +26,52 @@ import type {
 import { API_BASE } from "../api-constants";
 import { apiPost } from "./request";
 
-const eventHandlers = new Set<(e: ChatEvent) => void>();
-const approvalHandlers = new Set<(req: ApprovalRequest) => void>();
+// ---- 多连接池数据结构 ----
+
+interface ChatConnection {
+  threadId: string;
+  traceId: string;
+  eventHandlers: Set<(e: ChatEvent) => void>;
+  approvalHandlers: Set<(req: ApprovalRequest) => void>;
+  abortController: AbortController | null;
+  reader: ReadableStreamDefaultReader<Uint8Array> | null;
+  isActive: boolean;
+}
+
+const connections: Map<string, ChatConnection> = new Map();
 
 /**
- * 当前 SSE 流的 trace_id（在 send() 开始时由前端生成，POST body 携带；
+ * 每个连接独立的 trace_id（在 send() 开始时由前端生成，POST body 携带；
  * 后端若沿用则所有 SSE 事件的 trace_id 一致，若后端自己生成则以第一个
- * 事件为准）。useChatStream 通过 ``getCurrentTraceId`` 读取。
- *
- * 选前端生成的理由：用户点发送的瞬间就能拿到 trace_id（无需等服务端响应），
- * UI 可以立即展示，审批弹窗和错误提示也能立刻拿到 ID 拼到消息里。
+ * 事件为准）。useChatStream 通过 ``getCurrentTraceId`` 读取对应 threadId 的值。
  */
-let currentTraceId: string | null = null;
+function getConnection(threadId: string): ChatConnection {
+  let conn = connections.get(threadId);
+  if (!conn) {
+    conn = {
+      threadId,
+      traceId: "",
+      eventHandlers: new Set(),
+      approvalHandlers: new Set(),
+      abortController: null,
+      reader: null,
+      isActive: false,
+    };
+    connections.set(threadId, conn);
+  }
+  return conn;
+}
 
 /** 生成 16 字符 hex trace_id（与后端 new_trace_id() 格式对齐）。 */
 function generateTraceId(): string {
-  // crypto.randomUUID() 返回 36 字符（含 4 个连字符），取前 16 个 hex 字符
-  // （去掉连字符后取前 16 位），与后端 uuid.uuid4().hex[:16] 等价长度。
   const hex = crypto.randomUUID().replace(/-/g, "");
   return hex.slice(0, 16);
 }
 
-/** 暴露给 useChatStream 读取当前 turn 的 trace_id。 */
-export function getCurrentTraceId(): string | null {
-  return currentTraceId;
+/** 暴露给 useChatStream 读取指定 threadId 当前 turn 的 trace_id。 */
+export function getCurrentTraceId(threadId: string): string | null {
+  const conn = connections.get(threadId);
+  return conn?.traceId ?? null;
 }
 
 interface SendMessageOpts {
@@ -58,9 +80,7 @@ interface SendMessageOpts {
   systemPrompt?: string;
   agentMode?: AgentMode;
   workspacePath?: string | null;
-  /** 用户手动撤销过的路径列表；后端收到后跳过对这些路径的 chip 自动授权 */
   revokedPaths?: string[];
-  /** work 模式下 @mention 解析出的目标 agent key 列表（强制委派目标） */
   mentionTargets?: string[];
   onError?: (err: Error) => void;
 }
@@ -72,10 +92,22 @@ interface SendMessageOpts {
  * 流式事件以空行分隔（`\r\n\r\n` 或 `\n\n` 均兼容）。
  */
 async function send(msg: { role: string; content: string }, opts?: SendMessageOpts): Promise<void> {
-  // 入口生成 trace_id：放在 POST body 给后端沿用，并在模块级变量里存一份
-  // 供 useChatStream 读取（无需等服务端响应）。
+  const threadId = opts?.threadId ?? "";
+  const conn = getConnection(threadId);
+
+  // 若该 threadId 已有活跃连接，先中止旧连接（同会话内串行）
+  if (conn.isActive && conn.abortController) {
+    conn.abortController.abort();
+    cleanupConnection(threadId);
+  }
+
+  // 生成新 trace_id
   const traceId = generateTraceId();
-  currentTraceId = traceId;
+  conn.traceId = traceId;
+  conn.isActive = true;
+
+  const abortController = new AbortController();
+  conn.abortController = abortController;
 
   let res: Response;
   try {
@@ -84,7 +116,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: msg.content,
-        thread_id: opts?.threadId ?? "",
+        thread_id: threadId,
         permission_mode: opts?.permissionMode ?? "standard",
         system_prompt: opts?.systemPrompt ?? null,
         agent_mode: opts?.agentMode ?? "work",
@@ -93,16 +125,21 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         mention_targets: opts?.mentionTargets ?? null,
         trace_id: traceId,
       }),
+      signal: abortController.signal,
     });
   } catch (err) {
-    // 网络层错误：fetch 本身失败（离线 / CORS / DNS 等）
+    if ((err as Error).name === "AbortError") {
+      // 用户主动中止，不报错
+      cleanupConnection(threadId);
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     opts?.onError?.(new Error(`网络请求失败：${message}`));
+    cleanupConnection(threadId);
     return;
   }
 
   if (!res.ok) {
-    // HTTP 错误：后端已响应但状态码非 2xx，尝试读取错误文本
     let detail = "";
     try {
       detail = await res.text();
@@ -112,28 +149,30 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
     opts?.onError?.(
       new Error(`后端错误 ${res.status}${detail ? `：${detail.slice(0, 200)}` : ""}`),
     );
+    cleanupConnection(threadId);
     return;
   }
 
   const body = res.body;
   if (!body) {
     opts?.onError?.(new Error("响应体为空，无法读取 SSE 流"));
+    cleanupConnection(threadId);
     return;
   }
 
   const reader = body.getReader();
+  conn.reader = reader;
   const decoder = new TextDecoder();
   let buffer = "";
   let receivedDone = false;
   let lastPingTime = Date.now();
-  const PING_TIMEOUT = 90000; // 90 秒未收到 ping 则判定连接断开（后端 30 秒发一次）
+  const PING_TIMEOUT = 90000;
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      // SSE 事件以空行分隔（HTTP 标准 \r\n\r\n，部分实现用 \n\n，均需兼容）
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? "";
       for (const rawEvent of events) {
@@ -149,31 +188,27 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         }
         const dataStr = dataParts.join("\n");
         if (!dataStr && eventType === "message") continue;
-        // 处理心跳 ping 事件
         if (eventType === "ping") {
           lastPingTime = Date.now();
           continue;
         }
-        // data 可能是 JSON 或纯字符串（token 事件常用纯字符串）
         let payload: unknown = dataStr;
         const trimmed = dataStr.trim();
         if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
           try {
             payload = JSON.parse(trimmed);
           } catch {
-            payload = dataStr; // 解析失败保留原始字符串
+            payload = dataStr;
           }
         }
-        // ChatEvent 是 discriminated union（type 字段为字面量），
-        // 但 eventType 是动态 string，对象字面量无法直接赋值给 union，
-        // 用 `as unknown as ChatEvent` 断言。
         const evt = {
           type: eventType,
           ...(typeof payload === "object" && payload !== null
             ? (payload as Record<string, unknown>)
             : { data: payload }),
         } as unknown as ChatEvent;
-        eventHandlers.forEach((h) => h(evt));
+        // 只分发到该 threadId 注册的 handlers
+        conn.eventHandlers.forEach((h) => h(evt));
         if (eventType === "done") {
           receivedDone = true;
         }
@@ -192,33 +227,59 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
             writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
             traceId: typeof obj.trace_id === "string" ? obj.trace_id : undefined,
           };
-          approvalHandlers.forEach((h) => h(req));
+          conn.approvalHandlers.forEach((h) => h(req));
         }
       }
-      // 检查 ping 超时：长时间未收到 ping 说明连接可能已断开
       if (Date.now() - lastPingTime > PING_TIMEOUT) {
         throw new Error("SSE 连接超时：长时间未收到服务器心跳");
       }
     }
   } catch (err) {
-    // SSE 读取过程中连接异常（TCP 断开、浏览器冻结等）
+    if ((err as Error).name === "AbortError") {
+      cleanupConnection(threadId);
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     opts?.onError?.(new Error(`SSE 连接中断：${message}`));
+    cleanupConnection(threadId);
     return;
   }
 
   if (!receivedDone) {
     opts?.onError?.(new Error("连接中断，未收到完成事件"));
   }
+  cleanupConnection(threadId);
+}
+
+/** 清理指定 threadId 的连接资源。 */
+function cleanupConnection(threadId: string): void {
+  const conn = connections.get(threadId);
+  if (!conn) return;
+  conn.isActive = false;
+  conn.traceId = "";
+  if (conn.reader) {
+    try {
+      conn.reader.cancel();
+    } catch {
+      /* ignore */
+    }
+    conn.reader = null;
+  }
+  conn.abortController = null;
 }
 
 /** 中断指定 thread 的对话。 */
 async function abort(threadId: string): Promise<void> {
+  const conn = connections.get(threadId);
+  if (conn?.abortController) {
+    conn.abortController.abort();
+  }
   await fetch(`${API_BASE}/api/chat/abort`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ thread_id: threadId }),
   });
+  cleanupConnection(threadId);
 }
 
 /** 暂停指定 thread 的对话。 */
@@ -249,16 +310,29 @@ async function compact(threadId: string): Promise<CompactResult> {
   return (await r.json()) as CompactResult;
 }
 
-/** 注册 SSE 事件 handler，返回取消注册函数。 */
-function onEvent(handler: (e: ChatEvent) => void): () => void {
-  eventHandlers.add(handler);
-  return () => eventHandlers.delete(handler);
+/** 注册指定 threadId 的 SSE 事件 handler，返回取消注册函数。 */
+function onEvent(threadId: string, handler: (e: ChatEvent) => void): () => void {
+  const conn = getConnection(threadId);
+  conn.eventHandlers.add(handler);
+  return () => {
+    conn.eventHandlers.delete(handler);
+    // 若该连接无 handler 且非活跃，清理资源
+    if (!conn.isActive && conn.eventHandlers.size === 0 && conn.approvalHandlers.size === 0) {
+      connections.delete(threadId);
+    }
+  };
 }
 
-/** 注册 approval_request handler，返回取消注册函数。 */
-function onApprovalRequest(handler: (req: ApprovalRequest) => void): () => void {
-  approvalHandlers.add(handler);
-  return () => approvalHandlers.delete(handler);
+/** 注册指定 threadId 的 approval_request handler，返回取消注册函数。 */
+function onApprovalRequest(threadId: string, handler: (req: ApprovalRequest) => void): () => void {
+  const conn = getConnection(threadId);
+  conn.approvalHandlers.add(handler);
+  return () => {
+    conn.approvalHandlers.delete(handler);
+    if (!conn.isActive && conn.eventHandlers.size === 0 && conn.approvalHandlers.size === 0) {
+      connections.delete(threadId);
+    }
+  };
 }
 
 /**

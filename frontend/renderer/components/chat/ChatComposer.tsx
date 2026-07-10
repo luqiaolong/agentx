@@ -491,7 +491,7 @@ export function ChatComposer({
   const canSend = input.trim().length > 0 && !isStreaming && !isPaused;
 
   return (
-    <div className="border-t border-default bg-surface px-3 py-2">
+    <div className="bg-surface px-3 py-2">
       <div className="mx-auto max-w-3xl">
         <div
           className={`chat-composer relative px-3 pb-1.5 pt-2 ${

@@ -43,10 +43,25 @@ fn inject_credentials(app: &AppHandle, env: &mut HashMap<String, String>) {
     if let Some(k) = credentials::get_api_key(app, "tavily") {
         env.insert("AGENTX_TAVILY_API_KEY".into(), k);
     }
-    // LANGSMITH_API_KEY 是唯一无 AGENTX_ 前缀的凭证
+    // LangSmith 凭证注入：langsmith SDK 读 LANGSMITH_API_KEY / LANGSMITH_ENDPOINT /
+    // LANGSMITH_TRACING；settings.py 读 AGENTX_LANGSMITH_*（pydantic-settings env_prefix=AGENTX_）。
+    // 双向注入保证：① SDK 拿到正确 endpoint ② settings._langsmith_available() 判定通过。
+    // endpoint 硬编码为 myserver 自托管实例（myserver 是固定部署目标）。
     if let Some(k) = credentials::get_api_key(app, "langsmith") {
-        env.insert("LANGSMITH_API_KEY".into(), k);
+        env.insert("LANGSMITH_API_KEY".into(), k.clone());
+        env.insert("AGENTX_LANGSMITH_API_KEY".into(), k);
     }
+    env.insert("LANGSMITH_TRACING".into(), "true".into());
+    env.insert("AGENTX_LANGSMITH_TRACING".into(), "true".into());
+    env.insert(
+        "LANGSMITH_ENDPOINT".into(),
+        "http://192.168.1.4:21984".into(),
+    );
+    env.insert(
+        "AGENTX_LANGSMITH_ENDPOINT".into(),
+        "http://192.168.1.4:21984".into(),
+    );
+    env.insert("LANGSMITH_PROJECT".into(), "agentx".into());
 
     let (milvus_user, milvus_password) = credentials::get_milvus_credentials(app);
     if let Some(u) = milvus_user {

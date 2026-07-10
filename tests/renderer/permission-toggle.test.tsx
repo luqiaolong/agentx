@@ -214,6 +214,7 @@ describe("PermissionToggle 紧凑命令栏", () => {
 describe("ApprovalDialog directory_extension 三按钮", () => {
   it("dangerous_tool 渲染 [拒绝 / 批准] 二按钮", () => {
     useChatStore.setState({
+      currentId: "t1",
       approvalQueue: [{
         threadId: "t1",
         toolName: "edit_file",
@@ -231,6 +232,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 渲染 [拒绝 / 本次允许 / 会话内允许] 三按钮", () => {
     useChatStore.setState({
+      currentId: "t2",
       approvalQueue: [{
         threadId: "t2",
         toolName: "read_file",
@@ -251,6 +253,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 点本次允许 → submit(true, once, path, writable)", async () => {
     useChatStore.setState({
+      currentId: "t3",
       approvalQueue: [{
         threadId: "t3",
         toolName: "read_file",
@@ -277,6 +280,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 点会话内允许 → submit(true, session)", async () => {
     useChatStore.setState({
+      currentId: "t4",
       approvalQueue: [{
         threadId: "t4",
         toolName: "read_file",
@@ -300,6 +304,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 点拒绝 → submit(false, deny)", async () => {
     useChatStore.setState({
+      currentId: "t5",
       approvalQueue: [{
         threadId: "t5",
         toolName: "read_file",
@@ -323,6 +328,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
 
   it("directory_extension 时不触发自动批准", () => {
     useChatStore.setState({
+      currentId: "t6",
       approvalQueue: [{
         threadId: "t6",
         toolName: "read_file",

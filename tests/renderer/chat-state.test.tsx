@@ -31,13 +31,18 @@ vi.hoisted(() => {
 });
 
 const chatMock = vi.hoisted(() => {
-  const eventHandlers = new Set<(e: unknown) => void>();
+  const eventHandlers = new Map<string, Set<(e: unknown) => void>>();
   return {
     eventHandlers,
     chat: {
-      onEvent: vi.fn((h: (e: unknown) => void) => {
-        eventHandlers.add(h);
-        return () => eventHandlers.delete(h);
+      onEvent: vi.fn((threadId: string, h: (e: unknown) => void) => {
+        const set = eventHandlers.get(threadId) ?? new Set();
+        set.add(h);
+        eventHandlers.set(threadId, set);
+        return () => {
+          set.delete(h);
+          if (set.size === 0) eventHandlers.delete(threadId);
+        };
       }),
       onApprovalRequest: vi.fn(() => () => {}),
       send: vi.fn().mockResolvedValue(undefined),
@@ -59,7 +64,8 @@ import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useChatStore } from "@/stores/chat";
 import { installApiMock } from "./api-mock";
 
-const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
+const emitEvent = (threadId: string, e: unknown) =>
+  chatMock.eventHandlers.get(threadId)?.forEach((h) => h(e));
 
 installApiMock({
   sandbox: { authorize: vi.fn().mockResolvedValue(undefined) },
@@ -84,7 +90,7 @@ function Harness({
   const [, setTodos] = useState<TodoItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   useChatStream({
-    threadId: useChatStore.getState().currentId ?? undefined,
+    threadId: activeThreadId ?? useChatStore.getState().currentId ?? undefined,
     activeThreadIdRef,
     pendingIdRef,
     currentTaskIdRef,
@@ -114,7 +120,7 @@ describe("SSE done/error 按 thread_id 路由", () => {
 
     render(<Harness activeThreadId={idA} />);
     await act(async () => {
-      emitEvent({ type: "done", data: {} });
+      emitEvent(idA, { type: "done", data: {} });
     });
 
     expect(useChatStore.getState().sessions[idA]?.isRunning).toBe(false);
@@ -134,7 +140,7 @@ describe("SSE done/error 按 thread_id 路由", () => {
 
     render(<Harness activeThreadId={idA} initialPendingId={pendingId} />);
     await act(async () => {
-      emitEvent({ type: "error", data: "后端异常" });
+      emitEvent(idA, { type: "error", data: "后端异常" });
     });
 
     const sess = useChatStore.getState().sessions[idA];
@@ -151,7 +157,7 @@ describe("SSE done/error 按 thread_id 路由", () => {
     // 模拟从 idA 线程发出的 SSE 事件（activeThreadIdRef 仍指向 idA）
     render(<Harness activeThreadId={idA} />);
     await act(async () => {
-      emitEvent({ type: "done", data: {} });
+      emitEvent(idA, { type: "done", data: {} });
     });
 
     expect(useChatStore.getState().sessions[idA]?.isRunning).toBe(false);

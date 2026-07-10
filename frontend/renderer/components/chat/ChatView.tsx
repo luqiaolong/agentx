@@ -44,6 +44,9 @@ export function ChatView() {
     s.currentId ? s.sessions[s.currentId]?.messages ?? EMPTY_MESSAGES : EMPTY_MESSAGES,
   );
   const currentId = useChatStore((s) => s.currentId);
+  const currentSession = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId] ?? null : null,
+  );
   const isStreaming = useChatStore((s) => s.isStreaming);
   const createSession = useChatStore((s) => s.createSession);
   const addMessage = useChatStore((s) => s.addMessage);
@@ -56,6 +59,9 @@ export function ChatView() {
   const updateTask = useTasksStore((s) => s.updateTask);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
   const setTheme = useSettingsStore((s) => s.setTheme);
+
+  // 当前会话是否在执行中（用于控制发送、编辑、滚动等行为）
+  const currentSessionRunning = currentSession?.isRunning ?? false;
 
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -91,11 +97,11 @@ export function ChatView() {
 
   // 流式结束后清理线程归属缓存，避免暂停/恢复误操作旧线程
   useEffect(() => {
-    if (!isStreaming) {
+    if (!currentSessionRunning) {
       activeThreadIdRef.current = null;
     }
-  }, [isStreaming]);
-  const bottomRef = useAutoScroll(messages, isStreaming);
+  }, [currentSessionRunning]);
+  const bottomRef = useAutoScroll(messages, currentSessionRunning);
 
   // T9：计算滚动进度的纯函数（top% 和 viewport height%）
   const computeProgress = useCallback(() => {
@@ -352,7 +358,7 @@ export function ChatView() {
   };
 
   const handleSend = async (content: string) => {
-    if (!content || isStreaming) return;
+    if (!content || currentSessionRunning) return;
 
     // 内置命令本地分发，不发后端
     const trimmed = content.trim();
@@ -404,7 +410,7 @@ export function ChatView() {
     pendingIdRef.current = pendingId;
     // 观测中心：pending assistant 消息创建时预填 traceId（前端生成，后端应沿用）。
     // 后端 SSE 事件若带回 trace_id，useChatStream 会用 setMessageTraceId 覆盖为后端确认值。
-    const initialTraceId = getCurrentTraceId() ?? undefined;
+    const initialTraceId = getCurrentTraceId(tid) ?? undefined;
     addMessage({ id: pendingId, role: "assistant", content: "", ts: Date.now(), traceId: initialTraceId });
 
     // 新一轮发送：重置任务追踪状态，让 todo_update 创建新任务而非更新旧任务
@@ -504,10 +510,10 @@ export function ChatView() {
         ) : (
           <AssistantUIThread
             messages={messages}
-            isStreaming={isStreaming}
+            isStreaming={currentSessionRunning}
             onEditSubmit={(messageId, newContent) => {
               // 就地编辑提交：删除该消息及之后的所有消息，重新发送编辑后的内容
-              if (isStreaming) return;
+              if (currentSessionRunning) return;
               deleteMessagesAfter(messageId);
               setTodos([]);
               setErrorMsg(null);
@@ -546,7 +552,7 @@ export function ChatView() {
 
       {/* 输入区 */}
       <ChatComposer
-        isStreaming={isStreaming}
+        isStreaming={currentSessionRunning}
         isPaused={isPaused}
         setDropError={setDropError}
         onSend={handleSend}

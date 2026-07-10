@@ -31,13 +31,18 @@ vi.hoisted(() => {
 });
 
 const chatMock = vi.hoisted(() => {
-  const eventHandlers = new Set<(e: unknown) => void>();
+  const eventHandlers = new Map<string, Set<(e: unknown) => void>>();
   return {
     eventHandlers,
     chat: {
-      onEvent: vi.fn((h: (e: unknown) => void) => {
-        eventHandlers.add(h);
-        return () => eventHandlers.delete(h);
+      onEvent: vi.fn((threadId: string, h: (e: unknown) => void) => {
+        const set = eventHandlers.get(threadId) ?? new Set();
+        set.add(h);
+        eventHandlers.set(threadId, set);
+        return () => {
+          set.delete(h);
+          if (set.size === 0) eventHandlers.delete(threadId);
+        };
       }),
       onApprovalRequest: vi.fn(() => () => {}),
       send: vi.fn().mockResolvedValue(undefined),
@@ -55,7 +60,7 @@ import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
 import { useChatStore } from "@/stores/chat";
 import { installApiMock } from "./api-mock";
 
-const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
+const emitEvent = (threadId: string, e: unknown) => chatMock.eventHandlers.get(threadId)?.forEach((h) => h(e));
 
 installApiMock({
   sandbox: { authorize: vi.fn().mockResolvedValue(undefined) },
@@ -104,13 +109,13 @@ beforeEach(() => {
 
 describe("todo_update 按 task_id 分组", () => {
   it("无 task_id 时全量替换 todos", async () => {
-    render(<Harness threadId="t1" />);
+    render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         todos: [{ content: "a", status: "pending" }],
       });
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         todos: [{ content: "b", status: "completed" }],
       });
@@ -122,19 +127,19 @@ describe("todo_update 按 task_id 分组", () => {
   });
 
   it("有 task_id 时仅替换对应分组的 todos", async () => {
-    render(<Harness threadId="t1" />);
+    render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         task_id: "task-a",
         todos: [{ content: "任务 A", status: "pending" }],
       });
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         task_id: "task-b",
         todos: [{ content: "任务 B", status: "pending" }],
       });
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         task_id: "task-a",
         todos: [
@@ -142,7 +147,7 @@ describe("todo_update 按 task_id 分组", () => {
           { content: "A-2", status: "in_progress" },
         ],
       });
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         task_id: "task-b",
         todos: [{ content: "B-1", status: "completed" }],
@@ -164,14 +169,14 @@ describe("todo_update 按 task_id 分组", () => {
   });
 
   it("同一 task_id 的多次 todo_update 会覆盖该分组", async () => {
-    render(<Harness threadId="t1" />);
+    render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         task_id: "task-a",
         todos: [{ content: "A-1", status: "pending" }],
       });
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         task_id: "task-a",
         todos: [{ content: "A-2", status: "completed" }],
@@ -185,9 +190,9 @@ describe("todo_update 按 task_id 分组", () => {
   });
 
   it("原生 {content, status} schema 正确归一化三态", async () => {
-    render(<Harness threadId="t1" />);
+    render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent({
+      emitEvent('tid-1', {
         type: "todo_update",
         todos: [
           { content: "待办", status: "pending" },

@@ -421,14 +421,13 @@
     outline: none;
   }
 
-  /* Chat composer — 浮动容器
-     1px 边框 + 圆角, 内部由 textarea (无边框) 撑起.
-     focus-within 时整容器高亮, 视觉上更收敛 */
+  /* Chat composer — 隐形边框设计
+     默认边框色与背景同色，放大/高对比度时可见轮廓
+     hover/focus 时边框明显高亮 */
   .chat-composer {
     border: 1px solid var(--border-default);
     background-color: var(--bg-surface);
     border-radius: 1rem;
-    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
     transition: border-color 180ms ease, box-shadow 180ms ease,
       background-color 180ms ease;
   }

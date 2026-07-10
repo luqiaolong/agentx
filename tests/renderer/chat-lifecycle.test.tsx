@@ -32,15 +32,20 @@ vi.hoisted(() => {
 // Mock @/lib/api/chat 模块：vi.hoisted 创建共享状态，vi.mock 工厂引用。
 // useChatStream 内部 import { chat } from "@/lib/api/chat"，需在此替换。
 const chatMock = vi.hoisted(() => {
-  const eventHandlers = new Set<(e: unknown) => void>();
+  const eventHandlers = new Map<string, Set<(e: unknown) => void>>();
   const approvalHandlers = new Set<(req: unknown) => void>();
   return {
     eventHandlers,
     approvalHandlers,
     chat: {
-      onEvent: vi.fn((h: (e: unknown) => void) => {
-        eventHandlers.add(h);
-        return () => eventHandlers.delete(h);
+      onEvent: vi.fn((threadId: string, h: (e: unknown) => void) => {
+        const set = eventHandlers.get(threadId) ?? new Set();
+        set.add(h);
+        eventHandlers.set(threadId, set);
+        return () => {
+          set.delete(h);
+          if (set.size === 0) eventHandlers.delete(threadId);
+        };
       }),
       onApprovalRequest: vi.fn((h: (req: unknown) => void) => {
         approvalHandlers.add(h);
@@ -77,7 +82,10 @@ function deriveContent(parts: MessagePart[] | undefined): string {
 }
 
 // 事件触发辅助函数
-const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
+const emitEvent = (e: unknown) => {
+  const cid = useChatStore.getState().currentId;
+  if (cid) chatMock.eventHandlers.get(cid)?.forEach((h) => h(e));
+};
 const emitApproval = (req: unknown) => chatMock.approvalHandlers.forEach((h) => h(req));
 
 // sandbox/dialog 走 Tauri invoke / fetch，用 installApiMock 安装路由
@@ -99,7 +107,9 @@ function ChatHarness({ onError }: { onError?: (msg: string | null) => void }) {
   const [, setTodos] = useState<TodoItem[]>([]);
   const [isPaused, setIsPaused] = useState(false);
   const setErrorMsg = (msg: string | null) => onError?.(msg);
+  const currentId = useChatStore((s) => s.currentId);
   useChatStream({
+    threadId: currentId ?? undefined,
     pendingIdRef,
     currentTaskIdRef,
     lastUserQueryRef,

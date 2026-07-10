@@ -146,6 +146,9 @@ class Settings(BaseSettings):
     langsmith_api_key: str | None = None
     langsmith_project: str = "agentx"
     langsmith_tracing: bool = False
+    # 自托管 LangSmith endpoint URL（langsmith SDK 读 LANGSMITH_ENDPOINT；
+    # env.rs 同步注入 AGENTX_/LANGSMITH_ 两套前缀，本字段是 SSOT 桥接点）
+    langsmith_endpoint: str | None = None
 
     # ---- 观测中心（agent-observation-store）----
     # observation TTL（天）：超过 TTL 的 run/event/tool_call 自动清理，feedback 永久保留

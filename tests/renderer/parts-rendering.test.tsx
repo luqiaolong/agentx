@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, act } from "@testing-library/react";
 import { ToolCallCard } from "@/components/chat/parts/ToolCallCard";
 import { ReasoningBlock } from "@/components/chat/parts/ReasoningBlock";
 import { DelegationCard } from "@/components/chat/parts/DelegationCard";
@@ -670,7 +670,7 @@ describe("AssistantUIThread 配对逻辑", () => {
     expect(screen.getByText("运行中")).toBeTruthy();
   });
 
-  it("多 part 顺序：delegation → reasoning → tool-call → text 按顺序渲染", () => {
+  it("多 part 顺序：delegation → reasoning → tool-call → text 按顺序渲染", async () => {
     const message: ChatMessage = {
       id: "a1",
       role: "assistant",
@@ -699,14 +699,23 @@ describe("AssistantUIThread 配对逻辑", () => {
     render(<AssistantUIThread messages={[message]} isStreaming={false} />);
 
     // 所有 part 类型都应渲染（delegation 标签「由 代码子代理 执行」唯一匹配）
-    const delegation = screen.getByText(/由 代码子代理 执行/);
+    // delegation 默认折叠，需先展开才能看到内部的 reasoning 和 tool-call
+    const buttons = screen.getAllByRole("button", { expanded: false });
+    const delegationBtn = buttons.find((b) =>
+      b.textContent?.includes("由 代码子代理 执行")
+    )!;
+    expect(delegationBtn).toBeTruthy();
+    await act(async () => {
+      delegationBtn.click();
+    });
+
     const reasoning = screen.getByText(/已思考/);
     const toolCall = screen.getByText("read_file");
     const text = screen.getByText("最终回答");
 
     // 验证 DOM 顺序：delegation < reasoning < toolCall < text
     expect(
-      delegation.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING,
+      delegationBtn.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       reasoning.compareDocumentPosition(toolCall) & Node.DOCUMENT_POSITION_FOLLOWING,

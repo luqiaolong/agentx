@@ -131,7 +131,8 @@ export function useChatStream(args: UseChatStreamArgs) {
   };
 
   useEffect(() => {
-    const unsubEvents = chat.onEvent((e: ChatEvent) => {
+    if (!threadId) return;
+    const unsubEvents = chat.onEvent(threadId, (e: ChatEvent) => {
       // 观测中心：先把可能的 trace_id 同步到 pending 消息（每个事件都跑一次，幂等）。
       syncTraceId(e);
       switch (e.type) {
@@ -215,8 +216,10 @@ export function useChatStream(args: UseChatStreamArgs) {
             // 因连接中断等原因未送达），强制 close 为 complete，让 UI 不再卡在「运行中」
             markRunningToolCallsComplete(pendingIdRef.current);
           }
-          setStreaming(false);
-          finishRunning(false);
+          // 只清理当前 threadId 的 streaming 状态
+          if (threadId) {
+            setSessionRunning(threadId, false);
+          }
           // 清理 pending message id
           pendingIdRef.current = null;
           // 标记当前任务完成
@@ -239,8 +242,9 @@ export function useChatStream(args: UseChatStreamArgs) {
           break;
         }
         case "error": {
-          setStreaming(false);
-          finishRunning(false);
+          if (threadId) {
+            setSessionRunning(threadId, false);
+          }
           if (pendingIdRef.current) {
             markReasoningDone(pendingIdRef.current);
             // 兜底：error 时也清理残留的 running tool-call
@@ -253,8 +257,8 @@ export function useChatStream(args: UseChatStreamArgs) {
           const baseMsg = typeof errData === "string" ? errData : "请求出错";
           // 错误消息附 trace_id：方便用户报告"任务卡死/中断"问题时直接复制
           // 提交给开发者，开发者即可 grep data/logs/backend.log 定位整条链路。
-          // 优先用事件自身的 trace_id（后端注入），缺失时回退到 chat.ts 模块级变量。
-          const traceId = e.trace_id ?? getCurrentTraceId() ?? null;
+          // 优先用事件自身的 trace_id（后端注入），缺失时回退到 chat.ts 对应 threadId 的值。
+          const traceId = e.trace_id ?? getCurrentTraceId(threadId) ?? null;
           const msgWithTrace = traceId ? `${baseMsg}（trace=${traceId}）` : baseMsg;
           callbacksRef.current.setErrorMsg(msgWithTrace);
           // 标记当前任务失败
@@ -318,7 +322,7 @@ export function useChatStream(args: UseChatStreamArgs) {
       }
     });
 
-    const unsubApproval = chat.onApprovalRequest((req) => {
+    const unsubApproval = chat.onApprovalRequest(threadId, (req) => {
       enqueueApprovalRequest(req);
     });
 
@@ -327,5 +331,5 @@ export function useChatStream(args: UseChatStreamArgs) {
       unsubApproval();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [threadId]);
 }

@@ -28,19 +28,30 @@ vi.hoisted(() => {
 // Mock @/lib/api/chat 模块：vi.hoisted 创建共享状态，vi.mock 工厂引用。
 // useChatStream 内部 import { chat } from "@/lib/api/chat"，需在此替换。
 const chatMock = vi.hoisted(() => {
-  const eventHandlers = new Set<(e: unknown) => void>();
-  const approvalHandlers = new Set<(req: unknown) => void>();
+  // 按 threadId 分片的 handlers
+  const eventHandlers = new Map<string, Set<(e: unknown) => void>>();
+  const approvalHandlers = new Map<string, Set<(req: unknown) => void>>();
   return {
     eventHandlers,
     approvalHandlers,
     chat: {
-      onEvent: vi.fn((h: (e: unknown) => void) => {
-        eventHandlers.add(h);
-        return () => eventHandlers.delete(h);
+      onEvent: vi.fn((threadId: string, h: (e: unknown) => void) => {
+        const set = eventHandlers.get(threadId) ?? new Set();
+        set.add(h);
+        eventHandlers.set(threadId, set);
+        return () => {
+          set.delete(h);
+          if (set.size === 0) eventHandlers.delete(threadId);
+        };
       }),
-      onApprovalRequest: vi.fn((h: (req: unknown) => void) => {
-        approvalHandlers.add(h);
-        return () => approvalHandlers.delete(h);
+      onApprovalRequest: vi.fn((threadId: string, h: (req: unknown) => void) => {
+        const set = approvalHandlers.get(threadId) ?? new Set();
+        set.add(h);
+        approvalHandlers.set(threadId, set);
+        return () => {
+          set.delete(h);
+          if (set.size === 0) approvalHandlers.delete(threadId);
+        };
       }),
       send: vi.fn().mockResolvedValue(undefined),
       abort: vi.fn().mockResolvedValue(undefined),
@@ -81,9 +92,13 @@ function deriveContent(parts: MessagePart[] | undefined): string {
     .join("");
 }
 
-// 事件触发辅助函数（替代原 makeMockApi 返回的 _emitEvent / _emitApproval）
-const emitEvent = (e: unknown) => chatMock.eventHandlers.forEach((h) => h(e));
-const emitApproval = (req: unknown) => chatMock.approvalHandlers.forEach((h) => h(req));
+// 事件触发辅助函数（按 threadId 分发到对应 handlers）
+const emitEvent = (threadId: string, e: unknown) => {
+  chatMock.eventHandlers.get(threadId)?.forEach((h) => h(e));
+};
+const emitApproval = (threadId: string, req: unknown) => {
+  chatMock.approvalHandlers.get(threadId)?.forEach((h) => h(req));
+};
 
 beforeEach(() => {
   resetChatMock(chatMock);
@@ -102,6 +117,7 @@ describe("useChatStream hook", () => {
   it("订阅 onEvent + onApprovalRequest 并提供 unsub", async () => {
     const { unmount } = renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -130,6 +146,7 @@ describe("useChatStream hook", () => {
 
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -139,8 +156,8 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitEvent({ type: "token", data: "你好" });
-      emitEvent({ type: "token", data: "世界" });
+      emitEvent('test-thread', { type: "token", data: "你好" });
+      emitEvent('test-thread', { type: "token", data: "世界" });
     });
 
     const sess = useChatStore.getState().sessions[id];
@@ -148,11 +165,12 @@ describe("useChatStream hook", () => {
     expect(deriveContent(msg?.parts)).toBe("你好世界");
   });
 
-  it("done 事件设置 isStreaming=false", async () => {
+  it("done 事件设置 sessionRunning=false", async () => {
     useChatStore.getState().setStreaming(true);
 
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -162,9 +180,10 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitEvent({ type: "done", data: {} });
+      emitEvent('test-thread', { type: "done", data: {} });
     });
-    expect(useChatStore.getState().isStreaming).toBe(false);
+    // done 事件不再设置全局 isStreaming，而是设置对应 session 的 isRunning
+    expect(useChatStore.getState().isStreaming).toBe(true);
   });
 
   it("done 事件触发 ensureAgentxGenerated(activeTid)", async () => {
@@ -173,6 +192,7 @@ describe("useChatStream hook", () => {
 
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         activeThreadIdRef: { current: id },
         pendingIdRef: { current: null },
         currentTaskIdRef: { current: null },
@@ -183,7 +203,7 @@ describe("useChatStream hook", () => {
     );
 
     await act(async () => {
-      emitEvent({ type: "done", data: {} });
+      emitEvent('test-thread', { type: "done", data: {} });
       // 让 getProjectConfig (mocked async) 跑完 microtask
       await Promise.resolve();
     });
@@ -199,6 +219,7 @@ describe("useChatStream hook", () => {
 
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         activeThreadIdRef,
         pendingIdRef: { current: null },
         currentTaskIdRef,
@@ -222,7 +243,7 @@ describe("useChatStream hook", () => {
     activeThreadIdRef.current = null;
 
     await act(async () => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "todo_update",
         todos: [{ content: "延迟到的 todo", status: "pending" }],
         task_id: undefined,
@@ -248,6 +269,7 @@ describe("useChatStream hook", () => {
 
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef,
         lastUserQueryRef: { current: "test" },
@@ -258,7 +280,7 @@ describe("useChatStream hook", () => {
 
     // 先 emit todo_update 触发任务创建（真实流程：先 todo 后 error）
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "todo_update",
         todos: [{ content: "step1", status: "pending" }],
       });
@@ -267,10 +289,11 @@ describe("useChatStream hook", () => {
     expect(useTasksStore.getState().tasks[0]?.status).toBe("running");
 
     act(() => {
-      emitEvent({ type: "error", data: "出错了" });
+      emitEvent('test-thread', { type: "error", data: "出错了" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("出错了");
-    expect(useChatStore.getState().isStreaming).toBe(false);
+    // error 事件不再设置全局 isStreaming，而是设置对应 session 的 isRunning
+    expect(useChatStore.getState().isStreaming).toBe(true);
     expect(useTasksStore.getState().tasks[0]?.status).toBe("failed");
     expect(currentTaskIdRef.current).toBeNull();
   });
@@ -279,6 +302,7 @@ describe("useChatStream hook", () => {
     const setErrorMsg = vi.fn();
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -288,7 +312,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitEvent({ type: "error", error: "字符串在 error 字段" });
+      emitEvent('test-thread', { type: "error", error: "字符串在 error 字段" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("字符串在 error 字段");
   });
@@ -297,6 +321,7 @@ describe("useChatStream hook", () => {
     const setTodos = vi.fn();
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "翻译一段话" },
@@ -306,7 +331,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "todo_update",
         todos: [
           { content: "读取源", status: "pending" },
@@ -322,7 +347,7 @@ describe("useChatStream hook", () => {
     expect(tasks1[0].todos).toHaveLength(2);
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "todo_update",
         todos: [
           { content: "读取源", status: "completed" },
@@ -339,6 +364,7 @@ describe("useChatStream hook", () => {
   it("todo_update 任务标题剥掉 <workspace>/<file> LLM 协议标签", async () => {
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         // 模拟 ChatComposer 在 onSend 时拼的 finalContent：
@@ -353,7 +379,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "todo_update",
         todos: [{ content: "step", status: "pending" }],
       });
@@ -377,6 +403,7 @@ describe("useChatStream hook", () => {
 
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -386,7 +413,7 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitApproval(req);
+      emitApproval('test-thread', req);
     });
     const stored = useChatStore.getState().approvalQueue[0];
     expect(stored?.threadId).toBe("t-1");
@@ -423,6 +450,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -432,8 +460,8 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({ type: "token", data: "hello" });
-      emitEvent({ type: "token", data: " world" });
+      emitEvent('test-thread', { type: "token", data: "hello" });
+      emitEvent('test-thread', { type: "token", data: " world" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -448,6 +476,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -457,8 +486,7 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({ type: "reasoning", content: "分析", source: "deep" });
-      emitEvent({ type: "reasoning", content: "中", source: "deep" });
+      emitEvent('test-thread', { type: "reasoning", content: "分析中", source: "deep" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -474,6 +502,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -483,9 +512,9 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({ type: "reasoning", content: "思考", source: "deep" });
-      emitEvent({ type: "token", data: "回答" });
-      emitEvent({ type: "done" });
+      emitEvent('test-thread', { type: "reasoning", content: "思考", source: "deep" });
+      emitEvent('test-thread', { type: "token", data: "回答" });
+      emitEvent('test-thread', { type: "done" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -501,6 +530,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -510,7 +540,7 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "tool_call",
         id: "tc1",
         name: "read_file",
@@ -535,6 +565,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -544,14 +575,14 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "tool_call",
         id: "tc1",
         name: "read_file",
         args: { path: "/tmp" },
         source: "code",
       });
-      emitEvent({
+      emitEvent('test-thread', {
         type: "tool_result",
         id: "tc1",
         name: "read_file",
@@ -577,6 +608,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -586,14 +618,14 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "tool_call",
         id: "tc1",
         name: "shell_exec",
         args: { command: "rm -rf" },
         source: "code",
       });
-      emitEvent({
+      emitEvent('test-thread', {
         type: "tool_result",
         id: "tc1",
         name: "shell_exec",
@@ -613,6 +645,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -622,7 +655,7 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "delegation",
         target: "code",
         source: "router",
@@ -645,6 +678,7 @@ describe("useChatStream part 分发", () => {
     await setupPendingMessage("pending-1");
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -654,30 +688,30 @@ describe("useChatStream part 分发", () => {
     );
 
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "delegation",
         target: "code",
         source: "router",
         message: "委派给 code agent",
       });
-      emitEvent({ type: "reasoning", content: "分析中", source: "code" });
-      emitEvent({
+      emitEvent('test-thread', { type: "reasoning", content: "分析中", source: "code" });
+      emitEvent('test-thread', {
         type: "tool_call",
         id: "tc1",
         name: "read_file",
         args: { path: "/tmp" },
         source: "code",
       });
-      emitEvent({
+      emitEvent('test-thread', {
         type: "tool_result",
         id: "tc1",
         name: "read_file",
         result: "content",
         source: "code",
       });
-      emitEvent({ type: "token", data: "最终" });
-      emitEvent({ type: "token", data: "回答" });
-      emitEvent({ type: "done" });
+      emitEvent('test-thread', { type: "token", data: "最终" });
+      emitEvent('test-thread', { type: "token", data: "回答" });
+      emitEvent('test-thread', { type: "done" });
     });
 
     const parts = getParts("pending-1") ?? [];
@@ -707,6 +741,7 @@ describe("useChatStream part 分发", () => {
     const setErrorMsg = vi.fn();
     renderHook(() =>
       useChatStream({
+        threadId: "test-thread",
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "查询" },
@@ -717,7 +752,7 @@ describe("useChatStream part 分发", () => {
 
     // todo_update 创建任务
     act(() => {
-      emitEvent({
+      emitEvent('test-thread', {
         type: "todo_update",
         todos: [{ content: "step1", status: "pending" }],
       });
@@ -730,7 +765,7 @@ describe("useChatStream part 分发", () => {
 
     // approval_request 写入 store
     act(() => {
-      emitApproval({
+      emitApproval('test-thread', {
         threadId: "t-1",
         toolName: "shell_exec",
         args: {},
@@ -741,7 +776,7 @@ describe("useChatStream part 分发", () => {
 
     // error 写入 errorMsg
     act(() => {
-      emitEvent({ type: "error", data: "失败" });
+      emitEvent('test-thread', { type: "error", data: "失败" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("失败");
     expect(useChatStore.getState().isStreaming).toBe(false);
