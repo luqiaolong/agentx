@@ -255,6 +255,35 @@
     color: var(--text-muted);
   }
 
+  /* Background colors — for transparent / partial fill scenarios
+   * (例如右侧导航条 dash、退充 chip、徽标）
+   * 不存在 bg-app/bg-surface/bg-subtle 这三个原生；这组是 text-* 语义的颜色
+   * 透到 background，用 color-mix 实现 Tailwind 的 `/N` opacity 语义。 */
+  .bg-primary-c {
+    background-color: var(--text-primary);
+  }
+  .bg-secondary-c {
+    background-color: var(--text-secondary);
+  }
+  .bg-muted-c {
+    background-color: var(--text-muted);
+  }
+  .bg-primary-c\/70 {
+    background-color: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  }
+  .bg-subtle\/60 {
+    background-color: color-mix(in srgb, var(--bg-subtle) 60%, transparent);
+  }
+  .bg-muted-c\/70 {
+    background-color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  }
+  .hover\:bg-muted-c\/70:hover {
+    background-color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  }
+  .focus-visible\:bg-muted-c\/70:focus-visible {
+    background-color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  }
+
   /* Glass card — floating navbar / dialogs */
   .glass-card {
     background-color: color-mix(in srgb, var(--bg-surface) 85%, transparent);

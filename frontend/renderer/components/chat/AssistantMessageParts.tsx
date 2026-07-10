@@ -298,7 +298,12 @@ function SubAgentGroup({
               case "text":
                 return (
                   <div key={`x-${item.part.id}`} className={blockClass}>
-                    <TextPartView text={item.part.text} role="assistant" />
+                    <TextPartView
+                      text={item.part.text}
+                      role="assistant"
+                      messageId={messageId}
+                      partId={item.part.id}
+                    />
                   </div>
                 );
               default:
@@ -452,7 +457,12 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
                 case "text":
                   return (
                     <Fragment key={`x-${item.part.id}`}>
-                      <TextPartView text={item.part.text} role="assistant" />
+                      <TextPartView
+                        text={item.part.text}
+                        role="assistant"
+                        messageId={message.id}
+                        partId={item.part.id}
+                      />
                     </Fragment>
                   );
                 case "team":
@@ -474,7 +484,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
           {/*
            * 底部操作区：
            * - 左侧（常驻展示）：观测中心反馈按钮（MessageFeedback 👍/👎）
-           *   + 执行轨迹分析按钮（TraceAnalysisButtons：复盘 / 自进化）
+           *   + 竖向分隔条 + 执行轨迹分析按钮（TraceAnalysisButtons：复盘 / 自进化）
            * - 右侧：本次请求统计信息（MessageStats：traceId / token / 耗时，右对齐紧凑展示）
            *
            * 行为：
@@ -483,10 +493,19 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
            * - runId 缺失（已完成的旧消息迁移数据）→ 反馈/分析按钮 disabled；
              MessageStats 仍可展示 ts→lastPart 的耗时
            * - 复盘/自进化：点击后在当前会话追加一条 assistant 消息流式展示分析结果
+           *
+           * 视觉分隔：feedback 与 trace-analysis 是两类不同性质的按钮（一个是消息级反馈，
+           * 一个是轨迹级分析），用 1px 竖向分隔条 + 更大间距（gap-3）拉开，避免误触。
            */}
-          <div className="flex w-full items-center justify-between gap-2 pt-1">
-            <div className="flex items-center gap-2">
+          <div className="flex w-full items-center justify-between gap-3 pt-1">
+            <div className="flex items-center gap-3">
               <MessageFeedback runId={message.traceId} isStreaming={isStreamingLast} />
+              {/* 竖向分隔条：明确划分「反馈」与「轨迹分析」两组按钮 */}
+              <div
+                aria-hidden="true"
+                className="h-3 w-px shrink-0 bg-border-default"
+                data-testid="feedback-trace-divider"
+              />
               <TraceAnalysisButtons runId={message.traceId} isStreaming={isStreamingLast} />
             </div>
             <MessageStats message={message} isStreamingLast={isStreamingLast} />

@@ -37,8 +37,9 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
   const reviewDisabled = isDisabled || isAnalyzing;
   const evolveDisabled = isDisabled || isAnalyzing;
 
+  // gap-1.5 让两个分析按钮（复盘 / 自进化）之间有明显间距，避免视觉粘连误触
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1.5">
       {/* 复盘按钮 */}
       <button
         type="button"
@@ -50,7 +51,7 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
         }
         aria-label="复盘这条执行轨迹"
         data-testid="trace-review-btn"
-        className="flex h-5 shrink-0 items-center gap-0.5 rounded-md px-1 text-muted-c transition-colors hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-5 shrink-0 items-center gap-0.5 rounded-md px-1.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
         style={{ fontSize: "var(--fs-msg-assist, 11px)" }}
       >
         {analyzingKind === "review" ? (
@@ -72,7 +73,7 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
         }
         aria-label="自进化分析"
         data-testid="trace-self-evolve-btn"
-        className="flex h-5 shrink-0 items-center gap-0.5 rounded-md px-1 text-muted-c transition-colors hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
+        className="flex h-5 shrink-0 items-center gap-0.5 rounded-md px-1.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
         style={{ fontSize: "var(--fs-msg-assist, 11px)" }}
       >
         {analyzingKind === "self-evolve" ? (

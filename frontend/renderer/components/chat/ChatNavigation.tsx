@@ -237,10 +237,14 @@ function SegmentItem({
             ? `消息 ${group.index}`
             : `组 ${group.index} · ${group.count} 条`
         }
+        style={{
+          // Inline style：保证跨主题/跨构建配置都可见，颜色走 CSS 变量。
+          backgroundColor: isActive
+            ? "color-mix(in srgb, var(--text-primary) 70%, transparent)"
+            : "color-mix(in srgb, var(--bg-subtle) 60%, transparent)",
+        }}
         className={`block h-full w-full rounded-[2px] transition-colors duration-150 ${
-          isActive
-            ? "bg-primary-c/70"
-            : "bg-subtle/60 hover:bg-muted-c/70 focus-visible:bg-muted-c/70"
+          isActive ? "" : "hover:opacity-80 focus-visible:opacity-80"
         }`}
       />
 
