@@ -60,6 +60,11 @@ export function ChatView() {
   const updateTask = useTasksStore((s) => s.updateTask);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
   const setTheme = useSettingsStore((s) => s.setTheme);
+  // 当前会话 workspace 路径：会话级 workspacePath 优先，Home 回退到 homeWorkspacePath，
+  // 与 ChatComposer / useContextFiles 同源，保证 /skills 列表与 “/” 弹层一致。
+  const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
+  const commandWorkspacePath =
+    currentSession?.workspacePath ?? homeWorkspacePath ?? null;
 
   // 当前会话是否在执行中（用于控制发送、编辑、滚动等行为）
   const currentSessionRunning = currentSession?.isRunning ?? false;
@@ -308,7 +313,9 @@ export function ChatView() {
       }
       case "skills": {
         try {
-          const { skills } = await skillsApi.list();
+          // 使用当前 workspace 路径拉取，合并工作区 + 全局技能，
+          // 跟 “/” 弹层看到的列表保持一致。
+          const { skills } = await skillsApi.list(commandWorkspacePath);
           const items = skills.map(
             (s) => `${s.name}${s.description ? ` — ${s.description}` : ""}`,
           );

@@ -95,12 +95,22 @@ export const sandbox = {
 // ---- Skills ----
 
 export const skills = {
-  list: async (): Promise<{ skills: SkillSummary[] }> => {
-    const r = await fetch(`${API_BASE}/api/skills`);
+  list: async (
+    workspacePath?: string | null,
+  ): Promise<{ skills: SkillSummary[] }> => {
+    const qs = workspacePath
+      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
+      : "";
+    const r = await fetch(`${API_BASE}/api/skills${qs}`);
     return (await r.json()) as { skills: SkillSummary[] };
   },
-  reload: async (): Promise<{ ok: boolean; count: number }> => {
-    const r = await fetch(`${API_BASE}/api/skills/reload`, { method: "POST" });
+  reload: async (
+    workspacePath?: string | null,
+  ): Promise<{ ok: boolean; count: number }> => {
+    const qs = workspacePath
+      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
+      : "";
+    const r = await fetch(`${API_BASE}/api/skills/reload${qs}`, { method: "POST" });
     return (await r.json()) as { ok: boolean; count: number };
   },
 };

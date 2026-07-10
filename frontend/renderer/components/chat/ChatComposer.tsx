@@ -65,7 +65,9 @@ export function ChatComposer({
   const setSessionPermissionMode = useChatStore((s) => s.setSessionPermissionMode);
   // workspace 路径跟随当前会话绑定，而非本地 state，
   // 这样切换会话能正确切换 workspace；store 会持久化到 localStorage
-  const workspacePath = currentSession?.workspacePath ?? null;
+  // Home 会话（workspacePath=null）回退到 homeWorkspacePath，与 useContextFiles 同源，
+  // 保证技能拉取 / 上下文附件看到的工作区一致。
+  const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath ?? null;
   const permissionMode = currentSession?.permissionMode ?? "standard";
   const showWorkspaceChip = Boolean(workspacePath);
   const { textareaRef, textareaHeight } = useFixedTextarea();
@@ -113,6 +115,17 @@ export function ChatComposer({
   }, [isStreaming]);
 
   const skills = useSkillsStore((s) => s.skills);
+  const fetchSkills = useSkillsStore((s) => s.fetchSkills);
+
+  // workspacePath 变化时重新拉取技能列表，让 “/” 选择器 / 上下文面板
+  // 始终能看到当前工作区合并后的技能（全局 + .agentx/skills/）。
+  // store 内部会用 workspacePath 做 dedup，相同路径不重复拉。
+  useEffect(() => {
+    void fetchSkills(workspacePath).catch((err) => {
+      logger.warn("ChatComposer: fetchSkills failed", err);
+    });
+  }, [workspacePath, fetchSkills]);
+
   const pickerOpen = useCommandPickerStore((s) => s.open);
   const setPickerOpen = useCommandPickerStore((s) => s.setOpen);
   const setAnchor = useCommandPickerStore((s) => s.setAnchor);
