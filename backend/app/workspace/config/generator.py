@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.observability.logger import logger
-from app.workspace.config.templates import TEMPLATES
+from app.workspace.config.templates import EMPTY_DIRS, TEMPLATES
 
 __all__ = ["GenerationResult", "generate_agentx_dir"]
 
@@ -55,13 +55,22 @@ def generate_agentx_dir(workspace_path: Path) -> GenerationResult:
 
     for rel_path, content in TEMPLATES.items():
         file_path = agentx_dir / rel_path
-        # 确保父目录存在（rules/README.md 需要 rules/ 目录）
+        # 确保父目录存在
         file_path.parent.mkdir(parents=True, exist_ok=True)
         if file_path.exists():
             skipped.append(rel_path)
         else:
             file_path.write_text(content, encoding="utf-8")
             created.append(rel_path)
+
+    # 创建空目录（rules / skills / memory）
+    for dir_name in EMPTY_DIRS:
+        dir_path = agentx_dir / dir_name
+        dir_path.mkdir(parents=True, exist_ok=True)
+        if dir_path.exists():
+            created.append(f"{dir_name}/")
+        else:
+            skipped.append(f"{dir_name}/")
 
     logger.info(
         "workspace.config.generated",

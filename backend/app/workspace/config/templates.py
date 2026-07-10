@@ -170,16 +170,15 @@ updated_at: "2026-07-10T16:00:00+00:00"
 """
 
 # 所有模板的映射，供 generator 使用
+# 注意：system_prompt.md、tools.json、AGENTS.md 不再自动生成，由用户按需手动创建
+# 注意：rules、skills、memory 目录下的 README.md 也不再自动生成，只生成空目录
 TEMPLATES: dict[str, str] = {
-    "AGENTS.md": AGENTS_MD_TEMPLATE,
     "mcp.json": MCP_JSON_TEMPLATE,
     "subagents.json": SUBAGENTS_JSON_TEMPLATE,
-    "tools.json": TOOLS_JSON_TEMPLATE,
-    "system_prompt.md": SYSTEM_PROMPT_TEMPLATE,
-    "rules/README.md": RULES_README_TEMPLATE,
-    "skills/README.md": SKILLS_README_TEMPLATE,
-    "memory/README.md": MEMORY_README_TEMPLATE,
 }
+
+# 需要生成的空目录列表（仅创建目录，不放置文件）
+EMPTY_DIRS: list[str] = ["rules", "skills", "memory"]
 
 
 def _derive_top_level_names() -> list[str]:
