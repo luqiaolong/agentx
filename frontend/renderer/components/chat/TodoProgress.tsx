@@ -57,7 +57,7 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
         return (
           <li key={i} className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
             <span
-              className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border ${badgeClass} ${
+              className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${badgeClass} ${
                 isInProgress ? "animate-spin" : ""
               }`}
             >
@@ -96,6 +96,9 @@ export function TodoProgress({
   const groups = groupTodosByTaskId(todos);
   const grouped = Array.from(groups.entries());
   const hasGroups = grouped.length > 1 || (grouped.length === 1 && grouped[0]![0] !== undefined);
+  // T12: 进度条 —— completedTodos / todos.length * 100
+  const totalTodos = todos.length;
+  const progress = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
 
   return (
     <div className="mx-auto w-full max-w-3xl border-t border-default px-4 py-2.5">
@@ -106,6 +109,13 @@ export function TodoProgress({
         <span className="text-muted-c" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
           {completedTodos}/{todos.length}
         </span>
+      </div>
+      {/* T12: 进度条 */}
+      <div className="mb-2 h-1 overflow-hidden rounded-full bg-subtle">
+        <div
+          className="h-full rounded-full bg-brand-500 transition-all duration-300 dark:bg-brand-400"
+          style={{ width: `${progress}%` }}
+        />
       </div>
       {hasGroups ? (
         <div className="space-y-3">

@@ -11,6 +11,27 @@ export interface Task {
   updatedAt?: number;
   /** 任务所属的会话 ID，用于按会话隔离任务列表 */
   sessionId: string;
+  /**
+   * 父任务 ID（Team 多子任务场景）。
+   * - 主任务（DeepAgent/Supervisor/Expert 单 agent）：undefined
+   * - Team 子任务：值为父 thread_id，前端据此把子任务嵌套到父任务卡片下
+   */
+  parentTaskId?: string;
+  /**
+   * 任务来源大类。
+   * - "work": Work Supervisor 主路径
+   * - "coding": Coding Expert 主路径
+   * - "team": AgentTeam 子任务路径（含 deep/code/rag/web/frontend_dev 等）
+   * 主任务按场景填 work/coding；Team 子任务统一填 team（具体角色看 agentRole）。
+   */
+  taskSource?: "work" | "coding" | "team";
+  /**
+   * 子任务角色（仅 Team 子任务路径有值）。
+   * - 内置：deep / code / rag / web
+   * - 团队角色：frontend_dev / backend_dev / tester / architect / devops / ui_designer / product_manager
+   * - 自定义：custom-xxx
+   */
+  agentRole?: string;
 }
 
 interface TasksState {
@@ -39,6 +60,9 @@ interface TasksState {
  * - v3 -> v4: todos schema 破坏性升级，从 `{text, done}` 迁移到 deepagents 原生
  *   `{content, status}`（status: "pending" | "in_progress" | "completed"）。
  *   旧 `done: true` → `status: "completed"`；`done: false` → `status: "pending"`。
+ * - v4 -> v5: Task 接口扩展 parentTaskId / taskSource / agentRole 三个可选字段。
+ *   非破坏性迁移：旧任务不填这些字段（undefined），渲染时按主任务处理。
+ *   Team 子任务路径由 useChatStream 收到 parent_task_id 时动态创建子任务并填入。
  */
 export function migrateTasksState(
   persisted: unknown,
@@ -81,6 +105,8 @@ export function migrateTasksState(
       })),
     }));
   }
+  // v4 -> v5: 非破坏性，新字段（parentTaskId/taskSource/agentRole）保持 undefined，
+  // 旧任务默认按主任务渲染。无需显式赋值，仅版本号升级触发 rehydrate。
   p.tasks = tasks;
   return p as Partial<TasksState>;
 }
@@ -111,7 +137,7 @@ export const useTasksStore = create<TasksState>()(
       {
         name: "agentx-tasks",
         storage: createJSONStorage(() => localStorage),
-        version: 4,
+        version: 5,
         migrate: migrateTasksState,
         // 一次性清理：老版本升级后被赋 sessionId="" 的任务无法匹配任何会话，
         // 渲染时永远不可见；与其持久留存,直接在持久化恢复时一次性清除。

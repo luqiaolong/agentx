@@ -234,17 +234,40 @@ def _make_subtask_state_update(result: TeamSubtaskResult, task_index: int) -> di
     }
 
 
-def _emit_todo_in_progress(writer: Callable, todos: list[dict], task_index: int, parent_thread_id: str) -> None:
+def _emit_todo_in_progress(
+    writer: Callable,
+    todos: list[dict],
+    task_index: int,
+    parent_thread_id: str,
+    agent_role: str,
+) -> None:
     """子任务开始时标记对应 todo 为 in_progress 并发送 ``todo_update`` 事件。
 
     构造局部 todos 副本（仅当前 index 改为 in_progress），供前端展示进度。
     并行子任务各自发送的 todo_update 可能短暂竞态，但 ``stream_mode="values"``
     会在 reducer 归并后发送最终正确的 todo_update。
+
+    Args:
+        writer: LangGraph stream writer。
+        todos: 当前 todos 快照。
+        task_index: 当前子任务在 todos 中的索引。
+        parent_thread_id: 父 thread_id，作为 ``parent_task_id`` 注入 payload，
+                         前端据此把子任务 todo 嵌套到父任务卡片下。
+        agent_role: 子任务角色（如 ``"deep"`` / ``"code"`` / ``"rag"`` / ``"web"``
+                   / ``"frontend_dev"`` / ``"backend_dev"`` 等），作为 ``source`` 注入 payload，
+                   前端据此按角色分组渲染子任务。
     """
     updated = list(todos)
     if 0 <= task_index < len(updated):
         updated[task_index] = {**updated[task_index], "status": "in_progress"}
-    writer(make_todo_update_event(updated, task_id=parent_thread_id))
+    writer(
+        make_todo_update_event(
+            updated,
+            task_id=parent_thread_id,
+            source=agent_role,
+            parent_task_id=parent_thread_id,
+        )
+    )
 
 
 async def _deep_node(state: SubtaskState) -> dict:
@@ -261,7 +284,7 @@ async def _deep_node(state: SubtaskState) -> dict:
 
     child_id = f"{parent_thread_id}-team-deep-{task_index}"
     await _inherit_workspace(child_id, state.get("workspace_path"))
-    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id)
+    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     deep_state: dict = {
         "thread_id": child_id,
@@ -301,7 +324,7 @@ async def _code_node(state: SubtaskState) -> dict:
 
     child_id = f"{parent_thread_id}-team-code-{task_index}"
     await _inherit_workspace(child_id, state.get("workspace_path"))
-    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id)
+    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     runner = _get_runner("code", state.get("subtask_runners"))
     result = await _run_subtask_stream(
@@ -333,7 +356,7 @@ async def _builtin_node(state: SubtaskState) -> dict:
     if abort_event.is_set():
         return _make_subtask_state_update(TeamSubtaskResult(agent=task.agent, success=False, payload="用户中止"), task_index)
 
-    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id)
+    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     runner = _get_runner(task.agent, state.get("subtask_runners"))
     result = await _run_subtask_stream(
@@ -362,7 +385,7 @@ async def _team_role_node(state: SubtaskState) -> dict:
     if abort_event.is_set():
         return _make_subtask_state_update(TeamSubtaskResult(agent=task.agent, success=False, payload="用户中止"), task_index)
 
-    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id)
+    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     result = await _run_team_role_subtask(
         task=task,
@@ -392,7 +415,7 @@ async def _custom_node(state: SubtaskState) -> dict:
     if abort_event.is_set():
         return _make_subtask_state_update(TeamSubtaskResult(agent=task.agent, success=False, payload="用户中止"), task_index)
 
-    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id)
+    _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     key = task.agent[len("custom-"):]
     runner = _get_runner("custom", state.get("subtask_runners"))

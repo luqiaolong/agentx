@@ -10,7 +10,7 @@ import { useGitStore } from "@/stores/git";
 import { useChatStore } from "@/stores/chat";
 import { FileTree } from "./FileTree";
 import { GitPanel } from "./GitPanel";
-import { CompactTaskList } from "./CompactTaskList";
+import { TaskTimeline } from "./TaskTimeline";
 import { ContextTabPanel } from "./ContextTabPanel";
 import { ProjectConfigBadge } from "./ProjectConfigBadge";
 
@@ -138,10 +138,10 @@ export function WorkspacePanel({
                 )}
               </div>
             )}
-            {/* 上方：精简任务列表 —— 占 2/5 */}
+            {/* 上方：任务时间线（含父子分组） —— 占 2/5 */}
             <div className="flex h-2/5 min-h-0 flex-col">
               <div className="flex-1 min-h-0 overflow-auto">
-                <CompactTaskList />
+                <TaskTimeline />
               </div>
             </div>
             {/* 下方：上下文横向 Tab —— 占 3/5 */}

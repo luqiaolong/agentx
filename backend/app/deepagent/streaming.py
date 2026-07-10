@@ -181,10 +181,13 @@ async def _stream_agent_events(
 
         # 读取 deepagents 原生 state.todos（TodoListMiddleware 维护），
         # diff 检测变化后 yield todo_update 事件（原生 {content, status} schema）。
+        # 注入 source 标识（work/coding 等），前端据此按角色分组渲染任务流。
+        # parent_task_id 在主路径（单 agent）不传，仅 Team 子任务路径由
+        # ``_emit_todo_in_progress`` 注入。
         current_todos = state.get("todos", []) if hasattr(state, "get") else []
         if current_todos != _last_todos:
-            await _obs("todo_update", {"todos": current_todos, "task_id": thread_id})
-            yield make_todo_update_event(current_todos, task_id=thread_id)
+            await _obs("todo_update", {"todos": current_todos, "task_id": thread_id, "source": source})
+            yield make_todo_update_event(current_todos, task_id=thread_id, source=source)
             _last_todos = list(current_todos)
 
         messages = state.get("messages", []) if hasattr(state, "get") else []

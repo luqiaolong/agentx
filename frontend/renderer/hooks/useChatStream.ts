@@ -49,7 +49,6 @@ export interface UseChatStreamArgs {
   pendingIdRef: MutableRefObject<string | null>;
   currentTaskIdRef: MutableRefObject<string | null>;
   lastUserQueryRef: MutableRefObject<string>;
-  setTodos: (todos: TodoItem[] | ((prev: TodoItem[]) => TodoItem[])) => void;
   setErrorMsg: (msg: string | null) => void;
   setPaused?: (paused: boolean) => void;
 }
@@ -69,7 +68,7 @@ export interface UseChatStreamArgs {
  * - error → 保留错误处理
  */
 export function useChatStream(args: UseChatStreamArgs) {
-  const { threadId, activeThreadIdRef, pendingIdRef, currentTaskIdRef, lastUserQueryRef, setTodos, setErrorMsg, setPaused } = args;
+  const { threadId, activeThreadIdRef, pendingIdRef, currentTaskIdRef, lastUserQueryRef, setErrorMsg, setPaused } = args;
 
   const appendPartText = useChatStore((s) => s.appendPartText);
   const appendReasoningStep = useChatStore((s) => s.appendReasoningStep);
@@ -98,10 +97,10 @@ export function useChatStream(args: UseChatStreamArgs) {
     currentIdRef.current = currentId;
   }, [currentId]);
 
-  const callbacksRef = useRef({ setTodos, setErrorMsg, setPaused });
+  const callbacksRef = useRef({ setErrorMsg, setPaused });
   useEffect(() => {
-    callbacksRef.current = { setTodos, setErrorMsg, setPaused };
-  }, [setTodos, setErrorMsg, setPaused]);
+    callbacksRef.current = { setErrorMsg, setPaused };
+  }, [setErrorMsg, setPaused]);
 
   /** 获取 SSE 事件应归属的 thread id：优先使用发送时固定的 activeThreadIdRef。 */
   const targetThreadId = () => activeThreadIdRef?.current ?? threadIdRef.current;
@@ -275,36 +274,64 @@ export function useChatStream(args: UseChatStreamArgs) {
             typeof e.task_id === "string" && e.task_id.length > 0
               ? e.task_id
               : undefined;
+          const parentTaskId =
+            typeof e.parent_task_id === "string" && e.parent_task_id.length > 0
+              ? e.parent_task_id
+              : undefined;
+          const source =
+            typeof e.source === "string" && e.source.length > 0
+              ? e.source
+              : undefined;
           const incoming = normalizeTodos(e.todos, taskId);
-          callbacksRef.current.setTodos((prev) => {
-            // 有 task_id 时：替换该任务分组下的 todo；无 task_id 时：全量替换（兼容旧行为）
-            if (!taskId) return incoming;
-            const kept = prev.filter((t) => t.taskId !== taskId);
-            return [...kept, ...incoming];
-          });
-          const tid = currentTaskIdRef.current;
-          if (tid) {
-            updateTask(tid, { todos: incoming });
-          } else if (incoming.length > 0) {
-            const newId = `task-${crypto.randomUUID()}`;
-            currentTaskIdRef.current = newId;
-            const rawQuery = lastUserQueryRef.current
-              .replace(/<workspace>.*?<\/workspace>\s?/g, "")
-              .replace(/<file>.*?<\/file>\s?/g, "")
-              .trim();
-            const title = rawQuery.slice(0, 40) || "深度任务";
-            // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离。
-            // 走 currentIdRef 而非闭包 currentId —— 否则 SSE handler 永远拿到首次渲染的
-            // 会话 ID,流结束后到达的延迟 todo_update 会落到 stale 闭包或 ""。
+          if (parentTaskId && source) {
+            // Team 子任务路径：创建/更新子任务（幂等 ID = `{parent_task_id}-child-{source}`）
+            const childTaskId = `${parentTaskId}-child-${source}`;
             const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
-            addTask({
-              id: newId,
-              title,
-              status: "running",
-              todos: incoming,
-              createdAt: Date.now(),
-              sessionId,
-            });
+            const existing = useTasksStore.getState().tasks.find((t) => t.id === childTaskId);
+            if (existing) {
+              updateTask(childTaskId, { todos: incoming, status: "running" });
+            } else {
+              addTask({
+                id: childTaskId,
+                title: source,
+                status: "running",
+                todos: incoming,
+                createdAt: Date.now(),
+                sessionId,
+                parentTaskId,
+                taskSource: "team",
+                agentRole: source,
+              });
+            }
+          } else {
+            // 主任务路径：DeepAgent / Supervisor / Expert
+            const tid = currentTaskIdRef.current;
+            if (tid) {
+              updateTask(tid, { todos: incoming });
+            } else if (incoming.length > 0) {
+              const newId = `task-${crypto.randomUUID()}`;
+              currentTaskIdRef.current = newId;
+              const rawQuery = lastUserQueryRef.current
+                .replace(/<workspace>.*?<\/workspace>\s?/g, "")
+                .replace(/<file>.*?<\/file>\s?/g, "")
+                .trim();
+              const title = rawQuery.slice(0, 40) || "深度任务";
+              // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离。
+              // 走 currentIdRef 而非闭包 currentId —— 否则 SSE handler 永远拿到首次渲染的
+              // 会话 ID,流结束后到达的延迟 todo_update 会落到 stale 闭包或 ""。
+              const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
+              // 根据 source 推断 taskSource: "coding" 场景识别，其他默认 "work"
+              const taskSource: "work" | "coding" = source === "coding" ? "coding" : "work";
+              addTask({
+                id: newId,
+                title,
+                status: "running",
+                todos: incoming,
+                createdAt: Date.now(),
+                sessionId,
+                taskSource,
+              });
+            }
           }
           break;
         }

@@ -52,10 +52,16 @@ export type ChatEvent = (
   | { type: "classification"; label: string; reason: string; trace_id?: string }
   // todo_update 事件：DeepAgent 任务级 todo 列表（deepagents 原生 {content, status} schema）
   // 后端可能携带 task_id，用于多任务场景下按任务分组展示
+  // source: 任务来源标识（work/coding/rag/web 或 Team 子任务角色如 backend_dev），
+  //        前端据此按角色分组渲染任务流
+  // parent_task_id: 父任务 ID（Team 多子任务场景注入 parent_thread_id），
+  //                前端据此把子任务 todo 嵌套到父任务卡片下
   | {
       type: "todo_update";
       todos: { content: string; status: TodoStatus; task_id?: string }[];
       task_id?: string;
+      source?: string;
+      parent_task_id?: string;
       trace_id?: string;
     }
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）

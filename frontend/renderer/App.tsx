@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2, PanelRightOpen, PanelRightClose } from "lucide-react";
 import { onPythonStatus } from "@/lib/api/events";
@@ -41,6 +41,33 @@ export default function App() {
   const [viewerContent, setViewerContent] = useState<string | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
+  // T14: 右侧面板可调宽（240px-480px，默认 288px = w-72）
+  const [panelWidth, setPanelWidth] = useState(288);
+  const panelWidthRef = useRef(panelWidth);
+  useEffect(() => {
+    panelWidthRef.current = panelWidth;
+  }, [panelWidth]);
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelWidthRef.current;
+    const onMove = (ev: MouseEvent) => {
+      // 向左拖 = 增宽（delta = startX - clientX）
+      const delta = startX - ev.clientX;
+      const next = Math.min(480, Math.max(240, startWidth + delta));
+      setPanelWidth(next);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
   const theme = useSettingsStore((s) => s.theme);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const agentMode = useAgentModeStore((s) => s.mode);
@@ -292,9 +319,18 @@ export default function App() {
           </ErrorBoundary>
         </main>
 
-        {/* 右侧栏 —— 工作区面板 */}
+        {/* 右侧栏 —— 工作区面板（T14: 可调宽 240-480px） */}
         {workspaceOpen && (
-          <aside className="w-72 shrink-0 border-l border-default bg-surface flex">
+          <aside
+            className="relative shrink-0 border-l border-default bg-surface flex"
+            style={{ width: panelWidth }}
+          >
+            {/* T14: drag handle —— 拖拽调整面板宽度 */}
+            <div
+              onMouseDown={startResize}
+              className="absolute -left-0.5 top-0 z-10 h-full w-1 cursor-col-resize bg-transparent transition-colors hover:bg-brand-500/40"
+              title="拖拽调整宽度"
+            />
             <WorkspacePanel
               onFileClick={(file) => {
                 void openFileViewer(file);

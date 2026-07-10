@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { act, render } from "@testing-library/react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 
 // jsdom 不实现 scrollIntoView；CommandPicker effect 调用它会抛错。
 if (typeof HTMLElement !== "undefined") {
@@ -56,8 +56,9 @@ const chatMock = vi.hoisted(() => {
 
 vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
 
-import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
+import { useChatStream } from "@/hooks/useChatStream";
 import { useChatStore } from "@/stores/chat";
+import { useTasksStore } from "@/stores/tasks";
 import { installApiMock } from "./api-mock";
 
 const emitEvent = (threadId: string, e: unknown) => chatMock.eventHandlers.get(threadId)?.forEach((h) => h(e));
@@ -75,26 +76,14 @@ function Harness({ threadId }: { threadId: string }) {
   const pendingIdRef = useRef<string | null>(`pending-${threadId}`);
   const currentTaskIdRef = useRef<string | null>(null);
   const lastUserQueryRef = useRef<string>("query");
-  const [todos, setTodos] = useState<TodoItem[]>([]);
   useChatStream({
     threadId,
     pendingIdRef,
     currentTaskIdRef,
     lastUserQueryRef,
-    setTodos,
     setErrorMsg: () => {},
   });
-  return (
-    <div>
-      <ul data-testid="todos">
-        {todos.map((t, i) => (
-          <li key={i} data-task-id={t.taskId} data-status={t.status}>
-            {t.content}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+  return <div />;
 }
 
 beforeEach(() => {
@@ -105,94 +94,53 @@ beforeEach(() => {
     isStreaming: false,
     approvalQueue: [],
   });
+  useTasksStore.setState({ tasks: [] });
 });
 
-describe("todo_update 按 task_id 分组", () => {
-  it("无 task_id 时全量替换 todos", async () => {
+describe("todo_update 主任务路径", () => {
+  it("无 parent_task_id 时多次 todo_update 全量替换同一任务的 todos", async () => {
     render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent('tid-1', {
+      emitEvent("tid-1", {
         type: "todo_update",
         todos: [{ content: "a", status: "pending" }],
       });
-      emitEvent('tid-1', {
+      emitEvent("tid-1", {
         type: "todo_update",
         todos: [{ content: "b", status: "completed" }],
       });
     });
 
-    const items = document.querySelectorAll('[data-testid="todos"] li');
-    expect(items).toHaveLength(1);
-    expect(items[0]?.textContent).toBe("b");
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].todos).toHaveLength(1);
+    expect(tasks[0].todos![0].content).toBe("b");
+    expect(tasks[0].todos![0].status).toBe("completed");
   });
 
-  it("有 task_id 时仅替换对应分组的 todos", async () => {
+  it("多次 todo_update 覆盖同一任务的 todos（不累积）", async () => {
     render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent('tid-1', {
+      emitEvent("tid-1", {
         type: "todo_update",
-        task_id: "task-a",
-        todos: [{ content: "任务 A", status: "pending" }],
-      });
-      emitEvent('tid-1', {
-        type: "todo_update",
-        task_id: "task-b",
-        todos: [{ content: "任务 B", status: "pending" }],
-      });
-      emitEvent('tid-1', {
-        type: "todo_update",
-        task_id: "task-a",
-        todos: [
-          { content: "A-1", status: "completed" },
-          { content: "A-2", status: "in_progress" },
-        ],
-      });
-      emitEvent('tid-1', {
-        type: "todo_update",
-        task_id: "task-b",
-        todos: [{ content: "B-1", status: "completed" }],
-      });
-    });
-
-    const items = document.querySelectorAll('[data-testid="todos"] li');
-    expect(items).toHaveLength(3);
-    const byText = Array.from(items).map((el) => ({
-      text: el.textContent,
-      taskId: el.getAttribute("data-task-id"),
-      status: el.getAttribute("data-status"),
-    }));
-    expect(byText).toEqual([
-      { text: "A-1", taskId: "task-a", status: "completed" },
-      { text: "A-2", taskId: "task-a", status: "in_progress" },
-      { text: "B-1", taskId: "task-b", status: "completed" },
-    ]);
-  });
-
-  it("同一 task_id 的多次 todo_update 会覆盖该分组", async () => {
-    render(<Harness threadId="tid-1" />);
-    await act(async () => {
-      emitEvent('tid-1', {
-        type: "todo_update",
-        task_id: "task-a",
         todos: [{ content: "A-1", status: "pending" }],
       });
-      emitEvent('tid-1', {
+      emitEvent("tid-1", {
         type: "todo_update",
-        task_id: "task-a",
         todos: [{ content: "A-2", status: "completed" }],
       });
     });
 
-    const items = document.querySelectorAll('[data-testid="todos"] li');
-    expect(items).toHaveLength(1);
-    expect(items[0]?.textContent).toBe("A-2");
-    expect(items[0]?.getAttribute("data-task-id")).toBe("task-a");
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].todos).toHaveLength(1);
+    expect(tasks[0].todos![0].content).toBe("A-2");
   });
 
   it("原生 {content, status} schema 正确归一化三态", async () => {
     render(<Harness threadId="tid-1" />);
     await act(async () => {
-      emitEvent('tid-1', {
+      emitEvent("tid-1", {
         type: "todo_update",
         todos: [
           { content: "待办", status: "pending" },
@@ -202,10 +150,78 @@ describe("todo_update 按 task_id 分组", () => {
       });
     });
 
-    const items = document.querySelectorAll('[data-testid="todos"] li');
-    expect(items).toHaveLength(3);
-    expect(items[0]?.getAttribute("data-status")).toBe("pending");
-    expect(items[1]?.getAttribute("data-status")).toBe("in_progress");
-    expect(items[2]?.getAttribute("data-status")).toBe("completed");
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].todos).toHaveLength(3);
+    expect(tasks[0].todos![0].status).toBe("pending");
+    expect(tasks[0].todos![1].status).toBe("in_progress");
+    expect(tasks[0].todos![2].status).toBe("completed");
+  });
+});
+
+describe("todo_update Team 子任务路径", () => {
+  it("parent_task_id + source 创建独立子任务，同 source 后续更新覆盖", async () => {
+    render(<Harness threadId="tid-1" />);
+    await act(async () => {
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "parent-1",
+        source: "rag",
+        todos: [{ content: "rag-1", status: "pending" }],
+      });
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "parent-1",
+        source: "coder",
+        todos: [{ content: "coder-1", status: "pending" }],
+      });
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "parent-1",
+        source: "rag",
+        todos: [
+          { content: "rag-1", status: "completed" },
+          { content: "rag-2", status: "in_progress" },
+        ],
+      });
+    });
+
+    const tasks = useTasksStore.getState().tasks;
+    // 2 个子任务（rag + coder），主任务路径未触发
+    expect(tasks).toHaveLength(2);
+
+    const ragTask = tasks.find((t) => t.id === "parent-1-child-rag");
+    expect(ragTask).toBeDefined();
+    expect(ragTask!.parentTaskId).toBe("parent-1");
+    expect(ragTask!.taskSource).toBe("team");
+    expect(ragTask!.agentRole).toBe("rag");
+    expect(ragTask!.todos).toHaveLength(2);
+    expect(ragTask!.todos![0].content).toBe("rag-1");
+    expect(ragTask!.todos![0].status).toBe("completed");
+    expect(ragTask!.todos![1].content).toBe("rag-2");
+    expect(ragTask!.todos![1].status).toBe("in_progress");
+
+    const coderTask = tasks.find((t) => t.id === "parent-1-child-coder");
+    expect(coderTask).toBeDefined();
+    expect(coderTask!.agentRole).toBe("coder");
+    expect(coderTask!.todos).toHaveLength(1);
+    expect(coderTask!.todos![0].content).toBe("coder-1");
+  });
+
+  it("缺少 parent_task_id 时即使有 source 也走主任务路径", async () => {
+    render(<Harness threadId="tid-1" />);
+    await act(async () => {
+      emitEvent("tid-1", {
+        type: "todo_update",
+        source: "rag",
+        todos: [{ content: "step", status: "pending" }],
+      });
+    });
+
+    const tasks = useTasksStore.getState().tasks;
+    // 无 parent_task_id → 主任务路径，不应创建 team 子任务
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].parentTaskId).toBeUndefined();
+    expect(tasks[0].taskSource).toBe("work");
   });
 });

@@ -310,9 +310,9 @@ async def run_agent_with_approval(
                 if (
                     len(pending_calls) == len(last_calls)
                     and all(
-                        p.get("name") == l.get("name")
-                        and p.get("args", {}) == l.get("args", {})
-                        for p, l in zip(pending_calls, last_calls)
+                        p.get("name") == prev.get("name")
+                        and p.get("args", {}) == prev.get("args", {})
+                        for p, prev in zip(pending_calls, last_calls)
                     )
                 ):
                     _recent_calls_history.append(pending_calls)

@@ -121,7 +121,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -150,7 +149,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -174,7 +172,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -197,7 +194,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: null },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -224,7 +220,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: null },
         currentTaskIdRef,
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -273,7 +268,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: "p" },
         currentTaskIdRef,
         lastUserQueryRef: { current: "test" },
-        setTodos: () => {},
         setErrorMsg,
       }),
     );
@@ -306,7 +300,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg,
       }),
     );
@@ -318,14 +311,12 @@ describe("useChatStream hook", () => {
   });
 
   it("todo_update 首次创建任务；之后更新现有任务", async () => {
-    const setTodos = vi.fn();
     renderHook(() =>
       useChatStream({
         threadId: "test-thread",
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "翻译一段话" },
-        setTodos,
         setErrorMsg: () => {},
       }),
     );
@@ -373,7 +364,6 @@ describe("useChatStream hook", () => {
           current:
             "<workspace>D:\\java\\agentprojects\\agentx</workspace> 翻译<file>a.txt</file>",
         },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -407,7 +397,6 @@ describe("useChatStream hook", () => {
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -454,7 +443,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -480,7 +468,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -506,7 +493,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -534,7 +520,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -569,7 +554,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -612,7 +596,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -649,7 +632,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -682,7 +664,6 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
-        setTodos: () => {},
         setErrorMsg: () => {},
       }),
     );
@@ -737,7 +718,6 @@ describe("useChatStream part 分发", () => {
 
   it("todo_update / approval_request / error 逻辑在 parts 模型下保持不变", async () => {
     await setupPendingMessage("pending-1");
-    const setTodos = vi.fn();
     const setErrorMsg = vi.fn();
     renderHook(() =>
       useChatStream({
@@ -745,23 +725,20 @@ describe("useChatStream part 分发", () => {
         pendingIdRef: { current: "pending-1" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "查询" },
-        setTodos,
         setErrorMsg,
       }),
     );
 
-    // todo_update 创建任务
+    // todo_update 创建任务（T10/T11 后：todos 直接写入 useTasksStore，不再回调 setTodos）
     act(() => {
       emitEvent('test-thread', {
         type: "todo_update",
         todos: [{ content: "step1", status: "pending" }],
       });
     });
-    expect(setTodos).toHaveBeenCalledTimes(1);
-    const firstCall = setTodos.mock.calls[0]![0];
-    const actualTodos = typeof firstCall === "function" ? firstCall([]) : firstCall;
-    expect(actualTodos).toEqual([{ content: "step1", status: "pending" }]);
-    expect(useTasksStore.getState().tasks).toHaveLength(1);
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.todos).toEqual([{ content: "step1", status: "pending" }]);
 
     // approval_request 写入 store
     act(() => {

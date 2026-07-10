@@ -99,6 +99,8 @@ def make_todo_update_event(
     todos: list[dict[str, Any]],
     task_id: str | None = None,
     trace_id: str | None = None,
+    source: str | None = None,
+    parent_task_id: str | None = None,
 ) -> dict[str, str]:
     """构造 todo_update SSE 事件（原生 deepagents Todo schema）。
 
@@ -107,6 +109,14 @@ def make_todo_update_event(
                （status: ``"pending"`` | ``"in_progress"`` | ``"completed"``）。
         task_id: 任务分组标识（Team 多子任务场景注入 thread_id，单 agent 场景可省）。
         trace_id: 观测中心 trace_id。
+        source: SSE 事件 source 标识（``"work"`` / ``"coding"`` / ``"rag"`` / ``"web"``
+                或 Team 子任务角色如 ``"frontend_dev"`` / ``"backend_dev"`` 等）。
+                主路径（DeepAgent/Supervisor/Expert）由 ``_stream_agent_events`` 透传；
+                Team 子任务路径由 ``_emit_todo_in_progress`` 注入 ``task.agent``。
+                前端用于区分任务来源、按角色分组渲染。
+        parent_task_id: 父任务 ID（Team 多子任务场景注入 ``parent_thread_id``）。
+                       前端据此把子任务 todo 嵌套到父任务卡片下，实现任务流分组。
+                       主路径（单 agent）不传，前端按主任务渲染。
 
     Returns:
         SSE 事件 dict ``{"event": "todo_update", "data": "{\"todos\":[...],\"task_id\":...}"}``
@@ -118,12 +128,18 @@ def make_todo_update_event(
                 {"content": "读取文件", "status": "completed"},
                 {"content": "修改代码", "status": "in_progress"}
             ],
-            "task_id": "thread-xxx"
+            "task_id": "thread-xxx",
+            "source": "backend_dev",
+            "parent_task_id": "parent-thread-xxx"
         }
     """
     payload: dict[str, Any] = {"todos": todos}
     if task_id is not None:
         payload["task_id"] = task_id
+    if source is not None:
+        payload["source"] = source
+    if parent_task_id is not None:
+        payload["parent_task_id"] = parent_task_id
     return make_sse_event("todo_update", payload, trace_id=trace_id)
 
 

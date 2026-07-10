@@ -32,7 +32,6 @@ from app.deepagent.agent import trigger_profile_auto_extract
 from app.deepagent.context import current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
-    DANGEROUS_TOOLS,
     _load_mcp_tools,
     _make_deep_tools,
     compute_runtime_dangerous,

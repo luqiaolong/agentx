@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { AlertCircle } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
 import type { ChatMessage } from "@/stores/chat";
@@ -63,7 +63,23 @@ export function ChatView() {
   // 当前会话是否在执行中（用于控制发送、编辑、滚动等行为）
   const currentSessionRunning = currentSession?.isRunning ?? false;
 
-  const [todos, setTodos] = useState<TodoItem[]>([]);
+  // T10: 数据源统一 —— todos 从 useTasksStore 派生，删除本地 useState
+  // 仅取主任务（无 parentTaskId）的 todos，子任务在 TaskTimeline 展示
+  const allTasks = useTasksStore((s) => s.tasks);
+  const todos = useMemo<TodoItem[]>(() => {
+    if (!currentId) return [];
+    const items: TodoItem[] = [];
+    for (const t of allTasks) {
+      if (t.sessionId !== currentId) continue;
+      if (t.parentTaskId) continue; // 跳过子任务
+      if (!t.todos) continue;
+      for (const todo of t.todos) {
+        items.push({ content: todo.content, status: todo.status, taskId: t.id });
+      }
+    }
+    return items;
+  }, [allTasks, currentId]);
+
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -85,7 +101,6 @@ export function ChatView() {
     pendingIdRef,
     currentTaskIdRef,
     lastUserQueryRef,
-    setTodos,
     setErrorMsg,
     setPaused: setIsPaused,
   });
@@ -185,7 +200,6 @@ export function ChatView() {
           /* 后端不可用也允许前端清空 */
         }
         clearMessages();
-        setTodos([]);
         currentTaskIdRef.current = null;
         lastUserQueryRef.current = "";
         setErrorMsg(null);
@@ -416,7 +430,6 @@ export function ChatView() {
     // 新一轮发送：重置任务追踪状态，让 todo_update 创建新任务而非更新旧任务
     currentTaskIdRef.current = null;
     lastUserQueryRef.current = sendContent;
-    setTodos([]);
     setStreaming(true);
     setErrorMsg(null);
     // 标记当前会话进入执行状态
@@ -515,7 +528,6 @@ export function ChatView() {
               // 就地编辑提交：删除该消息及之后的所有消息，重新发送编辑后的内容
               if (currentSessionRunning) return;
               deleteMessagesAfter(messageId);
-              setTodos([]);
               setErrorMsg(null);
               // 触发重新发送（复用 handleSend）
               void handleSend(newContent);

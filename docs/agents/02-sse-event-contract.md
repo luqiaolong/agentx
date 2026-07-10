@@ -28,7 +28,7 @@
 | `tool_call` | JSON `{"id","name","args","source"}` | 工具调用开始（id 供前端配对 tool_result；subagent 用 astream_events v2 run_id） |
 | `tool_result` | JSON `{"id","name","result","source","error?"}` | 工具调用结束 |
 | `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
-| `todo_update` | JSON `{"todos": [{"content": str, "status": "pending"\|"in_progress"\|"completed"}], "task_id?": str}` | DeepAgent/Team 任务列表更新（deepagents 原生 TodoListMiddleware 维护；`task_id` 区分 Team 子任务） |
+| `todo_update` | JSON `{"todos": [{"content": str, "status": "pending"\|"in_progress"\|"completed"}], "task_id?": str, "source?": str, "parent_task_id?": str}` | DeepAgent/Team 任务列表更新（deepagents 原生 TodoListMiddleware 维护）。`task_id` 区分 Team 子任务；`source` 标识来源（`work`/`coding`/`rag`/`web` 或 Team 子任务角色 `frontend_dev`/`backend_dev` 等），前端按角色分组；`parent_task_id` 为 Team 子任务的父 thread_id，前端据此把子任务 todo 嵌套到父任务卡片下。主路径（单 agent）不传 `parent_task_id`。 |
 | `approval_request` | JSON `{"thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界 / 沙箱权限升级审批请求。`kind` 取值：`"dangerous_tool"`（危险工具）、`"directory_extension"`（目录越界）、`"sandbox_escalation"`（沙箱权限升级）。`sandbox_escalation` 额外字段：`command`、`exit_code`、`reason`、`suggested_action`、`suggested_path`。 |
 | `paused` | `"{}"` | 用户暂停，SSE 流在下一轮迭代退出并保留状态，等待 `resume` |
 | `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
