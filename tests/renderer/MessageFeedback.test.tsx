@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 
 describe("MessageFeedback — runId 缺失 / 流式中", () => {
-  it("runId 缺失时按钮 disabled + opacity 0（hover 也不浮现）", () => {
+  it("runId 缺失时按钮 disabled（常驻展示，不依赖 hover）", () => {
     const { container } = render(<MessageFeedback />);
     const upBtn = container.querySelector(
       '[data-testid="feedback-thumb-up"]',
@@ -56,7 +56,8 @@ describe("MessageFeedback — runId 缺失 / 流式中", () => {
     expect(downBtn.disabled).toBe(true);
     expect(upBtn.title).toMatch(/无可观测的 run_id/);
     expect(downBtn.title).toMatch(/无可观测的 run_id/);
-    expect(upBtn.className).toContain("opacity-0");
+    // 常驻展示：不含 opacity-0
+    expect(upBtn.className).not.toContain("opacity-0");
   });
 
   it("isStreaming=true 时按钮 disabled，title 提示结束后可反馈", () => {
@@ -68,15 +69,14 @@ describe("MessageFeedback — runId 缺失 / 流式中", () => {
     expect(upBtn.title).toMatch(/回复生成中/);
   });
 
-  it("runId 存在且非流式：hover 前 opacity-0，hover 后 opacity-100", () => {
+  it("runId 存在且非流式：按钮常驻可见（无 hover-reveal）", () => {
     const { container } = render(<MessageFeedback runId="r1" />);
     const upBtn = container.querySelector(
       '[data-testid="feedback-thumb-up"]',
     ) as HTMLButtonElement;
-    expect(upBtn.className).toContain("opacity-0");
-    // 触发 hover：fireEvent.mouseEnter 与 React 的 onMouseEnter 同步桥接
-    fireEvent.mouseEnter(upBtn.parentElement!);
+    // 常驻展示：始终可见，不含 opacity-0
     expect(upBtn.className).not.toContain("opacity-0");
+    expect(upBtn.className).not.toContain("opacity-100");
   });
 });
 

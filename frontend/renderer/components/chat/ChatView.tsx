@@ -106,9 +106,14 @@ export function ChatView() {
     setPaused: setIsPaused,
   });
 
-  // 切会话或新发送时重置暂停状态
+  // 切会话或新发送时重置暂停状态 + 滚动位置
   useEffect(() => {
     setIsPaused(false);
+    // BUGFIX: 重置滚动位置到顶部，避免虚拟化列表基于旧 scrollTop 计算错误范围
+    // 导致新会话消息被渲染到屏幕外
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
   }, [currentId]);
 
   // 流式结束后清理线程归属缓存，避免暂停/恢复误操作旧线程
@@ -558,6 +563,8 @@ export function ChatView() {
           <EmptyState />
         ) : (
           <AssistantUIThread
+            // BUGFIX: 切换会话时强制重新挂载虚拟化列表，彻底重置虚拟化器内部状态
+            key={currentId ?? 'empty'}
             messages={messages}
             isStreaming={currentSessionRunning}
             onEditSubmit={(messageId, newContent) => {

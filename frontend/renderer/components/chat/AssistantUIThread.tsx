@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect } from "react";
 import type { RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ChatMessage } from "@/stores/chat";
@@ -81,11 +81,26 @@ function VirtualizedThread({
     getScrollElement: () => parentRef.current,
     estimateSize: () => 200,
     overscan: 5,
+    // BUGFIX: 切换会话时按消息 id 作为缓存 key，避免新旧会话消息按 index 冲突导致渲染错位
+    getItemKey: (index) => messages[index]?.id ?? index,
     // HIGH-1 修复：动态高度内容（reasoning 展开 / tool-call 展开 / 长文本）必须测量实际高度，
     // 否则 estimateSize=200 会导致虚拟项重叠或留白，虚拟化实际不可用。
     // measureElement 会在每个虚拟项挂载/更新时回调，更新 virtualizer 内部的 size cache。
     measureElement: (el) => el.getBoundingClientRect().height,
   });
+
+  // BUGFIX: messages 数组引用变化时（如切换会话），强制虚拟化器滚动到顶部并重新测量，
+  // 避免旧会话的 scrollOffset 残留导致新会话消息被渲染到屏幕外。
+  useEffect(() => {
+    virtualizer.scrollToOffset(0, { behavior: "auto" });
+    // 延迟一帧重新测量，确保 DOM 更新后 size cache 正确
+    const id = requestAnimationFrame(() => {
+      virtualizer.measure();
+    });
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
   return (
     <div
       className="mx-auto relative max-w-3xl px-8 py-4 md:px-10"

@@ -7,7 +7,6 @@ import {
   Folder,
   ChevronDown,
   ChevronRight,
-  Code2,
   Pencil,
   MessageSquare,
 } from "lucide-react";
@@ -250,27 +249,20 @@ export function SessionList() {
         </button>
         <button
           type="button"
+          role="switch"
+          aria-checked={devMode}
+          data-checked={devMode}
           onClick={() => void handleToggleDevMode()}
           disabled={devModeBusy}
-          className={`flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors ${
-            devMode
-              ? "bg-brand-600/15 text-brand-500"
-              : "text-secondary-c hover:bg-hover-soft hover:text-primary-c"
-          } disabled:cursor-not-allowed disabled:opacity-60`}
+          className="switch-track shrink-0"
           aria-label={devMode ? "关闭开发模式" : "开启开发模式"}
-          aria-pressed={devMode}
           title={
             devMode
               ? "开发模式已开启：后端以终端方式启动（Win: PowerShell / Mac: Terminal / Linux: xterm）。点击关闭将重启后端回到静默模式"
               : "开发模式：点击开启后立即重启后端，用终端启动并保留窗口方便看日志。选项自动持久化"
           }
         >
-          <Code2
-            className={`h-3.5 w-3.5 ${devMode ? "text-brand-500" : "text-muted-c"}`}
-          />
-          <span className="whitespace-nowrap font-medium" style={{ fontSize: 'var(--fs-sidebar-action)' }}>
-            {devModeBusy ? "切换中…" : devMode ? "开发模式·开" : "开发模式"}
-          </span>
+          <span className="switch-thumb" data-checked={devMode} />
         </button>
       </div>
 

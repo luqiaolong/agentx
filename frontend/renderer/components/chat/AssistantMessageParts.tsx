@@ -10,6 +10,7 @@ import { TeamNodeCard } from "./parts/TeamNodeCard";
 import { ToolCallGroup } from "./parts/ToolCallGroup";
 import { MessageFeedback } from "./MessageFeedback";
 import { MessageStats } from "./MessageStats";
+import { TraceAnalysisButtons } from "./TraceAnalysisButtons";
 
 /**
  * tool-call part 与 tool-result part 按 id 配对后的合并视图。
@@ -472,17 +473,22 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
           })}
           {/*
            * 底部操作区：
-           * - 左侧：观测中心反馈按钮（MessageFeedback，hover-reveal）
+           * - 左侧（常驻展示）：观测中心反馈按钮（MessageFeedback 👍/👎）
+           *   + 执行轨迹分析按钮（TraceAnalysisButtons：复盘 / 自进化）
            * - 右侧：本次请求统计信息（MessageStats：traceId / token / 耗时，右对齐紧凑展示）
            *
            * 行为：
-           * - 流式中 isStreamingLast=true → MessageFeedback 按钮 disabled；
+           * - 流式中 isStreamingLast=true → 反馈/分析按钮 disabled；
              MessageStats 耗时实时递增（每 500ms tick），token 跟随 parts 累积
-           * - runId 缺失（已完成的旧消息迁移数据）→ MessageFeedback 按钮 disabled；
+           * - runId 缺失（已完成的旧消息迁移数据）→ 反馈/分析按钮 disabled；
              MessageStats 仍可展示 ts→lastPart 的耗时
+           * - 复盘/自进化：点击后在当前会话追加一条 assistant 消息流式展示分析结果
            */}
           <div className="flex w-full items-center justify-between gap-2 pt-1">
-            <MessageFeedback runId={message.traceId} isStreaming={isStreamingLast} />
+            <div className="flex items-center gap-2">
+              <MessageFeedback runId={message.traceId} isStreaming={isStreamingLast} />
+              <TraceAnalysisButtons runId={message.traceId} isStreaming={isStreamingLast} />
+            </div>
             <MessageStats message={message} isStreamingLast={isStreamingLast} />
           </div>
         </div>

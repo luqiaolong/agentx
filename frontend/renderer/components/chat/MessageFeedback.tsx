@@ -1,11 +1,11 @@
 /**
- * 反馈按钮（FR-8）：assistant 消息气泡右侧 hover-reveal 集成。
+ * 反馈按钮（FR-8）：assistant 消息底部常驻展示。
  *
  * - 👍 按钮：点击直接 POST /api/observation/feedback（kind=thumb_up），无 popover
  * - 👎 按钮：点击展开 popover，含分类下拉（fact_error / tone / speed /
  *   wrong_tool / other）+ 评论输入框 + 提交按钮，提交后关闭面板
  *
- * 默认不显示，hover 时浮现（参考 UserMessageBubble.tsx L118-126 模式）。
+ * 常驻展示（opacity-100），不再 hover-reveal；与右侧 TraceAnalysisButtons 并排。
  * 复用 usePopover hook（clickOutside + ESC 关闭）。
  *
  * run_id 来源：ChatMessage.traceId（由 useChatStream 从 SSE 事件 _tid / trace_id 字段
@@ -134,7 +134,7 @@ export const MessageFeedback = memo(function MessageFeedback({
       ref={rootRef}
       className="relative flex items-center gap-1"
     >
-      {/* 👍 按钮（hover-reveal） */}
+      {/* 👍 按钮（常驻展示） */}
       <button
         type="button"
         onClick={handleThumbUp}
@@ -144,12 +144,12 @@ export const MessageFeedback = memo(function MessageFeedback({
         }
         aria-label="点赞这条回复"
         data-testid="feedback-thumb-up"
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30 opacity-100`}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-colors hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
       >
         {renderIcon(thumbUp, ThumbsUp, "已反馈：👍")}
       </button>
 
-      {/* 👎 按钮 + popover（hover-reveal） */}
+      {/* 👎 按钮 + popover（常驻展示） */}
       <button
         type="button"
         onClick={handleThumbDownToggle}
@@ -162,7 +162,7 @@ export const MessageFeedback = memo(function MessageFeedback({
         aria-expanded={open}
         aria-haspopup="dialog"
         data-testid="feedback-thumb-down"
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30 opacity-100`}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-colors hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
       >
         {renderIcon(thumbDown, ThumbsDown, "已反馈：👎")}
       </button>
