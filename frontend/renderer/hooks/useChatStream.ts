@@ -389,8 +389,10 @@ export function useChatStream(args: UseChatStreamArgs) {
       if (req.toolCallId && pendingIdRef.current) {
         attachApprovalToToolCall(pendingIdRef.current, req.toolCallId, req);
       }
-      // 同时入队，保留弹窗兜底（ApprovalDialog 仍可按 currentId 过滤展示）
-      enqueueApprovalRequest(req);
+      // 只有无法关联到具体 tool-call 时（无 toolCallId），才入队走弹窗兜底
+      if (!req.toolCallId) {
+        enqueueApprovalRequest(req);
+      }
     });
 
     return () => {
