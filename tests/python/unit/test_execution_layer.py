@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.types import Command
 
 from app.deepagent.approval_runner import run_agent_with_approval
 
@@ -47,7 +48,8 @@ async def test_run_agent_with_approval_handles_interrupt_and_resumes() -> None:
 
     async def _fake_stream(agent, inputs, config, source):
         stream_calls.append(("inputs", inputs))
-        if inputs is None:
+        # resume 时传入 Command(resume=...) 而非 None
+        if isinstance(inputs, Command):
             nonlocal resume_count
             resume_count += 1
             if resume_count == 1:
@@ -85,7 +87,11 @@ async def test_run_agent_with_approval_handles_interrupt_and_resumes() -> None:
                         events.append(evt)
 
     assert ("inputs", {"messages": []}) in stream_calls
-    assert ("inputs", None) in stream_calls
+    # resume 时传入 Command(resume={"decisions": [{"type": "approve"}]})
+    assert any(
+        isinstance(call[1], Command) and call[1].resume == {"decisions": [{"type": "approve"}]}
+        for call in stream_calls if call[0] == "inputs"
+    )
     assert {"event": "token", "data": "done"} in events
 
 
@@ -96,7 +102,8 @@ async def test_run_agent_with_approval_full_trust_skips_approval() -> None:
     config = {"configurable": {"thread_id": "t1"}}
 
     async def _fake_stream(agent, inputs, config, source):
-        if inputs is None:
+        # resume 时传入 Command(resume=...) 而非 None
+        if isinstance(inputs, Command):
             yield {"event": "token", "data": "ok"}
 
     call_idx = 0

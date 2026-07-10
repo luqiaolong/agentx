@@ -13,6 +13,7 @@ import json
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from loguru import logger
+from langgraph.types import Command
 
 from app.security.approval import (
     is_aborted,
@@ -33,6 +34,30 @@ from app.security.approval.flow import (
 from app.sse.events import make_error_event, make_sse_event
 
 __all__ = ["run_agent_with_approval"]
+
+
+def _make_hitl_resume_decisions(pending_calls: list[dict], decision_type: str = "approve", message: str = "") -> Command:
+    """生成 HumanInTheLoopMiddleware 期望的 resume Command。
+
+    LangGraph 1.x 的 ``interrupt()`` 必须用 ``Command(resume=...)`` 恢复，
+    传 ``None`` 不会消费 interrupt，导致 ``state.interrupts`` 一直存在，
+    触发 stuck state 检测（root cause: 执行流程中断状态未正常解除）。
+
+    Args:
+        pending_calls: 待处理工具调用列表。
+        decision_type: 决策类型，"approve" 或 "reject"。
+        message: reject 时的自定义消息（可选）。
+
+    Returns:
+        ``Command(resume={"decisions": [...]})`` 供 ``agent.astream`` 使用。
+    """
+    decisions: list[dict[str, Any]] = []
+    for _ in pending_calls:
+        d: dict[str, Any] = {"type": decision_type}
+        if message and decision_type == "reject":
+            d["message"] = message
+        decisions.append(d)
+    return Command(resume={"decisions": decisions})
 
 
 async def _stream_default(
@@ -332,7 +357,12 @@ async def run_agent_with_approval(
         if is_full_trust:
             await _sandbox.clear_temp(thread_id)
             try:
-                async for sse in _stream(agent, None, config, source):
+                async for sse in _stream(
+                    agent,
+                    _make_hitl_resume_decisions(pending_calls, decision_type="approve"),
+                    config,
+                    source,
+                ):
                     yield await _forward(sse)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("agent resume failed", thread_id=thread_id)
@@ -391,9 +421,24 @@ async def run_agent_with_approval(
             )
 
             if decision is None or not decision.approved:
+                # 用户拒绝：先注入 ToolMessage 错误，再用 Command(resume=...) 消费
+                # HumanInTheLoopMiddleware 的 interrupt，避免 interrupt 残留导致
+                # 下次调用 stuck（root cause: 执行流程中断状态未正常解除）。
                 for tc in dangerous_calls:
                     await _inject_call(agent, config, tc, "用户拒绝执行危险操作")
                 yield await _forward(make_error_event( "用户拒绝执行危险操作"))
+                # 消费 HITL interrupt，避免 stuck state
+                try:
+                    async for _ in agent.astream(
+                        _make_hitl_resume_decisions(
+                            dangerous_calls, decision_type="reject", message="用户拒绝执行危险操作"
+                        ),
+                        config=config,
+                        stream_mode="values",
+                    ):
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
                 return
 
             logger.info(
@@ -419,10 +464,34 @@ async def run_agent_with_approval(
         if extension_handled.denied:
             yield await _forward(make_error_event( "用户拒绝访问该目录"))
             await _inject_msgs(agent, config, "用户拒绝访问该目录")
+            # 消费 HITL interrupt，避免 stuck state
+            try:
+                async for _ in agent.astream(
+                    _make_hitl_resume_decisions(
+                        pending_calls, decision_type="reject", message="用户拒绝访问该目录"
+                    ),
+                    config=config,
+                    stream_mode="values",
+                ):
+                    pass
+            except Exception:  # noqa: BLE001
+                pass
             return
         if extension_handled.timed_out:
             yield await _forward(make_error_event( "目录授权等待被中断，操作未执行"))
             await _inject_msgs(agent, config, "目录授权等待被中断，操作未执行")
+            # 消费 HITL interrupt，避免 stuck state
+            try:
+                async for _ in agent.astream(
+                    _make_hitl_resume_decisions(
+                        pending_calls, decision_type="reject", message="目录授权等待被中断，操作未执行"
+                    ),
+                    config=config,
+                    stream_mode="values",
+                ):
+                    pass
+            except Exception:  # noqa: BLE001
+                pass
             return
 
         # 恢复执行
@@ -433,7 +502,12 @@ async def run_agent_with_approval(
             pending_tools=[tc.get("name") for tc in pending_calls],
         )
         try:
-            async for sse in _stream(agent, None, config, source):
+            async for sse in _stream(
+                agent,
+                _make_hitl_resume_decisions(pending_calls, decision_type="approve"),
+                config,
+                source,
+            ):
                 yield await _forward(sse)
         except Exception as exc:  # noqa: BLE001
             logger.exception("agent resume failed", thread_id=thread_id)
