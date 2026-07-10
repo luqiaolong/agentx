@@ -97,6 +97,9 @@ class ProfileEntry(BaseModel):
     scope: str = "global"  # global | workspace
     created_at: str  # ISO 格式
     updated_at: str  # ISO 格式
+    title: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    scenarios: list[str] = Field(default_factory=list)
 
 
 class ProfileStore(BaseModel):
@@ -334,6 +337,9 @@ async def add(
             scope=scope,
             created_at=entry.created_at or now,
             updated_at=now,
+            title=entry.title,
+            keywords=list(entry.keywords),
+            scenarios=list(entry.scenarios),
         )
         store.entries.append(new_entry)
         save_fn(store)
@@ -351,8 +357,11 @@ async def update(
     content: str,
     category: str | None = None,
     workspace_path: str | None = None,
+    title: str | None = None,
+    keywords: list[str] | None = None,
+    scenarios: list[str] | None = None,
 ) -> ProfileEntry:
-    """更新画像条目的 content（可选 category）。
+    """更新画像条目的 content（可选 category / title / keywords / scenarios）。
 
     优先更新工作区画像中的条目；若工作区无此 key 则更新全局画像。
 
@@ -361,6 +370,9 @@ async def update(
         content: 新 content。
         category: 可选新 category。
         workspace_path: 工作区路径。
+        title: 可选新标题；None 时保留原值。
+        keywords: 可选新关键词列表；None 时保留原值。
+        scenarios: 可选新场景列表；None 时保留原值。
 
     Returns:
         更新后的 ProfileEntry。
@@ -376,6 +388,21 @@ async def update(
     if category is not None:
         _validate_category(category)
 
+    # 构造 model_copy update dict：None 表示保留原值
+    def _build_update(entry: ProfileEntry) -> dict[str, Any]:
+        update: dict[str, Any] = {
+            "content": content,
+            "category": category if category is not None else entry.category,
+            "updated_at": _now_iso(),
+        }
+        if title is not None:
+            update["title"] = title
+        if keywords is not None:
+            update["keywords"] = list(keywords)
+        if scenarios is not None:
+            update["scenarios"] = list(scenarios)
+        return update
+
     # 先尝试工作区
     if workspace_path:
         lock = _get_workspace_lock(workspace_path)
@@ -383,11 +410,7 @@ async def update(
             store = _load_workspace(workspace_path)
             for idx, entry in enumerate(store.entries):
                 if entry.key == key:
-                    new_entry = entry.model_copy(update={
-                        "content": content,
-                        "category": category if category is not None else entry.category,
-                        "updated_at": _now_iso(),
-                    })
+                    new_entry = entry.model_copy(update=_build_update(entry))
                     store.entries[idx] = new_entry
                     _save_workspace(store, workspace_path)
                     logger.info("画像条目已更新", key=key, scope="workspace")
@@ -398,11 +421,7 @@ async def update(
         store = _load("global")
         for idx, entry in enumerate(store.entries):
             if entry.key == key:
-                new_entry = entry.model_copy(update={
-                    "content": content,
-                    "category": category if category is not None else entry.category,
-                    "updated_at": _now_iso(),
-                })
+                new_entry = entry.model_copy(update=_build_update(entry))
                 store.entries[idx] = new_entry
                 _save_global(store)
                 logger.info("画像条目已更新", key=key, scope="global")
@@ -516,6 +535,9 @@ async def upsert_from_llm(
                     "source": "llm_extracted",
                     "scope": scope,
                     "updated_at": now,
+                    "title": raw.get("title", old.title),
+                    "keywords": raw.get("keywords", old.keywords),
+                    "scenarios": raw.get("scenarios", old.scenarios),
                 })
             else:
                 store.entries.append(ProfileEntry(
@@ -526,6 +548,9 @@ async def upsert_from_llm(
                     scope=scope,
                     created_at=now,
                     updated_at=now,
+                    title=raw.get("title"),
+                    keywords=raw.get("keywords", []),
+                    scenarios=raw.get("scenarios", []),
                 ))
             written += 1
 
@@ -580,7 +605,11 @@ def build_profile_prompt(workspace_path: str | None = None) -> str:
     for entry in sorted_entries:
         content = getattr(entry, "content", "")
         category = getattr(entry, "category", "custom")
-        lines.append(f"- [{category}] {content}")
+        title = getattr(entry, "title", None)
+        if title:
+            lines.append(f"- [{category}] {title}：{content}")
+        else:
+            lines.append(f"- [{category}] {content}")
     return "\n".join(lines)
 
 

@@ -12,7 +12,7 @@
  * - useProfileCrud / profileListConfig 为 ProfileEntry 专用的快捷工厂，
  *   消除 PreferenceManager / ProfileManager / ProjectMemoryManager 三者重复配置
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode, type KeyboardEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Plus, RefreshCw, Save, X } from "lucide-react";
 import type { ProfileEntry, ProfileEntryRequest } from "@/lib/utils";
@@ -50,13 +50,21 @@ export function useProfileCrud(
       return all;
     },
     creator: async (i) => {
-      const req: ProfileEntryRequest = { key: i.key.trim(), category: i.category || defaultCat, content: i.content };
+      const req: ProfileEntryRequest = {
+        key: i.key.trim(),
+        category: i.category || defaultCat,
+        content: i.content,
+        title: i.title,
+        keywords: i.keywords,
+        scenarios: i.scenarios,
+      };
       await memory.saveProfile(req, workspacePath);
     },
-    updater: async (i) => { await memory.updateProfile(i.key, i.content, i.category, workspacePath); },
+    updater: async (i) => { await memory.updateProfile(i.key, i.content, i.category, i.title, i.keywords, i.scenarios, workspacePath); },
     deleter: (k) => memory.deleteProfile(k, workspacePath),
     initialItem: () => ({
       key: "", category: defaultCat, content: "", source: "manual", created_at: "", updated_at: "",
+      title: "", keywords: [], scenarios: [],
     }),
     validate: (e) => {
       if (!KEY_RE.test(e.key.trim())) return "key 只能含字母、数字、下划线、连字符，长度 1-64";
@@ -100,6 +108,12 @@ export function profileListConfig(
     keyPlaceholder: opts.keyPlaceholder,
     getKey: (e) => e.key,
     setKey: (e, k) => ({ ...e, key: k }),
+    getTitle: (e) => e.title ?? "",
+    setTitle: (e, t) => ({ ...e, title: t }),
+    getKeywords: (e) => e.keywords ?? [],
+    setKeywords: (e, k) => ({ ...e, keywords: k }),
+    getScenarios: (e) => e.scenarios ?? [],
+    setScenarios: (e, s) => ({ ...e, scenarios: s }),
     contentMax: opts.contentMax,
     contentRows: opts.contentRows,
     contentPlaceholder: opts.contentPlaceholder,
@@ -127,6 +141,12 @@ export interface MemoryListConfig<T> {
   keyLabel?: string;
   getKey: (item: T) => string;
   setKey: (item: T, key: string) => T;
+  getTitle: (item: T) => string;
+  setTitle: (item: T, title: string) => T;
+  getKeywords: (item: T) => string[];
+  setKeywords: (item: T, keywords: string[]) => T;
+  getScenarios: (item: T) => string[];
+  setScenarios: (item: T, scenarios: string[]) => T;
   contentMax: number;
   contentRows: number;
   contentPlaceholder: string;
@@ -139,6 +159,106 @@ export interface MemoryListConfig<T> {
 interface MemoryListProps<T> {
   crud: UseCrudListReturn<T>;
   config: MemoryListConfig<T>;
+}
+
+/**
+ * 标签输入组件：逗号/回车分隔，支持 max 限制。
+ * 内联在 MemoryList.tsx 供 keywords / scenarios 字段使用。
+ */
+function TagInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  max,
+}: {
+  label: string;
+  value: string[];
+  onChange: (tags: string[]) => void;
+  placeholder?: string;
+  max?: number;
+}) {
+  const [input, setInput] = useState("");
+
+  const addTag = () => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    if (max != null && value.length >= max) return;
+    if (value.includes(trimmed)) {
+      setInput("");
+      return;
+    }
+    onChange([...value, trimmed]);
+    setInput("");
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addTag();
+    } else if (e.key === "Backspace" && !input && value.length > 0) {
+      onChange(value.slice(0, -1));
+    }
+  };
+
+  const removeTag = (idx: number) => {
+    onChange(value.filter((_, i) => i !== idx));
+  };
+
+  const reachedMax = max != null && value.length >= max;
+
+  return (
+    <div>
+      <label
+        className="mb-1 block font-medium text-secondary-c"
+        style={{ fontSize: "var(--fs-settings-form-label)" }}
+      >
+        {label}
+        {max != null && (
+          <span
+            className="ml-1 text-muted-c"
+            style={{ fontSize: "var(--fs-card-meta)" }}
+          >
+            {value.length}/{max}
+          </span>
+        )}
+      </label>
+      <div
+        className="input-field flex flex-wrap items-center gap-1"
+        style={{ fontSize: "var(--fs-settings-form-input)" }}
+      >
+        {value.map((tag, idx) => (
+          <span
+            key={`${tag}-${idx}`}
+            className="inline-flex items-center gap-0.5 rounded-full bg-subtle px-1.5 py-0.5 text-secondary-c"
+            style={{ fontSize: "var(--fs-settings-badge)" }}
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={() => removeTag(idx)}
+              className="text-muted-c hover:text-rose-500"
+              aria-label={`删除 ${tag}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        ))}
+        {!reachedMax && (
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={addTag}
+            placeholder={value.length === 0 ? placeholder : ""}
+            className="min-w-[80px] flex-1 border-0 bg-transparent outline-none"
+            style={{ fontSize: "var(--fs-settings-form-input)" }}
+          />
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
@@ -223,6 +343,14 @@ export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
           {items.map((item) => {
             const id = config.getId(item);
             const idLabel = config.getIdLabel ? config.getIdLabel(item) : id;
+            const itemTitle = config.getTitle(item);
+            const itemContent = config.getContent(item);
+            const itemKeywords = config.getKeywords(item);
+            // title 为空时兜底显示 key 或 content 首句
+            const displayTitle =
+              itemTitle ||
+              idLabel ||
+              (itemContent.split(/[。\n]/)[0] ?? "").slice(0, 40);
             return (
               <li
                 key={id}
@@ -230,7 +358,15 @@ export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
                 style={{ fontSize: "var(--fs-settings-desc)" }}
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-secondary-c">{idLabel}</span>
+                  <span className="font-medium text-secondary-c">{displayTitle}</span>
+                  {itemTitle && (
+                    <span
+                      className="font-mono text-muted-c"
+                      style={{ fontSize: "var(--fs-card-meta)" }}
+                    >
+                      {idLabel}
+                    </span>
+                  )}
                   {config.renderBadges?.(item)}
                   <span
                     className="ml-auto text-muted-c"
@@ -249,8 +385,21 @@ export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
                   </button>
                   <ConfirmButton onConfirm={() => void remove(id)} />
                 </div>
+                {itemKeywords.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {itemKeywords.map((k, idx) => (
+                      <span
+                        key={`${k}-${idx}`}
+                        className="rounded-full bg-brand-600/10 px-1.5 py-0.5 font-medium text-brand-500"
+                        style={{ fontSize: "var(--fs-settings-badge)" }}
+                      >
+                        {k}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <p className="mt-1 whitespace-pre-wrap break-words text-secondary-c">
-                  {config.getContent(item)}
+                  {itemContent}
                 </p>
               </li>
             );
@@ -277,6 +426,39 @@ export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
               style={{ fontSize: "var(--fs-settings-form-input)" }}
             />
           </div>
+
+          <div>
+            <label
+              className="mb-1 block font-medium text-secondary-c"
+              style={{ fontSize: "var(--fs-settings-form-label)" }}
+            >
+              Title
+            </label>
+            <input
+              type="text"
+              value={config.getTitle(editing)}
+              onChange={(e) => editing && updateDraft(config.setTitle(editing, e.target.value))}
+              placeholder="条目标题（可选，用于列表展示与检索）"
+              className="input-field"
+              style={{ fontSize: "var(--fs-settings-form-input)" }}
+            />
+          </div>
+
+          <TagInput
+            label="Keywords"
+            value={config.getKeywords(editing)}
+            onChange={(tags) => editing && updateDraft(config.setKeywords(editing, tags))}
+            placeholder="逗号或回车添加关键词..."
+            max={5}
+          />
+
+          <TagInput
+            label="Scenarios"
+            value={config.getScenarios(editing)}
+            onChange={(tags) => editing && updateDraft(config.setScenarios(editing, tags))}
+            placeholder="逗号或回车添加适用场景..."
+            max={3}
+          />
 
           {config.renderExtraFields?.(editing, update)}
 

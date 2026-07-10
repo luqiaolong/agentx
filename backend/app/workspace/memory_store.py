@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -96,6 +96,9 @@ class MemoryEntry:
     content: str
     source: str
     updated_at: str
+    title: str | None = None
+    keywords: list[str] = field(default_factory=list)
+    scenarios: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +107,9 @@ class MemoryEntry:
             "content": self.content,
             "source": self.source,
             "updated_at": self.updated_at,
+            "title": self.title,
+            "keywords": list(self.keywords),
+            "scenarios": list(self.scenarios),
         }
 
 
@@ -129,12 +135,18 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 def _serialize_entry(entry: MemoryEntry) -> str:
     """将 MemoryEntry 序列化为 ``.md`` 文件内容。"""
-    frontmatter = {
+    frontmatter: dict[str, Any] = {
         "key": entry.key,
         "category": entry.category,
         "source": entry.source,
         "updated_at": entry.updated_at,
     }
+    if entry.title is not None:
+        frontmatter["title"] = entry.title
+    if entry.keywords:
+        frontmatter["keywords"] = list(entry.keywords)
+    if entry.scenarios:
+        frontmatter["scenarios"] = list(entry.scenarios)
     try:
         import yaml
         yaml_block = yaml.safe_dump(
@@ -162,12 +174,28 @@ def _read_entry_file(file_path: Path) -> MemoryEntry | None:
     category = str(frontmatter.get("category", "custom"))
     source = str(frontmatter.get("source", "manual"))
     updated_at = str(frontmatter.get("updated_at", _now_iso()))
+    # 新字段：缺失时补默认值（兼容旧 frontmatter）
+    title_raw = frontmatter.get("title")
+    title = str(title_raw) if title_raw is not None else None
+    keywords_raw = frontmatter.get("keywords")
+    if isinstance(keywords_raw, list):
+        keywords = [str(k) for k in keywords_raw]
+    else:
+        keywords = []
+    scenarios_raw = frontmatter.get("scenarios")
+    if isinstance(scenarios_raw, list):
+        scenarios = [str(s) for s in scenarios_raw]
+    else:
+        scenarios = []
     return MemoryEntry(
         key=key,
         category=category,
         content=content,
         source=source,
         updated_at=updated_at,
+        title=title,
+        keywords=keywords,
+        scenarios=scenarios,
     )
 
 
@@ -211,6 +239,9 @@ async def save_entry(
     category: str,
     content: str,
     source: str = "manual",
+    title: str | None = None,
+    keywords: list[str] | None = None,
+    scenarios: list[str] | None = None,
 ) -> MemoryEntry:
     """写入/覆盖工作区记忆条目。
 
@@ -220,6 +251,9 @@ async def save_entry(
         category: 分类。
         content: Markdown 内容。
         source: 来源。
+        title: 可读标题。
+        keywords: 关键词标签列表。
+        scenarios: 应用场景列表。
 
     Returns:
         写入后的 MemoryEntry。
@@ -239,6 +273,9 @@ async def save_entry(
             content=content,
             source=source,
             updated_at=_now_iso(),
+            title=title,
+            keywords=list(keywords) if keywords is not None else [],
+            scenarios=list(scenarios) if scenarios is not None else [],
         )
         file_path = _entry_file_path(workspace_path, key)
         text = _serialize_entry(entry)
@@ -344,12 +381,19 @@ async def upsert_from_llm(
 
             file_path = _entry_file_path(workspace_path, key)
             existing = _read_entry_file(file_path)
+            # 优先保留 existing 字段值，除非 raw 中显式提供新值
+            title = raw.get("title") or (existing.title if existing is not None else None)
+            keywords = raw.get("keywords") or (existing.keywords if existing is not None else [])
+            scenarios = raw.get("scenarios") or (existing.scenarios if existing is not None else [])
             entry = MemoryEntry(
                 key=key,
                 category=category,
                 content=content,
                 source="llm_extracted",
                 updated_at=now,
+                title=title,
+                keywords=list(keywords),
+                scenarios=list(scenarios),
             )
             text = _serialize_entry(entry)
             tmp = file_path.with_suffix(".md.tmp")

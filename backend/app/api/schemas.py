@@ -100,13 +100,22 @@ class ProfileEntryRequest(BaseModel):
     key: str
     category: str  # preference/project/fact/custom
     content: str
+    title: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    scenarios: list[str] = Field(default_factory=list)
 
 
 class ProfileUpdateRequest(BaseModel):
-    """画像更新请求体。"""
+    """画像更新请求体。
+
+    ``keywords`` / ``scenarios`` 默认 None 表示保留原值；传入空列表 = 显式清空。
+    """
 
     content: str
     category: str | None = None
+    title: str | None = None
+    keywords: list[str] | None = None
+    scenarios: list[str] | None = None
 
 
 class ExtractRequest(BaseModel):
