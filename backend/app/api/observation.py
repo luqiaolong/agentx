@@ -149,12 +149,23 @@ async def _stream_with_think_parse(
 
     - `<think>` 内部内容作为 reasoning 事件输出，前端渲染为 Think/Reasoning 模块。
     - `</think>` 之后的内容作为 token 事件输出，渲染为正式复盘正文。
+
+    鲁棒性优化（2026-07-10）：
+    - think 块以「完整闭合」为分界；为让用户在思考中实时看到进度，在 think 期间
+      每积累 ``_THINK_FLUSH_CHARS`` 字符就 yield 一次 reasoning（带可拼接后缀）。
+    - 完整闭合 ``<think>...</think>`` 后，把 tag 之间的纯内容一次性 yield。
+    - 流结束时若仍 in_think=True（LLM 忘了闭合），把全部内容作为 reasoning yield
+      （前端仍会按未闭合表现为一个 ReasoningBlock，避免泄露 ``<think>`` 字面量）。
     """
+    import re as _re
+
     buffer = ""
     in_think = False
     think_content = ""
-    think_open = "<think>"
-    think_close = "</think>"
+    # 与 text.py THINK_OPEN/THINK_CLOSE 一致（允许可选闭合 '\>'）
+    _think_open_re = _re.compile(r"<think>")
+    _think_close_re = _re.compile(r"</think>")
+    _think_flush_chars = 200  # 思考中每积累 200 字符 yield 一次，让用户实时看到进度
 
     async def _emit_reasoning(content: str) -> dict[str, str]:
         return {
@@ -170,30 +181,36 @@ async def _stream_with_think_parse(
 
     async for text in text_stream:
         buffer += text
+        # 多次 while 循环：当前 chunk 可能含多个 <think>/</think> 标签
         while buffer:
             if in_think:
-                end = buffer.find(think_close)
-                if end == -1:
+                close_match = _think_close_re.search(buffer)
+                if close_match is None:
                     think_content += buffer
                     buffer = ""
+                    # 流式反馈：积累超过阈值 yield 一次中间进度（保留 buffer 续接，
+                    # 下次 chunk 再补全；同时允许前端实时渲染思考过程）。
+                    if len(think_content) >= _think_flush_chars:
+                        yield await _emit_reasoning(think_content)
+                        think_content = ""
                     break
-                think_content += buffer[:end]
+                think_content += buffer[: close_match.start()]
                 yield await _emit_reasoning(think_content)
                 in_think = False
                 think_content = ""
-                buffer = buffer[end + len(think_close) :]
+                buffer = buffer[close_match.end() :]
             else:
-                start = buffer.find(think_open)
-                if start == -1:
+                open_match = _think_open_re.search(buffer)
+                if open_match is None:
                     if buffer:
                         yield await _emit_token(buffer)
                         buffer = ""
                     break
-                if start > 0:
-                    yield await _emit_token(buffer[:start])
+                if open_match.start() > 0:
+                    yield await _emit_token(buffer[: open_match.start()])
                 in_think = True
                 think_content = ""
-                buffer = buffer[start + len(think_open) :]
+                buffer = buffer[open_match.end() :]
 
     # 流结束：未闭合的 think 也作为 reasoning 输出，剩余 buffer 作为 token 输出
     if in_think:
@@ -204,14 +221,18 @@ async def _stream_with_think_parse(
             yield await _emit_token(buffer)
 
 
-def _collect_project_summary() -> str:
+def _collect_project_summary() -> tuple[str, list[str]]:
     """收集 agentx 项目核心代码概览（供自进化分析）。
 
     扫描 backend/app 关键模块的目录树 + 读取少量核心文件内容（截断），
     让 LLM 基于真实代码结构分析问题。控制在 _PROJECT_SUMMARY_LIMIT 内。
+
+    返回 (summary, files_read)：files_read 为实际成功读取并纳入摘要的核心文件
+    相对路径，供调用方在 SSE 流中向用户展示「正在读取代码」的可观测进度。
     """
     from pathlib import Path
 
+    files_read: list[str] = []
     # 项目根：backend/app 向上两级
     app_dir = Path(__file__).resolve().parent.parent  # backend/app
     project_root = app_dir.parent.parent  # agentx 项目根
@@ -263,6 +284,7 @@ def _collect_project_summary() -> str:
             break
         lines.append(block)
         total += len(block)
+        files_read.append(rel)
 
     # 3. AGENTS.md 架构段（前 3000 字符）
     agents_md = project_root / "AGENTS.md"
@@ -270,10 +292,11 @@ def _collect_project_summary() -> str:
         try:
             md = agents_md.read_text(encoding="utf-8", errors="ignore")[:3000]
             lines.append(f"\n## AGENTS.md（前 3000 字符）\n{md}")
+            files_read.append("AGENTS.md")
         except OSError:
             pass
 
-    return "\n".join(lines)
+    return "\n".join(lines), files_read
 
 
 def _extract_chunk_text(chunk: Any) -> str:
@@ -613,7 +636,11 @@ def register_observation_routes(app: FastAPI) -> None:
         """自进化：结合 agentx 项目代码分析执行轨迹暴露的问题与优化点。
 
         读 trace events + 扫描 agentx 核心代码 → LLM 流式分析。
-        SSE 事件：reasoning → token* → done。
+        SSE 事件：reasoning（扫描代码进度）→ token* → done。
+
+        代码扫描在 SSE 流内执行，扫描前后发 reasoning 事件，让用户感知到
+        「正在读取项目代码 → 已读取 X 个文件 → 开始分析」的完整过程，
+        而非连接建立前的静默等待。
         """
         sink = get_observation_sink()
         run = await _async(sink.get_run_sync, req.run_id)
@@ -629,16 +656,43 @@ def register_observation_routes(app: FastAPI) -> None:
             return EventSourceResponse(_empty())
 
         trace_summary = _build_trace_summary(run, events)
-        project_summary = await _async(_collect_project_summary)
-        logger.info(
-            "trace self-evolve started",
-            run_id=req.run_id,
-            thread_id=req.thread_id,
-            events_count=len(events),
-            summary_len=len(trace_summary),
-        )
 
         async def _evolve_stream() -> AsyncIterator[dict[str, str]]:
+            # 1. 扫描项目代码：在 SSE 流内执行，发 reasoning 让用户感知「读代码」步骤。
+            #    原先此处在外层（EventSourceResponse 之前）同步执行，连接未建立，
+            #    用户只能看到网络 pending，完全感知不到「正在读取代码」。
+            yield {
+                "event": "reasoning",
+                "data": json.dumps(
+                    {
+                        "content": "正在扫描 AgentX 项目代码结构…",
+                        "source": "review",
+                        "trace_id": req.run_id,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+            project_summary, files_read = await _async(_collect_project_summary)
+            files_line = "、".join(files_read) if files_read else "（未读取到核心文件）"
+            yield {
+                "event": "reasoning",
+                "data": json.dumps(
+                    {
+                        "content": f"已读取项目代码：{files_line}",
+                        "source": "review",
+                        "trace_id": req.run_id,
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+            logger.info(
+                "trace self-evolve started",
+                run_id=req.run_id,
+                thread_id=req.thread_id,
+                events_count=len(events),
+                summary_len=len(trace_summary),
+                files_read=files_read,
+            )
             async for event in _stream_segmented_analysis(
                 run,
                 events,
