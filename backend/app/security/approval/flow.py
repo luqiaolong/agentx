@@ -253,6 +253,7 @@ async def _handle_directory_extension(
     sandbox: SessionSandbox,
     workspace_path: str | None = None,
     parent_thread_id: str | None = None,
+    existing_decision: Any | None = None,
 ) -> _ExtensionResult:
     """处理工具调用的目录越界扩展授权。
 
@@ -365,11 +366,14 @@ async def _handle_directory_extension(
 
     # 第三步：等待一次统一审批决策（覆盖所有越界路径）
     # bug #6 修复：max_wait 不再为 float("inf")
-    decision = await _await_approval(
-        thread_id,
-        poll_interval=_APPROVAL_POLL_INTERVAL,
-        max_wait=_resolve_max_wait(),
-    )
+    # 如果已有审批决策（如 dangerous_tool 审批已通过），直接使用，避免重复等待
+    decision = existing_decision
+    if decision is None:
+        decision = await _await_approval(
+            thread_id,
+            poll_interval=_APPROVAL_POLL_INTERVAL,
+            max_wait=_resolve_max_wait(),
+        )
     if decision is None:
         return _ExtensionResult(events=events, timed_out=True)
     if decision.decision == "deny" or not decision.approved:

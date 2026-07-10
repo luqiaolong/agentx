@@ -404,12 +404,14 @@ async def run_agent_with_approval(
             )
 
         # 所有工具：检查是否越界（含只读工具、execute、cli_execute 等）
+        # 如果 dangerous_tool 审批已通过，将决策传给 directory_extension 避免重复等待
         extension_handled: _ExtensionResult = await _handle_directory_extension(
             pending_calls,
             thread_id,
             _sandbox,
             workspace_path=workspace_path,
             parent_thread_id=parent_thread_id,
+            existing_decision=decision if dangerous_calls else None,
         )
         for evt in extension_handled.events:
             yield await _forward(evt)
