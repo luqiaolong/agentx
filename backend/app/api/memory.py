@@ -180,7 +180,14 @@ def register_memory_routes(app: FastAPI) -> None:
                 raise HTTPException(status_code=409, detail=f"key 已存在: {req.key}，请用 PUT 更新")
             try:
                 entry = await save_entry(
-                    workspace_path, req.key, req.category, req.content, source="manual"
+                    workspace_path,
+                    req.key,
+                    req.category,
+                    req.content,
+                    source="manual",
+                    title=req.title,
+                    keywords=req.keywords,
+                    scenarios=req.scenarios,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
@@ -196,6 +203,9 @@ def register_memory_routes(app: FastAPI) -> None:
             source="manual",
             created_at="",
             updated_at="",
+            title=req.title,
+            keywords=req.keywords,
+            scenarios=req.scenarios,
         )
         try:
             new_entry = await add(entry, workspace_path=None)
@@ -219,7 +229,14 @@ def register_memory_routes(app: FastAPI) -> None:
             if existing is not None:
                 try:
                     entry = await save_entry(
-                        workspace_path, key, req.category or existing.category, req.content, source="manual"
+                        workspace_path,
+                        key,
+                        req.category or existing.category,
+                        req.content,
+                        source="manual",
+                        title=req.title if req.title is not None else existing.title,
+                        keywords=req.keywords if req.keywords is not None else existing.keywords,
+                        scenarios=req.scenarios if req.scenarios is not None else existing.scenarios,
                     )
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc))
@@ -229,7 +246,15 @@ def register_memory_routes(app: FastAPI) -> None:
         from app.memory.profile_store import update
 
         try:
-            updated = await update(key, req.content, req.category, workspace_path=None)
+            updated = await update(
+                key,
+                req.content,
+                req.category,
+                workspace_path=None,
+                title=req.title,
+                keywords=req.keywords,
+                scenarios=req.scenarios,
+            )
         except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except KeyError as exc:

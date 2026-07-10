@@ -343,6 +343,9 @@ export const memory = {
     key: string,
     content: string,
     category?: ProfileCategory | string,
+    title?: string,
+    keywords?: string[],
+    scenarios?: string[],
     workspacePath?: string | null,
   ): Promise<unknown> => {
     const qs = workspacePath
@@ -351,7 +354,7 @@ export const memory = {
     const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, category }),
+      body: JSON.stringify({ content, category, title, keywords, scenarios }),
     });
     return r.json();
   },

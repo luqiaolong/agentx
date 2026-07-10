@@ -22,6 +22,9 @@ class ProfileEntry(BaseModel):
     key: str = Field(description="条目唯一键，如 uses_ts / project_framework")
     category: str = Field(description="分类：preference / project / fact")
     content: str = Field(description="条目内容描述")
+    title: str | None = Field(default=None, description="可读标题,不超过20字")
+    keywords: list[str] = Field(default_factory=list, description="3-5个关键词标签")
+    scenarios: list[str] = Field(default_factory=list, description="1-3个应用场景")
 
 
 class ProfileResult(BaseModel):
@@ -35,7 +38,11 @@ _PROFILE_SYSTEM = (
     "- 用户偏好（如\"喜欢简洁回复\"、\"用 TypeScript\"）\n"
     "- 项目约定（如\"项目用 FastAPI\"、\"测试用 pytest\"）\n"
     "- 重要事实（如\"用户是前端工程师\"、\"工作日 9-18 点在线\"）\n"
-    "若无可抽取内容，返回空 entries。不要编造，只抽取明确的事实。"
+    "若无可抽取内容，返回空 entries。不要编造，只抽取明确的事实。\n"
+    "对每条记忆，必须生成以下结构化字段：\n"
+    "- title：可读标题，不超过20字，概括该条记忆的核心要点\n"
+    "- keywords：3-5个关键词标签，用于检索与分类\n"
+    "- scenarios：1-3个应用场景，描述该记忆在何种情境下应被引用"
 )
 
 _PROFILE_PROMPT = ChatPromptTemplate.from_messages(

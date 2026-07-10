@@ -312,12 +312,24 @@ export interface ProfileEntry {
   updated_at: string;
   /** 条目来源层级：workspace（工作区级）| global（全局级） */
   scope?: "workspace" | "global";
+  /** 条目标题（可选，用于列表展示与检索命中） */
+  title?: string;
+  /** 关键词标签列表（用于检索增强与场景匹配） */
+  keywords: string[];
+  /** 适用场景标签列表（用于限定条目生效的对话场景） */
+  scenarios: string[];
 }
 
 export interface ProfileEntryRequest {
   key: string;
   category: string;
   content: string;
+  /** 条目标题（可选） */
+  title?: string;
+  /** 关键词标签列表 */
+  keywords: string[];
+  /** 适用场景标签列表 */
+  scenarios: string[];
 }
 
 // ---- MCP (Model Context Protocol) ----
