@@ -32,8 +32,10 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
     : null;
   const isDisabled = disabledReason !== null;
 
-  const reviewDisabled = isDisabled || (isAnalyzing && analyzingKind === "review");
-  const evolveDisabled = isDisabled || (isAnalyzing && analyzingKind === "self-evolve");
+  // 当前消息（或同 hook 实例）有任意分析在进行中时，两个按钮都禁用，
+  // 避免用户同时触发复盘+自进化导致多条 SSE 流并发、滚动状态冲突。
+  const reviewDisabled = isDisabled || isAnalyzing;
+  const evolveDisabled = isDisabled || isAnalyzing;
 
   return (
     <div className="flex items-center gap-1">
