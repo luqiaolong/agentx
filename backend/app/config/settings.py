@@ -114,8 +114,6 @@ class Settings(BaseSettings):
 
     # ---- 危险操作审批 ----
     # 0=禁用（无限期暂停等用户操作）；>0 时倒计时归零自动批准
-    auto_approve_after_seconds: int = 0
-
     # ---- 审批超时（T8）----
     approval_max_wait: float = 300.0  # 0=无限等待
 

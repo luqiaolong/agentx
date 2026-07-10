@@ -12,6 +12,10 @@
 平行存在，Phase 5 统一迁移 import 后旧定义可删除。
 """
 
+from app.security.sandbox_escalation import (
+    SandboxFailureAnalysis,
+    analyze_sandbox_failure,
+)
 from app.security.approval import (
     ApprovalDecision,
     ApprovalResult,
@@ -57,6 +61,9 @@ __all__ = [
     "has_forbidden_args",
     "is_git_write_command",
     "redact_args",
+    # sandbox_escalation
+    "SandboxFailureAnalysis",
+    "analyze_sandbox_failure",
     # approval
     "ApprovalDecision",
     "ApprovalResult",

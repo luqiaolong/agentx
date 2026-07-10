@@ -35,8 +35,6 @@ pub struct LlmConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalConfig {
-    #[serde(default)]
-    pub auto_approve_after_seconds: f64,
     #[serde(default = "default_approval_max_wait")]
     pub approval_max_wait: f64,
     #[serde(default = "default_max_upload_bytes")]
@@ -239,7 +237,6 @@ pub fn set_system_prompt(app: &AppHandle, prompt: &str) {
 /// 读取审批配置。
 pub fn get_approval_config(app: &AppHandle) -> ApprovalConfig {
     ApprovalConfig {
-        auto_approve_after_seconds: get_number(app, "approval.autoApproveAfterSeconds", 0.0),
         approval_max_wait: get_number(app, "approval.approvalMaxWait", 300.0),
         max_upload_bytes: get_number(app, "approval.maxUploadBytes", 52428800.0),
     }
@@ -295,17 +292,9 @@ fn clamp_finite(v: f64, min: f64, max: f64) -> f64 {
 /// `Some` 字段才写入，`None` 字段保留原值（Partial 语义）。
 pub fn set_approval_config_partial(
     app: &AppHandle,
-    auto_approve_after_seconds: Option<f64>,
     approval_max_wait: Option<f64>,
     max_upload_bytes: Option<f64>,
 ) {
-    if let Some(v) = auto_approve_after_seconds {
-        set_value(
-            app,
-            "approval.autoApproveAfterSeconds",
-            Value::from(clamp_finite(v, 0.0, 3600.0)),
-        );
-    }
     if let Some(v) = approval_max_wait {
         set_value(
             app,

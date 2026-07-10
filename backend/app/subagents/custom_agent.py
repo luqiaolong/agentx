@@ -57,6 +57,7 @@ def build_custom_agent(
     checkpointer: Any = None,
     rubric: str = "",
     grader_model: Any = None,
+    chat_model: Any = None,
 ) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
@@ -122,7 +123,7 @@ def build_custom_agent(
             "custom subagent has no tools bound, agent will be unreachable",
             key=key,
         )
-    model = get_chat_model(temperature=cfg.temperature, streaming=True)
+    model = chat_model if chat_model is not None else get_chat_model(temperature=cfg.temperature, streaming=True)
     _tools = _make_custom_tools(thread_id or "", cfg.tools, workspace_path)
     prompt = (cfg.system_prompt or "") + THINK_PROMPT_SUFFIX
     return create_agent(

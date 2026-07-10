@@ -189,6 +189,7 @@ def build_builtin_subagent(
     name: str,
     thread_id: str,
     checkpointer: Any = None,
+    chat_model: Any = None,
 ) -> Any:
     """构建内置子代理（rag/web）deep_agent 子图，返回 CompiledStateGraph。
 
@@ -196,13 +197,14 @@ def build_builtin_subagent(
         name: 子代理名称，"rag" 或 "web"。
         thread_id: 会话 ID。
         checkpointer: 可选的 LangGraph checkpointer。
+        chat_model: 可选的注入 ChatModel（eval mock 模式透传）；为 None 时回退到 ``get_chat_model``。
     """
     from app.deepagent.factory import create_agent
     from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
 
     settings = get_settings()
     cfg = settings.subagents[name]
-    model = get_chat_model(temperature=cfg.temperature, streaming=True)
+    model = chat_model if chat_model is not None else get_chat_model(temperature=cfg.temperature, streaming=True)
     if name == "rag":
         tools = make_rag_tools(thread_id)
     elif name == "web":

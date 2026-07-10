@@ -29,7 +29,7 @@
 | `tool_result` | JSON `{"id","name","result","source","error?"}` | 工具调用结束 |
 | `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
 | `todo_update` | JSON `{"todos": [{"content": str, "status": "pending"\|"in_progress"\|"completed"}], "task_id?": str}` | DeepAgent/Team 任务列表更新（deepagents 原生 TodoListMiddleware 维护；`task_id` 区分 Team 子任务） |
-| `approval_request` | JSON `{"thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界审批请求 |
+| `approval_request` | JSON `{"thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界 / 沙箱权限升级审批请求。`kind` 取值：`"dangerous_tool"`（危险工具）、`"directory_extension"`（目录越界）、`"sandbox_escalation"`（沙箱权限升级）。`sandbox_escalation` 额外字段：`command`、`exit_code`、`reason`、`suggested_action`、`suggested_path`。 |
 | `paused` | `"{}"` | 用户暂停，SSE 流在下一轮迭代退出并保留状态，等待 `resume` |
 | `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
 | `done` | `"{}"` | 流结束 |

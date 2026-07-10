@@ -86,7 +86,6 @@ class TestLoadTauriStoreConfig:
                 "milvusAuthEnabled": False,
             },
             "approval": {
-                "autoApproveAfterSeconds": 0,
                 "approvalMaxWait": 300,
                 "maxUploadBytes": 52428800,
             },
@@ -124,7 +123,6 @@ class TestLoadTauriStoreConfig:
         assert env["AGENTX_MILVUS_AUTH_ENABLED"] == "false"
 
         # 审批
-        assert env["AGENTX_AUTO_APPROVE_AFTER_SECONDS"] == "0"
         assert env["AGENTX_APPROVAL_MAX_WAIT"] == "300.0"
         assert env["AGENTX_MAX_UPLOAD_BYTES"] == "52428800"
 

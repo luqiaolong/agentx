@@ -194,7 +194,6 @@ mod tests {
         m.insert("llm.defaultModel".into(), json!("deepseek-chat"));
         m.insert("llm.openaiBaseUrl".into(), json!("https://api.deepseek.com"));
         m.insert("systemPrompt".into(), json!("你是助手"));
-        m.insert("approval.autoApproveAfterSeconds".into(), json!(0));
         m.insert("approval.approvalMaxWait".into(), json!(300));
         m.insert("approval.maxUploadBytes".into(), json!(52428800));
         m.insert("knowledge.milvusHost".into(), json!("192.168.1.4"));
@@ -268,12 +267,8 @@ mod tests {
         // number
         assert_eq!(
             result
-                .get("approval.autoApproveAfterSeconds")
+                .get("approval.approvalMaxWait")
                 .and_then(|v| v.as_f64()),
-            Some(0.0)
-        );
-        assert_eq!(
-            result.get("approval.approvalMaxWait").and_then(|v| v.as_f64()),
             Some(300.0)
         );
         // bool
@@ -295,7 +290,7 @@ mod tests {
         assert!(result.get("models.entries").unwrap().is_array());
 
         // 全部加入 preserved
-        assert!(report.preserved.contains(&"approval.autoApproveAfterSeconds".to_string()));
+        assert!(report.preserved.contains(&"approval.approvalMaxWait".to_string()));
         assert!(report.preserved.contains(&"knowledge.milvusAuthEnabled".to_string()));
         assert!(report.preserved.contains(&"subagents".to_string()));
         assert!(report.preserved.contains(&"mcp.servers".to_string()));
@@ -337,10 +332,10 @@ mod tests {
         // migrated strings: apikey.openai, apikey.deepseek, llm.defaultModel,
         //   llm.openaiBaseUrl, systemPrompt, knowledge.milvusHost, models.activeId = 7
         assert_eq!(report.migrated.len(), 7);
-        // preserved: 2 enc: values + approval.*(3) + knowledge.milvusPort(1) +
+        // preserved: 2 enc: values + approval.*(2) + knowledge.milvusPort(1) +
         //   knowledge.milvusAuthEnabled(1) + profile.autoExtract(1) +
-        //   subagents(1) + tools(1) + mcp.servers(1) + models.entries(1) = 12
-        assert_eq!(report.preserved.len(), 12);
+        //   subagents(1) + tools(1) + mcp.servers(1) + models.entries(1) = 11
+        assert_eq!(report.preserved.len(), 11);
     }
 
     #[test]
@@ -348,7 +343,7 @@ mod tests {
         let report = MigrationReport {
             migrated: vec!["apikey.openai".into(), "llm.defaultModel".into()],
             requires_reinput: vec!["milvus.user".into()],
-            preserved: vec!["approval.autoApproveAfterSeconds".into()],
+            preserved: vec!["approval.approvalMaxWait".into()],
         };
         let json = serde_json::to_string(&report).unwrap();
         // camelCase 序列化
@@ -397,7 +392,6 @@ mod tests {
         m.insert("llm.openaiBaseUrl".into(), json!("https://api.deepseek.com/v1"));
         m.insert("systemPrompt".into(), json!("你是 AgentX 助手"));
         // 数值
-        m.insert("approval.autoApproveAfterSeconds".into(), json!(0));
         m.insert("approval.approvalMaxWait".into(), json!(300));
         m.insert("approval.maxUploadBytes".into(), json!(52428800));
         m.insert("knowledge.milvusPort".into(), json!(19530));

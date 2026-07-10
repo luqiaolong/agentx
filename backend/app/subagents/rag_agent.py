@@ -22,12 +22,14 @@ from app.subagents.base import (
 def build_rag_agent(
     thread_id: str,
     checkpointer: Any = None,
+    chat_model: Any = None,
 ) -> Any:
     """构建 RAG 子代理 deep_agent 子图，返回 CompiledStateGraph。
 
     薄 re-export：委托给 ``build_builtin_subagent("rag", ...)``。
+    ``chat_model`` 透传用于 eval mock 模式注入。
     """
-    return build_builtin_subagent("rag", thread_id, checkpointer=checkpointer)
+    return build_builtin_subagent("rag", thread_id, checkpointer=checkpointer, chat_model=chat_model)
 
 
 async def run_rag_agent(

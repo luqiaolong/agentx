@@ -1,0 +1,16 @@
+fix: eval smoke 修复 — work 模式 chat_model 透传 + team fixture 更新
+
+1. work 模式 token 事件缺失修复：
+   - _build_subagent_runnables 新增 chat_model 参数，透传到 build_rag_agent /
+     build_web_agent / build_custom_agent
+   - build_builtin_subagent / build_custom_agent 新增 chat_model 参数，
+     非空时使用注入模型（eval mock），为空时回退 get_chat_model（生产路径）
+   - 根因：work 模式预编译子代理时硬编码调 get_chat_model()，eval mock 模式
+     无 API key 导致 ValueError → error 事件 → 0 token
+
+2. team fixture 更新：
+   - team.yaml 从过时的 delegate_to_expert/delegate_to_subagent tool_call
+     更新为 write_todos（write-todos-unification 变更后的新架构）
+   - todos content 含 [agent:xxx] 前缀（orchestrator 约定格式）
+
+3. test_supervisor.py 断言更新：匹配新增的 chat_model 参数

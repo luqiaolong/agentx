@@ -28,7 +28,6 @@ vi.hoisted(() => {
 beforeEach(() => {
   useSettingsStore.setState({
     persistAuthorizedDirs: true,
-    autoApproveAfterSeconds: 0,
     milvusConfigured: false,
     maxUploadBytes: 52428800,
     theme: "dark",
@@ -51,13 +50,6 @@ describe("settings store", () => {
     expect(useSettingsStore.getState().theme).toBe("light");
     useSettingsStore.getState().setTheme("dark");
     expect(useSettingsStore.getState().theme).toBe("dark");
-  });
-
-  it("setAutoApproveAfterSeconds", () => {
-    useSettingsStore.getState().setAutoApproveAfterSeconds(30);
-    expect(useSettingsStore.getState().autoApproveAfterSeconds).toBe(30);
-    useSettingsStore.getState().setAutoApproveAfterSeconds(0);
-    expect(useSettingsStore.getState().autoApproveAfterSeconds).toBe(0);
   });
 
   it("setMilvusConfigured / setMaxUploadBytes", () => {

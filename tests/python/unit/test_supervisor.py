@@ -162,8 +162,8 @@ class TestBuildSubagentRunnables:
                     assert names == {"rag", "web"}
                     assert any(s["runnable"] is mock_rag.return_value for s in subagents)
                     assert any(s["runnable"] is mock_web.return_value for s in subagents)
-                    mock_rag.assert_called_once_with("test-thread")
-                    mock_web.assert_called_once_with("test-thread")
+                    mock_rag.assert_called_once_with("test-thread", chat_model=None)
+                    mock_web.assert_called_once_with("test-thread", chat_model=None)
 
     def test_skips_disabled(self) -> None:
         """禁用的子代理不会出现在列表中。"""
@@ -200,7 +200,7 @@ class TestBuildSubagentRunnables:
 
                 assert [s["name"] for s in subagents] == ["myagent"]
                 mock_custom.assert_called_once_with(
-                    "myagent", thread_id="test-thread", workspace_path="/ws"
+                    "myagent", thread_id="test-thread", workspace_path="/ws", chat_model=None
                 )
 
 

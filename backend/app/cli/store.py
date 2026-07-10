@@ -382,8 +382,6 @@ def load_tauri_store_config() -> dict[str, str]:
 
     # ---- 审批配置 ----
     approval = config.get("approval", {})
-    if "autoApproveAfterSeconds" in approval:
-        env["AGENTX_AUTO_APPROVE_AFTER_SECONDS"] = str(int(approval["autoApproveAfterSeconds"]))
     if "approvalMaxWait" in approval:
         env["AGENTX_APPROVAL_MAX_WAIT"] = str(float(approval["approvalMaxWait"]))
     if "maxUploadBytes" in approval:

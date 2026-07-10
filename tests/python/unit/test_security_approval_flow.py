@@ -927,3 +927,223 @@ class TestHandleDirectoryExtensionBugs:
         assert result.events == []
         assert result.denied is False
         assert result.timed_out is False
+
+
+# ============================================================
+# 10. Cross-stream dedup sharing + msg_count increment check
+# (fix for trace=64851677fced422c)
+# ============================================================
+
+
+class TestRepeatDetectionAfterStreamResume:
+    """Regression tests for trace=64851677fced422c.
+
+    Reproduces: astream resume re-emits historical state.messages without
+    increasing the message count, while pending_calls keeps returning the
+    same tool calls. Before the fix, this was misclassified as an LLM loop
+    after 3 iterations and forced a stop. After the fix, repeat detection
+    only runs when current_msg_count > _yielded_msg_count.
+    """
+
+    @pytest.fixture
+    def _common_mocks(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        monkeypatch.setattr("app.deepagent.approval_runner.is_paused", AsyncMock(return_value=False))
+        monkeypatch.setattr("app.deepagent.approval_runner.is_aborted", AsyncMock(return_value=False))
+
+        fake_settings = MagicMock()
+        fake_settings.approval_max_wait = 300
+        monkeypatch.setattr("app.security.approval.flow.get_settings", lambda: fake_settings)
+        return {}
+
+    @pytest.mark.asyncio
+    async def test_resume_replay_does_not_trigger_repeat_detection(
+        self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """astream resume replay (msg_count unchanged) should NOT trigger repeat detection.
+
+        Reproduces trace=64851677fced422c:
+        - Initial stream produces 7 messages
+        - approval_runner enters resume loop, calls stream 3 times
+        - Each stream produces no new messages (msg_count still 7)
+        - pending_calls always returns the same 4 tools
+        - Before fix: 3rd repeat detected as loop, force stop
+        - After fix: msg_count unchanged, detection skipped, normal completion
+        """
+        from app.deepagent.approval_runner import run_agent_with_approval
+
+        sandbox = MagicMock()
+        sandbox.is_path_authorized = AsyncMock(return_value=True)
+        sandbox.clear_temp = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._await_approval",
+            AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
+        )
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._handle_directory_extension",
+            AsyncMock(return_value=_FakeExtensionResult()),
+        )
+
+        # 4 parallel tool calls, returned 5 times unchanged
+        same_pending = [
+            _fake_tool_call("tc-1", "list_dir", {"path": "/a"}),
+            _fake_tool_call("tc-2", "read_file", {"path": "/a/x.py"}),
+            _fake_tool_call("tc-3", "read_file", {"path": "/a/y.py"}),
+            _fake_tool_call("tc-4", "grep", {"pattern": "foo"}),
+        ]
+        pending_mock = AsyncMock(side_effect=[same_pending] * 5)
+
+        # Simulate state.values.messages always 7 items (astream resume replay)
+        fake_state = MagicMock()
+        fake_state.values = {"messages": list(range(7))}
+        agent = MagicMock()
+        agent.aget_state = AsyncMock(return_value=fake_state)
+
+        # is_interrupted: True, True, True, True, False
+        interrupted_values = [True, True, True, True, False]
+
+        config = {"configurable": {"thread_id": "trace-64851677fced422c"}}
+
+        events = [
+            e
+            async for e in run_agent_with_approval(
+                agent,
+                config,
+                thread_id="trace-64851677fced422c",
+                workspace_path="/workspace",
+                permission_mode="standard",
+                runtime_dangerous={"write_file", "edit_file"},
+                source="coding",
+                inputs={"messages": []},
+                sandbox=sandbox,
+                stream_fn=_empty_stream,
+                is_interrupted_fn=AsyncMock(side_effect=interrupted_values),
+                get_pending_calls_fn=pending_mock,
+                inject_tool_error_for_call_fn=AsyncMock(),
+                inject_tool_error_messages_fn=AsyncMock(),
+                max_iterations=10,
+            )
+        ]
+
+        # After fix: should NOT produce a "repeat loop" error event
+        error_events = [e for e in events if e.get("event") == "error"]
+        repeat_errors = [e for e in error_events if "\u91cd\u590d\u5faa\u73af" in e.get("data", "")]
+        assert len(repeat_errors) == 0, (
+            f"After fix, repeat detection should be skipped, but got "
+            f"{len(repeat_errors)} repeat errors: {repeat_errors}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stream_fn_receives_seen_signatures_kwarg(
+        self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify stream_fn is invoked with seen_signatures kwarg (cross-call shared state)."""
+        from app.deepagent.approval_runner import run_agent_with_approval
+
+        sandbox = MagicMock()
+        sandbox.is_path_authorized = AsyncMock(return_value=True)
+        sandbox.clear_temp = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._await_approval",
+            AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
+        )
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._handle_directory_extension",
+            AsyncMock(return_value=_FakeExtensionResult()),
+        )
+
+        seen_signatures_observed: list = []
+
+        async def custom_stream_with_seen(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
+            seen_signatures_observed.append(kwargs.get("seen_signatures"))
+            yield {"event": "token", "data": "ok"}
+
+        pending_calls = [_fake_tool_call("tc-1", "read_file", {"path": "/a"})]
+        fake_state = MagicMock()
+        fake_state.values = {"messages": list(range(3))}
+        agent = MagicMock()
+        agent.aget_state = AsyncMock(return_value=fake_state)
+
+        config = {"configurable": {"thread_id": "test-seen-sig"}}
+
+        async for _ in run_agent_with_approval(
+            agent,
+            config,
+            thread_id="test-seen-sig",
+            workspace_path="/workspace",
+            permission_mode="standard",
+            runtime_dangerous=set(),
+            source="coding",
+            inputs={"messages": []},
+            sandbox=sandbox,
+            stream_fn=custom_stream_with_seen,
+            is_interrupted_fn=AsyncMock(side_effect=[True, False]),
+            get_pending_calls_fn=AsyncMock(return_value=pending_calls),
+            inject_tool_error_for_call_fn=AsyncMock(),
+            inject_tool_error_messages_fn=AsyncMock(),
+            max_iterations=5,
+        ):
+            pass
+
+        # At least 2 stream calls (initial + resume), each should receive seen_signatures
+        assert len(seen_signatures_observed) >= 2
+        first_set = seen_signatures_observed[0]
+        assert isinstance(first_set, set)
+        for ss in seen_signatures_observed[1:]:
+            assert ss is first_set, "Cross stream calls should share the same seen_signatures set"
+
+    @pytest.mark.asyncio
+    async def test_stream_fn_without_seen_signatures_kwarg_falls_back(
+        self, _common_mocks: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Legacy stream_fn without seen_signatures kwarg should fall back gracefully."""
+        from app.deepagent.approval_runner import run_agent_with_approval
+
+        sandbox = MagicMock()
+        sandbox.is_path_authorized = AsyncMock(return_value=True)
+        sandbox.clear_temp = AsyncMock()
+
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._await_approval",
+            AsyncMock(return_value=_FakeApprovalDecision(approved=True)),
+        )
+        monkeypatch.setattr(
+            "app.deepagent.approval_runner._handle_directory_extension",
+            AsyncMock(return_value=_FakeExtensionResult()),
+        )
+
+        async def legacy_stream(agent: Any, inputs: Any, config: dict, source: str) -> AsyncIterator[dict[str, str]]:
+            yield {"event": "token", "data": "ok"}
+
+        pending_calls = [_fake_tool_call("tc-1", "read_file", {"path": "/a"})]
+        fake_state = MagicMock()
+        fake_state.values = {"messages": list(range(3))}
+        agent = MagicMock()
+        agent.aget_state = AsyncMock(return_value=fake_state)
+
+        config = {"configurable": {"thread_id": "test-fallback"}}
+
+        events = []
+        async for e in run_agent_with_approval(
+            agent,
+            config,
+            thread_id="test-fallback",
+            workspace_path="/workspace",
+            permission_mode="standard",
+            runtime_dangerous=set(),
+            source="coding",
+            inputs={"messages": []},
+            sandbox=sandbox,
+            stream_fn=legacy_stream,
+            is_interrupted_fn=AsyncMock(side_effect=[True, False]),
+            get_pending_calls_fn=AsyncMock(return_value=pending_calls),
+            inject_tool_error_for_call_fn=AsyncMock(),
+            inject_tool_error_messages_fn=AsyncMock(),
+            max_iterations=5,
+        ):
+            events.append(e)
+
+        # Should yield token normally, no TypeError
+        assert any(e.get("event") == "token" for e in events)
+

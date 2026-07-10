@@ -39,7 +39,7 @@ const mockApi = {
     setSystemPrompt: vi.fn().mockResolvedValue({ ok: true }),
     getApprovalConfig: vi
       .fn()
-      .mockResolvedValue({ autoApproveAfterSeconds: 0, approvalMaxWait: 300, maxUploadBytes: 52428800 }),
+      .mockResolvedValue({ approvalMaxWait: 300, maxUploadBytes: 52428800 }),
     setApprovalConfig: vi.fn().mockResolvedValue({ ok: true }),
     getKnowledgeConfig: vi.fn().mockResolvedValue({
       embeddingUrl: "",

@@ -40,7 +40,6 @@ beforeEach(() => {
     isStreaming: false,
     approvalQueue: [],
   });
-  useSettingsStore.setState({ autoApproveAfterSeconds: 0 });
   approveSubmit.mockClear();
 });
 
@@ -322,8 +321,7 @@ describe("ApprovalDialog directory_extension 三按钮", () => {
     expect(args[2]).toBe("deny");
   });
 
-  it("directory_extension 时 autoApproveAfterSeconds 不触发自动批准", () => {
-    useSettingsStore.setState({ autoApproveAfterSeconds: 1 });
+  it("directory_extension 时不触发自动批准", () => {
     useChatStore.setState({
       approvalQueue: [{
         threadId: "t6",

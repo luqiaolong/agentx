@@ -122,15 +122,9 @@ pub fn settings_set_approval_config(app: AppHandle, cfg: Value) -> Result<OkResu
     let obj = cfg
         .as_object()
         .ok_or_else(|| "approval config must be an object".to_string())?;
-    let auto_approve_after_seconds = obj.get("autoApproveAfterSeconds").and_then(|v| v.as_f64());
     let approval_max_wait = obj.get("approvalMaxWait").and_then(|v| v.as_f64());
     let max_upload_bytes = obj.get("maxUploadBytes").and_then(|v| v.as_f64());
-    store::set_approval_config_partial(
-        &app,
-        auto_approve_after_seconds,
-        approval_max_wait,
-        max_upload_bytes,
-    );
+    store::set_approval_config_partial(&app, approval_max_wait, max_upload_bytes);
     Ok(OkResult::ok())
 }
 

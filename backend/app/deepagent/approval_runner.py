@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from typing import Any, AsyncIterator, Awaitable, Callable
 
@@ -147,7 +148,25 @@ async def run_agent_with_approval(
     """
     from app.sandbox import get_sandbox
 
-    _stream = stream_fn or _stream_default
+    # 跨 stream 调用共享的"已 yield 消息签名"集合（避免 astream resume
+    # 时重发历史消息被重复 yield，root cause: trace=64851677fced422c）。
+    # 包装器自动向支持 seen_signatures 关键字参数的 stream_fn 注入；
+    # 不支持的自定义 stream_fn（测试桩）自动降级为不带参数调用。
+    _seen_signatures: set[str] = set()
+    _base_stream = stream_fn or _stream_default
+
+    async def _stream(agent: Any, inputs: Any, config: dict, source: str) -> AsyncIterator[dict[str, str]]:
+        """包装原 stream_fn 注入共享 seen_signatures。"""
+        try:
+            async for sse in _base_stream(
+                agent, inputs, config, source, seen_signatures=_seen_signatures
+            ):
+                yield sse
+        except TypeError:
+            # 自定义 stream_fn（测试桩）不支持 seen_signatures kwarg，降级调用
+            async for sse in _base_stream(agent, inputs, config, source):
+                yield sse
+
     _is_int = is_interrupted_fn or _is_interrupted
     _get_calls = get_pending_calls_fn or _get_pending_tool_calls
     _inject_call = inject_tool_error_for_call_fn or _inject_tool_error_for_call
@@ -164,10 +183,34 @@ async def run_agent_with_approval(
     iteration = 0
     readonly_streak = 0
 
-    # 循环保护：记录最近几次 pending_calls 以检测重复模式
+    # 循环保护：记录最近几次 pending_calls 以检测重复模式。
+    # 重要：仅在 LLM 真正生成新消息后才记录。astream resume 时会重放历史 state，
+    # 同一批 pending_calls 会被重复提出，但不应触发"LLM 循环"判定
+    # （root cause: trace=64851677fced422c）。
     _recent_calls_history: list[list[dict]] = []
     _REPEAT_DETECTION_WINDOW = 3  # 最近 3 次迭代
     _REPEAT_THRESHOLD = 2  # 有 2 次重复即判定为循环
+    # 跟踪已 yield 后的 state.values.messages 数量，作为"是否有新消息"的基线。
+    # 初始 stream 后初始化为初始 state 长度；后续每次 stream 完成后更新。
+    _yielded_msg_count: int = -1
+
+    async def _state_msg_count() -> int:
+        """读取当前 state 的 messages 数量（用于增量判断）。失败时返回 -1 表示未知。
+
+        兼容 MagicMock / AsyncMock 测试场景：state.values.get(...) 在 AsyncMock 下
+        会返回 coroutine，需 inspect.isawaitable 检测后 await。
+        """
+        try:
+            state = await agent.aget_state(config)
+            if not state or not getattr(state, "values", None):
+                return -1
+            messages = state.values.get("messages", [])
+            # 防御性：AsyncMock 会把 .get 当 async 调用，返回 coroutine
+            if inspect.isawaitable(messages):
+                messages = await messages
+            return len(messages or [])
+        except Exception:  # noqa: BLE001 — 读取失败不应阻塞主流程
+            return -1
 
     # 1. 初始流式执行
     try:
@@ -178,6 +221,9 @@ async def run_agent_with_approval(
         await _inject_msgs(agent, config, f"执行失败: {exc}")
         yield await _forward(make_error_event( f"执行失败: {exc}"))
         return
+    # 初始化已 yield 基线：取初始 stream 后的 state.messages 数量。
+    # 后续 stream 完成时刷新；重复检测用此判断"是否有新消息生成"。
+    _yielded_msg_count = await _state_msg_count()
 
     # 2. 中断/恢复循环
     while iteration < max_iterations:
@@ -205,35 +251,49 @@ async def run_agent_with_approval(
             logger.warning("interrupted but no pending tool calls", thread_id=thread_id)
             break
 
-        # 重复工具调用检测
-        _recent_calls_history.append(pending_calls)
-        if len(_recent_calls_history) > _REPEAT_DETECTION_WINDOW:
-            _recent_calls_history.pop(0)
-        if len(_recent_calls_history) >= _REPEAT_DETECTION_WINDOW:
-            # 提取每次的工具名称+参数签名
-            def _call_signature(calls: list[dict]) -> str:
-                return "|".join(
-                    f"{c.get('name','')}:{json.dumps(c.get('args',{}),sort_keys=True,separators=(',',':'))}"
-                    for c in calls
-                )
-            signatures = [_call_signature(c) for c in _recent_calls_history]
-            # 检查最近 N 次是否有重复
-            repeat_count = sum(1 for i in range(1, len(signatures)) if signatures[i] == signatures[i - 1])
-            if repeat_count >= _REPEAT_THRESHOLD:
-                logger.warning(
-                    "agent stuck in repeating tool-call loop, forcing stop",
-                    thread_id=thread_id,
-                    signatures=signatures,
-                    repeat_count=repeat_count,
-                )
-                await _inject_msgs(agent, config, "工具调用陷入重复循环，已强制停止。请简化您的请求或明确指定目标路径。")
-                yield await _forward(
-                    make_sse_event(
-                        "error",
-                        "工具调用陷入重复循环，已强制停止。请简化您的请求或明确指定目标路径。",
+        # 重复工具调用检测。
+        # 关键：仅在 LLM 真正生成新 AIMessage 时才记录（current_msg_count > _yielded_msg_count）。
+        # astream resume 时会重放历史 state，同一批 pending_calls 被重复提出，
+        # 但因为 messages 数量未增长，属于重放而非 LLM 循环，不应触发判定
+        # （root cause: trace=64851677fced422c：msg_count 始终为 7，但 pending_calls 一致）。
+        current_msg_count = await _state_msg_count()
+        if _yielded_msg_count >= 0 and current_msg_count <= _yielded_msg_count:
+            logger.debug(
+                "repeat detection skipped: no new messages since last stream",
+                thread_id=thread_id,
+                current_msg_count=current_msg_count,
+                yielded_msg_count=_yielded_msg_count,
+                source=source,
+            )
+        else:
+            _recent_calls_history.append(pending_calls)
+            if len(_recent_calls_history) > _REPEAT_DETECTION_WINDOW:
+                _recent_calls_history.pop(0)
+            if len(_recent_calls_history) >= _REPEAT_DETECTION_WINDOW:
+                # 提取每次的工具名称+参数签名
+                def _call_signature(calls: list[dict]) -> str:
+                    return "|".join(
+                        f"{c.get('name','')}:{json.dumps(c.get('args',{}),sort_keys=True,separators=(',',':'))}"
+                        for c in calls
                     )
-                )
-                return
+                signatures = [_call_signature(c) for c in _recent_calls_history]
+                # 检查最近 N 次是否有重复
+                repeat_count = sum(1 for i in range(1, len(signatures)) if signatures[i] == signatures[i - 1])
+                if repeat_count >= _REPEAT_THRESHOLD:
+                    logger.warning(
+                        "agent stuck in repeating tool-call loop, forcing stop",
+                        thread_id=thread_id,
+                        signatures=signatures,
+                        repeat_count=repeat_count,
+                    )
+                    await _inject_msgs(agent, config, "工具调用陷入重复循环，已强制停止。请简化您的请求或明确指定目标路径。")
+                    yield await _forward(
+                        make_sse_event(
+                            "error",
+                            "工具调用陷入重复循环，已强制停止。请简化您的请求或明确指定目标路径。",
+                        )
+                    )
+                    return
 
         pending_names = {tc.get("name", "") for tc in pending_calls}
         has_dangerous = bool(pending_names & runtime_dangerous)
@@ -279,6 +339,8 @@ async def run_agent_with_approval(
                 await _inject_msgs(agent, config, f"恢复失败: {exc}")
                 yield await _forward(make_error_event( f"恢复失败: {exc}"))
                 return
+            # 刷新已 yield 基线（root cause: trace=64851677fced422c）
+            _yielded_msg_count = await _state_msg_count()
             continue
 
         # standard 模式：危险工具判定
@@ -369,6 +431,12 @@ async def run_agent_with_approval(
             await _inject_msgs(agent, config, f"恢复失败: {exc}")
             yield await _forward(make_error_event( f"恢复失败: {exc}"))
             return
+
+        # 刷新已 yield 基线（root cause: trace=64851677fced422c）。
+        # 每次 stream 完成后记录最新 state.messages 数量，重复检测据此判断
+        # 是否有新 LLM 消息生成（仅在 current_count > _yielded_msg_count 时
+        # 才进入循环检测，避免 astream resume 重放历史误触发）。
+        _yielded_msg_count = await _state_msg_count()
 
         await _sandbox.clear_temp(thread_id)
 

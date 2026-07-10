@@ -1,14 +1,22 @@
 - match: "团队"
   response: "我将协调 Coding Team 的多个专家并行处理这个任务。"
   tool_calls:
-    - name: "delegate_to_expert"
-      args: {"expert_name": "backend_dev", "task": "实现评测框架数据层"}
+    - name: "write_todos"
+      args:
+        todos:
+          - content: "[agent:code] 读取并分析项目结构"
+            status: "pending"
+          - content: "[agent:rag] 检索评测最佳实践"
+            status: "pending"
 
 - match: "委派"
   response: "正在把子任务分发给对应专家。"
   tool_calls:
-    - name: "delegate_to_subagent"
-      args: {"agent_name": "rag", "task": "检索评测最佳实践"}
+    - name: "write_todos"
+      args:
+        todos:
+          - content: "[agent:code] 实现评测框架数据层"
+            status: "pending"
 
 - match: "汇总"
   response: "各专家结果已收集完毕，正在生成综合报告。"

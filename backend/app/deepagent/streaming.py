@@ -37,7 +37,12 @@ __all__ = ["_stream_agent_events"]
 
 
 async def _stream_agent_events(
-    agent: Any, inputs: Any, config: dict, source: str = "deep"
+    agent: Any,
+    inputs: Any,
+    config: dict,
+    source: str = "deep",
+    *,
+    seen_signatures: set[str] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_on``。
 
@@ -47,8 +52,8 @@ async def _stream_agent_events(
     SSE 事件映射:
     - ``state.todos`` 变化 → ``todo_update``（原生 ``{content, status}`` schema，
       由 deepagents ``TodoListMiddleware`` 维护）
-    - AIMessage with tool_calls → ``reasoning`` + ``tool_call`` SSE
-    - AIMessage without tool_calls → ``token``（最终回复，strip_think 后一次性 yield）
+    - AIMessage with ``tool_calls`` → ``reasoning`` + ``tool_call`` SSE
+    - AIMessage without ``tool_calls`` → ``token``（最终回复，``strip_think`` 后一次性 yield）
     - ToolMessage → ``tool_result`` SSE
 
     在 ``interrupt_on`` 处暂停时，最后一个 state 的 messages[-1]
@@ -61,6 +66,10 @@ async def _stream_agent_events(
         config: LangGraph 运行配置。
         source: SSE 事件 source 标识，默认 "deep"（DeepAgent）。
             Supervisor 传 "work"，Expert 传 "coding" 等。
+        seen_signatures: 可选外部去重集合。若提供，使用它替代内部新建的 set，
+            用于跨 ``_stream_agent_events`` 调用（如 approval_runner resume）
+            共享"已 yield 的消息签名"，避免 astream resume 时重发历史消息
+            被重复 yield（root cause: trace=64851677fced422c）。
     """
     from langchain_core.messages import AIMessage, ToolMessage
     from app.utils.text import strip_think
@@ -95,7 +104,11 @@ async def _stream_agent_events(
     # 去重集合：基于消息签名避免 LangGraph astream 在 interrupt/resume 后
     # 重发已处理过的消息（astream 每次从图起点遍历，会重复 emit 历史状态）。
     # 签名 = msg_type + content_hash + tool_call_ids，覆盖 AIMessage 和 ToolMessage。
-    _seen_signatures: set[str] = set()
+    # 跨调用共享（approval_runner resume 场景）：由调用方传入 seen_signatures；
+    # 未传入时新建一次性 set（保持原行为兼容测试桩 stream_fn）。
+    _seen_signatures: set[str] = (
+        seen_signatures if seen_signatures is not None else set()
+    )
 
     def _msg_signature(msg: Any) -> str:
         """为消息生成唯一签名，用于去重。"""

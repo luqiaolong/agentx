@@ -22,8 +22,13 @@ from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 
 from app.security.command_filter import has_forbidden_args, is_command_blocked, is_git_write_command
+from app.security.sandbox_escalation import analyze_sandbox_failure
 
 __all__ = ["SafeLocalShellBackend"]
+
+
+# 模块级标志：控制沙箱权限升级功能是否启用（可通过环境变量或配置覆盖）
+_SANDBOX_ESCALATION_ENABLED = True
 
 
 class SafeLocalShellBackend(LocalShellBackend):
@@ -109,4 +114,24 @@ class SafeLocalShellBackend(LocalShellBackend):
 
         # 5. 调用父类执行（root_dir 限制工作目录）
         # 父类 LocalShellBackend.execute 已始终返回 ExecuteResponse，无需再做包装
-        return super().execute(command, **kwargs)
+        result = super().execute(command, **kwargs)
+
+        # 6. 沙箱权限升级：若执行失败且疑似沙箱限制，分析并返回带升级提示的结果
+        if _SANDBOX_ESCALATION_ENABLED and result.exit_code != 0:
+            analysis = analyze_sandbox_failure(command, result.exit_code, result.output)
+            if analysis.is_sandbox_limit:
+                # 在输出中附加沙箱升级提示，供上层审批流识别
+                upgrade_hint = (
+                    f"\n\n[SANDBOX_ESCALATION]"
+                    f"\nreason: {analysis.reason}"
+                    f"\nsuggested_action: {analysis.suggested_action}"
+                )
+                if analysis.suggested_path:
+                    upgrade_hint += f"\nsuggested_path: {analysis.suggested_path}"
+                return ExecuteResponse(
+                    output=result.output + upgrade_hint,
+                    exit_code=result.exit_code,
+                    truncated=result.truncated,
+                )
+
+        return result

@@ -56,7 +56,6 @@ export function setSystemPrompt(prompt: string): Promise<void> {
 // ---- Approval ----
 
 export function getApprovalConfig(): Promise<{
-  autoApproveAfterSeconds: number;
   approvalMaxWait: number;
   maxUploadBytes: number;
 }> {
@@ -64,7 +63,6 @@ export function getApprovalConfig(): Promise<{
 }
 
 export function setApprovalConfig(cfg: {
-  autoApproveAfterSeconds?: number;
   approvalMaxWait?: number;
   maxUploadBytes?: number;
 }): Promise<void> {

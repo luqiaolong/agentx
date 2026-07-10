@@ -82,7 +82,7 @@ export type ChatEvent = (
  * `trace_id`，`_tid` 作为 forward-compatible 别名。
  */
 
-export type ApprovalKind = "dangerous_tool" | "directory_extension";
+export type ApprovalKind = "dangerous_tool" | "directory_extension" | "sandbox_escalation";
 
 export interface ApprovalRequest {
   threadId: string;
@@ -93,6 +93,12 @@ export interface ApprovalRequest {
   requestedPath?: string;       // directory_extension 时必填
   writable?: boolean;           // directory_extension 时必填
   traceId?: string;             // 后端 SSE 事件顶层 trace_id（用户报问题时复制）
+  // sandbox_escalation 专用字段
+  command?: string;             // 原始命令
+  exitCode?: number;            // 沙箱失败退出码
+  reason?: string;              // AI 分析的人类可读原因
+  suggestedAction?: "retry_with_auth" | "execute_unsandboxed";  // 建议动作
+  suggestedPath?: string;       // 建议授权的路径
 }
 
 export type PermissionMode = "standard" | "full_trust";

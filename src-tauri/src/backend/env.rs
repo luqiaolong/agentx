@@ -72,13 +72,9 @@ fn inject_llm_config(app: &AppHandle, env: &mut HashMap<String, String>) {
     }
 }
 
-/// 注入审批配置（autoApproveAfterSeconds / approvalMaxWait / maxUploadBytes）。
+/// 注入审批配置（approvalMaxWait / maxUploadBytes）。
 fn inject_approval_config(app: &AppHandle, env: &mut HashMap<String, String>) {
     let approval = store::get_approval_config(app);
-    env.insert(
-        "AGENTX_AUTO_APPROVE_AFTER_SECONDS".into(),
-        approval.auto_approve_after_seconds.to_string(),
-    );
     env.insert(
         "AGENTX_APPROVAL_MAX_WAIT".into(),
         approval.approval_max_wait.to_string(),

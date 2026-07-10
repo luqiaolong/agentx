@@ -236,10 +236,6 @@ pub async fn app_reload_backend_config(app: AppHandle) -> Result<Value, String> 
         "max_upload_bytes".into(),
         Value::from(approval.max_upload_bytes),
     );
-    payload.insert(
-        "auto_approve_after_seconds".into(),
-        Value::from(approval.auto_approve_after_seconds),
-    );
     if !system_prompt.is_empty() {
         payload.insert("default_system_prompt".into(), Value::String(system_prompt));
     }

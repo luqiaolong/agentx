@@ -55,6 +55,7 @@ __all__ = [
 def _build_subagent_runnables(
     thread_id: str,
     workspace_path: str | None = None,
+    chat_model: Any = None,
 ) -> list[CompiledSubAgent]:
     """构建 Supervisor 的 compiled subagent 列表，透传给 ``SubAgentMiddleware``。
 
@@ -65,6 +66,7 @@ def _build_subagent_runnables(
     Args:
         thread_id: 会话 ID（传给子代理用于沙箱授权 / 线程隔离）。
         workspace_path: 当前工作区路径（传给自定义子代理用于相对路径解析）。
+        chat_model: 可选的注入 ChatModel（eval mock 模式透传）；为 None 时子代理各自调 ``get_chat_model``。
 
     Returns:
         ``CompiledSubAgent`` 列表，可直接作为 ``create_deep_agent(subagents=...)`` 参数。
@@ -82,7 +84,7 @@ def _build_subagent_runnables(
             {
                 "name": "rag",
                 "description": rag_cfg.trigger_description or "检索内部知识库并回答",
-                "runnable": build_rag_agent(thread_id),
+                "runnable": build_rag_agent(thread_id, chat_model=chat_model),
             }
         )
 
@@ -95,7 +97,7 @@ def _build_subagent_runnables(
             {
                 "name": "web",
                 "description": web_cfg.trigger_description or "联网搜索最新信息",
-                "runnable": build_web_agent(thread_id),
+                "runnable": build_web_agent(thread_id, chat_model=chat_model),
             }
         )
 
@@ -114,6 +116,7 @@ def _build_subagent_runnables(
                     key,
                     thread_id=thread_id,
                     workspace_path=workspace_path,
+                    chat_model=chat_model,
                 ),
             }
         )
@@ -380,7 +383,7 @@ async def run_work_supervisor(
             expert_tool = make_expert_delegation_tool(thread_id, workspace_path)
             all_tools = [*agent_tools, expert_tool]
 
-            subagents = _build_subagent_runnables(thread_id, workspace_path)
+            subagents = _build_subagent_runnables(thread_id, workspace_path, chat_model=chat_model)
 
             agent = await build_work_supervisor(
                 thread_id,

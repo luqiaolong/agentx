@@ -183,11 +183,7 @@ def register_chat_routes(app: FastAPI) -> None:
         支持两种审批场景：
         - dangerous_tool：approval=True/False，decision="approve"/"deny"
         - directory_extension：decision="once"/"session"/"deny"，path/writable 描述目标
-
-        若 ``auto_approve_after_seconds > 0`` 且倒计时归零，记录 auto_approve trace；
-        否则按用户实际操作记录 user_approve / user_reject。
         """
-        settings = get_settings()
         # approval=False → 强制 deny（覆盖 decision 默认值 "approve"）
         effective_decision = "deny" if not req.approval else req.decision
         await submit_approval(
@@ -199,26 +195,18 @@ def register_chat_routes(app: FastAPI) -> None:
             ),
         )
 
-        # LangSmith trace：区分用户批准 / 拒绝 / 自动批准
-        if req.approval and settings.auto_approve_after_seconds > 0:
-            # 自动批准由 SSE handler 倒计时触发后调本端点（approval=True）
-            span_name = "approval.auto_approve"
-            action = "auto_approve"
-            auto_approved = True
-        elif req.approval:
+        # LangSmith trace：区分用户批准 / 拒绝
+        if req.approval:
             span_name = "approval.user_approve"
             action = "user_approve"
-            auto_approved = False
         else:
             span_name = "approval.user_reject"
             action = "user_reject"
-            auto_approved = False
 
         with trace_span(
             span_name,
             thread_id=req.thread_id,
             action=action,
-            auto_approved=auto_approved,
             decision=req.decision,
             path=req.path,
             args=mark_redacted(),
@@ -250,17 +238,12 @@ def register_chat_routes(app: FastAPI) -> None:
             from app.observability.feedback import record_implicit_bad
 
             await record_implicit_bad(req.run_id, reason="rejected_dangerous_tool")
-        elif req.run_id and auto_approved:
-            from app.observability.feedback import record_implicit_ok
-
-            await record_implicit_ok(req.run_id, reason="auto_approved")
 
         logger.info(
             "approval submitted",
             thread_id=req.thread_id,
             approval=req.approval,
             decision=req.decision,
-            auto_approved=auto_approved,
         )
         return {"ok": True}
 

@@ -22,12 +22,14 @@ from app.subagents.base import (
 def build_web_agent(
     thread_id: str,
     checkpointer: Any = None,
+    chat_model: Any = None,
 ) -> Any:
     """构建 Web 子代理 deep_agent 子图，返回 CompiledStateGraph。
 
     薄 re-export：委托给 ``build_builtin_subagent("web", ...)``。
+    ``chat_model`` 透传用于 eval mock 模式注入。
     """
-    return build_builtin_subagent("web", thread_id, checkpointer=checkpointer)
+    return build_builtin_subagent("web", thread_id, checkpointer=checkpointer, chat_model=chat_model)
 
 
 async def run_web_agent(
