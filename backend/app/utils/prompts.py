@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from app.utils.platform_info import get_os_hint
+
 
 def resolve_system_prompt(
     default: str,
@@ -35,13 +37,14 @@ def build_workspace_prompt_suffix(workspace_path: str | None) -> str:
     集中实现，供 Supervisor / DeepAgent / Coding Expert 等场景复用，
     避免各 agent 中重复定义导致文案漂移。
     """
-    if not workspace_path:
-        return ""
-    return (
-        f"\n\n当前 workspace: {workspace_path}\n"
-        "对该路径下的文件操作需已被用户授权；"
-        "若涉及越界读写，会触发审批请求。"
-    )
+    parts = [get_os_hint()]
+    if workspace_path:
+        parts.append(
+            f"\n\n当前 workspace: {workspace_path}\n"
+            "对该路径下的文件操作需已被用户授权；"
+            "若涉及越界读写，会触发审批请求。"
+        )
+    return "".join(parts)
 
 
 __all__ = ["resolve_system_prompt", "build_workspace_prompt_suffix"]
