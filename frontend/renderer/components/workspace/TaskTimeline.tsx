@@ -69,7 +69,11 @@ function formatAgentRole(role: string | undefined): string | null {
 }
 
 function TaskCard({ task, compact = false }: { task: Task; compact?: boolean }) {
-  const [expanded, setExpanded] = useState(task.status === "running");
+  // 有 todos 的任务默认展开 todo 清单（深度任务标题下方直接展示）；
+  // 无 todos 时仅 running 状态展开（预留展示位）
+  const [expanded, setExpanded] = useState(
+    task.status === "running" || (task.todos?.length ?? 0) > 0,
+  );
   const removeTask = useTasksStore((s) => s.removeTask);
 
   const cfg = STATUS_CONFIG[task.status];
@@ -355,7 +359,7 @@ export function TaskTimeline() {
         </div>
         <div className="font-medium text-secondary-c" style={{ fontSize: 'var(--fs-empty-title)' }}>暂无任务</div>
         <div className="text-muted-c" style={{ fontSize: 'var(--fs-empty-desc)' }}>
-          发起深度任务后将在此显示进度
+          发送消息后将在此记录任务流水
         </div>
       </div>
     );

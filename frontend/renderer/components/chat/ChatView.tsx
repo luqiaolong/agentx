@@ -56,6 +56,7 @@ export function ChatView() {
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const isPaused = useChatStore((s) => s.isPaused);
   const setIsPaused = useChatStore((s) => s.setIsPaused);
+  const addTask = useTasksStore((s) => s.addTask);
   const updateTask = useTasksStore((s) => s.updateTask);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -427,8 +428,24 @@ export function ChatView() {
     const initialTraceId = getCurrentTraceId(tid) ?? undefined;
     addMessage({ id: pendingId, role: "assistant", content: "", ts: Date.now(), traceId: initialTraceId });
 
-    // 新一轮发送：重置任务追踪状态，让 todo_update 创建新任务而非更新旧任务
-    currentTaskIdRef.current = null;
+    // 每次对话都创建任务流水记录（不只是深度任务才显示在任务面板）
+    const taskId = `task-${crypto.randomUUID()}`;
+    currentTaskIdRef.current = taskId;
+    const rawQuery = sendContent
+      .replace(/<workspace>.*?<\/workspace>\s?/g, "")
+      .replace(/<file>.*?<\/file>\s?/g, "")
+      .trim();
+    const title = rawQuery.slice(0, 40) || "对话";
+    const taskSource: "work" | "coding" =
+      agentMode === "coding" || agentMode === "coding_team" ? "coding" : "work";
+    addTask({
+      id: taskId,
+      title,
+      status: "running",
+      createdAt: Date.now(),
+      sessionId: tid,
+      taskSource,
+    });
     lastUserQueryRef.current = sendContent;
     setStreaming(true);
     setErrorMsg(null);

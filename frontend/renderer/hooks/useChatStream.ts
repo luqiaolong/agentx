@@ -313,8 +313,11 @@ export function useChatStream(args: UseChatStreamArgs) {
               : undefined;
           const incoming = normalizeTodos(e.todos, taskId);
           if (parentTaskId && source) {
-            // Team 子任务路径：创建/更新子任务（幂等 ID = `{parent_task_id}-child-{source}`）
-            const childTaskId = `${parentTaskId}-child-${source}`;
+            // Team 子任务路径：创建/更新子任务。
+            // effectiveParentId 优先用 currentTaskIdRef.current（handleSend 预创建的主任务 id，
+            // 前端 UUID），建立正确的父子链接；回退到事件原始 parentTaskId（后端 thread_id）。
+            const effectiveParentId = currentTaskIdRef.current ?? parentTaskId;
+            const childTaskId = `${effectiveParentId}-child-${source}`;
             const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
             const existing = useTasksStore.getState().tasks.find((t) => t.id === childTaskId);
             if (existing) {
@@ -327,7 +330,7 @@ export function useChatStream(args: UseChatStreamArgs) {
                 todos: incoming,
                 createdAt: Date.now(),
                 sessionId,
-                parentTaskId,
+                parentTaskId: effectiveParentId,
                 taskSource: "team",
                 agentRole: source,
               });

@@ -45,7 +45,6 @@ export const MessageFeedback = memo(function MessageFeedback({
   runId,
   isStreaming,
 }: MessageFeedbackProps) {
-  const [hovered, setHovered] = useState(false);
   const { open, setOpen, rootRef } = usePopover();
   const [thumbUp, setThumbUp] = useState<SubmitState>("idle");
   const [thumbDown, setThumbDown] = useState<SubmitState>("idle");
@@ -133,9 +132,7 @@ export const MessageFeedback = memo(function MessageFeedback({
   return (
     <div
       ref={rootRef}
-      className="relative flex items-center gap-0.5"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      className="relative flex items-center gap-1"
     >
       {/* 👍 按钮（hover-reveal） */}
       <button
@@ -147,9 +144,7 @@ export const MessageFeedback = memo(function MessageFeedback({
         }
         aria-label="点赞这条回复"
         data-testid="feedback-thumb-up"
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30 ${
-          hovered && !isDisabled ? "opacity-100" : thumbUp === "done" ? "opacity-100" : "opacity-0"
-        }`}
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30 opacity-100`}
       >
         {renderIcon(thumbUp, ThumbsUp, "已反馈：👍")}
       </button>
@@ -167,9 +162,7 @@ export const MessageFeedback = memo(function MessageFeedback({
         aria-expanded={open}
         aria-haspopup="dialog"
         data-testid="feedback-thumb-down"
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30 ${
-          hovered && !isDisabled ? "opacity-100" : thumbDown === "done" ? "opacity-100" : "opacity-0"
-        }`}
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-muted-c transition-opacity hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30 opacity-100`}
       >
         {renderIcon(thumbDown, ThumbsDown, "已反馈：👎")}
       </button>
