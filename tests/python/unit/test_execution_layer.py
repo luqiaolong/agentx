@@ -114,6 +114,18 @@ async def test_run_agent_with_approval_full_trust_skips_approval() -> None:
         # 第一次检测为 True，进入中断循环；恢复后再次检测为 False
         return call_idx <= 1
 
+    # 模拟 resume 后 state msg_count 增长，避免 stuck state 检测触发
+    state_msg_count = 0
+
+    async def _aget_state(config):
+        nonlocal state_msg_count
+        state_msg_count += 1
+        mock_state = MagicMock()
+        mock_state.values = {"messages": [MagicMock()] * state_msg_count}
+        return mock_state
+
+    agent.aget_state = _aget_state
+
     with patch("app.deepagent.approval_runner._stream_default", _fake_stream):
         with patch("app.deepagent.approval_runner._is_interrupted", _is_interrupted):
             with patch(

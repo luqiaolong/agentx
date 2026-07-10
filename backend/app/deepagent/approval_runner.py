@@ -282,7 +282,12 @@ async def run_agent_with_approval(
         # 但因为 messages 数量未增长，属于重放而非 LLM 循环，不应触发判定
         # （root cause: trace=64851677fced422c：msg_count 始终为 7，但 pending_calls 一致）。
         current_msg_count = await _state_msg_count()
-        if _yielded_msg_count >= 0 and current_msg_count <= _yielded_msg_count:
+        _no_new_messages = (
+            _yielded_msg_count >= 0
+            and current_msg_count >= 0
+            and current_msg_count <= _yielded_msg_count
+        )
+        if _no_new_messages:
             logger.debug(
                 "repeat detection skipped: no new messages since last stream",
                 thread_id=thread_id,
@@ -290,6 +295,24 @@ async def run_agent_with_approval(
                 yielded_msg_count=_yielded_msg_count,
                 source=source,
             )
+            # 防御：虽然 msg_count 未增长，但如果 pending_calls 与上次完全相同，
+            # 且已连续多次出现，则可能是 stuck state 导致的重复（而非正常重放）。
+            # 此时仍记录并检测，避免 stuck state 场景下重复检测完全失效
+            # （root cause: trace=e629ab945dad467c）。
+            if _recent_calls_history and pending_calls:
+                last_calls = _recent_calls_history[-1]
+                if (
+                    len(pending_calls) == len(last_calls)
+                    and all(
+                        p.get("name") == l.get("name")
+                        and p.get("args", {}) == l.get("args", {})
+                        for p, l in zip(pending_calls, last_calls)
+                    )
+                ):
+                    _recent_calls_history.append(pending_calls)
+                    if len(_recent_calls_history) > _REPEAT_DETECTION_WINDOW:
+                        _recent_calls_history.pop(0)
+                    # 不在这里触发停止，让 stuck state 检测在 resume 后处理
         else:
             _recent_calls_history.append(pending_calls)
             if len(_recent_calls_history) > _REPEAT_DETECTION_WINDOW:
@@ -356,6 +379,7 @@ async def run_agent_with_approval(
         # full_trust 模式：直接恢复
         if is_full_trust:
             await _sandbox.clear_temp(thread_id)
+            pre_resume_msg_count = await _state_msg_count()
             try:
                 async for sse in _stream(
                     agent,
@@ -367,10 +391,61 @@ async def run_agent_with_approval(
             except Exception as exc:  # noqa: BLE001
                 logger.exception("agent resume failed", thread_id=thread_id)
                 await _inject_msgs(agent, config, f"恢复失败: {exc}")
+                # 异常后尝试消费可能残留的 interrupt，避免 stuck state
+                try:
+                    async for _ in agent.astream(
+                        _make_hitl_resume_decisions(
+                            pending_calls, decision_type="reject", message=f"恢复失败: {exc}"
+                        ),
+                        config=config,
+                        stream_mode="values",
+                    ):
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
                 yield await _forward(make_error_event( f"恢复失败: {exc}"))
                 return
             # 刷新已 yield 基线（root cause: trace=64851677fced422c）
             _yielded_msg_count = await _state_msg_count()
+            # 防御：检测 resume 后 state 是否推进（root cause: trace=e629ab945dad467c）
+            # 注意：任一值为 -1（state 读取失败）时跳过检测，避免误判
+            if (
+                pre_resume_msg_count >= 0
+                and _yielded_msg_count >= 0
+                and _yielded_msg_count <= pre_resume_msg_count
+            ):
+                logger.warning(
+                    "agent resume did not advance state, possible stuck state in full_trust",
+                    thread_id=thread_id,
+                    source=source,
+                    pre_resume_msg_count=pre_resume_msg_count,
+                    post_resume_msg_count=_yielded_msg_count,
+                    iteration=iteration,
+                )
+                # 强制注入错误消息以尝试解除 stuck state
+                await _inject_msgs(
+                    agent,
+                    config,
+                    "工具执行后状态未正常推进，已强制终止。请重试或联系支持。",
+                )
+                # 消费可能残留的 interrupt
+                try:
+                    async for _ in agent.astream(
+                        _make_hitl_resume_decisions(
+                            pending_calls, decision_type="reject", message="状态未推进，强制终止"
+                        ),
+                        config=config,
+                        stream_mode="values",
+                    ):
+                        pass
+                except Exception:  # noqa: BLE001
+                    pass
+                yield await _forward(
+                    make_error_event(
+                        "工具执行后状态未正常推进，已强制终止。请重试或联系支持。"
+                    )
+                )
+                return
             continue
 
         # standard 模式：危险工具判定
