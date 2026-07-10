@@ -179,6 +179,13 @@ export const approve = {
     });
     await assertOk(r);
   },
+  /** 查询指定会话是否有待审批决策（用于刷新后恢复审批状态） */
+  checkPending: async (threadId: string): Promise<boolean> => {
+    const r = await fetch(`${API_BASE}/api/chat/pending-approval?thread_id=${encodeURIComponent(threadId)}`);
+    await assertOk(r);
+    const data = (await r.json()) as { ok: boolean; pending: boolean };
+    return data.pending;
+  },
 };
 
 // ---- Health ----

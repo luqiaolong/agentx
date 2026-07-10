@@ -146,6 +146,19 @@ async def pop_approval(thread_id: str) -> ApprovalResult | None:
         return entry[0] if entry is not None else None
 
 
+async def has_pending_approval(thread_id: str) -> bool:
+    """检查是否有待审批决策（未消费）。用于前端刷新后恢复审批状态。"""
+    async with _state_lock:
+        return thread_id in _pending_approvals
+
+
+async def peek_approval(thread_id: str) -> ApprovalResult | None:
+    """查看但不移除审批决策。用于查询当前审批状态。"""
+    async with _state_lock:
+        entry = _pending_approvals.get(thread_id)
+        return entry[0] if entry is not None else None
+
+
 # ---- abort ----
 
 

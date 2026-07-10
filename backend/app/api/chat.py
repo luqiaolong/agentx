@@ -18,6 +18,7 @@ from app.security.approval import (
     ApprovalResult,
     clear_abort,
     clear_pause,
+    has_pending_approval,
     is_aborted,
     set_abort,
     set_pause,
@@ -364,3 +365,13 @@ def register_chat_routes(app: FastAPI) -> None:
             "summary": summary,
             "compressed_count": len(to_compress),
         }
+
+    @app.get("/api/chat/pending-approval")
+    async def chat_pending_approval(thread_id: str) -> dict[str, Any]:
+        """查询指定会话是否有待审批决策。
+
+        用于前端刷新后恢复审批状态：若用户刷新页面时仍有未处理的审批请求，
+        前端可调用此端点检查并重新显示审批弹窗。
+        """
+        pending = await has_pending_approval(thread_id)
+        return {"ok": True, "pending": pending}
