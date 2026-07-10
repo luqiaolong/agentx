@@ -1,7 +1,8 @@
 """真实 AsyncSqliteSaver 上的 checkpointer 写回集成测试。
 
 验证 ``_append_messages_to_checkpointer`` 在真实 LangGraph SQLite checkpointer
-上能正确写入并被后续读取（即单元测试里 _FakeCheckpointer 测不到的真实 bug）。
+上能正确写入并被后续读取。该函数仅用于 coding_team 路径（team graph 无
+checkpointer，由 Router 手动写回 user + assistant 消息）。
 
 使用临时 SQLite 数据库（不污染生产 data/agentx.db）。
 """
@@ -98,7 +99,7 @@ async def test_append_messages_to_real_sqlite(async_sqlite_checkpointer):
 async def test_append_messages_preserves_user_memory_across_rounds(
     async_sqlite_checkpointer,
 ):
-    """验证场景 1（CHAT 跨轮记忆）：第二轮写入后，第一轮的 HumanMessage 仍能被读到。"""
+    """验证场景 1（跨轮记忆）：第二轮写入后，第一轮的 HumanMessage 仍能被读到。"""
     from langchain_core.messages import AIMessage, HumanMessage
     from langgraph.graph import END, START, MessagesState, StateGraph
 
@@ -139,7 +140,6 @@ async def test_append_messages_preserves_user_memory_across_rounds(
     config = {"configurable": {"thread_id": thread_id}}
     state = await compiled.aget_state(config)
     messages = state.values.get("messages", [])
-    # 第二轮 LLM 之所以能答"蓝色"，正是因为它能看到第一轮的"我喜欢蓝色"
     user_msgs = [m.content for m in messages if isinstance(m, HumanMessage)]
     assert "记住：我最喜欢的颜色是蓝色" in user_msgs
     assert "我最喜欢什么颜色？" in user_msgs

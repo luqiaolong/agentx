@@ -71,15 +71,14 @@ async def test_router_work_mode_dispatches_to_supervisor(
         message: str,
         thread_id: str,
         profile_prompt: str = "",
-        history: list | None = None,
         permission_mode: str = "standard",
         workspace_path: str | None = None,
         chat_model=None,
+        checkpointer: Any = None,
     ) -> AsyncIterator[dict]:
         captured["message"] = message
         captured["thread_id"] = thread_id
         captured["profile_prompt"] = profile_prompt
-        captured["history"] = history
         captured["permission_mode"] = permission_mode
         captured["workspace_path"] = workspace_path
         yield {"event": "token", "data": "你好"}
@@ -132,10 +131,10 @@ async def test_router_coding_mode_dispatches_to_expert(
         message: str,
         thread_id: str,
         profile_prompt: str = "",
-        history: list | None = None,
         permission_mode: str = "standard",
         workspace_path: str | None = None,
         chat_model=None,
+        checkpointer: Any = None,
     ) -> AsyncIterator[dict]:
         captured["message"] = message
         captured["thread_id"] = thread_id
@@ -393,106 +392,7 @@ async def test_router_skill_tag_not_injected_in_coding_mode(
 
 
 # ============================================================
-# 7. checkpointer 历史加载与写回
-# ============================================================
-
-
-async def test_router_checkpointer_history_loaded_and_written_back(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """checkpointer 历史被加载，assistant 内容被写回。"""
-    from langchain_core.messages import AIMessage, HumanMessage
-    from langgraph.checkpoint.memory import InMemorySaver
-
-    checkpointer = InMemorySaver()
-
-    # 预写入一条历史消息
-    from langgraph.graph import END, START, MessagesState, StateGraph
-
-    async def _passthrough(state: MessagesState) -> dict:
-        return {"messages": []}
-
-    graph = StateGraph(MessagesState)
-    graph.add_node("passthrough", _passthrough)
-    graph.add_edge(START, "passthrough")
-    graph.add_edge("passthrough", END)
-    compiled = graph.compile(checkpointer=checkpointer)
-    config = {"configurable": {"thread_id": "t-cp"}}
-    await compiled.ainvoke(
-        {"messages": [HumanMessage(content="历史问题"), AIMessage(content="历史回答")]},
-        config=config,
-    )
-
-    captured: dict = {}
-
-    async def _fake_run_work_supervisor(
-        message: str,
-        thread_id: str,
-        profile_prompt: str = "",
-        history: list | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[dict]:
-        captured["history"] = history
-        yield {"event": "token", "data": "新回答"}
-
-    monkeypatch.setattr(
-        "app.router.graph.run_work_supervisor",
-        _fake_run_work_supervisor,
-    )
-
-    events = await _collect_events(
-        run_router("新问题", "t-cp", checkpointer=checkpointer, agent_mode="work")
-    )
-
-    # 历史被加载（至少 2 条）
-    assert len(captured["history"]) >= 2
-
-    # 写回后，checkpointer 中应包含新问题和新回答
-    checkpoint = checkpointer.get({"configurable": {"thread_id": "t-cp"}})
-    messages = checkpoint.get("channel_values", {}).get("messages", [])
-    contents = [getattr(m, "content", "") for m in messages]
-    assert "新问题" in contents
-    assert "新回答" in contents
-
-    assert any(e["event"] == "done" for e in events)
-
-
-async def test_router_empty_assistant_content_skips_writeback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """assistant 内容为空（仅 error）时不写回 checkpointer。"""
-    from langgraph.checkpoint.memory import InMemorySaver
-
-    checkpointer = InMemorySaver()
-
-    async def _fake_run_work_supervisor(
-        message: str,
-        thread_id: str,
-        **kwargs: Any,
-    ) -> AsyncIterator[dict]:
-        yield {"event": "error", "data": "LLM 不可用"}
-        # 无 token 事件 → assistant_content_parts 为空
-
-    monkeypatch.setattr(
-        "app.router.graph.run_work_supervisor",
-        _fake_run_work_supervisor,
-    )
-
-    events = await _collect_events(
-        run_router("hi", "t-empty", checkpointer=checkpointer, agent_mode="work")
-    )
-
-    # checkpointer 中无新消息
-    checkpoint = checkpointer.get({"configurable": {"thread_id": "t-empty"}})
-    if checkpoint:
-        messages = checkpoint.get("channel_values", {}).get("messages", [])
-        assert len(messages) == 0, f"expected 0 messages, got {len(messages)}"
-
-    assert any(e["event"] == "done" for e in events)
-
-
-# ============================================================
-# 8. workspace_path 透传 + 授权
+# 7. workspace_path 透传 + 授权
 # ============================================================
 
 

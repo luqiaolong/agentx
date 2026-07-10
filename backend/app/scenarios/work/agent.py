@@ -28,13 +28,14 @@ from deepagents import CompiledSubAgent
 from app.scenarios.work.mention import parse_mention
 from app.config import get_settings
 from app.deepagent.approval_runner import run_agent_with_approval
+from app.deepagent.agent import trigger_profile_auto_extract
 from app.deepagent.context import current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
-    _TOOL_NAME_MAP,
     _load_mcp_tools,
     _make_deep_tools,
+    compute_runtime_dangerous,
 )
 from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
@@ -318,10 +319,10 @@ async def run_work_supervisor(
     message: str,
     thread_id: str,
     profile_prompt: str = "",
-    history: list | None = None,
     permission_mode: str = "standard",
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    checkpointer: Any = None,
 ) -> AsyncIterator[dict]:
     """运行 work 场景 Supervisor，yield SSE 事件。
 
@@ -330,14 +331,18 @@ async def run_work_supervisor(
     2. 构建 Supervisor agent（含标准工具 + delegate_to_expert + task 子代理 + interrupt_on 危险工具审批）
     3. 流式执行，危险工具中断 → 审批 → 恢复，循环直至完成
 
+    历史 messages 由 LangGraph astream 从 checkpointer 自动加载（thread_id 匹配），
+    不再显式传入 history 参数。
+
     Args:
         message: 用户消息（可能含 @mention）。
         thread_id: 会话 ID。
         profile_prompt: 用户画像前缀。
-        history: 历史 messages 列表（已截断）。
         permission_mode: 权限模式，"standard" 或 "full_trust"。
         workspace_path: 可选当前工作区绝对路径。
         chat_model: 可选注入的 ChatModel，透传到 ``build_work_supervisor`` 与 @mention 强制委派时的 ``run_coding_expert``。None 时使用真实 LLM。
+        checkpointer: 可选的 LangGraph checkpointer。Router 传共享 checkpointer
+            让 LangGraph 自动加载/写回历史；None 时 ``build_work_supervisor`` 内部获取全局 checkpointer。
 
     Yields:
         SSE 事件 dict: {event: str, data: str}
@@ -370,10 +375,10 @@ async def run_work_supervisor(
             cleaned_message,
             thread_id,
             profile_prompt=profile_prompt,
-            history=history,
             workspace_path=workspace_path,
             permission_mode=permission_mode,
             chat_model=chat_model,
+            checkpointer=checkpointer,
         ):
             yield sse
         return
@@ -412,8 +417,9 @@ async def run_work_supervisor(
         # 加载 supervisor 配置（rubric / grader_model 在此读取）
         supervisor_cfg = get_settings().agents.supervisor
 
-        history_msgs = list(history) if history else []
-        inputs = {"messages": [*history_msgs, {"role": "user", "content": cleaned_message}]}
+        # inputs 只含当前 user message；历史 messages 由 LangGraph astream 从
+        # checkpointer 自动加载（thread_id 匹配时），避免双重写入。
+        inputs = {"messages": [{"role": "user", "content": cleaned_message}]}
 
         try:
             agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
@@ -444,6 +450,7 @@ async def run_work_supervisor(
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
                 chat_model=chat_model,
+                checkpointer=checkpointer,
                 rubric=supervisor_cfg.rubric or None,
                 grader_model=supervisor_cfg.grader_model,
             )
@@ -456,14 +463,9 @@ async def run_work_supervisor(
             return
 
         # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集 + MCP untrusted
-        enabled_tool_names = {
-            _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
-        }
-        runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
-        # 内置 fs 写工具（write_file/edit_file）由 AuthorizedLocalShellBackend 注入，
-        # 不在 agent_tools 列表中，但 workspace_path 设置后即对 LLM 可用，需纳入危险集合。
-        if workspace_path:
-            runtime_dangerous = runtime_dangerous | {"write_file", "edit_file"}
+        runtime_dangerous = compute_runtime_dangerous(
+            agent_tools, mcp_untrusted_names, workspace_path
+        )
         # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
         # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
 
@@ -486,6 +488,9 @@ async def run_work_supervisor(
     finally:
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
+
+    # 异步触发画像提取（与 deep/coding 路径一致）
+    trigger_profile_auto_extract(agent, config, cleaned_message)
 
 
 async def _run_subagent_for_mention(

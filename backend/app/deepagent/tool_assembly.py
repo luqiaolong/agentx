@@ -4,7 +4,7 @@
 
 职责:
 - ``DANGEROUS_TOOLS``：触发人工审批中断的工具集合（写操作 + 删除）
-- ``_TOOL_NAME_MAP``：内部 tool 函数名 → settings.tools_enabled key 的映射（保留空 dict 向后兼容）
+- ``compute_runtime_dangerous``：计算运行时危险工具集合（DANGEROUS_TOOLS + MCP untrusted + workspace fs 写工具）
 - ``_make_deep_tools``：构建 DeepAgent 工具集（delete_file + rag + web）
 - ``_load_mcp_tools``：异步加载 MCP 工具并标记非可信工具
 
@@ -29,17 +29,38 @@ from app.subagents.base import _make_rag_tools, _make_web_tools
 
 __all__ = [
     "DANGEROUS_TOOLS",
-    "_TOOL_NAME_MAP",
+    "compute_runtime_dangerous",
     "_make_deep_tools",
     "_load_mcp_tools",
 ]
 
-# 工具名映射：保留空 dict 向后兼容（内置 fs 工具名与 config key 一致，无需映射）。
-# 历史上 glob_files→glob / grep_files→grep 的映射已废弃（内置工具名为 glob/grep）。
-_TOOL_NAME_MAP: dict[str, str] = {}
-
 # 沙箱根目录保护：禁止删除这两个目录本身（允许删除其下的子项）
 _GUARDED_ROOTS = frozenset({"data/workspace", "data/uploads"})
+
+
+def compute_runtime_dangerous(
+    agent_tools: list,
+    mcp_untrusted_names: set[str],
+    workspace_path: str | None = None,
+) -> set[str]:
+    """计算运行时危险工具集合。
+
+    集合来源：
+    1. ``DANGEROUS_TOOLS`` 与 agent_tools 工具名的交集
+    2. MCP untrusted 工具名（来自 ``trusted=False`` server）
+    3. workspace_path 非空时追加内置 fs 写工具 ``write_file`` / ``edit_file``
+       （由 AuthorizedLocalShellBackend 注入，不在 agent_tools 列表中）
+
+    Args:
+        agent_tools: 已构建的工具列表（含 .name 属性）。
+        mcp_untrusted_names: MCP 非可信工具名集合。
+        workspace_path: 当前工作区路径，非空时纳入内置 fs 写工具。
+    """
+    enabled_tool_names = {t.name for t in agent_tools}
+    dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+    if workspace_path:
+        dangerous = dangerous | {"write_file", "edit_file"}
+    return dangerous
 
 
 def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
@@ -137,7 +158,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
 
     # 根据 settings.tools_enabled 过滤；未配置的工具默认启用
     enabled = get_settings().tools_enabled
-    return [t for t in all_tools if enabled.get(_TOOL_NAME_MAP.get(t.name, t.name), True)]
+    return [t for t in all_tools if enabled.get(t.name, True)]
 
 
 async def _load_mcp_tools() -> tuple[list, set[str]]:

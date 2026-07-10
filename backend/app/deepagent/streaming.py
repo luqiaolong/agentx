@@ -3,14 +3,17 @@
 从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
-- ``_stream_agent_events``：驱动 ``agent.astream(stream_mode="values")``，
+- ``_stream_agent_events``：驱动 ``agent.astream(stream_mode=["custom", "values"])``，
   尊重 ``interrupt_on``，把 LangGraph state 转换为前端 SSE 事件。
+  ``custom`` 模式用于透传工具节点内部通过 ``get_stream_writer()`` 写入的事件
+  （如 Supervisor ``delegate_to_expert`` 透传的 Expert approval_request 等）。
 
 SSE 事件映射:
 - ``state.todos`` 变化 → ``todo_update``（原生 deepagents ``{content, status}`` schema）
 - ``AIMessage`` with ``tool_calls`` → ``reasoning`` + ``tool_call``
 - ``AIMessage`` without ``tool_calls`` → ``token``（最终回复）
 - ``ToolMessage`` → ``tool_result``
+- ``custom`` stream 事件 → 直接透传 yield（工具节点内部写入的 SSE 事件）
 
 导入方向：``agent.py`` → ``streaming.py``（单向，无循环）。
 """
@@ -44,10 +47,10 @@ async def _stream_agent_events(
     *,
     seen_signatures: set[str] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """驱动 ``agent.astream(stream_mode="values")``，尊重 ``interrupt_on``。
+    """驱动 ``agent.astream(stream_mode=["custom", "values"])``，尊重 ``interrupt_on``。
 
     ``astream_events`` 不尊重 ``interrupt_on``（会直接执行工具），
-    MUST 用 ``astream`` + ``stream_mode="values"`` 才能在 tools 节点前暂停。
+    MUST 用 ``astream`` + ``stream_mode=["custom", "values"]`` 才能在 tools 节点前暂停。
 
     SSE 事件映射:
     - ``state.todos`` 变化 → ``todo_update``（原生 ``{content, status}`` schema，

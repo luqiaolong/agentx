@@ -12,9 +12,11 @@ Router 保留的公共职责：
 1. ``@skill:<name>`` 标记解析（仅 work 场景注入 system prompt）
 2. workspace 授权同步
 3. 用户画像加载
-4. 从 checkpointer 加载历史 messages + 截断
-5. 收集 assistant 内容并写回 checkpointer
-6. 统一 yield ``done`` 事件
+4. 从 checkpointer 加载历史 messages + 截断（仅用于 coding_team 子任务上下文 + 观测）
+5. 统一 yield ``done`` 事件
+
+work / coding 路径的 checkpointer 历史加载 + 新消息写回由 LangGraph astream 自动处理，
+Router 不再传 history 也不手动写回（避免双重写入）。
 """
 
 from __future__ import annotations
@@ -145,12 +147,13 @@ async def run_router(
     3. 从请求字段同步 workspace 授权（跳过 revoked_paths 中的路径）
     4. 读取用户画像
     5. 从 checkpointer 加载历史 messages（若提供）+ 截断到预算
+       （仅用于 coding_team 子任务上下文 + 观测 preview；work/coding 路径
+       由 LangGraph astream 自动从 checkpointer 加载，不传 history）
     6. 按 ``agent_mode`` 分发：
-       - ``"work"`` → ``run_work_supervisor``
-       - ``"coding"`` → ``run_coding_expert``
-       - ``"coding_team"`` → ``run_coding_team``
-    7. 收集 assistant token 内容，写回 checkpointer
-    8. 统一 yield ``done`` 事件
+       - ``"work"`` → ``run_work_supervisor``（传 checkpointer，不传 history）
+       - ``"coding"`` → ``run_coding_expert``（传 checkpointer，不传 history）
+       - ``"coding_team"`` → ``run_coding_team``（传 history，子任务用独立 thread_id）
+    7. 统一 yield ``done`` 事件
 
     Args:
         message: 用户消息。
@@ -335,43 +338,45 @@ async def run_router(
                 logger.warning("observation record_prompt/start failed", error=str(exc))
 
         # ---- 6. 场景分发 ----
-        # 收集本次对话的 user + assistant 消息并写回 checkpointer
-        assistant_content_parts: list[str] = []
-
-        async def _collect_path_sse(path_generator: AsyncIterator[dict[str, str]]) -> AsyncIterator[dict[str, str]]:
-            async for sse in path_generator:
-                if sse.get("event") == "token":
-                    assistant_content_parts.append(str(sse.get("data", "")))
-                yield sse
-
+        # work / coding 路径：LangGraph astream 自动从 checkpointer 加载历史 + 写回新消息，
+        # 不再传 history（避免历史消息重复）也不手动写回（避免 user/assistant 重复）。
+        # coding_team 路径：子任务用独立 child thread_id，checkpointer 无父会话历史，
+        # 需要显式传 history 提供上下文；team graph 无 checkpointer，由 Router 写回。
         if agent_mode == "work":
-            async for sse in _collect_path_sse(
-                run_work_supervisor(
-                    cleaned_message,
-                    thread_id,
-                    profile_prompt=profile_prompt,
-                    history=history,
-                    permission_mode=permission_mode,
-                    workspace_path=workspace_path,
-                    chat_model=chat_model,
-                )
+            async for sse in run_work_supervisor(
+                cleaned_message,
+                thread_id,
+                profile_prompt=profile_prompt,
+                permission_mode=permission_mode,
+                workspace_path=workspace_path,
+                chat_model=chat_model,
+                checkpointer=checkpointer,
             ):
                 yield sse
         elif agent_mode == "coding":
-            async for sse in _collect_path_sse(
-                run_coding_expert(
-                    cleaned_message,
-                    thread_id,
-                    profile_prompt=profile_prompt,
-                    history=history,
-                    permission_mode=permission_mode,
-                    workspace_path=workspace_path,
-                    chat_model=chat_model,
-                )
+            async for sse in run_coding_expert(
+                cleaned_message,
+                thread_id,
+                profile_prompt=profile_prompt,
+                permission_mode=permission_mode,
+                workspace_path=workspace_path,
+                chat_model=chat_model,
+                checkpointer=checkpointer,
             ):
                 yield sse
         else:  # coding_team
-            async for sse in _collect_path_sse(
+            # coding_team 的 team graph 无 checkpointer，Router 收集 token 并写回
+            assistant_content_parts: list[str] = []
+
+            async def _collect_team_sse(
+                path_generator: AsyncIterator[dict[str, str]],
+            ) -> AsyncIterator[dict[str, str]]:
+                async for sse in path_generator:
+                    if sse.get("event") == "token":
+                        assistant_content_parts.append(str(sse.get("data", "")))
+                    yield sse
+
+            async for sse in _collect_team_sse(
                 run_coding_team(
                     cleaned_message,
                     thread_id,
@@ -384,18 +389,18 @@ async def run_router(
             ):
                 yield sse
 
-        # ---- 7. 写回 checkpointer ----
-        assistant_content = "".join(assistant_content_parts).strip()
-        if assistant_content and checkpointer is not None:
-            from langchain_core.messages import AIMessage, HumanMessage
+            # coding_team 写回 checkpointer（team graph 无 checkpointer，需 Router 手动写）
+            assistant_content = "".join(assistant_content_parts).strip()
+            if assistant_content and checkpointer is not None:
+                from langchain_core.messages import AIMessage, HumanMessage
 
-            new_messages = [
-                HumanMessage(content=cleaned_message),
-                AIMessage(content=assistant_content),
-            ]
-            await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
+                new_messages = [
+                    HumanMessage(content=cleaned_message),
+                    AIMessage(content=assistant_content),
+                ]
+                await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
 
-        # ---- 7.5 观测中心：end state snapshot ----
+        # ---- 7. 观测中心：end state snapshot ----
         if run_id:
             try:
                 if checkpointer is not None and hasattr(checkpointer, "aget"):
@@ -448,21 +453,18 @@ async def _append_messages_to_checkpointer(
 ) -> None:
     """将 ``new_messages`` 追加到 ``thread_id`` 的 checkpointer messages channel。
 
-    实现策略：通过 LangGraph 编译一个最小 ``StateGraph``（含 messages channel），
-    调用 ``graph.ainvoke`` 让 LangGraph 内部 schema 机制负责 channel_versions /
-    checkpoint_id / checkpoint_ns 等字段的正确序列化。直接手工 ``aput`` 会因为
-    缺少 ``checkpoint_ns`` / ``id`` 字段触发 ``InternalError: 'checkpoint_ns'``。
+    仅用于 coding_team 路径（team graph 无 checkpointer，需 Router 手动写回）。
+    work / coding 路径由 LangGraph astream 自动写回，不调用此函数。
 
-    仅支持异步 checkpointer（``aget`` 接口）。生产环境使用 ``AsyncSqliteSaver``，
-    测试使用 ``InMemorySaver``，两者均实现 ``aget``。同步 ``SqliteSaver`` 不支持
-    异步接口，调用方应使用 ``get_async_checkpointer()`` 获取异步实例。
+    通过 LangGraph 编译最小 ``StateGraph``（含 messages channel），调用
+    ``graph.ainvoke`` 让 LangGraph 内部 schema 机制负责 channel_versions /
+    checkpoint_id / checkpoint_ns 等字段的正确序列化。
     """
     from langchain_core.runnables import RunnableConfig
     from langgraph.graph import END, START, MessagesState, StateGraph
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-    # 读取已有 messages，与 new_messages 合并后重新调用 ainvoke
     existing = await checkpointer.aget(config)
 
     existing_msgs: list = []
@@ -471,7 +473,6 @@ async def _append_messages_to_checkpointer(
         existing_msgs = list(channel_values.get("messages", []) or [])
     combined_msgs = [*existing_msgs, *new_messages]
 
-    # 构建单节点最小图：passthrough 节点把 input.messages 直接 emit 到 output.messages
     async def _passthrough(state: MessagesState) -> dict:  # noqa: ARG001
         return {"messages": []}
 
@@ -481,3 +482,6 @@ async def _append_messages_to_checkpointer(
     graph.add_edge("passthrough", END)
     compiled = graph.compile(checkpointer=checkpointer)
     await compiled.ainvoke({"messages": combined_msgs}, config=config)
+
+
+

@@ -20,15 +20,14 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 from deepagents import SubAgent
 
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
-from app.deepagent.agent import build_deep_agent
+from app.deepagent.agent import build_deep_agent, trigger_profile_auto_extract
 from app.deepagent.approval_runner import run_agent_with_approval
 from app.deepagent.context import current_thread_id
 from app.deepagent.streaming import _stream_agent_events
 from app.deepagent.tool_assembly import (
-    DANGEROUS_TOOLS,
-    _TOOL_NAME_MAP,
     _load_mcp_tools,
     _make_deep_tools,
+    compute_runtime_dangerous,
 )
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
@@ -120,8 +119,6 @@ async def build_coding_expert(
     checkpointer: Any = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
-    rubric: str | None = None,
-    grader_model: Any | None = None,
 ) -> Any:
     """构造 coding 场景 Expert agent。
 
@@ -176,8 +173,7 @@ async def build_coding_expert(
         workspace_path=workspace_path,
         chat_model=chat_model,
         subagents=subagents,
-        rubric=expert_cfg.rubric if expert_cfg.rubric else rubric,
-        grader_model=grader_model,
+        rubric=expert_cfg.rubric or None,
     )
 
 
@@ -185,7 +181,6 @@ async def run_coding_expert(
     message: str,
     thread_id: str,
     profile_prompt: str = "",
-    history: list | None = None,
     permission_mode: str = "standard",
     workspace_path: str | None = None,
     parent_thread_id: str | None = None,
@@ -199,18 +194,21 @@ async def run_coding_expert(
     1. 构建 coding Expert agent（含标准工具集 + subagents + interrupt_on 审批）
     2. 流式执行，危险工具中断 → 审批 → 恢复，循环直至完成
 
+    历史 messages 由 LangGraph astream 从 checkpointer 自动加载（thread_id 匹配），
+    不再显式传入 history 参数。delegate_to_expert 工具传入隔离的 ``InMemorySaver``
+    时，Expert 无历史上下文（符合隔离设计）。
+
     Args:
         message: 用户消息。
         thread_id: 会话 ID。
         profile_prompt: 用户画像前缀。
-        history: 历史 messages 列表（已截断）。
         permission_mode: 权限模式，"standard" 或 "full_trust"。
         workspace_path: 可选当前工作区绝对路径。
         parent_thread_id: 父 thread_id（Team 模式下子任务继承父 thread 的沙箱授权）。
         chat_model: 可选注入的 ChatModel，透传到 ``build_coding_expert``。
-        checkpointer: 可选的隔离 checkpointer（如 ``InMemorySaver``）。
-            传入时 Expert 使用独立 checkpointer，避免污染调用方的 checkpoint。
-            None 时 ``build_coding_expert`` 内部获取全局 checkpointer。
+        checkpointer: 可选的 checkpointer。传入时 Expert 用此 checkpointer（Router
+            传共享 checkpointer 让 LangGraph 自动加载/写回历史；delegate_to_expert
+            传 ``InMemorySaver`` 隔离）。None 时 ``build_coding_expert`` 内部获取全局 checkpointer。
         yield_event: 可选的异步回调，每 yield 一个事件时同步调用。
             用于 Supervisor ``delegate_to_expert`` 工具透传 Expert 事件到外层 SSE 流。
 
@@ -229,8 +227,9 @@ async def run_coding_expert(
             await sandbox.set_full_trust(thread_id, True)
             logger.info("coding_expert full_trust mode enabled", thread_id=thread_id)
 
-        history_msgs = list(history) if history else []
-        inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
+        # inputs 只含当前 user message；历史 messages 由 LangGraph astream 从
+        # checkpointer 自动加载（thread_id 匹配时），避免双重写入。
+        inputs = {"messages": [{"role": "user", "content": message}]}
 
         # 构建 agent 工具集（标准工具 + MCP）并构造 agent
         try:
@@ -262,16 +261,9 @@ async def run_coding_expert(
             return
 
         # 运行时危险工具集合
-        enabled_tool_names = {
-            _TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools
-        }
-        runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
-        # 内置 fs 写工具（write_file/edit_file）由 AuthorizedLocalShellBackend 注入，
-        # 不在 agent_tools 列表中，但 workspace_path 设置后即对 LLM 可用，需纳入危险集合。
-        if workspace_path:
-            runtime_dangerous = runtime_dangerous | {"write_file", "edit_file"}
-        # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
-        # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
+        runtime_dangerous = compute_runtime_dangerous(
+            agent_tools, mcp_untrusted_names, workspace_path
+        )
 
         # 统一审批执行循环（deep.execution.run_agent_with_approval）
         # stream_fn 传入模块级引用，以便测试通过
@@ -296,3 +288,6 @@ async def run_coding_expert(
     finally:
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
+
+    # 异步触发画像提取（与 deep 路径一致）
+    trigger_profile_auto_extract(agent, config, message)

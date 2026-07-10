@@ -290,6 +290,7 @@ describe("ReasoningBlock", () => {
   });
 
   it("流式状态（done=false, 有文本）显示可滚动预览区", () => {
+    vi.useFakeTimers();
     const { container } = render(
       <ReasoningBlock
         partId="p1"
@@ -302,11 +303,16 @@ describe("ReasoningBlock", () => {
     // 流式且有文本 → 可滚动预览区
     const preview = screen.getByTestId("reasoning-stream-preview");
     expect(preview).toBeTruthy();
-    // 预览区内应包含流式文本
+    // 打字机效果：初始不显示完整文本，推进时间后显示
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    // 预览区内应包含流式文本（15ms/字符，200ms 后应已显示全部）
     expect(preview.textContent).toContain("正在分析问题");
     // pre 元素承载文本
     const pre = container.querySelector("pre");
     expect(pre?.textContent).toContain("正在分析问题");
+    vi.useRealTimers();
   });
 
   it("完成状态默认永远展开：显示完整 text 与「已思考 N 秒」标题（chat-trace-fixed-order）", () => {
@@ -409,6 +415,7 @@ describe("ReasoningBlock", () => {
   });
 
   it("流式状态默认展开并显示 caret 视觉提示（chat-trace-fixed-order）", () => {
+    vi.useFakeTimers();
     render(
       <ReasoningBlock
         partId="p1"
@@ -419,11 +426,16 @@ describe("ReasoningBlock", () => {
       />,
     );
     // 流式状态默认也是展开（不再先收起到单行）
+    // 打字机效果：推进时间后文本显示
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
     expect(screen.getByText("正在分析问题")).toBeTruthy();
     // 流式 caret 视觉
     expect(screen.getByTestId("reasoning-caret")).toBeTruthy();
     // 标题应显示"思考中…"
     expect(screen.getByText(/思考中… \d+s/)).toBeTruthy();
+    vi.useRealTimers();
   });
 });
 

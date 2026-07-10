@@ -110,7 +110,7 @@ async def test_multiple_dangerous_tools_yield_all_approval_requests(
     monkeypatch.setattr(
         exec_module,
         "_is_interrupted",
-        AsyncMock(side_effect=[True, False]),
+        AsyncMock(side_effect=[True, False, False]),
     )
     monkeypatch.setattr(
         exec_module,
@@ -164,7 +164,7 @@ async def test_deny_multiple_dangerous_tools_injects_errors(
     monkeypatch.setattr(
         exec_module,
         "_is_interrupted",
-        AsyncMock(side_effect=[True, False]),
+        AsyncMock(side_effect=[True, False, False]),
     )
     monkeypatch.setattr(
         exec_module,
@@ -223,7 +223,7 @@ async def test_timeout_dangerous_tools_injects_errors(
     monkeypatch.setattr(
         exec_module,
         "_is_interrupted",
-        AsyncMock(side_effect=[True, False]),
+        AsyncMock(side_effect=[True, False, False]),
     )
     monkeypatch.setattr(
         exec_module,

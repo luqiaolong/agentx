@@ -19,9 +19,9 @@ from app.deepagent.context import current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
-    _TOOL_NAME_MAP,
     _load_mcp_tools,
     _make_deep_tools,
+    compute_runtime_dangerous,
 )
 from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
@@ -51,6 +51,7 @@ __all__ = [
     "DANGEROUS_TOOLS",
     "build_deep_agent",
     "run_deep_path",
+    "trigger_profile_auto_extract",
 ]
 
 
@@ -94,6 +95,47 @@ async def build_deep_agent(
         grader_model=grader_model,
         subagents=subagents,
     )
+
+
+def trigger_profile_auto_extract(
+    agent: Any,
+    config: dict,
+    message: str,
+) -> None:
+    """异步触发用户画像自动提取（fire-and-forget）。
+
+    从 agent 的 checkpointer 读取最后一轮 assistant 回复，通过 LLM 提取画像条目，
+    写入 profile_store。任务加入 ``_extract_tasks`` 集合防止 GC 回收。
+
+    三条路径（deep / coding / work）在 SSE 流结束后调用此函数。
+
+    Args:
+        agent: 已编译的 LangGraph agent（含 checkpointer，可通过 aget_state 读取 messages）。
+        config: LangGraph config，含 ``{"configurable": {"thread_id": ...}}``。
+        message: 用户原始消息（用于画像提取的上下文）。
+    """
+    if not get_settings().profile_auto_extract:
+        return
+
+    from app.memory.profile_extractor import (
+        extract_last_assistant_reply,
+        extract_profile_via_llm,
+    )
+    from app.memory.profile_store import upsert_from_llm
+
+    async def _do_extract() -> None:
+        try:
+            assistant_reply = await extract_last_assistant_reply(agent, config)
+            if assistant_reply:
+                entries = await extract_profile_via_llm(message, assistant_reply)
+                upsert_from_llm(entries)
+                logger.info("profile auto extracted", count=len(entries))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("profile auto extract failed", error=str(exc))
+
+    task = asyncio.create_task(_do_extract())
+    _extract_tasks.add(task)
+    task.add_done_callback(_extract_tasks.discard)
 
 
 async def run_deep_path(
@@ -154,14 +196,9 @@ async def run_deep_path(
             await sandbox.set_full_trust(thread_id, False)
         return
 
-    enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
-    runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
-    # 内置 fs 写工具（write_file/edit_file）由 AuthorizedLocalShellBackend 注入，
-    # 不在 agent_tools 列表中，但 workspace_path 设置后即对 LLM 可用，需纳入危险集合。
-    if workspace_path:
-        runtime_dangerous = runtime_dangerous | {"write_file", "edit_file"}
-    # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
-    # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
+    runtime_dangerous = compute_runtime_dangerous(
+        agent_tools, mcp_untrusted_names, workspace_path
+    )
 
     try:
         async for sse in run_agent_with_approval(
@@ -182,20 +219,4 @@ async def run_deep_path(
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
 
-    if get_settings().profile_auto_extract:
-        from app.memory.profile_extractor import extract_last_assistant_reply, extract_profile_via_llm
-        from app.memory.profile_store import upsert_from_llm
-
-        async def _do_extract() -> None:
-            try:
-                assistant_reply = await extract_last_assistant_reply(agent, config)
-                if assistant_reply:
-                    entries = await extract_profile_via_llm(message, assistant_reply)
-                    upsert_from_llm(entries)
-                    logger.info("profile auto extracted", count=len(entries))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("profile auto extract failed", error=str(exc))
-
-        task = asyncio.create_task(_do_extract())
-        _extract_tasks.add(task)
-        task.add_done_callback(_extract_tasks.discard)
+    trigger_profile_auto_extract(agent, config, message)

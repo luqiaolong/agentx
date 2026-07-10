@@ -1,15 +1,16 @@
 """场景 runner 写回 checkpointer 的持久化测试。
 
-覆盖（Phase 2e 新架构）：
-1. work 场景结束后将 user + assistant 消息写入 checkpointer
-2. coding 场景结束后将 user + assistant 消息写入 checkpointer
-3. coding_team 场景结束后将 user + assistant 消息写入 checkpointer
-4. 空 assistant 内容时不写入
-5. 无 checkpointer 时跳过持久化
+work / coding 路径的 checkpointer 历史加载 + 新消息写回由 LangGraph astream
+自动处理（Router 传共享 checkpointer），不再由 Router 手动写回。
+coding_team 路径的 team graph 无 checkpointer，由 Router 收集 token 后手动写回。
+
+覆盖：
+1. coding_team 场景结束后将 user + assistant 消息写入 checkpointer
+2. 空 assistant 内容时不写入
+3. 无 checkpointer 时跳过持久化
 
 使用 LangGraph 官方 ``InMemorySaver`` 作为 checkpointer 而非自定义 mock，
-确保与真实 SQLite AsyncSqliteSaver 行为一致（mock 过去能绕过
-``BaseCheckpointSaver`` 校验导致 bug 漏检）。
+确保与真实 SQLite AsyncSqliteSaver 行为一致。
 """
 
 from __future__ import annotations
@@ -29,73 +30,6 @@ def _collect_messages(saver: InMemorySaver, thread_id: str) -> list:
         return []
     channel_values = checkpoint.get("channel_values", {})
     return list(channel_values.get("messages", []))
-
-
-@pytest.mark.asyncio
-async def test_work_mode_persists_messages() -> None:
-    """work 场景结束后写入 HumanMessage + AIMessage。"""
-    from app.router.graph import run_router
-
-    checkpointer = InMemorySaver()
-
-    async def _fake_run_work_supervisor(
-        message: str,
-        thread_id: str,
-        **kwargs: Any,
-    ) -> AsyncIterator[dict[str, str]]:
-        yield {"event": "token", "data": "你好"}
-
-    import app.router.graph as graph_module
-
-    original = graph_module.run_work_supervisor
-    graph_module.run_work_supervisor = _fake_run_work_supervisor
-    try:
-        events = [e async for e in run_router("hi", "t-work", checkpointer=checkpointer, agent_mode="work")]
-    finally:
-        graph_module.run_work_supervisor = original
-
-    assert any(e.get("event") == "done" for e in events)
-    messages = _collect_messages(checkpointer, "t-work")
-    assert len(messages) >= 2, f"expected at least 2 messages, got {len(messages)}"
-    assert any(isinstance(m, HumanMessage) and m.content == "hi" for m in messages)
-    assert any(
-        isinstance(m, AIMessage) and "你好" in m.content for m in messages
-    )
-
-
-@pytest.mark.asyncio
-async def test_coding_mode_persists_messages() -> None:
-    """coding 场景结束后写入 user + assistant 消息。"""
-    from app.router.graph import run_router
-
-    checkpointer = InMemorySaver()
-
-    async def _fake_run_coding_expert(
-        message: str,
-        thread_id: str,
-        **kwargs: Any,
-    ) -> AsyncIterator[dict[str, str]]:
-        yield {"event": "token", "data": "code result"}
-
-    import app.router.graph as graph_module
-
-    original = graph_module.run_coding_expert
-    graph_module.run_coding_expert = _fake_run_coding_expert
-    try:
-        events = [
-            e
-            async for e in run_router(
-                "查找文件", "t-coding", checkpointer=checkpointer, agent_mode="coding"
-            )
-        ]
-    finally:
-        graph_module.run_coding_expert = original
-
-    assert any(e.get("event") == "done" for e in events)
-    messages = _collect_messages(checkpointer, "t-coding")
-    assert len(messages) >= 2
-    assert any(isinstance(m, HumanMessage) and m.content == "查找文件" for m in messages)
-    assert any(isinstance(m, AIMessage) and "code result" in m.content for m in messages)
 
 
 @pytest.mark.asyncio
@@ -138,12 +72,12 @@ async def test_coding_team_mode_persists_messages() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_assistant_content_skips_persistence() -> None:
-    """场景 runner 产生的 assistant 内容为空时跳过持久化（仅 error/done 时不写）。"""
+    """coding_team 场景 assistant 内容为空时跳过持久化（仅 error 时不写）。"""
     from app.router.graph import run_router
 
     checkpointer = InMemorySaver()
 
-    async def _fake_run_work_supervisor(
+    async def _fake_run_coding_team(
         message: str,
         thread_id: str,
         **kwargs: Any,
@@ -152,12 +86,12 @@ async def test_empty_assistant_content_skips_persistence() -> None:
 
     import app.router.graph as graph_module
 
-    original = graph_module.run_work_supervisor
-    graph_module.run_work_supervisor = _fake_run_work_supervisor
+    original = graph_module.run_coding_team
+    graph_module.run_coding_team = _fake_run_coding_team
     try:
-        _ = [e async for e in run_router("hi", "t-empty", checkpointer=checkpointer, agent_mode="work")]
+        _ = [e async for e in run_router("hi", "t-empty", checkpointer=checkpointer, agent_mode="coding_team")]
     finally:
-        graph_module.run_work_supervisor = original
+        graph_module.run_coding_team = original
 
     # error 时没有 assistant_content 应跳过持久化
     messages = _collect_messages(checkpointer, "t-empty")

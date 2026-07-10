@@ -306,7 +306,6 @@ async def _code_node(state: SubtaskState) -> dict:
         runner_args=(task.input, child_id),
         runner_kwargs={
             "profile_prompt": state.get("profile_prompt", ""),
-            "history": state.get("history"),
             "permission_mode": state.get("permission_mode", "standard"),
             "workspace_path": state.get("workspace_path"),
             "parent_thread_id": parent_thread_id,

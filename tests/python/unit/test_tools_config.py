@@ -16,9 +16,9 @@ import pytest
 from app.config import get_settings
 from app.deepagent.agent import (
     DANGEROUS_TOOLS,
-    _TOOL_NAME_MAP,
     _make_deep_tools,
 )
+from app.deepagent.tool_assembly import compute_runtime_dangerous
 
 
 # ============================================================
@@ -195,11 +195,10 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
 
     # 模拟 run_deep_path 中的 runtime_dangerous 计算
     agent_tools = _make_deep_tools("t1")
-    enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
-    runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
+    runtime_dangerous = compute_runtime_dangerous(agent_tools, set(), None)
 
     assert "delete_file" not in runtime_dangerous
-    assert runtime_dangerous == frozenset()  # delete_file 是唯一在 _make_deep_tools 中的危险工具
+    assert runtime_dangerous == set()  # delete_file 是唯一在 _make_deep_tools 中的危险工具
 
 
 def test_runtime_dangerous_all_enabled() -> None:
@@ -211,8 +210,7 @@ def test_runtime_dangerous_all_enabled() -> None:
     git_* 工具已删除（Phase B.1），不再出现在 runtime_dangerous 中。
     """
     agent_tools = _make_deep_tools("t1")
-    enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
-    runtime_dangerous = DANGEROUS_TOOLS & enabled_tool_names
+    runtime_dangerous = compute_runtime_dangerous(agent_tools, set(), None)
 
     # _make_deep_tools 仅含 delete_file（write_file/edit_file 由 backend 注入）
     assert runtime_dangerous == {
