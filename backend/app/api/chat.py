@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI
@@ -162,9 +163,21 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                     obs_ctx.add_metadata(
                         "result_text", "".join(assistant_content_parts).strip()
                     )
-                    obs_ctx.add_metadata(
-                        "result_token_count", len(assistant_content_parts)
-                    )
+                    # 修正：result_token_count 不再用 SSE 事件数（len(parts)），
+                    # 而是从 observation_event 表读取真实 LLM token_usage.total_tokens。
+                    # 若 observation 尚未写入（极端时序），回退到字符估算。
+                    _real_tc = None
+                    try:
+                        from app.observability.observation import get_observation_sink
+
+                        _real_tc = await get_observation_sink().get_last_llm_token_count(trace_id)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if _real_tc is None:
+                        _real_tc = max(1, len("".join(assistant_content_parts)) // 4)
+                    obs_ctx.add_metadata("result_token_count", _real_tc)
+                    # done 事件携带真实 token_count，供前端直接展示
+                    yield {"event": "done", "data": json.dumps({"token_count": _real_tc})}
                 except Exception as inner_exc:
                     # FR-4.5: 异常分支写 error_type + error_message（在 dual_trace 退出前设置）
                     obs_ctx.add_metadata("error_type", type(inner_exc).__name__)

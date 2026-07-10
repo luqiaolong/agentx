@@ -123,7 +123,9 @@ export const MessageStats = memo(function MessageStats({
     };
   }, []);
 
-  const tokenCount = estimateTokens(countOutputChars(message));
+  // 优先使用后端 done 事件带回的真实 token_count；缺失时回退到前端 chars/4 估算
+  const estimatedTokenCount = estimateTokens(countOutputChars(message));
+  const tokenCount = message.tokenCount ?? estimatedTokenCount;
 
   const endTime = isStreamingLast ? now : lastPartTime(message);
   const durationMs = Math.max(0, endTime - message.ts);

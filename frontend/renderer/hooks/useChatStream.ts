@@ -82,6 +82,7 @@ export function useChatStream(args: UseChatStreamArgs) {
   const attachApprovalToToolCall = useChatStore((s) => s.attachApprovalToToolCall);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const setMessageTraceId = useChatStore((s) => s.setMessageTraceId);
+  const setMessageTokenCount = useChatStore((s) => s.setMessageTokenCount);
   const addTask = useTasksStore((s) => s.addTask);
   const updateTask = useTasksStore((s) => s.updateTask);
   const currentId = useChatStore((s) => s.currentId);
@@ -225,6 +226,15 @@ export function useChatStream(args: UseChatStreamArgs) {
             // 兜底：流结束时仍有 status=running 的 tool-call（通常是 tool_result 事件
             // 因连接中断等原因未送达），强制 close 为 complete，让 UI 不再卡在「运行中」
             markRunningToolCallsComplete(pendingIdRef.current);
+            // 后端 done 事件可能携带真实 token_count（JSON 对象）
+            const doneData =
+              typeof e.data === "object" && e.data !== null
+                ? (e.data as Record<string, unknown>)
+                : null;
+            const tc = doneData?.token_count;
+            if (typeof tc === "number" && Number.isFinite(tc)) {
+              setMessageTokenCount(pendingIdRef.current, tc);
+            }
           }
           // 只清理当前 threadId 的 streaming 状态
           if (threadId) {

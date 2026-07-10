@@ -120,6 +120,11 @@ export interface ChatMessage {
    * 用途：MessageFeedback 组件读此字段作为 POST /api/observation/feedback 的 run_id。
    */
   traceId?: string;
+  /**
+   * 后端 done 事件携带的真实 LLM token 消耗（total_tokens）。
+   * 若缺失（旧消息 / 后端未上报），MessageStats 回退到 chars/4 估算。
+   */
+  tokenCount?: number;
 }
 
 // 复用 shared/api-types.ts 的 ApprovalRequest（含 kind/requestedPath/writable），
@@ -367,6 +372,11 @@ export interface ChatState {
   clearSessionNewResult: (id: string) => void;
   /** 设置指定会话的权限模式。 */
   setSessionPermissionMode: (id: string, mode: PermissionMode) => void;
+  /**
+   * 设置指定 message 的真实 token 消耗（由后端 done 事件携带）。
+   * 写入后 MessageStats 优先展示此值，不再估算。
+   */
+  setMessageTokenCount: (messageId: string, tokenCount: number) => void;
 }
 
 function createSessionRecord(id: string, workspacePath: string | null = null): Session {
@@ -1134,6 +1144,20 @@ export const useChatStore = create<ChatState>()(
               },
             };
           }),
+
+        setMessageTokenCount: (messageId, tokenCount) => {
+          set((s) => {
+            const targetCid = lookupSessionId(messageId);
+            if (targetCid === null) return s;
+            const sess = s.sessions[targetCid];
+            if (!sess) return s;
+            const messages = sess.messages.map((m) =>
+              m.id === messageId ? { ...m, tokenCount } : m,
+            );
+            const sessions = { ...s.sessions, [targetCid]: { ...sess, messages } };
+            return { sessions };
+          });
+        },
       }),
       {
         name: "agentx-chat",

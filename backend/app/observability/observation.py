@@ -473,6 +473,27 @@ class SqliteObservationSink:
             )
             return [dict(r) for r in cur.fetchall()]
 
+    def get_last_llm_token_count_sync(self, run_id: str) -> int | None:
+        """读取指定 run 最近一次 llm_end 事件的 payload.token_count（真实 LLM token 消耗）。"""
+        with self._connect_read() as conn:
+            cur = conn.execute(
+                """SELECT payload_json FROM observation_event
+                   WHERE run_id=? AND event_type='llm_end'
+                   ORDER BY seq DESC LIMIT 1""",
+                (run_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            try:
+                payload = json.loads(row[0])
+                tc = payload.get("token_count")
+                if isinstance(tc, int):
+                    return tc
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
     def list_feedback_sync(self, run_id: str) -> list[dict[str, Any]]:
         with self._connect_read() as conn:
             conn.row_factory = sqlite3.Row
@@ -586,6 +607,9 @@ class SqliteObservationSink:
 
     async def update_tool_call_approval(self, *args: Any, **kwargs: Any) -> None:
         await asyncio.to_thread(self.update_tool_call_approval_sync, *args, **kwargs)
+
+    async def get_last_llm_token_count(self, run_id: str) -> int | None:
+        return await asyncio.to_thread(self.get_last_llm_token_count_sync, run_id)
 
     async def cleanup_old(self, ttl_days: int = 30) -> int:
         return await asyncio.to_thread(self.cleanup_old_sync, ttl_days)
