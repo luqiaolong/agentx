@@ -488,7 +488,7 @@ export function ChatComposer({
     }
   };
 
-  const canSend = input.trim().length > 0 && !isStreaming;
+  const canSend = input.trim().length > 0 && !isStreaming && !isPaused;
 
   return (
     <div className="border-t border-default bg-surface px-3 py-2">
@@ -628,8 +628,8 @@ export function ChatComposer({
                     onClick={handleSubmit}
                     disabled={!canSend}
                     className="btn-send"
-                    aria-label="发送消息"
-                    title="发送 (Enter)"
+                    aria-label={isPaused ? "发送已禁用（会话已暂停）" : "发送消息"}
+                    title={isPaused ? "当前会话已暂停，请先点上方「继续」按钮" : "发送 (Enter)"}
                   >
                     <Send className="h-3 w-3" />
                   </button>

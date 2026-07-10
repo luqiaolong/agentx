@@ -51,6 +51,8 @@ export function ChatView() {
   const deleteMessagesAfter = useChatStore((s) => s.deleteMessagesAfter);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
+  const isPaused = useChatStore((s) => s.isPaused);
+  const setIsPaused = useChatStore((s) => s.setIsPaused);
   const updateTask = useTasksStore((s) => s.updateTask);
   const setSettingsOpen = useSettingsStore((s) => s.setSettingsOpen);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -59,7 +61,7 @@ export function ChatView() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+  // isPaused 已下沉到 chat store（便于 SessionList 在 isStreaming 下放行切换）。
   // T9：导航条进度 state，由 rAF throttle 的 scroll listener 驱动
   const [scrollProgress, setScrollProgress] = useState({ top: 0, height: 1 });
 
@@ -463,6 +465,11 @@ export function ChatView() {
     } catch {
       /* ignore */
     }
+    // 不主动 setStreaming(false)：保留 isStreaming=true 让 ChatComposer 的
+    // `isStreaming && isPaused` 分支继续渲染"继续"按钮，用户能从暂停恢复。
+    // SessionList 的"切换/新建"阻断由 `isStreaming && !isPaused` 判定（见
+    // SessionList.handleSwitch / handleCreateInHome），isPaused=true 时放行。
+    setSessionRunning(tid, false);
     setIsPaused(true);
   };
 
@@ -474,6 +481,9 @@ export function ChatView() {
     } catch {
       /* ignore */
     }
+    // 恢复执行：同步标记会话为运行中（sidebar 圆点继续转动），
+    // 与 handlePause 的 setSessionRunning(false) 对称。
+    setSessionRunning(tid, true);
     setIsPaused(false);
   };
 

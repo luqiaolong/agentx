@@ -172,6 +172,13 @@ export interface ChatState {
   // 通用状态
   isStreaming: boolean;
   /**
+   * 当前会话是否被用户"暂停"（后端 SSE 冻结在 wait_for_resume）。
+   * SessionList 据此允许"暂停下"切换/新建会话（避免 "当前会话正在流式输出"
+   * 弹窗阻断用户），而 ChatComposer 仍渲染"继续"按钮供恢复。
+   * 非持久化字段：刷新页面重置。
+   */
+  isPaused: boolean;
+  /**
    * 审批请求队列（FIFO）。后端批量 yield 多个 approval_request 事件时，
    * 逐条入队，用户审批完队首后 shift 出队，展示下一条。
    * 队首元素（approvalQueue[0]）即当前展示的审批请求。
@@ -325,6 +332,13 @@ export interface ChatState {
    */
   deleteMessage: (messageId: string) => void;
   setStreaming: (v: boolean) => void;
+  /**
+   * 设置"已暂停"标志。由 ChatView.handlePause / handleResume 调用，也由
+   * useChatStream 的 "paused" / 首个 token 事件反向重置；切会话时由
+   * ChatView useEffect 重置。
+   * 非持久化字段（partialize 不包含），刷新页面重置。
+   */
+  setIsPaused: (v: boolean) => void;
   /** 将审批请求追加到队列尾部（批量审批时多条入队）。 */
   enqueueApprovalRequest: (req: ApprovalRequest) => void;
   /** 移除并返回队首审批请求（用户审批完当前条后调用，展示下一条）。 */
@@ -359,6 +373,7 @@ export const useChatStore = create<ChatState>()(
         currentId: null,
         homeWorkspacePath: null,
         isStreaming: false,
+        isPaused: false,
         approvalQueue: [],
 
         createSession: async (workspacePath = null) => {
@@ -1024,6 +1039,8 @@ export const useChatStore = create<ChatState>()(
           setStreamingActive(v);
           set({ isStreaming: v });
         },
+
+        setIsPaused: (v) => set({ isPaused: v }),
 
         enqueueApprovalRequest: (req) =>
           set((s) => ({ approvalQueue: [...s.approvalQueue, req] })),
