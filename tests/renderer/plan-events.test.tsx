@@ -54,7 +54,10 @@ const chatMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
+vi.mock("@/lib/api/chat", () => ({
+  chat: chatMock.chat,
+  getCurrentTraceId: vi.fn().mockReturnValue(null),
+}));
 
 import { useChatStream } from "@/hooks/useChatStream";
 import { useChatStore } from "@/stores/chat";
@@ -223,5 +226,108 @@ describe("todo_update Team 子任务路径", () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].parentTaskId).toBeUndefined();
     expect(tasks[0].taskSource).toBe("work");
+  });
+
+  it("Team 交错事件：主任务 task_id 与子任务 parent_task_id 建立父子链接", async () => {
+    // 模拟真实 Team 运行：
+    // 1. values-mode diff 发出全局 todos（task_id=thread_id，无 source/parent_task_id）
+    // 2. _emit_todo_in_progress 发出子代理 todos（parent_task_id=thread_id + source=agent_role）
+    render(<Harness threadId="tid-1" />);
+    await act(async () => {
+      // 主任务：全局 todos diff
+      emitEvent("tid-1", {
+        type: "todo_update",
+        task_id: "thread-1",
+        todos: [
+          { content: "规划任务", status: "completed" },
+          { content: "执行子任务", status: "in_progress" },
+        ],
+      });
+      // 子任务：rag 代理进度
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "thread-1",
+        source: "rag",
+        todos: [{ content: "检索知识库", status: "in_progress" }],
+      });
+      // 子任务：coder 代理进度
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "thread-1",
+        source: "coder",
+        todos: [{ content: "编写代码", status: "pending" }],
+      });
+    });
+
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks).toHaveLength(3);
+
+    // 主任务 id 应为 thread-1（来自 e.task_id），而非随机 UUID
+    const mainTask = tasks.find((t) => !t.parentTaskId);
+    expect(mainTask).toBeDefined();
+    expect(mainTask!.id).toBe("thread-1");
+
+    // 子任务 parentTaskId 应等于主任务 id → 父子链接建立
+    const childTasks = tasks.filter((t) => t.parentTaskId);
+    expect(childTasks).toHaveLength(2);
+    expect(childTasks.every((t) => t.parentTaskId === "thread-1")).toBe(true);
+    expect(childTasks.every((t) => t.parentTaskId === mainTask!.id)).toBe(true);
+  });
+
+  it("done 事件标记主任务和子任务为 done", async () => {
+    render(<Harness threadId="tid-1" />);
+    await act(async () => {
+      // 创建主任务
+      emitEvent("tid-1", {
+        type: "todo_update",
+        task_id: "thread-1",
+        todos: [{ content: "主任务步骤", status: "in_progress" }],
+      });
+      // 创建子任务
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "thread-1",
+        source: "rag",
+        todos: [{ content: "子任务步骤", status: "in_progress" }],
+      });
+    });
+
+    // 确认两个任务都在 running
+    expect(
+      useTasksStore.getState().tasks.filter((t) => t.status === "running"),
+    ).toHaveLength(2);
+
+    // 发出 done 事件
+    await act(async () => {
+      emitEvent("tid-1", { type: "done", data: {} });
+    });
+
+    // 主任务和子任务都应标记为 done
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks.every((t) => t.status === "done")).toBe(true);
+  });
+
+  it("error 事件标记主任务和子任务为 failed", async () => {
+    render(<Harness threadId="tid-1" />);
+    await act(async () => {
+      emitEvent("tid-1", {
+        type: "todo_update",
+        task_id: "thread-1",
+        todos: [{ content: "主任务步骤", status: "in_progress" }],
+      });
+      emitEvent("tid-1", {
+        type: "todo_update",
+        parent_task_id: "thread-1",
+        source: "rag",
+        todos: [{ content: "子任务步骤", status: "in_progress" }],
+      });
+    });
+
+    await act(async () => {
+      emitEvent("tid-1", { type: "error", data: "出错了" });
+    });
+
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks.every((t) => t.status === "failed")).toBe(true);
   });
 });

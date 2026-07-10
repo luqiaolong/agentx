@@ -43,7 +43,7 @@ async def _stream_agent_events(
     agent: Any,
     inputs: Any,
     config: dict,
-    source: str = "deep",
+    source: str = "work",
     *,
     seen_signatures: set[str] | None = None,
 ) -> AsyncIterator[dict[str, str]]:
