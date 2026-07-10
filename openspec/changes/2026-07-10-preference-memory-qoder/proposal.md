@@ -60,7 +60,7 @@
 ## Impact
 
 - **后端**：修改 5 个文件（profile_store.py、memory_store.py、profile_extractor.py、schemas.py、memory.py）
-- **前端**：修改 5 个文件（api-types.ts、http.ts、MemoryList.tsx、PreferenceManager.tsx、ProfileManager.tsx、ProjectMemoryManager.tsx、WorkspacePanel.tsx），新增 1 个文件（MemoryReferencesPanel.tsx）
+- **前端**：修改 7 个文件（api-types.ts、http.ts、MemoryList.tsx、PreferenceManager.tsx、ProfileManager.tsx、ProjectMemoryManager.tsx、WorkspacePanel.tsx），新增 1 个文件（MemoryReferencesPanel.tsx）
 - **兼容性**：Pydantic 默认值保证旧数据无需迁移；frontmatter 缺失字段补默认值；API 新增字段均为可选
 - **测试**：后端新增 title/keywords/scenarios 读写测试 + frontmatter 兼容测试；前端 typecheck + 组件测试
 - **SSE 事件契约**：无变更（不涉及 SSE 事件）

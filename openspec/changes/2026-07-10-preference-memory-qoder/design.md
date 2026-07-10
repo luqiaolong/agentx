@@ -104,9 +104,9 @@ MemoryList 编辑器在现有 key/content 基础上增加：
 
 WorkspacePanel Tab 类型增加 `preference` / `memory`，对应内容渲染 `MemoryReferencesPanel` 组件。
 
-`MemoryReferencesPanel` 内部管理「偏好」「记忆」子 tab：
-- 偏好 tab：拉取 preference 类画像（全局 + 工作区）
-- 记忆 tab：拉取 project 类画像（全局 + 工作区）
+`MemoryReferencesPanel` 接受 `category` prop（`"preference"` 或 `"project"`），根据 category 拉取对应类别的画像（全局 + 工作区），不再有内部子 tab：
+- WorkspacePanel「偏好」tab → `<MemoryReferencesPanel category="preference" />`
+- WorkspacePanel「记忆」tab → `<MemoryReferencesPanel category="project" />`
 
 卡片样式参考 qoder：
 - 顶部：图标 + title（为空兜底 key）
