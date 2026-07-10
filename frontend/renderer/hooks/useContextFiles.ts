@@ -45,11 +45,11 @@ export function useContextFiles() {
     }
   }, [skills.length, fetchSkills]);
 
-  // 拉取画像条目
+  // 拉取当前工作区的记忆条目（只读工作区级，不掺全局画像）
   useEffect(() => {
     let cancelled = false;
     memory
-      .getProfile()
+      .getProfile(undefined, workspacePath, "workspace")
       .then((res) => {
         if (!cancelled) setProfileEntries(res.entries ?? []);
       })
@@ -60,7 +60,7 @@ export function useContextFiles() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [workspacePath]);
 
   // 只取当前会话的任务用于摘要展示
   const sessionTasks = useMemo(

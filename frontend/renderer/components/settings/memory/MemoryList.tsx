@@ -36,12 +36,13 @@ export function useProfileCrud(
   category: string | string[],
   contentMax: number,
   defaultCategory?: string,
+  workspacePath?: string | null,
 ) {
   const cats = Array.isArray(category) ? category : [category];
   const defaultCat = defaultCategory ?? (Array.isArray(category) ? (category[0] ?? "custom") : category);
   return useCrudList<ProfileEntry>({
     fetcher: async () => {
-      const results = await Promise.all(cats.map((c) => memory.getProfile(c)));
+      const results = await Promise.all(cats.map((c) => memory.getProfile(c, workspacePath)));
       const all = results.flatMap((r) => r.entries ?? []);
       if (cats.length > 1) {
         all.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -50,10 +51,10 @@ export function useProfileCrud(
     },
     creator: async (i) => {
       const req: ProfileEntryRequest = { key: i.key.trim(), category: i.category || defaultCat, content: i.content };
-      await memory.saveProfile(req);
+      await memory.saveProfile(req, workspacePath);
     },
-    updater: async (i) => { await memory.updateProfile(i.key, i.content, i.category); },
-    deleter: (k) => memory.deleteProfile(k),
+    updater: async (i) => { await memory.updateProfile(i.key, i.content, i.category, workspacePath); },
+    deleter: (k) => memory.deleteProfile(k, workspacePath),
     initialItem: () => ({
       key: "", category: defaultCat, content: "", source: "manual", created_at: "", updated_at: "",
     }),

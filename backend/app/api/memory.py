@@ -120,30 +120,37 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_profile_list(
         category: str | None = None,
         workspace_path: str | None = Query(None, description="工作区路径；非空则合并工作区画像"),
+        scope: str | None = Query(
+            None,
+            description="限定来源：workspace=只读工作区级；默认合并工作区+全局",
+        ),
     ) -> dict[str, Any]:
-        """返回画像条目（合并工作区 + 全局）；可选按 category 过滤。
+        """返回画像条目；可选按 category / scope 过滤。
 
-        工作区级画像改为从 ``.agentx/memory/*.md`` 读取，全局级仍走 ``profile.json``。
+        - ``scope=workspace``：只读工作区 profile.json + ``.agentx/memory/*.md``，
+          不掺全局条目；``workspace_path`` 为空时返回空列表。
+        - 默认：合并工作区 + 全局（工作区优先）。
         """
         from app.memory.profile_store import get_all as get_all_profile
 
-        # 全局画像（data/config/profile.json）
-        global_entries = get_all_profile(category, workspace_path=None)
+        # profile.json 层（按 scope 决定是否合并全局）
+        entries = get_all_profile(
+            category, workspace_path=workspace_path, scope=scope
+        )
 
-        # 工作区画像（.agentx/memory/*.md）
-        ws_entries: list[Any] = []
+        # 合并字典，便于后续 overlay 新格式
+        merged: dict[str, Any] = {e.key: e for e in entries}
+
+        # 再 overlay 新格式 .agentx/memory/*.md（同 key 覆盖旧数据）
         if workspace_path:
             from app.workspace.memory_store import list_entries
 
             try:
                 ws_entries = list_entries(workspace_path, category=category)
+                for e in ws_entries:
+                    merged[e.key] = e
             except Exception as exc:  # noqa: BLE001
                 logger.warning("workspace_memory.list_failed", workspace=workspace_path, error=str(exc))
-
-        # 合并：工作区优先，同 key 覆盖全局
-        merged: dict[str, Any] = {e.key: e for e in global_entries}
-        for e in ws_entries:
-            merged[e.key] = e
 
         # 统一序列化为前端兼容的 dict 格式
         result = []

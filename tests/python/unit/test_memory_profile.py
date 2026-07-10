@@ -557,6 +557,18 @@ async def test_get_all_merges_workspace_and_global(tmp_path: Path) -> None:
     assert merged_entries["global_only"].content == "only in global"  # 全局保留
     assert merged_entries["ws_only"].content == "only in workspace"  # 工作区独有
 
+    # 传 workspace_path + scope=workspace → 只读工作区级，不掺全局
+    ws_only_entries = {
+        e.key: e for e in get_all(workspace_path=str(ws_path), scope="workspace")
+    }
+    assert "shared" in ws_only_entries
+    assert ws_only_entries["shared"].content == "workspace value"
+    assert "global_only" not in ws_only_entries  # 全局条目被排除
+    assert "ws_only" in ws_only_entries
+
+    # scope=workspace 但 workspace_path=None → 空列表
+    assert get_all(scope="workspace") == []
+
 
 async def test_build_profile_prompt_merges_workspace(tmp_path: Path) -> None:
     """build_profile_prompt 合并工作区 + 全局。"""

@@ -99,6 +99,7 @@ export interface ApprovalRequest {
   requestedPath?: string;       // directory_extension 时必填
   writable?: boolean;           // directory_extension 时必填
   traceId?: string;             // 后端 SSE 事件顶层 trace_id（用户报问题时复制）
+  toolCallId?: string;          // 关联的 tool-call id（内联授权时定位对应步骤）
   // sandbox_escalation 专用字段
   command?: string;             // 原始命令
   exitCode?: number;            // 沙箱失败退出码
@@ -119,7 +120,7 @@ export type PermissionMode = "standard" | "full_trust";
  */
 export type AgentMode = "work" | "coding" | "coding_team";
 
-export type ApprovalDecision = "approve" | "once" | "session" | "deny";
+export type ApprovalDecision = "approve" | "once" | "session" | "deny" | "full_trust";
 
 export interface MilvusCredentialResult {
   user: string | null;
@@ -309,6 +310,8 @@ export interface ProfileEntry {
   source: string;
   created_at: string;
   updated_at: string;
+  /** 条目来源层级：workspace（工作区级）| global（全局级） */
+  scope?: "workspace" | "global";
 }
 
 export interface ProfileEntryRequest {

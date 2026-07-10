@@ -165,6 +165,7 @@ export const approve = {
     decision?: ApprovalDecision,
     path?: string,
     writable?: boolean,
+    toolCallId?: string,
   ): Promise<void> => {
     const r = await fetch(`${API_BASE}/api/chat/approve`, {
       method: "POST",
@@ -175,6 +176,7 @@ export const approve = {
         decision: decision ?? "approve",
         path: path ?? null,
         writable: writable ?? false,
+        tool_call_id: toolCallId ?? null,
       }),
     });
     await assertOk(r);
@@ -307,15 +309,30 @@ export const memory = {
     );
     return (await r.json()) as { ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null };
   },
-  getProfile: async (category?: ProfileCategory | string): Promise<{ entries: ProfileEntry[] }> => {
-    const url = category
-      ? `${API_BASE}/api/memory/profile?category=${encodeURIComponent(category)}`
+  getProfile: async (
+    category?: ProfileCategory | string,
+    workspacePath?: string | null,
+    scope?: "workspace" | null,
+  ): Promise<{ entries: ProfileEntry[] }> => {
+    const params = new URLSearchParams();
+    if (category) params.set("category", category);
+    if (workspacePath) params.set("workspace_path", workspacePath);
+    if (scope) params.set("scope", scope);
+    const qs = params.toString();
+    const url = qs
+      ? `${API_BASE}/api/memory/profile?${qs}`
       : `${API_BASE}/api/memory/profile`;
     const r = await fetch(url);
     return (await r.json()) as { entries: ProfileEntry[] };
   },
-  saveProfile: async (entry: ProfileEntryRequest): Promise<unknown> => {
-    const r = await fetch(`${API_BASE}/api/memory/profile`, {
+  saveProfile: async (
+    entry: ProfileEntryRequest,
+    workspacePath?: string | null,
+  ): Promise<unknown> => {
+    const qs = workspacePath
+      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
+      : "";
+    const r = await fetch(`${API_BASE}/api/memory/profile${qs}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(entry),
@@ -326,16 +343,26 @@ export const memory = {
     key: string,
     content: string,
     category?: ProfileCategory | string,
+    workspacePath?: string | null,
   ): Promise<unknown> => {
-    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}`, {
+    const qs = workspacePath
+      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
+      : "";
+    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content, category }),
     });
     return r.json();
   },
-  deleteProfile: async (key: string): Promise<unknown> => {
-    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}`, {
+  deleteProfile: async (
+    key: string,
+    workspacePath?: string | null,
+  ): Promise<unknown> => {
+    const qs = workspacePath
+      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
+      : "";
+    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs}`, {
       method: "DELETE",
     });
     return r.json();

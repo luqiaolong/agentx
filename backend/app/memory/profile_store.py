@@ -242,20 +242,28 @@ def _save_workspace(store: ProfileStore, workspace_path: str) -> None:
 def get_all(
     category: str | None = None,
     workspace_path: str | None = None,
+    scope: str | None = None,
 ) -> list[ProfileEntry]:
-    """返回全部画像条目（合并工作区 + 全局）；可选按 category 过滤。
+    """返回全部画像条目；可选按 category / scope 过滤。
 
     Args:
         category: 可选 category 过滤。
         workspace_path: 工作区路径；None → 仅全局。
+        scope: 限定来源层级：``workspace`` → 只读工作区 profile.json；
+               None 或其他值 → 合并工作区 + 全局（工作区优先）。
     """
-    global_entries = _load("global").entries
-    ws_entries = _load_workspace(workspace_path).entries
-    # 合并：工作区优先，同 key 覆盖全局
-    merged: dict[str, ProfileEntry] = {e.key: e for e in global_entries}
-    for e in ws_entries:
-        merged[e.key] = e
-    entries = list(merged.values())
+    if scope == "workspace":
+        if not workspace_path:
+            return []
+        entries = list(_load_workspace(workspace_path).entries)
+    else:
+        global_entries = _load("global").entries
+        ws_entries = _load_workspace(workspace_path).entries
+        # 合并：工作区优先，同 key 覆盖全局
+        merged: dict[str, ProfileEntry] = {e.key: e for e in global_entries}
+        for e in ws_entries:
+            merged[e.key] = e
+        entries = list(merged.values())
     if category is not None and category in _VALID_CATEGORIES:
         return [e for e in entries if e.category == category]
     return entries
@@ -539,26 +547,26 @@ def build_profile_prompt(workspace_path: str | None = None) -> str:
           - [category] content
           ...
 
-    工作区画像来源：
+    工作区画像来源（按优先级降序，新格式覆盖旧格式）：
+    - 工作区记忆文件（``.agentx/memory/*.md``），新格式，优先
+    - 旧工作区画像（``.agentx/profile.json``），兼容旧数据
     - 全局画像（data/config/profile.json）
-    - 工作区记忆文件（``.agentx/memory/*.md``），由 ``workspace.memory_store`` 读取
     """
-    # 全局画像
-    global_entries = get_all(workspace_path=None)
+    # 先取全局 + 旧工作区 profile.json（兼容旧数据）
+    entries = get_all(workspace_path=workspace_path)
 
-    # 工作区画像（.agentx/memory/*.md）
-    ws_entries: list[Any] = []
+    # 合并字典，便于后续 overlay 新格式
+    merged: dict[str, Any] = {e.key: e for e in entries}
+
+    # 再 overlay 新格式 .agentx/memory/*.md（同 key 覆盖旧数据）
     if workspace_path:
         try:
             from app.workspace.memory_store import list_entries
             ws_entries = list_entries(workspace_path)
+            for e in ws_entries:
+                merged[e.key] = e
         except Exception as exc:  # noqa: BLE001
             logger.warning("workspace_memory.build_prompt_failed", workspace=workspace_path, error=str(exc))
-
-    # 合并：工作区优先，同 key 覆盖全局
-    merged: dict[str, Any] = {e.key: e for e in global_entries}
-    for e in ws_entries:
-        merged[e.key] = e
 
     entries = list(merged.values())
     if not entries:
