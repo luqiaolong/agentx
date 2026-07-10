@@ -12,13 +12,11 @@ const ARGS_PREVIEW_MAX_CHARS = 50;
 /** 复制成功反馈展示时长（毫秒） */
 const COPY_FEEDBACK_MS = 2000;
 
-/** source chip 颜色映射：code/rag/web/deep 各自配色 */
-const SOURCE_CHIP_STYLE: Record<string, string> = {
-  code: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  rag: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
-  web: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  deep: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-};
+/** source 字段保留用于将来扩展 / 调试溯源（不再渲染 chip）。原色映射表见 git history。 */
+
+// MARK: source chip display removed on 2026-07-10: 标题不加 mode/subagent chip，
+// 用户明确反馈 chip 是冗余信息。ToolCallCardProps.source 仍保留以保持
+// 父组件接口兼容。
 
 /** 从 args 对象提取第一个标量字段值作为预览。 */
 function getArgsPreview(args: unknown): string {
@@ -66,12 +64,13 @@ function formatJsonTruncated(value: unknown): string {
  * - error（tool-result 有 error 字段）：✗ + 工具名 + args 预览
  *
  * 增强（execution-trace-optimization T7）：
- * - toolName 右侧显示 source chip（code/rag/web/deep 等）
  * - complete 状态显示执行耗时（startedAt → completedAt/arrivedAt）
  * - args 区和 result 区各加复制按钮（navigator.clipboard.writeText + ✓ 反馈 2s）
  * - result 超长（>1000 字符）时折叠显示截断 + 「显示完整」按钮
  *
  * 默认折叠单行，点击展开 args/result JSON。
+ *
+ * 2026-07-10：移除 source chip（mode/subagent）渲染，标题不再重复模式上下文。
  */
 export interface ToolCallCardProps {
   toolName: string;
@@ -79,7 +78,7 @@ export interface ToolCallCardProps {
   status: "running" | "complete" | "error";
   result?: unknown;
   error?: string;
-  /** 工具来源（code/rag/web/deep 等），显示为 toolName 右侧 chip */
+  /** 工具来源（code/work/coding/rag/web/deep 等）；保留用于数据溯源，标题不再渲染 chip */
   source?: string;
   /** tool-call 开始时间（毫秒） */
   startedAt?: number;
@@ -166,11 +165,6 @@ function ToolCallCardImpl({
     }
   }, [args, resultFullStr]);
 
-  // source chip 样式：未知 source 用默认灰底
-  const sourceChipClass = source
-    ? SOURCE_CHIP_STYLE[source] ?? "bg-muted-c/10 text-muted-c/70"
-    : "";
-
   // 内联授权提交
   const handleApprove = useCallback(
     async (decision: ApprovalDecision) => {
@@ -204,14 +198,6 @@ function ToolCallCardImpl({
       >
         <Wrench className="h-2.5 w-2.5 shrink-0 text-muted-c/60" />
         <span className="font-mono text-muted-c/70">{toolName}</span>
-        {source && (
-          <span
-            className={`rounded px-1 py-px font-sans text-[10px] leading-none ${sourceChipClass}`}
-            data-testid="tool-source-chip"
-          >
-            {source}
-          </span>
-        )}
         {argsPreview && (
           <span className="truncate font-mono text-muted-c/40">({argsPreview})</span>
         )}

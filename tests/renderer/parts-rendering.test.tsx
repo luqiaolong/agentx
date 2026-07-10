@@ -60,6 +60,29 @@ describe("ToolCallCard", () => {
     expect(screen.queryByText("完成")).toBeNull();
   });
 
+  it("标题纯透传 toolName，不做任何映射", () => {
+    const { rerender } = render(
+      <ToolCallCard
+        toolName="execute"
+        args={{ command: "echo hi" }}
+        status="complete"
+        result="hi"
+      />,
+    );
+    expect(screen.getByText("execute")).toBeTruthy();
+
+    rerender(
+      <ToolCallCard
+        toolName="read_file"
+        args={{ path: "/tmp" }}
+        status="complete"
+        result="ok"
+      />,
+    );
+    expect(screen.getByText("read_file")).toBeTruthy();
+    expect(screen.queryByTestId("tool-name")).toBeNull();
+  });
+
   it("args 预览：显示第一个 scalar 字段值", () => {
     render(
       <ToolCallCard
@@ -146,30 +169,24 @@ describe("ToolCallCard", () => {
     expect(screen.queryByText("Result")).toBeNull();
   });
 
-  it("source chip 显示在 toolName 右侧", () => {
+  it("不再渲染 source chip（与 mode/subagent 区分解耦）", () => {
+    // 2026-07-10 变更：ToolCallCard 标题不再重复 mode/subagent 上下文。
+    // 未来如果某些场景需要 chip 可复用原 testid 重启渲染逻辑。
     render(
       <ToolCallCard
-        toolName="read_file"
-        args={{ path: "/tmp" }}
+        toolName="execute"
+        args={{ command: "powershell -Command \"Get-CimInstance\"" }}
         status="complete"
         result="ok"
-        source="code"
+        source="coding"
       />,
     );
-    const chip = screen.getByTestId("tool-source-chip");
-    expect(chip.textContent).toBe("code");
-  });
-
-  it("source 缺省时不渲染 chip", () => {
-    render(
-      <ToolCallCard
-        toolName="read_file"
-        args={{ path: "/tmp" }}
-        status="complete"
-        result="ok"
-      />,
-    );
+    // source chip 不再渲染
     expect(screen.queryByTestId("tool-source-chip")).toBeNull();
+    // 标题仍只显示 toolName 原样（execute），不出现 「coding」chip，不出现映射
+    expect(screen.getByText("execute")).toBeTruthy();
+    expect(screen.queryByText("coding")).toBeNull();
+    expect(screen.queryByText("exec shell")).toBeNull();
   });
 
   it("complete 状态显示执行耗时（基于 startedAt + arrivedAt）", () => {
