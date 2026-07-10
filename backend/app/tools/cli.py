@@ -23,7 +23,7 @@ from app.config import PROJECT_ROOT, get_settings
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox import PathNotAuthorized, get_sandbox, is_critical
-from app.security.command_filter import has_forbidden_args, is_command_blocked
+from app.security.command_filter import get_forbidden_chars, has_forbidden_args, is_command_blocked
 from app.sandbox.path_guard import normalize_path
 
 __all__ = ["LLM_CLI_TOOL_NAME", "cli_execute"]
@@ -52,16 +52,27 @@ def _resolve_cwd(cwd: str | None, workspace_path: str | None = None) -> Path:
 
 
 def _format_output(exit_code: int, stdout: str, stderr: str, max_chars: int) -> str:
-    """格式化命令输出，截断超长内容。"""
+    """格式化命令输出，超长时智能截取（保留首尾，中间折叠）。"""
     combined = f"[exit={exit_code}]\n"
     if stdout.strip():
         combined += f"--- stdout ---\n{stdout}\n"
     if stderr.strip():
         combined += f"--- stderr ---\n{stderr}\n"
     text = combined.rstrip()
-    if len(text) > max_chars:
-        text = text[:max_chars] + f"\n...（输出已截断至 {max_chars} 字符）"
-    return text
+    if len(text) <= max_chars:
+        return text
+
+    # 智能截取：保留开头和结尾，中间折叠
+    # 预留折叠提示的字符空间
+    ellipsis = f"\n...（共 {len(text)} 字符，中间 {len(text) - max_chars} 字符已折叠）...\n"
+    reserve = max_chars - len(ellipsis)
+    if reserve < 200:
+        # 空间不足，直接截断尾部
+        return text[:max_chars] + f"\n...（输出已截断至 {max_chars} 字符）"
+
+    head_len = reserve // 2
+    tail_len = reserve - head_len
+    return text[:head_len] + ellipsis + text[-tail_len:]
 
 
 async def _check_cwd_authorization(thread_id: str, cwd: Path) -> str | None:
@@ -117,12 +128,32 @@ async def cli_execute(
         return "command 不能为空"
 
     if is_command_blocked(command):
+        logger.warning(
+            "cli_execute.blocked",
+            thread_id=thread_id,
+            command=command,
+            reason="blocklist",
+        )
         return f"命令 '{command}' 在黑名单中，禁止执行（删除/格式化/提权等极度危险操作）"
 
     arguments = list(arguments) if arguments else []
     for idx, arg in enumerate(arguments):
         if has_forbidden_args(arg):
-            return f"参数 [{idx}] 包含非法字符: {arg!r}"
+            forbidden = get_forbidden_chars(arg)
+            logger.warning(
+                "cli_execute.blocked",
+                thread_id=thread_id,
+                command=command,
+                reason="forbidden_chars",
+                matched_chars=forbidden,
+                arg_index=idx,
+            )
+            return (
+                f"参数 [{idx}] 包含非法字符: {arg!r}\n"
+                f"被拦截字符: {', '.join(repr(c) for c in forbidden)}\n"
+                f"提示: 沙箱禁止管道(|)、重定向(<>)、变量($)、命令链(;&`)等元字符，"
+                f"请拆分复杂命令为多个简单命令，或使用 Python 标准库替代"
+            )
 
     resolved_cwd = _resolve_cwd(cwd, workspace_path)
     if _is_critical_dir(resolved_cwd):

@@ -23,7 +23,7 @@ import os
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 
-from app.security.command_filter import has_forbidden_args, is_command_blocked, is_git_write_command
+from app.security.command_filter import get_forbidden_chars, has_forbidden_args, is_command_blocked, is_git_write_command
 from app.security.sandbox_escalation import analyze_sandbox_failure
 
 __all__ = ["SafeLocalShellBackend"]
@@ -147,8 +147,14 @@ class SafeLocalShellBackend(LocalShellBackend):
 
         # 3. 元字符过滤（阻断 shell 注入：; & | ` $ < >）
         if has_forbidden_args(command):
+            forbidden = get_forbidden_chars(command)
             return ExecuteResponse(
-                output=f"命令包含非法 shell 元字符: {command!r}",
+                output=(
+                    f"命令包含非法 shell 元字符: {command!r}\n"
+                    f"被拦截字符: {', '.join(repr(c) for c in forbidden)}\n"
+                    f"提示: 沙箱禁止管道(|)、重定向(<>)、变量($)、命令链(;&`)等元字符，"
+                    f"请拆分复杂命令为多个简单命令，或使用 Python 标准库替代"
+                ),
                 exit_code=126,
                 truncated=False,
             )

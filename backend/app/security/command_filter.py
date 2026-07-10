@@ -23,6 +23,7 @@ __all__ = [
     "effective_blocklist",
     "is_command_blocked",
     "has_forbidden_args",
+    "get_forbidden_chars",
     "is_git_write_command",
     "redact_args",
 ]
@@ -95,6 +96,18 @@ def is_command_blocked(command: str) -> bool:
 def has_forbidden_args(value: str) -> bool:
     """检查字符串是否包含 shell 元字符。"""
     return bool(FORBIDDEN_ARG_PATTERN.search(value))
+
+
+def get_forbidden_chars(value: str) -> list[str]:
+    """提取字符串中所有被禁止的 shell 元字符（去重，保持出现顺序）。"""
+    seen: set[str] = set()
+    chars: list[str] = []
+    for m in FORBIDDEN_ARG_PATTERN.finditer(value):
+        ch = m.group(0)
+        if ch not in seen:
+            seen.add(ch)
+            chars.append(ch)
+    return chars
 
 
 # Git 写操作子命令集合：这些子命令会改变仓库状态（commit/push/checkout 等），

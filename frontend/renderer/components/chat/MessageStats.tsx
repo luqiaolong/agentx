@@ -8,7 +8,8 @@
  *
  * 用户偏好规范：底部操作区右对齐紧凑展示（user_communication 偏好规范）。
  */
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, useCallback, useRef } from "react";
+import { Check, Copy } from "lucide-react";
 import type { ChatMessage } from "@/stores/chat";
 
 /** 与 stores/contextUsage.ts 保持一致的 token 估算。 */
@@ -87,11 +88,40 @@ export const MessageStats = memo(function MessageStats({
 }: MessageStatsProps) {
   // 流式中：每 500ms 刷新一次"现在"以让耗时递增
   const [now, setNow] = useState(() => Date.now());
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!isStreamingLast) return;
     const id = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(id);
   }, [isStreamingLast]);
+
+  const handleCopyTrace = useCallback(() => {
+    if (!message.traceId) return;
+    try {
+      const maybePromise = navigator.clipboard?.writeText(message.traceId);
+      if (maybePromise && typeof maybePromise.then === "function") {
+        maybePromise
+          .then(() => {
+            setCopied(true);
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(() => setCopied(false), 2000);
+          })
+          .catch(() => {
+            // 静默忽略
+          });
+      }
+    } catch {
+      // 静默忽略
+    }
+  }, [message.traceId]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const tokenCount = estimateTokens(countOutputChars(message));
 
@@ -107,13 +137,25 @@ export const MessageStats = memo(function MessageStats({
       data-testid="message-stats"
       className="flex shrink-0 select-none items-center gap-2 text-[11px] leading-none text-muted-c"
     >
-      <span
-        className="font-mono"
+      <button
+        type="button"
+        onClick={handleCopyTrace}
+        className="inline-flex cursor-pointer items-center gap-0.5 rounded px-1 font-mono hover:bg-hover-soft hover:text-primary-c"
         title={traceTitle}
         data-testid="message-stats-trace"
+        aria-label={`复制 traceId：${traceTitle}`}
       >
-        trace:{traceShort}
-      </span>
+        {copied ? (
+          <>
+            <Check className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="text-emerald-600 dark:text-emerald-400">已复制</span>
+          </>
+        ) : (
+          <>
+            trace:{traceShort}
+          </>
+        )}
+      </button>
       <span aria-hidden="true" className="opacity-50">·</span>
       <span
         title="按 4 字符 / token 估算（流式期间实时累积）"

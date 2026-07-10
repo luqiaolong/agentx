@@ -327,9 +327,9 @@ function ToolCallCardImpl({
       )}
       {/* 内联授权按钮：折叠/展开状态均可见 */}
       {approvalRequest && (
-        <div className="flex items-center justify-end gap-1 px-3 py-1.5">
+        <div className="flex items-center justify-end gap-1 pr-1 pb-1 pt-2">
           <div className="relative" ref={menuRef}>
-            <div className="inline-flex items-center overflow-hidden rounded-lg border border-default bg-surface shadow-soft">
+            <div className="inline-flex items-center overflow-hidden rounded-lg border border-primary-c/30 bg-primary-c/10 shadow-soft">
               {/* 主按钮：点击直接执行「本次允许」 */}
               <button
                 type="button"
