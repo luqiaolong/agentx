@@ -3,16 +3,16 @@
 Bug 描述：当用户授权 workspace 不在 PROJECT_ROOT 下时，LLM 用相对路径访问
 工作区内的文件会被误拒（因 SessionSandbox._normalize 默认基于 PROJECT_ROOT 解析）。
 
-修复：SessionSandbox.check_read/check_write/is_path_authorized 接受 base 参数，
-fs 工具（read_file/write_file/edit_file/list_dir/glob/grep）将 workspace_path
-作为 base 传入。
+修复：SessionSandbox.check_read/check_write/is_path_authorized 接受 base 参数；
+AuthorizedLocalShellBackend（提供内置 fs 工具）将 ``self.cwd``（= workspace_path）
+作为 base 传入 SessionSandbox.check_*_sync。
 
 覆盖：
 1. check_read 带 base：相对路径在工作区内可读
 2. check_write 带 base：相对路径在工作区内可写
 3. is_path_authorized 带 base：相对路径识别正确
-4. read_file 端到端：相对路径工作区内可读
-5. write_file 端到端：相对路径工作区内可写
+4. AuthorizedLocalShellBackend.read 端到端：相对路径工作区内可读
+5. AuthorizedLocalShellBackend.write 端到端：相对路径工作区内可写
 6. base 不传时退化到 PROJECT_ROOT（向后兼容）
 7. base 与授权目录不一致时仍拒绝
 """
@@ -24,7 +24,8 @@ from pathlib import Path
 import pytest
 
 from app.config import PROJECT_ROOT
-from app.tools.filesystem import read_file, write_file
+from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
+from app.deepagent.context import current_thread_id
 from app.sandbox import (
     PathNotAuthorized,
     SessionSandbox,
@@ -35,6 +36,25 @@ from app.sandbox import (
 def sandbox() -> SessionSandbox:
     """每个测试用例使用独立实例，避免共享状态。"""
     return SessionSandbox()
+
+
+@pytest.fixture(autouse=True)
+def reset_global_state() -> None:
+    """每个测试前后清理 contextvar + 全局 sandbox 单例状态（test 4/5 用到）。"""
+    token = current_thread_id.set("")
+    from app.sandbox.session_sandbox import get_sandbox
+
+    gs = get_sandbox()
+    gs._authorized_dirs.clear()
+    gs._temp_authorized.clear()
+    gs._full_trust_threads.clear()
+    gs._parent_map.clear()
+    yield
+    current_thread_id.reset(token)
+    gs._authorized_dirs.clear()
+    gs._temp_authorized.clear()
+    gs._full_trust_threads.clear()
+    gs._parent_map.clear()
 
 
 # 1. check_read 带 base：相对路径在工作区内可读
@@ -69,44 +89,53 @@ async def test_is_path_authorized_with_base(sandbox: SessionSandbox) -> None:
     assert await sandbox.is_path_authorized("t1", "src/foo.py", base="d:/proj") is True
 
 
-# 4. read_file 端到端：相对路径工作区内可读
+# 4. AuthorizedLocalShellBackend.read 端到端：相对路径工作区内可读
 @pytest.mark.asyncio
-async def test_read_file_relative_path_in_workspace(
+async def test_backend_read_relative_path_in_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """完整流程：workspace + 相对路径读文件。"""
+    """完整流程：AuthorizedLocalShellBackend.read(workspace=相对路径) 可读。
+
+    backend.cwd = workspace_path，相对路径基于 cwd 解析。
+    thread_id 通过 contextvar 传入，授权通过 SessionSandbox.check_read_sync(base=cwd)。
+    """
     workspace = tmp_path / "proj"
     workspace.mkdir()
     target = workspace / "src" / "foo.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("print('hello')", encoding="utf-8")
 
-    sandbox = SessionSandbox()
+    from app.sandbox.session_sandbox import get_sandbox
+
+    sandbox = get_sandbox()
     await sandbox.authorize("t1", str(workspace), writable=True)
-    # 替换全局 sandbox
-    monkeypatch.setattr("app.sandbox.session_sandbox._sandbox", sandbox, raising=True)
+    current_thread_id.set("t1")
 
-    rel_path = "src/foo.py"
-    content = await read_file("t1", rel_path, base=str(workspace))
-    assert content == "print('hello')"
+    backend = AuthorizedLocalShellBackend(root_dir=workspace, virtual_mode=False)
+    result = backend.read("src/foo.py")
+    assert result.error is None
+    assert result.file_data is not None
+    assert "print('hello')" in result.file_data["content"]
 
 
-# 5. write_file 端到端：相对路径工作区内可写
+# 5. AuthorizedLocalShellBackend.write 端到端：相对路径工作区内可写
 @pytest.mark.asyncio
-async def test_write_file_relative_path_in_workspace(
+async def test_backend_write_relative_path_in_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """完整流程：workspace + 相对路径写文件。"""
+    """完整流程：AuthorizedLocalShellBackend.write(workspace=相对路径) 可写。"""
     workspace = tmp_path / "proj"
     workspace.mkdir()
 
-    sandbox = SessionSandbox()
-    await sandbox.authorize("t1", str(workspace), writable=True)
-    monkeypatch.setattr("app.sandbox.session_sandbox._sandbox", sandbox, raising=True)
+    from app.sandbox.session_sandbox import get_sandbox
 
-    rel_path = "src/new.py"
-    result = await write_file("t1", rel_path, "x = 1\n", base=str(workspace))
-    assert "已写入" in result
+    sandbox = get_sandbox()
+    await sandbox.authorize("t1", str(workspace), writable=True)
+    current_thread_id.set("t1")
+
+    backend = AuthorizedLocalShellBackend(root_dir=workspace, virtual_mode=False)
+    result = backend.write("src/new.py", "x = 1\n")
+    assert result.error is None
     assert (workspace / "src" / "new.py").exists()
     assert (workspace / "src" / "new.py").read_text(encoding="utf-8") == "x = 1\n"
 

@@ -95,7 +95,7 @@ def test_make_approval_event_includes_thread_id():
 
     tool_call = {
         "name": "write_file",
-        "args": {"path": "/data/workspace/test.txt", "content": "hello"},
+        "args": {"file_path": "/data/workspace/test.txt", "content": "hello"},
     }
 
     event = _make_approval_event(tool_call, "thread-xyz-123")
@@ -112,24 +112,24 @@ def test_make_approval_event_includes_thread_id():
     assert payload["preview"] == "将写入文件: /data/workspace/test.txt"
     # content 被 redacted
     assert payload["args"]["content"] == "<redacted>"
-    assert payload["args"]["path"] == "/data/workspace/test.txt"
+    assert payload["args"]["file_path"] == "/data/workspace/test.txt"
 
 
 def test_make_approval_event_redacts_edit_file_content():
-    """edit_file 的 old_text/new_text 应被 redacted。"""
+    """edit_file 的 old_string/new_string 应被 redacted。"""
     from app.security.approval.flow import _make_approval_event
 
     tool_call = {
         "name": "edit_file",
-        "args": {"path": "/data/workspace/foo.py", "old_text": "secret", "new_text": "new"},
+        "args": {"file_path": "/data/workspace/foo.py", "old_string": "secret", "new_string": "new"},
     }
 
     event = _make_approval_event(tool_call, "thread-edit")
     payload = json.loads(event["data"])
 
-    assert payload["args"]["old_text"] == "<redacted>"
-    assert payload["args"]["new_text"] == "<redacted>"
-    assert payload["args"]["path"] == "/data/workspace/foo.py"
+    assert payload["args"]["old_string"] == "<redacted>"
+    assert payload["args"]["new_string"] == "<redacted>"
+    assert payload["args"]["file_path"] == "/data/workspace/foo.py"
     assert payload["thread_id"] == "thread-edit"
 
 

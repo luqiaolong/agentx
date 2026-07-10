@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.config import get_settings
 from app.deepagent.approval_runner import run_agent_with_approval
+from app.deepagent.context import current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
@@ -108,6 +109,8 @@ async def run_deep_path(
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器。"""
     thread_id = state.get("thread_id", "")
+    # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
+    current_thread_id.set(thread_id)
     config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
     sandbox = get_sandbox()
     settings = get_settings()
@@ -153,6 +156,10 @@ async def run_deep_path(
 
     enabled_tool_names = {_TOOL_NAME_MAP.get(t.name, t.name) for t in agent_tools}
     runtime_dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+    # 内置 fs 写工具（write_file/edit_file）由 AuthorizedLocalShellBackend 注入，
+    # 不在 agent_tools 列表中，但 workspace_path 设置后即对 LLM 可用，需纳入危险集合。
+    if workspace_path:
+        runtime_dangerous = runtime_dangerous | {"write_file", "edit_file"}
     # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
     # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
 

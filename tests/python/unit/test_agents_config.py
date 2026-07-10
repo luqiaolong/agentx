@@ -51,7 +51,6 @@ class TestSupervisorSettings:
         assert "read_file" in s.tools
         assert "write_file" in s.tools
         assert "execute" in s.tools
-        assert "git_commit" in s.tools
         assert "rag_retrieve" in s.tools
         assert "web_search" in s.tools
 
@@ -182,26 +181,16 @@ class TestDefaultAgentsConfig:
         assert cfg.coding_team_enabled is False
 
     def test_supervisor_tools_complete(self) -> None:
-        """Supervisor 默认工具集含 fs/cli/git/rag/web 全部。"""
+        """Supervisor 默认工具集含 fs/cli/rag/web + delete_file 全部。"""
         cfg = _default_agents_config()
         tools = set(cfg.supervisor.tools)
-        # fs
-        assert {"read_file", "list_dir", "glob", "grep", "write_file", "edit_file"} <= tools
+        # fs（内置工具名：ls 而非 list_dir）
+        assert {"read_file", "ls", "glob", "grep", "write_file", "edit_file"} <= tools
+        # delete_file（项目自研）
+        assert "delete_file" in tools
         # cli
         assert "execute" in tools
         assert "cli_execute" not in tools
-        # git
-        assert {
-            "git_status",
-            "git_diff",
-            "git_log",
-            "git_branches",
-            "git_clone",
-            "git_pull",
-            "git_checkout",
-            "git_stage",
-            "git_commit",
-        } <= tools
         # rag + web
         assert {"rag_retrieve", "web_search"} <= tools
 
@@ -211,14 +200,11 @@ class TestDefaultAgentsConfig:
 
         tools = set(_DEFAULT_SUPERVISOR_TOOLS)
         # execute 已从 DANGEROUS_TOOLS 中移除，审批改为 directory_extension 机制
+        # git_* 已从 DANGEROUS_TOOLS 中移除，Git 写操作由 is_git_write_command 拦截
         assert DANGEROUS_TOOLS & tools == {
             "write_file",
             "edit_file",
-            "git_clone",
-            "git_pull",
-            "git_checkout",
-            "git_stage",
-            "git_commit",
+            "delete_file",
         }
 
     def test_coding_expert_tools_complete(self) -> None:

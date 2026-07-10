@@ -1,11 +1,11 @@
 """自定义子代理工厂：按 key 动态构建 ReAct 子图。
 
 设计：
-- 工具池复用现有 ``_make_fs_tools`` / ``_make_rag_tools`` / ``_make_web_tools``，
-  按配置的 ``tools`` 字段筛选并组装。
-- **安全硬约束**：危险工具（write_file / edit_file / shell_exec）已在 config 层
-  被 ``_sanitize_custom_tools`` 过滤，本模块再次防御性过滤，确保 subagent 不暴露
-  任何写/编辑/shell 工具（参考 claude.md §10）。
+- 工具池复用 ``make_rag_tools`` / ``make_web_tools``，按配置的 ``tools`` 字段筛选并组装。
+- 内置 fs 工具（ls/read_file/glob/grep）由 ``AuthorizedLocalShellBackend`` 自动注入，
+  通过 ``create_agent(excluded_tools=FORBIDDEN_SUBAGENT_TOOLS)`` 过滤写工具（write_file/edit_file/delete_file）。
+- **安全硬约束**：危险工具已在 config 层被 ``_sanitize_custom_tools`` 过滤，本模块再次
+  防御性过滤，确保 subagent 不暴露任何写/编辑/shell 工具（参考 claude.md §10）。
 - 自定义子代理复用路径 B 的事件契约（token / tool_call / tool_result）。
 """
 
@@ -28,25 +28,16 @@ def _make_custom_tools(
     """按 tool_names 组装工具列表（复用现有工具实现）。
 
     安全：再次过滤危险工具（防御性），即便 config 层漏过也保底。
-    ``workspace_path`` 用于 fs 工具解析相对路径，避免被解到 PROJECT_ROOT。
+    ``workspace_path`` 保留参数签名兼容，fs 工具已由 backend 注入无需此参数。
+
+    注意：fs 工具（read_file/ls/glob/grep）不再通过本函数提供，
+    由 ``AuthorizedLocalShellBackend`` 自动注入。本函数仅返回 rag/web 工具。
     """
-    from app.subagents.base import make_fs_tools, make_rag_tools, make_web_tools
+    from app.subagents.base import make_rag_tools, make_web_tools
 
     # 防御性过滤：移除危险工具
     safe_names = {t for t in tool_names if t not in FORBIDDEN_SUBAGENT_TOOLS}
-    # 内部函数名 → tools_enabled 配置 key 映射
-    name_map = {
-        "read_file": "read_file", "list_dir": "list_dir",
-        "glob_files": "glob", "grep_files": "grep",
-        "rag_retrieve": "rag_retrieve", "web_search": "web_search",
-    }
     tools: list = []
-    # FS 工具集（make_fs_tools 已按 tools_enabled 过滤，这里二次过滤用户未选的工具）
-    fs_cfg_names = {"read_file", "list_dir", "glob", "grep"}
-    if safe_names & fs_cfg_names:
-        for t in make_fs_tools(thread_id, workspace_path):
-            if name_map.get(t.name, t.name) in safe_names or t.name in safe_names:
-                tools.append(t)
     # RAG 工具集（make_rag_tools 已含 tools_enabled 过滤）
     if "rag_retrieve" in safe_names:
         tools.extend(make_rag_tools(thread_id))
@@ -116,6 +107,7 @@ def build_custom_agent(
             name=f"custom_{key}",
             rubric=rubric or None,
             grader_model=grader_model,
+            excluded_tools=FORBIDDEN_SUBAGENT_TOOLS,
         )
 
     # 模式 1：从配置加载
@@ -143,6 +135,7 @@ def build_custom_agent(
         name=f"custom_{key}",
         rubric=cfg.rubric or None,
         grader_model=cfg.grader_model,
+        excluded_tools=FORBIDDEN_SUBAGENT_TOOLS,
     )
 
 

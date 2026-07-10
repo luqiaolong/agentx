@@ -3,24 +3,29 @@
 从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
-- ``DANGEROUS_TOOLS``：触发人工审批中断的工具集合（写操作 + shell 执行）
-- ``_TOOL_NAME_MAP``：内部 tool 函数名 → settings.tools_enabled key 的映射
-- ``_make_deep_tools``：构建 DeepAgent 内置工具集（只读 fs + 危险 fs + rag + web）
+- ``DANGEROUS_TOOLS``：触发人工审批中断的工具集合（写操作 + 删除）
+- ``_TOOL_NAME_MAP``：内部 tool 函数名 → settings.tools_enabled key 的映射（保留空 dict 向后兼容）
+- ``_make_deep_tools``：构建 DeepAgent 工具集（delete_file + rag + web）
 - ``_load_mcp_tools``：异步加载 MCP 工具并标记非可信工具
 
-CLI 执行由 ``SafeLocalShellBackend`` 提供的 deepagents 内置 ``execute`` 工具承担，
-不再注册自研 ``cli_execute`` 工具。
+内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
+自动注入，不在 ``_make_deep_tools`` 返回的工具列表中。CLI 执行（含 Git 操作）由 backend 提供的
+deepagents 内置 ``execute`` 工具承担；Git 写操作在 ``SafeLocalShellBackend.execute`` 通过
+``is_git_write_command`` 拦截。
 
 导入方向：``agent.py`` → ``tool_assembly.py``（单向，无循环）。
 """
 
 from __future__ import annotations
 
+import shutil
 
 from app.config import get_settings
 from app.observability.logger import logger
+from app.sandbox import get_sandbox
+from app.sandbox.path_guard import PathNotAuthorized
 from app.security.dangerous_tools import DANGEROUS_TOOLS
-from app.subagents.base import _make_fs_tools, _make_git_tools, _make_rag_tools, _make_web_tools
+from app.subagents.base import _make_rag_tools, _make_web_tools
 
 __all__ = [
     "DANGEROUS_TOOLS",
@@ -29,55 +34,106 @@ __all__ = [
     "_load_mcp_tools",
 ]
 
-# 工具名映射：将内部 tool 函数名映射到 settings.tools_enabled 的 key
-# （_make_fs_tools 中 glob_files/grep_files 与 config key glob/grep 不一致）
-_TOOL_NAME_MAP = {"glob_files": "glob", "grep_files": "grep"}
+# 工具名映射：保留空 dict 向后兼容（内置 fs 工具名与 config key 一致，无需映射）。
+# 历史上 glob_files→glob / grep_files→grep 的映射已废弃（内置工具名为 glob/grep）。
+_TOOL_NAME_MAP: dict[str, str] = {}
+
+# 沙箱根目录保护：禁止删除这两个目录本身（允许删除其下的子项）
+_GUARDED_ROOTS = frozenset({"data/workspace", "data/uploads"})
 
 
 def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
-    """构建 DeepAgent 内置工具集：只读 fs + 危险 fs + rag + web（同步部分）。
+    """构建 DeepAgent 工具集：delete_file + rag + web。
+
+    内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
+    自动注入，不在此列表中。``delete_file`` 是项目自研工具（内置 fs 工具不含删除能力），
+    需要在此显式构建。Git 操作（status/diff/log/commit/push 等）由 deepagents 内置
+    ``execute`` 工具承担，Git 写操作在 ``SafeLocalShellBackend.execute`` 通过
+    ``is_git_write_command`` 拦截。
 
     安全设计：
-    - 只读工具（read_file/list_dir/glob/grep）复用 ``_make_fs_tools``，与 subagent 一致。
-    - 危险工具（write_file/edit_file）**仅** 在 DeepAgent 中暴露，由
-      ``interrupt_on`` 触发审批，避免被 subagent 路径绕过。
-    - CLI 执行由 ``SafeLocalShellBackend`` 的内置 ``execute`` 工具提供（blocklist + 元字符过滤），
-      不再注册自研 ``cli_execute``。
+    - 内置只读工具（ls/read_file/glob/grep）：由 backend 注入，授权通过
+      ``AuthorizedLocalShellBackend._check_auth`` 校验。
+    - 内置写工具（write_file/edit_file）：由 backend 注入，授权同上；
+      危险性通过 ``interrupt_on`` 触发审批。
+    - ``delete_file``：项目自研，配合 ``interrupt_on`` 审批 + 沙箱授权 + 根目录保护。
+    - CLI 执行（含 Git 操作）由 ``AuthorizedLocalShellBackend`` 的内置 ``execute`` 工具提供
+      （blocklist + 元字符过滤 + Git 写操作拦截）。
 
     T4: 根据 ``get_settings().tools_enabled`` 过滤工具集。若工具被禁用，
     则不暴露给 LLM，且运行时 dangerous 集合也不含该工具（见 ``run_deep_path``）。
-    工具名映射：``glob_files``→``glob``、``grep_files``→``grep``（与 subagents 一致）。
 
     MCP 工具由 ``_load_mcp_tools`` 异步加载并合并（见 ``run_deep_path``）。
 
     Args:
         thread_id: 会话 ID，用于沙箱授权校验。
-        workspace_path: 可选当前工作区绝对路径，作为 fs 工具相对路径基准。
+        workspace_path: 可选当前工作区绝对路径，作为 delete_file 路径解析基准。
     """
     from langchain_core.tools import tool
 
-    from app.tools import filesystem as fs
-
-    fs_tools = _make_fs_tools(thread_id, workspace_path=workspace_path)  # 只读工具集
-    git_tools = _make_git_tools(thread_id)  # 只读 + 写 Git 工具
     rag_tools = _make_rag_tools(thread_id)
     web_tools = _make_web_tools(thread_id)
 
-    # 危险工具：仅在 DeepAgent 暴露，配合 interrupt_on 审批
+    # 危险工具：删除文件/目录，配合 interrupt_on 审批 + 沙箱授权
     @tool
-    async def write_file(path: str, content: str) -> str:
-        """写入文本文件（覆盖）。"""
-        return await fs.write_file(thread_id, path, content, base=workspace_path)
+    async def delete_file(path: str, recursive: bool = False) -> str:
+        """删除文件或目录。
 
-    @tool
-    async def edit_file(path: str, old_text: str, new_text: str) -> str:
-        """编辑文件：将 old_text 替换为 new_text（仅首次匹配）。"""
-        return await fs.edit_file(
-            thread_id, path, old_text, new_text, base=workspace_path
-        )
+        Args:
+            path: 文件或目录路径（相对 workspace）。
+            recursive: True 时递归删除目录；False 时仅删文件，遇目录返回错误。
 
-    # CLI 执行由 SafeLocalShellBackend 的内置 execute 工具提供，不再注册自研 cli_execute
-    all_tools = [*fs_tools, write_file, edit_file, *git_tools, *rag_tools, *web_tools]
+        Returns:
+            成功返回确认消息，失败返回错误描述字符串。
+        """
+        sandbox = get_sandbox()
+        ws_base = workspace_path
+
+        # 1. 沙箱授权校验（异步）
+        try:
+            await sandbox.check_write(thread_id, path, base=ws_base)
+        except PathNotAuthorized as exc:
+            logger.warning(
+                "delete_file.denied",
+                thread_id=thread_id,
+                path=path,
+                reason=str(exc),
+            )
+            return f"删除失败：路径 {path} 未授权 ({exc})"
+
+        # 2. 解析完整路径
+        from app.sandbox.path_guard import normalize_path
+        full_path = normalize_path(path, base=ws_base)
+
+        # 3. 根目录保护：禁止删除 data/workspace / data/uploads 本身
+        norm_str = str(full_path).replace("\\", "/")
+        for guarded in _GUARDED_ROOTS:
+            if norm_str == guarded or norm_str.endswith("/" + guarded):
+                return f"删除失败：禁止删除沙箱根目录 {guarded}"
+
+        # 4. 路径不存在
+        if not full_path.exists():
+            return f"路径不存在: {path}"
+
+        # 5. 目录处理
+        if full_path.is_dir():
+            if not recursive:
+                return f"删除失败：{path} 是目录，需 recursive=True 才能递归删除"
+            try:
+                shutil.rmtree(full_path)
+            except OSError as exc:
+                return f"递归删除目录失败: {path} ({exc})"
+            return f"已递归删除目录: {path}"
+
+        # 6. 文件删除
+        try:
+            full_path.unlink()
+        except OSError as exc:
+            return f"删除文件失败: {path} ({exc})"
+        return f"已删除: {path}"
+
+    # CLI 执行由 AuthorizedLocalShellBackend 的内置 execute 工具提供
+    all_tools = [delete_file, *rag_tools, *web_tools]
 
     # 根据 settings.tools_enabled 过滤；未配置的工具默认启用
     enabled = get_settings().tools_enabled

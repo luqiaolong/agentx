@@ -7,11 +7,15 @@
 （token / password / user:pass@host）。
 
 新增 ``redact_args``：统一脱敏入口，支持 dict / list / str 输入。
+
+新增 ``is_git_write_command``：检测命令是否为 Git 写操作（commit/push/checkout 等），
+供 ``SafeLocalShellBackend.execute`` 拦截 Git 写操作，强制走审批流。
 """
 
 from __future__ import annotations
 
 import re
+import shlex
 
 __all__ = [
     "DEFAULT_BLOCKLIST",
@@ -19,6 +23,7 @@ __all__ = [
     "effective_blocklist",
     "is_command_blocked",
     "has_forbidden_args",
+    "is_git_write_command",
     "redact_args",
 ]
 
@@ -92,6 +97,52 @@ def has_forbidden_args(value: str) -> bool:
     return bool(FORBIDDEN_ARG_PATTERN.search(value))
 
 
+# Git 写操作子命令集合：这些子命令会改变仓库状态（commit/push/checkout 等），
+# 在 ``SafeLocalShellBackend.execute`` 中被拦截，强制走审批流。
+# 只读子命令（status/diff/log/branch/show）不在其中，可正常执行。
+_GIT_WRITE_SUBCOMMANDS: frozenset[str] = frozenset(
+    {
+        "commit",
+        "push",
+        "checkout",
+        "clone",
+        "pull",
+        "add",
+        "merge",
+        "rebase",
+        "reset",
+        "stash",
+    }
+)
+
+
+def is_git_write_command(command: str) -> bool:
+    """检测命令是否为 Git 写操作。
+
+    用 ``shlex.split`` 解析命令，检查第一个 token 是否为 ``git``、
+    第二个 token 是否在 ``_GIT_WRITE_SUBCOMMANDS`` 中。
+
+    ``shlex.split`` 解析失败（如不匹配的引号）时返回 False，安全降级为不拦截
+    （后续 blocklist + 元字符过滤仍会兜底）。
+
+    Args:
+        command: 完整命令字符串。
+
+    Returns:
+        True 表示该命令是 Git 写操作，应被拦截；False 表示不是或无法解析。
+    """
+    if not command or not command.strip():
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # shlex 解析失败（如不匹配的引号）→ 安全降级，不拦截
+        return False
+    if len(tokens) < 2:
+        return False
+    return tokens[0] == "git" and tokens[1] in _GIT_WRITE_SUBCOMMANDS
+
+
 def _redact_command_string(value: str) -> str:
     """对 cli_execute 的 command 字符串做凭证脱敏。"""
     result = _TOKEN_PATTERN.sub(_REDACTED, value)
@@ -118,14 +169,19 @@ def _redact_cli_execute_args(args: dict) -> dict:
 
 
 def _redact_fs_args(args: dict) -> dict:
-    """脱敏 write_file / edit_file 的参数 dict（隐藏文件内容）。"""
+    """脱敏 write_file / edit_file 的参数 dict（隐藏文件内容）。
+
+    内置 fs 工具参数名（deepagents FilesystemMiddleware）：
+    - write_file: ``file_path`` / ``content``
+    - edit_file: ``file_path`` / ``old_string`` / ``new_string`` / ``replace_all``
+    """
     redacted = dict(args)
     if "content" in redacted:
         redacted["content"] = "<redacted>"
-    if "new_text" in redacted:
-        redacted["new_text"] = "<redacted>"
-    if "old_text" in redacted:
-        redacted["old_text"] = "<redacted>"
+    if "new_string" in redacted:
+        redacted["new_string"] = "<redacted>"
+    if "old_string" in redacted:
+        redacted["old_string"] = "<redacted>"
     return redacted
 
 
@@ -133,7 +189,7 @@ def redact_args(tool_name: str, args: dict | list | str) -> dict:
     """统一脱敏入口。
 
     根据工具名选择脱敏策略：
-    - ``write_file`` / ``edit_file``：隐藏 ``content`` / ``new_text`` / ``old_text``。
+    - ``write_file`` / ``edit_file``：隐藏 ``content`` / ``new_string`` / ``old_string``。
     - ``execute`` / ``cli_execute``：对 ``command`` / ``arguments`` 做凭证脱敏
       （token=xxx / password=xxx / user:pass@host → ``***REDACTED***``）。
       ``execute`` 是 deepagents ``LocalShellBackend`` 内置工具（单 ``command`` 参数）；

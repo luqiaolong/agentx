@@ -1,4 +1,4 @@
-r"""SafeLocalShellBackend: 继承 deepagents LocalShellBackend，添加 blocklist + 元字符过滤。
+r"""SafeLocalShellBackend: 继承 deepagents LocalShellBackend，添加 blocklist + 元字符过滤 + Git 写操作拦截。
 
 deepagents 的 ``LocalShellBackend`` 提供 ``execute`` 工具用 ``subprocess.run(shell=True)``
 执行命令——无 blocklist、无元字符过滤。本模块继承并 override ``execute`` 方法，
@@ -6,6 +6,8 @@ deepagents 的 ``LocalShellBackend`` 提供 ``execute`` 工具用 ``subprocess.r
 
 - **blocklist**: ``DEFAULT_BLOCKLIST``（rm/del/format/shutdown/sudo...）+ 用户配置合并
 - **元字符过滤**: ``FORBIDDEN_ARG_PATTERN`` 拦截 ``; & | ` $ < >``，阻断 shell 注入
+- **Git 写操作拦截**: ``is_git_write_command`` 检测 ``git commit/push/checkout...`` 等写操作，
+  返回 exit_code=126 提示走审批流（Phase B.2）
 - **root_dir**: 限制工作目录（由父类 ``LocalShellBackend.__init__`` 处理）
 - **审批**: ``execute`` 不再属于 ``DANGEROUS_TOOLS``，其审批通过 ``directory_extension``
   机制处理（workspace 之外未授权时触发审批）
@@ -19,21 +21,23 @@ from __future__ import annotations
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 
-from app.security.command_filter import has_forbidden_args, is_command_blocked
+from app.security.command_filter import has_forbidden_args, is_command_blocked, is_git_write_command
 
 __all__ = ["SafeLocalShellBackend"]
 
 
 class SafeLocalShellBackend(LocalShellBackend):
-    """LocalShellBackend with blocklist + metachar filtering.
+    """LocalShellBackend with blocklist + metachar filtering + git write interception.
 
     继承 ``LocalShellBackend`` 并 override ``execute`` 方法，在调用父类执行前：
     1. 提取命令名，检查是否在 blocklist 中
     2. 检查整个命令字符串是否包含 shell 元字符
+    3. 检查是否为 Git 写操作（commit/push/checkout 等）
 
     安全层：
     - blocklist: 复用 ``app.security.command_filter.DEFAULT_BLOCKLIST`` + 用户配置
     - 元字符过滤: 复用 ``has_forbidden_args``，拦截 ``; & | ` $ < >``
+    - Git 写操作拦截: 复用 ``is_git_write_command``，拦截 ``git commit/push/...``
     - root_dir: 父类 ``LocalShellBackend`` 限制工作目录
     - 审批: execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension
       机制处理（workspace 之外未授权时触发审批）。
@@ -47,7 +51,7 @@ class SafeLocalShellBackend(LocalShellBackend):
     """
 
     def execute(self, command: str, **kwargs) -> ExecuteResponse:
-        """执行 shell 命令，带 blocklist + 元字符过滤。
+        """执行 shell 命令，带 blocklist + 元字符过滤 + Git 写操作拦截。
 
         Args:
             command: 完整命令字符串（``shell=True`` 模式）。
@@ -59,6 +63,7 @@ class SafeLocalShellBackend(LocalShellBackend):
             - 空命令：``ExecuteResponse(output="command 不能为空", exit_code=1, truncated=False)``
             - blocklist 命中：``ExecuteResponse(output=..., exit_code=126, truncated=False)``
             - 元字符过滤命中：``ExecuteResponse(output=..., exit_code=126, truncated=False)``
+            - Git 写操作命中：``ExecuteResponse(output=..., exit_code=126, truncated=False)``
 
         Raises:
             ValueError: 透传父类在非法 timeout 时的异常。
@@ -93,6 +98,15 @@ class SafeLocalShellBackend(LocalShellBackend):
                 truncated=False,
             )
 
-        # 4. 调用父类执行（root_dir 限制工作目录）
+        # 4. Git 写操作拦截（commit/push/checkout/clone/pull/add/merge/rebase/reset/stash）
+        # Git 写操作会改变仓库状态，需通过审批流执行。
+        if is_git_write_command(command):
+            return ExecuteResponse(
+                output="git 写操作需审批，请通过审批流执行",
+                exit_code=126,
+                truncated=False,
+            )
+
+        # 5. 调用父类执行（root_dir 限制工作目录）
         # 父类 LocalShellBackend.execute 已始终返回 ExecuteResponse，无需再做包装
         return super().execute(command, **kwargs)

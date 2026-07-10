@@ -37,7 +37,7 @@ __all__ = [
 
 # 基础专家（始终可用）
 _BASE_EXPERTS = (
-    "- code: 读取/搜索代码与文件，只读工具（read_file/list_dir/glob/grep）。\n"
+    "- code: 读取/搜索代码与文件，只读工具（read_file/ls/glob/grep）。\n"
     "- rag: 从向量知识库检索文档。\n"
     "- web: 联网搜索实时信息。\n"
     "- deep: 执行需要写文件、编辑文件或系统命令的危险任务（会走审批）。\n"

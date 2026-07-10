@@ -227,26 +227,6 @@ def test_subagents_env_trigger_description_empty_string_becomes_empty(
 # ============================================================
 
 
-def test_make_fs_tools_filters_disabled_tools(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """tools_enabled.glob=false，_make_fs_tools 返回的工具集不含 glob_files。"""
-    from app.subagents.base import _make_fs_tools
-
-    monkeypatch.setenv(
-        "AGENTX_TOOLS_CONFIG",
-        json.dumps({"glob": False}),
-    )
-    get_settings.cache_clear()
-
-    tools = _make_fs_tools("t1")
-    tool_names = {t.name for t in tools}
-    assert "glob_files" not in tool_names
-    assert "read_file" in tool_names
-    assert "list_dir" in tool_names
-    assert "grep_files" in tool_names
-
-
 def test_make_rag_tools_filters_when_rag_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

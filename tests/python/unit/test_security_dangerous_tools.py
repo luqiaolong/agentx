@@ -28,15 +28,13 @@ def test_dangerous_tools_is_frozenset() -> None:
 
 
 def test_dangerous_tools_contains_expected_tools() -> None:
-    """包含写操作 + Git 写操作。execute 已移除，审批改为 directory_extension 机制。"""
+    """包含写操作 + delete_file。execute 已移除（审批改为 directory_extension 机制）；
+    git_* 已移除（Git 写操作由 SafeLocalShellBackend.execute 通过 is_git_write_command 拦截）。
+    """
     expected = {
         "edit_file",
         "write_file",
-        "git_clone",
-        "git_pull",
-        "git_checkout",
-        "git_stage",
-        "git_commit",
+        "delete_file",
     }
     assert DANGEROUS_TOOLS == frozenset(expected)
 
@@ -57,11 +55,10 @@ def test_forbidden_subagent_tools_is_frozenset() -> None:
 
 
 def test_forbidden_subagent_tools_contains_write_ops() -> None:
-    """包含写/编辑/git 写操作。"""
+    """包含写/编辑操作。git_* 工具已删除，不再在此集合中。"""
     assert "write_file" in FORBIDDEN_SUBAGENT_TOOLS
     assert "edit_file" in FORBIDDEN_SUBAGENT_TOOLS
-    assert "git_clone" in FORBIDDEN_SUBAGENT_TOOLS
-    assert "git_commit" in FORBIDDEN_SUBAGENT_TOOLS
+    assert "delete_file" in FORBIDDEN_SUBAGENT_TOOLS
 
 
 def test_forbidden_subagent_tools_no_shell_exec() -> None:

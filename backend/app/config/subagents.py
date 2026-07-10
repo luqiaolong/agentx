@@ -54,15 +54,15 @@ __all__ = [
 
 
 # 全部工具清单（tools_enabled 默认值）
-# CLI 工具 ``execute`` 由 SafeLocalShellBackend 提供，不在此列表中
-# （仅在 DeepAgent 主路径暴露，subagent 禁止绑定）。
+# 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 AuthorizedLocalShellBackend
+# 自动注入，此处保留 key 用于配置可见性；``execute`` 由 backend 提供，不在此列表中。
+# ``delete_file`` 是项目自研工具，可通过 tools_enabled 禁用。
+# Git 操作（status/diff/log/commit/push 等）由 deepagents 内置 ``execute`` 工具承担，
+# 不再有独立 git_* 工具（Phase B.1 已删除 make_git_tools）。
 _ALL_TOOLS = [
-    "read_file", "list_dir", "glob", "grep",
-    "write_file", "edit_file",
+    "read_file", "ls", "glob", "grep",
+    "write_file", "edit_file", "delete_file",
     "web_search", "rag_retrieve",
-    # Git 工具：只读 + 写操作
-    "git_status", "git_diff", "git_log", "git_branches",
-    "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
 ]
 
 

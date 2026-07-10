@@ -60,8 +60,9 @@ _APPROVAL_POLL_INTERVAL = 0.3
 _ABSOLUTE_MAX_WAIT = 3600.0
 
 # 只读工具集合（directory_extension 预检查 + 循环保护检测共用）
+# 内置 fs 工具名：ls / read_file / glob / grep（deepagents FilesystemMiddleware 提供）
 _READONLY_TOOLS: frozenset[str] = frozenset(
-    {"read_file", "list_dir", "glob", "glob_files", "grep", "grep_files"}
+    {"ls", "read_file", "glob", "grep"}
 )
 
 
@@ -75,15 +76,16 @@ def _extract_paths_from_tool_call(
 ) -> list[str]:
     """从工具调用参数中提取路径字符串（用于 directory_extension / 危险工具预检查）。
 
-    支持的工具：
-    - read_file / write_file / edit_file / list_dir / grep: args["path"]
-    - glob / glob_files: args["pattern"] → 取 _glob_base
+    支持的工具（内置 fs 工具由 deepagents FilesystemMiddleware 提供）：
+    - ls / grep / delete_file: args["path"]
+    - read_file / write_file / edit_file: args["file_path"]
+    - glob: args["path"]（可选）；未指定时取 _glob_base(args["pattern"])
     - execute: 工作目录由 SafeLocalShellBackend 的 root_dir 限制；
       若已选择 workspace，回退到 workspace_path 作为工作目录。
     - cli_execute: args["cwd"]；未指定时若已选择 workspace，回退到 workspace_path
       作为默认工作目录，避免已授权工作区仍被误标为危险操作。
 
-    注意：write_file / edit_file / git_* 在 dangerous_tool 判定时检查路径授权；
+    注意：write_file / edit_file / delete_file / git_* 在 dangerous_tool 判定时检查路径授权；
     execute 不再属于 dangerous_tool，其路径通过 directory_extension 机制检查。
     """
     from app.tools.filesystem import _glob_base
@@ -92,10 +94,18 @@ def _extract_paths_from_tool_call(
     args = tool_call.get("args", {})
     if not isinstance(args, dict):
         return []
-    if name in ("read_file", "write_file", "edit_file", "list_dir", "grep", "grep_files"):
+    # 内置 fs 工具：read_file/write_file/edit_file 用 file_path，ls/grep/delete_file 用 path
+    if name in ("read_file", "write_file", "edit_file"):
+        p = args.get("file_path")
+        return [str(p)] if p else []
+    if name in ("ls", "grep", "delete_file"):
         p = args.get("path")
         return [str(p)] if p else []
-    if name in ("glob", "glob_files"):
+    if name == "glob":
+        # glob 优先用 path；未指定 path 时从 pattern 提取 base
+        p = args.get("path")
+        if p:
+            return [str(p)]
         pattern = args.get("pattern", "")
         if not pattern:
             return []
@@ -157,11 +167,14 @@ def _make_approval_event(
     if kind == "directory_extension":
         preview = f"AI 想访问目录: {requested_path}"
     elif name == "write_file":
-        path = args.get("path", "?") if isinstance(args, dict) else "?"
+        path = args.get("file_path", "?") if isinstance(args, dict) else "?"
         preview = f"将写入文件: {path}"
     elif name == "edit_file":
-        path = args.get("path", "?") if isinstance(args, dict) else "?"
+        path = args.get("file_path", "?") if isinstance(args, dict) else "?"
         preview = f"将编辑文件: {path}"
+    elif name == "delete_file":
+        path = args.get("path", "?") if isinstance(args, dict) else "?"
+        preview = f"将删除文件/目录: {path}"
     elif name == "execute":
         preview = f"将执行命令: {args.get('command', '?') if isinstance(args, dict) else '?'}"
     elif name == "cli_execute":
@@ -281,7 +294,7 @@ async def _handle_directory_extension(
         if not paths:
             continue
         # 根据工具类型决定 writable 检查：写操作/execute 需要 writable=True
-        needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+        needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
         for path in paths:
             if await sandbox.is_path_authorized(
                 thread_id,
@@ -309,7 +322,7 @@ async def _handle_directory_extension(
             {},
         )
         name = tc_for_path.get("name", "")
-        needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+        needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
         if await sandbox.is_path_authorized(
             thread_id,
             path,
@@ -339,7 +352,7 @@ async def _handle_directory_extension(
             {},
         )
         name = representative_tc.get("name", "")
-        needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+        needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
         events.append(
             _make_approval_event(
                 representative_tc,
@@ -372,7 +385,7 @@ async def _handle_directory_extension(
                     {},
                 )
                 name = tc_for_path.get("name", "")
-                needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+                needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
                 await sandbox.authorize_temp(thread_id, path, writable=needs_writable)
             except ValueError as exc:
                 logger.warning("authorize_temp failed", path=path, error=str(exc))
@@ -385,7 +398,7 @@ async def _handle_directory_extension(
                     {},
                 )
                 name = tc_for_path.get("name", "")
-                needs_writable = name in ("write_file", "edit_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+                needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
                 await sandbox.authorize(thread_id, path, writable=needs_writable)
             except ValueError as exc:
                 logger.warning("authorize session failed", path=path, error=str(exc))

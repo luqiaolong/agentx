@@ -2,18 +2,18 @@
   response: "我需要读取文件内容。"
   tool_calls:
     - name: "read_file"
-      args: {"path": "pyproject.toml"}
+      args: {"file_path": "pyproject.toml"}
 
 - match: "README"
   response: "我来读取 README 文件。"
   tool_calls:
     - name: "read_file"
-      args: {"path": "README.md"}
+      args: {"file_path": "README.md"}
 
 - match: "目录"
   response: "我来列出当前目录的内容。"
   tool_calls:
-    - name: "list_dir"
+    - name: "ls"
       args: {"path": "."}
 
 - match: "搜索"
