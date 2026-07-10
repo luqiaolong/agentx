@@ -59,13 +59,9 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                           id 用于前端配对 tool_result）。
     - ``tool_result``   — 工具调用结束（data 为 JSON ``{"id","name","result","source","error?"}``）。
     - ``delegation``    — 子代理委派标记（data 为 JSON ``{"target","source","message"}``）。
-    - ``todo_update``   — DeepAgent 任务列表更新。
+    - ``todo_update``   — DeepAgent/Team 任务列表更新（原生 deepagents ``{content, status}`` schema，
+                          status: ``"pending"|"in_progress"|"completed"``；可选 ``task_id`` 区分 Team 子任务）。
     - ``approval_request`` — 危险工具/目录扩展审批请求（含 tool_name / args / preview）。
-    - ``team_plan``     — AgentTeam Orchestrator 生成的子任务计划（data 为 JSON
-                          ``{"plan": [{"agent","input","purpose"}], "reasoning": str}``）。
-    - ``team_progress`` — AgentTeam 子任务状态变化（data 为 JSON
-                          ``{"agent": str, "status": "running"|"done"|"error", "message?": str}``）。
-    - ``team_result``   — AgentTeam 子任务结果摘要（data 为 JSON ``{"agent": str, "summary": str}``）。
     - ``team_done``     — AgentTeam 整体结束（data 为 JSON ``{"status": "done"|"error"}``）。
     - ``done``          — 流结束。
     - ``error``         — 错误（含消息）。

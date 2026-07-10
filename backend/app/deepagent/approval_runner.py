@@ -45,11 +45,26 @@ async def _stream_default(
 
 
 async def _is_interrupted(agent: Any, config: dict) -> bool:
-    """检查 agent 是否在 interrupt 处暂停。"""
+    """检查 agent 是否在 interrupt 处暂停。
+
+    LangGraph 1.x ``StateSnapshot`` 含 ``interrupts`` 字段（``tuple[Interrupt, ...]``），
+    deepagents 0.6.x 通过 ``HumanInTheLoopMiddleware.after_model`` 触发 interrupt，
+    被中断的 task 节点名为 ``"HumanInTheLoopMiddleware.after_model"``（不是 ``"tools"``）。
+    旧判定 ``"tools" in state.next`` 因此永远 False → approval_runner 提前 break → SSE
+    无审批事件就关闭（trace 47ba5000ac804eec 复现）。修复：优先检查 ``state.interrupts``，
+    保留 ``"tools" in state.next`` 作为 ``interrupt_before=["tools"]`` 旧机制兼容。
+    """
     state = await agent.aget_state(config)
-    if not state or not state.next:
+    if not state:
         return False
-    return "tools" in state.next
+    # 主判定：LangGraph 1.x HITL interrupt 由 HumanInTheLoopMiddleware 触发，
+    # StateSnapshot.interrupts 直接给出待处理的 Interrupt 对象列表
+    if getattr(state, "interrupts", None):
+        return True
+    # 向后兼容 interrupt_before=["tools"] 旧机制（已不在项目代码使用）
+    if state.next and "tools" in state.next:
+        return True
+    return False
 
 
 async def _get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:

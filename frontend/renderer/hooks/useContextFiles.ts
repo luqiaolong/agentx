@@ -121,7 +121,7 @@ function mapTasksToSummary(
 ): CategorizedFile[] {
   return tasks.map((t) => {
     const total = t.todos?.length ?? 0;
-    const done = t.todos?.filter((x) => x.done).length ?? 0;
+    const done = t.todos?.filter((x) => x.status === "completed").length ?? 0;
     return {
       id: `task-${t.id}`,
       name: t.title,

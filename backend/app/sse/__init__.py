@@ -3,9 +3,8 @@
 from app.sse.events import (  # noqa: F401
     make_sse_event,
     make_error_event,
-    make_todo_event,
+    make_todo_update_event,
     make_tool_call_event,
     make_tool_result_event,
-    make_team_event,
     make_approval_event,
 )

@@ -23,19 +23,14 @@
 
 | event | data 类型 | 说明 |
 |---|---|---|
-| `token` | 纯字符串 | 增量 token（visible text，已剥离 ` 块） |
+| `token` | 纯字符串 | 增量 token（visible text，已剥离 think 块） |
 | `reasoning` | JSON `{"content": str, "source": str}` | 思考过程 chunk（由 ThinkFilter retain_think 模式从 token 流分离） |
 | `tool_call` | JSON `{"id","name","args","source"}` | 工具调用开始（id 供前端配对 tool_result；subagent 用 astream_events v2 run_id） |
 | `tool_result` | JSON `{"id","name","result","source","error?"}` | 工具调用结束 |
 | `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
-| `todo_update` | JSON `{"task_id": str, "title": str, "done": bool}` | DeepAgent 任务进度（按 `task_id` 分组） |
+| `todo_update` | JSON `{"todos": [{"content": str, "status": "pending"\|"in_progress"\|"completed"}], "task_id?": str}` | DeepAgent/Team 任务列表更新（deepagents 原生 TodoListMiddleware 维护；`task_id` 区分 Team 子任务） |
 | `approval_request` | JSON `{"thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界审批请求 |
-| `plan` | JSON `{"plan": [{"id","title","status"}]}` | DeepAgent 结构化任务计划 |
-| `plan_update` | JSON `{"id": str, "status": str}` | 计划项状态更新 |
 | `paused` | `"{}"` | 用户暂停，SSE 流在下一轮迭代退出并保留状态，等待 `resume` |
-| `team_plan` | JSON `{"plan": [{agent, input, purpose}], "reasoning": str}` | AgentTeam Orchestrator 生成的子任务计划 |
-| `team_progress` | JSON `{"agent": str, "status": "running"|"done"|"error", "message?": str}` | AgentTeam 子任务状态变化 |
-| `team_result` | JSON `{"agent": str, "summary": str}` | AgentTeam 子任务结果摘要 |
 | `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
 | `done` | `"{}"` | 流结束 |
 | `error` | 错误消息字符串 | 错误 |

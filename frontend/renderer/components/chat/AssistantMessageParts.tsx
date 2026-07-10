@@ -326,7 +326,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500" />
             </span>
-            思考中
+            思考中…
           </div>
         </div>
       </div>

@@ -36,12 +36,11 @@ if TYPE_CHECKING:
     from app.router.state import RouterState
 
 # DeepAgent 系统提示
+# write_todos 指令由 deepagents TodoListMiddleware 自带 WRITE_TODOS_SYSTEM_PROMPT 自动注入
 _DEEP_SYSTEM_PROMPT = (
     "你是一个强大的个人助理。你可以读写文件、搜索知识库、搜索网页。"
     "执行危险操作（写文件、执行命令）前需要用户审批。"
     "请根据用户任务规划步骤，调用合适的工具完成。"
-    "\n\n对于需要多步执行的复杂任务，请使用 write_todos 工具维护任务清单，"
-    "每完成一步更新对应 todo 的状态为 completed。"
 )
 
 # T10：异步画像抽取任务引用集合，防止被 GC 回收

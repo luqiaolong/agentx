@@ -224,7 +224,7 @@ describe("useChatStream hook", () => {
     await act(async () => {
       emitEvent({
         type: "todo_update",
-        todos: [{ text: "延迟到的 todo", done: false }],
+        todos: [{ content: "延迟到的 todo", status: "pending" }],
         task_id: undefined,
       });
       await Promise.resolve();
@@ -260,7 +260,7 @@ describe("useChatStream hook", () => {
     act(() => {
       emitEvent({
         type: "todo_update",
-        todos: [{ text: "step1", done: false }],
+        todos: [{ content: "step1", status: "pending" }],
       });
     });
     expect(currentTaskIdRef.current).toBeTruthy();
@@ -309,8 +309,8 @@ describe("useChatStream hook", () => {
       emitEvent({
         type: "todo_update",
         todos: [
-          { text: "读取源", done: false },
-          { text: "翻译", done: true },
+          { content: "读取源", status: "pending" },
+          { content: "翻译", status: "completed" },
         ],
       });
     });
@@ -325,15 +325,15 @@ describe("useChatStream hook", () => {
       emitEvent({
         type: "todo_update",
         todos: [
-          { text: "读取源", done: true },
-          { text: "翻译", done: true },
+          { content: "读取源", status: "completed" },
+          { content: "翻译", status: "completed" },
         ],
       });
     });
 
     const tasks2 = useTasksStore.getState().tasks;
     expect(tasks2).toHaveLength(1); // 没新增
-    expect(tasks2[0].todos?.every((t) => t.done)).toBe(true);
+    expect(tasks2[0].todos?.every((t) => t.status === "completed")).toBe(true);
   });
 
   it("todo_update 任务标题剥掉 <workspace>/<file> LLM 协议标签", async () => {
@@ -355,7 +355,7 @@ describe("useChatStream hook", () => {
     act(() => {
       emitEvent({
         type: "todo_update",
-        todos: [{ text: "step", done: false }],
+        todos: [{ content: "step", status: "pending" }],
       });
     });
 
@@ -719,13 +719,13 @@ describe("useChatStream part 分发", () => {
     act(() => {
       emitEvent({
         type: "todo_update",
-        todos: [{ text: "step1", done: false }],
+        todos: [{ content: "step1", status: "pending" }],
       });
     });
     expect(setTodos).toHaveBeenCalledTimes(1);
     const firstCall = setTodos.mock.calls[0]![0];
     const actualTodos = typeof firstCall === "function" ? firstCall([]) : firstCall;
-    expect(actualTodos).toEqual([{ text: "step1", done: false }]);
+    expect(actualTodos).toEqual([{ content: "step1", status: "pending" }]);
     expect(useTasksStore.getState().tasks).toHaveLength(1);
 
     // approval_request 写入 store
