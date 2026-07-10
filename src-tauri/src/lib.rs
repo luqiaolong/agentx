@@ -12,7 +12,7 @@ pub mod store;
 
 use std::sync::Mutex;
 
-use tauri::{image::Image, Manager};
+use tauri::{image::Image, Emitter, Manager};
 
 const PYTHON_PORT: u16 = 8123;
 
@@ -209,17 +209,36 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 窗口创建时设置图标（setup 中窗口尚未创建）
-            if let tauri::WindowEvent::Focused(_) = event {
-                static ONCE: std::sync::Once = std::sync::Once::new();
-                ONCE.call_once(|| {
-                    let app_icon = build_app_icon();
-                    if let Err(e) = window.set_icon(app_icon) {
-                        log::warn!("failed to set icon on window focus: {e}");
-                    } else {
-                        log::info!("set icon on window focus");
+            match event {
+                // 窗口创建时设置图标（setup 中窗口尚未创建）
+                tauri::WindowEvent::Focused(_) => {
+                    static ONCE: std::sync::Once = std::sync::Once::new();
+                    ONCE.call_once(|| {
+                        let app_icon = build_app_icon();
+                        if let Err(e) = window.set_icon(app_icon) {
+                            log::warn!("failed to set icon on window focus: {e}");
+                        } else {
+                            log::info!("set icon on window focus");
+                        }
+                    });
+                }
+                // 主窗口关闭请求：拦截，走 cleanup 链清理 Python + vite/node 子进程后
+                // 再真正销毁窗口。幂等（AtomicBool 守卫）。
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() == "main" {
+                        api.prevent_close();
+                        let _ = window.emit("app:closing", serde_json::json!({}));
+                        log::info!("main window close requested, dispatching cleanup");
+                        let app_handle = window.app_handle().clone();
+                        let win = window.clone();
+                        tauri::async_runtime::spawn(async move {
+                            backend::cleanup::cleanup_all(app_handle.clone()).await;
+                            // 清理完后真正销毁窗口（幂等 cleanup 不会二次走这条路径）
+                            win.destroy().ok();
+                        });
                     }
-                });
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())

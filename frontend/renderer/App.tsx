@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Sun, Moon, Settings, Bot, Minus, Square, X, Maximize2, PanelRightOpen, PanelRightClose } from "lucide-react";
-import { onPythonStatus } from "@/lib/api/events";
+import { onPythonStatus, onAppClosing } from "@/lib/api/events";
 import {
   minimize,
   maximize,
@@ -41,6 +41,9 @@ export default function App() {
   const [viewerContent, setViewerContent] = useState<string | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
+  // 关闭中状态：Tauri 主进程拦截 CloseRequested 后开始清理前后端进程时置 true。
+  // 为防止 Esc 等误关，10s 后强制解锁（防止 CI/异常场景下卡死）。
+  const [closingApp, setClosingApp] = useState(false);
   // T14: 右侧面板可调宽（240px-480px，默认 288px = w-72）
   const [panelWidth, setPanelWidth] = useState(288);
   const panelWidthRef = useRef(panelWidth);
@@ -88,6 +91,17 @@ export default function App() {
   useEffect(() => {
     const promise = onPythonStatus((status) => {
       setPythonStatus(status as PythonStatus);
+    });
+    return () => {
+      void promise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  // 订阅主窗口关闭事件：Tauri 拦截 CloseRequested 后 emit `app:closing`，
+  // 前端显示「正在关闭前后端进程…」遮罩让用户感知到 0.5-2s 的清理窗口。
+  useEffect(() => {
+    const promise = onAppClosing(() => {
+      setClosingApp(true);
     });
     return () => {
       void promise.then((unlisten) => unlisten());
@@ -381,6 +395,16 @@ export default function App() {
             >
               重启后端
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 关闭中遮罩：Tauri 拦截 CloseRequested 后展示，后续由 Rust 端调用 win.destroy() 销毁窗口 */}
+      {closingApp && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="glass-card flex items-center gap-3 rounded-xl border border-default px-6 py-4 shadow-pop">
+            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-brand-500" />
+            <span className="font-medium" style={{ fontSize: 'var(--fs-brand)' }}>正在关闭前后端进程…</span>
           </div>
         </div>
       )}

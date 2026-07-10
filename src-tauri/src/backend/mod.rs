@@ -7,6 +7,7 @@
 //! - 崩溃退避重试：非零退出指数退避（1s/2s/4s）最多 3 次
 //! - 进程清理：Windows `taskkill /T /F`，Unix 负 PID 杀进程组
 
+pub mod cleanup;
 pub mod env;
 pub mod handle;
 

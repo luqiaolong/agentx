@@ -53,9 +53,16 @@ pub fn app_get_version(app: AppHandle) -> String {
 }
 
 /// `app:quit` → 退出应用。
+///
+/// 走 [backend::cleanup::cleanup_all](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/cleanup.rs)
+/// 链路：先停 Python 子进程 + 清理 vite/node 兄弟进程，等端口释放（Windows TCP TIME_WAIT）
+/// 后再 `app.exit(0)`。幂等多次调用。
 #[tauri::command]
-pub fn app_quit(app: AppHandle) {
+pub async fn app_quit(app: AppHandle) -> Result<(), String> {
+    logger::append_log(&app, "[main] app_quit requested, running cleanup");
+    backend::cleanup::cleanup_all(app.clone()).await;
     app.exit(0);
+    Ok(())
 }
 
 /// `app:restart` → 全量重启 Tauri 应用（对应 Electron `app.relaunch + app.quit`）。
