@@ -1,4 +1,4 @@
-import { memo, useEffect } from "react";
+import { memo } from "react";
 import type { RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ChatMessage } from "@/stores/chat";
@@ -89,17 +89,12 @@ function VirtualizedThread({
     measureElement: (el) => el.getBoundingClientRect().height,
   });
 
-  // BUGFIX: messages 数组引用变化时（如切换会话），强制虚拟化器滚动到顶部并重新测量，
-  // 避免旧会话的 scrollOffset 残留导致新会话消息被渲染到屏幕外。
-  useEffect(() => {
-    virtualizer.scrollToOffset(0, { behavior: "auto" });
-    // 延迟一帧重新测量，确保 DOM 更新后 size cache 正确
-    const id = requestAnimationFrame(() => {
-      virtualizer.measure();
-    });
-    return () => cancelAnimationFrame(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages]);
+  // NOTE: 不要监听 messages 引用变化来滚动到顶部。
+  // store 每次 part 更新都会生成新的 messages 数组，若依赖 messages 会
+  // 在每次 token/reasoning 到达时都触发 scrollToOffset(0)，导致：
+  // 1) 复盘/自进化新增消息时原执行轨迹被滚出视口（"原来的执行轨迹不见了"）
+  // 2) 与 useAutoScroll 的 scroll-to-bottom 冲突，虚拟化项定位错乱（"混在一起"）
+  // 会话切换由 ChatView 的 key={currentId ?? 'empty'} 重新挂载 + scrollTop=0 处理。
 
   return (
     <div
