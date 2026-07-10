@@ -142,26 +142,26 @@ def test_reload_skills_returns_ok_and_count(client: TestClient, tmp_path: Path) 
 
 
 def test_parse_skill_tag_no_tag() -> None:
-    """无 @skill 标记 → (原消息, None)。"""
+    """无 /skill 标记 → (原消息, None)。"""
     msg, content = _parse_skill_tag("帮我分析这个文件")
     assert msg == "帮我分析这个文件"
     assert content is None
 
 
 def test_parse_skill_tag_with_valid_skill(skills_dir: Path) -> None:
-    """@skill:<existing> → 移除标记 + 返回 skill content。"""
+    """/skill:<existing> → 移除标记 + 返回 skill content。"""
     _write_skill(skills_dir.parent, "search_and_summarize", "搜索并总结的技能内容")
 
     msg, content = _parse_skill_tag(
-        "@skill:search_and_summarize 帮我搜索 LangGraph"
+        "/skill:search_and_summarize 帮我搜索 LangGraph"
     )
     assert msg == "帮我搜索 LangGraph"
     assert content == "搜索并总结的技能内容"
 
 
 def test_parse_skill_tag_skill_not_found() -> None:
-    """@skill:<nonexistent> → 移除标记（避免 LLM 困惑），不注入 content。"""
-    msg, content = _parse_skill_tag("@skill:nonexistent 做某事")
+    """/skill:<nonexistent> → 移除标记（避免 LLM 困惑），不注入 content。"""
+    msg, content = _parse_skill_tag("/skill:nonexistent 做某事")
     assert msg == "做某事"
     assert content is None
 
@@ -171,7 +171,7 @@ def test_parse_skill_tag_truncates_long_content(skills_dir: Path) -> None:
     long_content = "A" * 5000
     _write_skill(skills_dir.parent, "big_skill", long_content)
 
-    msg, content = _parse_skill_tag("@skill:big_skill 做任务")
+    msg, content = _parse_skill_tag("/skill:big_skill 做任务")
     assert msg == "做任务"
     assert content is not None
     assert len(content) <= 4000 + len("\n[skill content truncated]")
@@ -180,26 +180,26 @@ def test_parse_skill_tag_truncates_long_content(skills_dir: Path) -> None:
 
 
 def test_parse_skill_tag_multiple_tags(skills_dir: Path) -> None:
-    """多个 @skill: 标记 → 首个存在技能注入 content，所有标记从消息移除。"""
+    """多个 /skill: 标记 → 首个存在技能注入 content，所有标记从消息移除。"""
     _write_skill(skills_dir.parent, "a", "A技能")
     _write_skill(skills_dir.parent, "b", "B技能")
 
-    msg, content = _parse_skill_tag("@skill:a @skill:b 任务")
+    msg, content = _parse_skill_tag("/skill:a /skill:b 任务")
     assert msg == "任务"
     assert content == "A技能"
 
 
 def test_parse_skill_tag_multiple_all_not_found() -> None:
-    """多个不存在的 @skill: 标记 → 全部移除，不注入 content。"""
-    msg, content = _parse_skill_tag("@skill:x @skill:y 做事")
+    """多个不存在的 /skill: 标记 → 全部移除，不注入 content。"""
+    msg, content = _parse_skill_tag("/skill:x /skill:y 做事")
     assert msg == "做事"
     assert content is None
 
 
 def test_parse_skill_tag_tag_in_middle(skills_dir: Path) -> None:
-    """@skill 标记在消息中间 → 正确移除标记，保留其余文本。"""
+    """/skill 标记在消息中间 → 正确移除标记，保留其余文本。"""
     _write_skill(skills_dir.parent, "helper", "help content")
 
-    msg, content = _parse_skill_tag("请 @skill:helper 帮我做事")
-    assert "helper" not in msg.replace("@skill:helper", "")  # 标记被移除
+    msg, content = _parse_skill_tag("请 /skill:helper 帮我做事")
+    assert "helper" not in msg.replace("/skill:helper", "")  # 标记被移除
     assert content == "help content"

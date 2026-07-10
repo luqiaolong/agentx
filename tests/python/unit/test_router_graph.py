@@ -307,7 +307,7 @@ async def test_router_default_agent_mode_is_work(
 
 
 # ============================================================
-# 6. @skill 标记解析（work 场景注入，coding 场景不注入）
+# 6. /skill 标记解析（work 场景注入，coding 场景不注入）
 # ============================================================
 
 
@@ -315,7 +315,7 @@ async def test_router_skill_tag_injected_in_work_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """work 场景下 @skill: 标记的 skill_content 拼到 profile_prompt 前。"""
+    """work 场景下 /skill: 标记的 skill_content 拼到 profile_prompt 前。"""
 
     captured: dict = {}
 
@@ -339,10 +339,10 @@ async def test_router_skill_tag_injected_in_work_mode(
     )
 
     events = await _collect_events(
-        run_router("@skill:coder 帮我写代码", "t-skill", agent_mode="work")
+        run_router("/skill:coder 帮我写代码", "t-skill", agent_mode="work")
     )
 
-    # @skill: 标记被移除
+    # /skill: 标记被移除
     assert captured["message"] == "帮我写代码"
     # skill_content 拼到 profile_prompt 前
     assert "CODER SKILL CONTENT" in captured["profile_prompt"]
@@ -356,7 +356,7 @@ async def test_router_skill_tag_not_injected_in_coding_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """coding 场景下 @skill: 标记被移除但不注入 profile_prompt。"""
+    """coding 场景下 /skill: 标记被移除但不注入 profile_prompt。"""
 
     captured: dict = {}
 
@@ -380,10 +380,10 @@ async def test_router_skill_tag_not_injected_in_coding_mode(
     )
 
     events = await _collect_events(
-        run_router("@skill:coder 帮我写代码", "t-skill-coding", agent_mode="coding")
+        run_router("/skill:coder 帮我写代码", "t-skill-coding", agent_mode="coding")
     )
 
-    # @skill: 标记被移除
+    # /skill: 标记被移除
     assert captured["message"] == "帮我写代码"
     # coding 场景不注入 skill_content
     assert "CODER SKILL CONTENT" not in captured["profile_prompt"]

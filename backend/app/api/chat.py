@@ -134,6 +134,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                         agent_mode=effective_agent_mode,
                         workspace_path=req.workspace_path,
                         revoked_paths=req.revoked_paths,
+                        trace_id=trace_id,
                     ):
                         # 检查中止标志
                         if await is_aborted(req.thread_id):
@@ -168,6 +169,8 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 "event": "error",
                 "data": f"内部错误: {exc} | trace={trace_id}",
             }
+            # 异常分支必须 yield done，否则前端一直显示"..."等待中
+            yield {"event": "done", "data": "{}"}
 
 
 def register_chat_routes(app: FastAPI) -> None:

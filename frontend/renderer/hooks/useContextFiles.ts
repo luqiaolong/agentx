@@ -93,6 +93,12 @@ export function useContextFiles() {
     skill_files: skillFiles,
     session_summary: sessionSummary,
     memory_files: memoryFiles,
+    /** 原始数据：用于详情弹框查找完整内容 */
+    _raw: {
+      skills,
+      sessionTasks,
+      profileEntries,
+    },
   };
 }
 

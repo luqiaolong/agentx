@@ -59,6 +59,7 @@ from app.team.planner import (
     _ORCHESTRATOR_SYSTEM_PROMPT,
     _build_project_context,
     _build_team_experts_description,
+    _strip_agent_prefix_from_todos,
     _todos_to_team_tasks,
     _validate_task,
 )
@@ -141,9 +142,11 @@ async def _plan_node(state: TeamState) -> dict:
     tasks, reasoning = _todos_to_team_tasks(todos, settings)
     if not tasks:
         writer(make_sse_event("error", {"message": "Orchestrator 未生成有效计划"}))
-        return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": todos}
+        return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": _strip_agent_prefix_from_todos(todos)}
 
-    return {"plan": tasks, "todos": todos, "reasoning": reasoning}
+    # 剥离 [agent:xxx] 前缀后存入 state.todos，确保 SSE todo_update 透传到前端的是纯文本
+    clean_todos = _strip_agent_prefix_from_todos(todos)
+    return {"plan": tasks, "todos": clean_todos, "reasoning": reasoning}
 
 
 def _dispatch_node(state: TeamState) -> list[Send]:

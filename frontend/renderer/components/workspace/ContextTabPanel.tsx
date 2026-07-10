@@ -8,6 +8,7 @@ import {
 import { useContextFiles } from "@/hooks/useContextFiles";
 import { formatTime } from "@/lib/format";
 import type { CategorizedFile } from "./extractFiles";
+import { ContextDetailModal, type DetailItem } from "./ContextDetailModal";
 
 /* ------------------------------------------------------------------ */
 /*  上下文横向 Tab 配置                                                  */
@@ -34,7 +35,71 @@ export function ContextTabPanel({
   const [activeSub, setActiveSub] = useState<ContextSubTab>("tool_files");
   const allFiles = useContextFiles();
 
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<DetailItem | null>(null);
+
   const currentFiles: CategorizedFile[] = allFiles[activeSub];
+
+  const handleItemClick = (f: CategorizedFile) => {
+    // 有 path 的文件走编辑器打开（tool_files）
+    if (f.path) {
+      onFileClick?.(f);
+      return;
+    }
+
+    // 技能 / 摘要 / 记忆 走详情弹框
+    const raw = allFiles._raw;
+    if (f.category === "skill_files") {
+      const skill = raw.skills.find((s) => `skill-${s.name}` === f.id);
+      if (skill) {
+        setDetailItem({
+          type: "skill",
+          name: skill.name,
+          description: skill.description,
+          trigger: skill.trigger,
+          tools: skill.tools,
+          content_preview: skill.content_preview,
+          path: skill.path,
+        });
+        setDetailOpen(true);
+      }
+      return;
+    }
+
+    if (f.category === "session_summary") {
+      const task = raw.sessionTasks.find((t) => `task-${t.id}` === f.id);
+      if (task) {
+        setDetailItem({
+          type: "summary",
+          title: task.title,
+          status: task.status,
+          todos: task.todos?.map((todo) => ({
+            content: todo.content,
+            status: todo.status,
+          })),
+          createdAt: task.createdAt,
+        });
+        setDetailOpen(true);
+      }
+      return;
+    }
+
+    if (f.category === "memory_files") {
+      const entry = raw.profileEntries.find((e) => `profile-${e.key}` === f.id);
+      if (entry) {
+        setDetailItem({
+          type: "memory",
+          key: entry.key,
+          category: entry.category,
+          content: entry.content,
+          source: entry.source,
+          updated_at: entry.updated_at,
+        });
+        setDetailOpen(true);
+      }
+      return;
+    }
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -72,24 +137,13 @@ export function ContextTabPanel({
           </div>
         ) : (
           <div className="space-y-0.5">
-            {currentFiles.map((f) => {
-              const canOpen = Boolean(f.path);
-              return (
+            {currentFiles.map((f) => (
                 <button
                   key={f.id}
                   type="button"
-                  onClick={() => onFileClick?.(f)}
-                  disabled={!canOpen}
-                  className={`group flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left transition-colors ${
-                    canOpen
-                      ? "hover:bg-hover-soft"
-                      : "cursor-not-allowed opacity-60"
-                  }`}
-                  title={
-                    canOpen
-                      ? (f.path || f.name)
-                      : "该条目不是文件，暂不支持编辑器打开"
-                  }
+                  onClick={() => handleItemClick(f)}
+                  className="group flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left transition-colors hover:bg-hover-soft"
+                  title={f.name}
                 >
                   <FileText className="h-3 w-3 shrink-0 text-muted-c" />
                   <span className="min-w-0 flex-1 truncate text-secondary-c" style={{ fontSize: 'var(--fs-ws-file-name)' }}>
@@ -114,11 +168,15 @@ export function ContextTabPanel({
                     )}
                   </div>
                 </button>
-              );
-            })}
+            ))}
           </div>
         )}
       </div>
+      <ContextDetailModal
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        item={detailItem}
+      />
     </div>
   );
 }

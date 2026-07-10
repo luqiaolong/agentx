@@ -106,16 +106,13 @@ def trigger_profile_auto_extract(
 ) -> None:
     """异步触发用户画像自动提取（fire-and-forget）。
 
-    从 agent 的 checkpointer 读取最后一轮 assistant 回复，通过 LLM 提取画像条目，
-    写入 profile_store。任务加入 ``_extract_tasks`` 集合防止 GC 回收。
+    从 agent 的 checkpointer 读取最后一轮 assistant 回复，通过 LLM 提取画像条目：
+    - ``workspace_path`` 非空 → 写入 ``.agentx/memory/<key>.md``（工作区记忆）
+    - ``workspace_path`` 为空 → 写入 ``data/config/profile.json``（全局画像）
+
+    任务加入 ``_extract_tasks`` 集合防止 GC 回收。
 
     三条路径（deep / coding / work）在 SSE 流结束后调用此函数。
-
-    Args:
-        agent: 已编译的 LangGraph agent（含 checkpointer，可通过 aget_state 读取 messages）。
-        config: LangGraph config，含 ``{"configurable": {"thread_id": ...}}``。
-        message: 用户原始消息（用于画像提取的上下文）。
-        workspace_path: 工作区路径；非空 → 写入工作区画像，None → 写入全局画像。
     """
     if not get_settings().profile_auto_extract:
         return
@@ -124,18 +121,30 @@ def trigger_profile_auto_extract(
         extract_last_assistant_reply,
         extract_profile_via_llm,
     )
-    from app.memory.profile_store import upsert_from_llm
 
     async def _do_extract() -> None:
         try:
             assistant_reply = await extract_last_assistant_reply(agent, config)
-            if assistant_reply:
-                entries = await extract_profile_via_llm(message, assistant_reply)
-                await upsert_from_llm(entries, workspace_path=workspace_path)
+            if not assistant_reply:
+                return
+            entries = await extract_profile_via_llm(message, assistant_reply)
+            if not entries:
+                return
+            if workspace_path:
+                from app.workspace.memory_store import upsert_from_llm
+                written = await upsert_from_llm(workspace_path, entries)
+                logger.info(
+                    "workspace_memory.auto_extracted",
+                    count=written,
+                    workspace=workspace_path,
+                )
+            else:
+                from app.memory.profile_store import upsert_from_llm
+                await upsert_from_llm(entries, workspace_path=None)
                 logger.info(
                     "profile auto extracted",
                     count=len(entries),
-                    scope="workspace" if workspace_path else "global",
+                    scope="global",
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("profile auto extract failed", error=str(exc))

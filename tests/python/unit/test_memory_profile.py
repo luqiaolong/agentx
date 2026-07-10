@@ -37,6 +37,9 @@ def _isolate_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(ps_module, "DATA_DIR", tmp_path)
     monkeypatch.setattr(ps_module, "_PROFILE_DIR", tmp_path / "config")
     monkeypatch.setattr(ps_module, "_PROFILE_FILE", tmp_path / "config" / "profile.json")
+    # 隔离 workspace.memory_store 的锁缓存，避免测试间交叉污染
+    import app.workspace.memory_store as ms_module
+    monkeypatch.setattr(ms_module, "_workspace_locks", {})
     yield
 
 

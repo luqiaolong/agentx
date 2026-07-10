@@ -22,6 +22,7 @@ Router 不再传 history 也不手动写回（避免双重写入）。
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 
 from langchain_core.messages import trim_messages
@@ -51,14 +52,14 @@ _VALID_AGENT_MODES: frozenset[str] = frozenset({"work", "coding", "coding_team"}
 
 
 # ============================================================
-# @skill / <workspace> 标记解析
+# /skill:<name> 标记解析
 # ============================================================
 
 # 单 skill content 注入上限（超出截断）
 _SKILL_CONTENT_MAX = 4000
 
-# @skill:<name> 标记正则
-_SKILL_TAG_RE = re.compile(r"@skill:(\S+)")
+# /skill:<name> 标记正则
+_SKILL_TAG_RE = re.compile(r"/skill:(\S+)")
 
 
 def _load_skill_def(name: str) -> SkillDef | None:
@@ -87,19 +88,19 @@ def _load_skill_def(name: str) -> SkillDef | None:
 
 
 def _parse_skill_tag(message: str) -> tuple[str, str | None]:
-    """解析用户消息中的所有 ``@skill:<name>`` 标记。
+    """解析用户消息中的所有 ``/skill:<name>`` 标记。
 
-    - 移除所有 @skill: 标记（无论技能是否存在），避免 LLM 看到未知标记困惑。
+    - 移除所有 /skill: 标记（无论技能是否存在），避免 LLM 看到未知标记困惑。
     - 首个存在的技能 → 注入其 content；其余标记仅移除。
     - 无标记或所有技能都不存在 → ``(cleaned_message, None)``。
     - 单 skill content 超过 ``_SKILL_CONTENT_MAX`` 字符时截断并追加标记。
 
     Examples:
-        >>> _parse_skill_tag("@skill:coder 帮我写代码")
+        >>> _parse_skill_tag("/skill:coder 帮我写代码")
         ("帮我写代码", "<coder skill content>")
-        >>> _parse_skill_tag("@skill:unknown 帮我")  # 技能不存在
+        >>> _parse_skill_tag("/skill:unknown 帮我")  # 技能不存在
         ("帮我", None)
-        >>> _parse_skill_tag("@skill:a @skill:b 任务")  # 多标签，a 存在
+        >>> _parse_skill_tag("/skill:a /skill:b 任务")  # 多标签，a 存在
         ("任务", "<a skill content>")
     """
     matches = list(_SKILL_TAG_RE.finditer(message))
@@ -117,7 +118,7 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
             skill_content = content
             break  # 仅注入首个存在的技能
 
-    # 移除所有 @skill:<name> 标记（含不存在的），剩余文本作为用户消息
+    # 移除所有 /skill:<name> 标记（含不存在的），剩余文本作为用户消息
     cleaned = _SKILL_TAG_RE.sub("", message).strip()
     # 合并多余空白（移除标记后可能留下连续空格）
     cleaned = " ".join(cleaned.split())
@@ -129,47 +130,17 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
 # ============================================================
 
 
-async def run_router(
+async def _run_router_inner(
     message: str,
     thread_id: str,
-    checkpointer: Any = None,
-    permission_mode: str = "standard",
-    agent_mode: str = "work",
-    workspace_path: str | None = None,
-    revoked_paths: list[str] | None = None,
-    chat_model: BaseChatModel | None = None,
+    checkpointer: Any,
+    permission_mode: str,
+    agent_mode: str,
+    workspace_path: str | None,
+    revoked_paths: list[str] | None,
+    chat_model: BaseChatModel | None,
 ) -> AsyncIterator[dict[str, str]]:
-    """运行 Router，按 ``agent_mode`` 分发到对应场景 runner，yield SSE 事件。
-
-    流程:
-    1. 校验 ``agent_mode``，非法值直接 yield error
-    2. 解析 ``@skill:<name>`` 标记（仅 work 场景注入 system prompt）
-    3. 从请求字段同步 workspace 授权（跳过 revoked_paths 中的路径）
-    4. 读取用户画像
-    5. 从 checkpointer 加载历史 messages（若提供）+ 截断到预算
-       （仅用于 coding_team 子任务上下文 + 观测 preview；work/coding 路径
-       由 LangGraph astream 自动从 checkpointer 加载，不传 history）
-    6. 按 ``agent_mode`` 分发：
-       - ``"work"`` → ``run_work_supervisor``（传 checkpointer，不传 history）
-       - ``"coding"`` → ``run_coding_expert``（传 checkpointer，不传 history）
-       - ``"coding_team"`` → ``run_coding_team``（传 history，子任务用独立 thread_id）
-    7. 统一 yield ``done`` 事件
-
-    Args:
-        message: 用户消息。
-        thread_id: 会话 ID。
-        checkpointer: 可选的 LangGraph checkpointer，用于加载/写回历史 messages。
-        permission_mode: 权限模式，"standard"（审批流）或 "full_trust"（会话内全量放行）。
-        agent_mode: 场景+模式枚举，``"work"`` / ``"coding"`` / ``"coding_team"``。
-            默认 ``"work"``（Supervisor 全能 agent）。
-        workspace_path: 可选当前会话绑定的 workspace 绝对路径，非空时自动授权沙箱写入。
-        revoked_paths: 可选用户手动撤销过的路径列表；若 effective_workspace 在此列表中，
-            则跳过 chip 自动授权，尊重用户撤销意图。
-        chat_model: 可选注入的 ChatModel（用于评测框架注入 MockChatModel）。``None`` 时下游 runner 各自调用 ``get_chat_model()``。
-
-    Yields:
-        SSE 事件 dict: {event: str, data: str}
-    """
+    """run_router 实际逻辑（被外层 trace bind 包裹）。"""
     with trace_span("router.run", thread_id=thread_id, message_len=len(message), agent_mode=agent_mode):
         # ---- 1. 校验 agent_mode ----
         if agent_mode not in _VALID_AGENT_MODES:
@@ -185,13 +156,10 @@ async def run_router(
             yield make_sse_event("done", "{}")
             return
 
-        # ---- 2. 解析 @skill 标记 ----
+        # ---- 2. 解析 /skill 标记 ----
         cleaned_message, skill_content = _parse_skill_tag(message)
 
         # ---- 3. workspace 授权同步 ----
-        # 优先使用会话级 workspace_path；若为空则回退到 thread 已有授权中的第一个
-        # （重新发送消息的场景：会话从持久化恢复后 path 为 None，但上次授权仍然有效）。
-        # 都不存在才跳过授权，以免污染 authorized_dirs。
         effective_workspace = (workspace_path or "").strip() or None
         if not effective_workspace:
             from app.sandbox import get_sandbox as _get_sandbox_fallback
@@ -207,7 +175,6 @@ async def run_router(
                     workspace=effective_workspace,
                 )
         if effective_workspace:
-            # 若用户已显式撤销该路径，跳过 chip 自动授权，尊重撤销意图
             _revoked = {str(p).strip().lower() for p in (revoked_paths or [])}
             if effective_workspace.strip().lower() in _revoked:
                 logger.info(
@@ -217,7 +184,6 @@ async def run_router(
                 )
             else:
                 from app.sandbox import get_sandbox
-
                 sandbox = get_sandbox()
                 try:
                     await sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
@@ -234,22 +200,17 @@ async def run_router(
                         error=str(exc),
                     )
 
-        # ---- 4. 读取用户画像（合并工作区 + 全局）+ 项目级 system_prompt ----
-        # build_profile_prompt 失败时返回空字符串，不影响主流程
+        # ---- 4. 读取用户画像 + 项目级 system_prompt ----
         try:
             profile_prompt = build_profile_prompt(workspace_path=effective_workspace)
-        except Exception as exc:  # noqa: BLE001 — 画像读取兜底
+        except Exception as exc:  # noqa: BLE001
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
 
-        # 加载项目级 system_prompt（.agentx/system_prompt.md）
-        # AGENTS.md + rules 由 deepagents memory= 参数自动加载（harness.resolve_memory_paths）
         project_system_prompt = ""
         if effective_workspace:
             try:
                 from pathlib import Path
-
-                # H2: async 热路径中用 to_thread 包装同步文件 IO，避免阻塞事件循环
                 project_config = await asyncio.to_thread(
                     load_project_config, Path(effective_workspace)
                 )
@@ -263,7 +224,7 @@ async def run_router(
                             workspace=effective_workspace,
                             has_system_prompt=True,
                         )
-            except Exception as exc:  # noqa: BLE001 — 项目配置加载兜底
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "router.workspace_config_load_failed",
                     thread_id=thread_id,
@@ -271,29 +232,20 @@ async def run_router(
                     error=str(exc),
                 )
 
-        # 项目级 system_prompt 前置到 profile_prompt
-        # AGENTS.md + rules 由 deepagents memory= 自动注入，不再手动拼接
         if project_system_prompt:
             profile_prompt = (project_system_prompt + "\n" + profile_prompt).strip()
-
-        # work 场景：skill_content 拼到 profile_prompt 前（作为 system prompt 前缀）
-        # coding / coding_team 场景：skill_content 不注入（Expert 有自己的 prompt 体系）
         if agent_mode == "work" and skill_content:
             profile_prompt = (skill_content + "\n" + profile_prompt).strip()
 
-        # ---- 5. 加载历史 messages（从 checkpointer）----
+        # ---- 5. 加载历史 messages ----
         history: list = []
         if checkpointer is not None:
             try:
                 history = await _load_history_from_checkpointer(checkpointer, thread_id)
-            except Exception as exc:  # noqa: BLE001 — 历史加载兜底
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("load history failed", error=str(exc))
                 history = []
 
-        # T-P3-1: 用 LangChain 标准 trim_messages 替代手写 history[-max_msgs:]。
-        # strategy="last" 保留最近消息（行为等价），避免破坏 tool_call 配对
-        # （trim_messages 自动检测 tool_call ↔ ToolMessage 完整性）。
-        # token 预算由 deepagents SummarizationMiddleware 处理。
         settings = get_settings()
         max_msgs = settings.context_max_messages
         if len(history) > max_msgs:
@@ -312,7 +264,7 @@ async def run_router(
             history_count=len(history),
         )
 
-        # ---- 5.5 观测中心：record_prompt + start state snapshot ----
+        # ---- 5.5 观测中心 ----
         run_id = current_trace_id() or ""
         if run_id:
             history_preview = "\n".join(
@@ -327,21 +279,16 @@ async def run_router(
                     user_message=cleaned_message,
                     history_preview=history_preview,
                 )
-                # start snapshot：从 checkpointer 读 channel_values
                 if checkpointer is not None and hasattr(checkpointer, "aget"):
                     cp_config = {"configurable": {"thread_id": thread_id}}
                     checkpoint = await checkpointer.aget(cp_config)
                     if checkpoint and isinstance(checkpoint, dict):
                         channel_values = checkpoint.get("channel_values", {}) or {}
                         await sink.record_state_snapshot(run_id, "start", channel_values)
-            except Exception as exc:  # noqa: BLE001 — 观测失败不阻塞 router
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("observation record_prompt/start failed", error=str(exc))
 
         # ---- 6. 场景分发 ----
-        # work / coding 路径：LangGraph astream 自动从 checkpointer 加载历史 + 写回新消息，
-        # 不再传 history（避免历史消息重复）也不手动写回（避免 user/assistant 重复）。
-        # coding_team 路径：子任务用独立 child thread_id，checkpointer 无父会话历史，
-        # 需要显式传 history 提供上下文；team graph 无 checkpointer，由 Router 写回。
         if agent_mode == "work":
             async for sse in run_work_supervisor(
                 cleaned_message,
@@ -365,7 +312,6 @@ async def run_router(
             ):
                 yield sse
         else:  # coding_team
-            # coding_team 的 team graph 无 checkpointer，Router 收集 token 并写回
             assistant_content_parts: list[str] = []
 
             async def _collect_team_sse(
@@ -389,18 +335,16 @@ async def run_router(
             ):
                 yield sse
 
-            # coding_team 写回 checkpointer（team graph 无 checkpointer，需 Router 手动写）
             assistant_content = "".join(assistant_content_parts).strip()
             if assistant_content and checkpointer is not None:
                 from langchain_core.messages import AIMessage, HumanMessage
-
                 new_messages = [
                     HumanMessage(content=cleaned_message),
                     AIMessage(content=assistant_content),
                 ]
                 await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
 
-        # ---- 7. 观测中心：end state snapshot ----
+        # ---- 7. 观测中心 end ----
         if run_id:
             try:
                 if checkpointer is not None and hasattr(checkpointer, "aget"):
@@ -409,11 +353,44 @@ async def run_router(
                     if checkpoint and isinstance(checkpoint, dict):
                         channel_values = checkpoint.get("channel_values", {}) or {}
                         await sink.record_state_snapshot(run_id, "end", channel_values)
-            except Exception as exc:  # noqa: BLE001 — 观测失败不阻塞 router
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("observation end snapshot failed", error=str(exc))
 
         # ---- 8. 统一 yield done ----
         yield make_sse_event("done", "{}")
+
+
+async def run_router(
+    message: str,
+    thread_id: str,
+    checkpointer: Any = None,
+    permission_mode: str = "standard",
+    agent_mode: str = "work",
+    workspace_path: str | None = None,
+    revoked_paths: list[str] | None = None,
+    chat_model: BaseChatModel | None = None,
+    trace_id: str | None = None,
+) -> AsyncIterator[dict[str, str]]:
+    """运行 Router，按 ``agent_mode`` 分发到对应场景 runner，yield SSE 事件。
+
+    外层包裹 trace_id ContextVar，确保 LangGraph 内部节点也能读取到 trace_id。
+    """
+    from app.observability.trace import bind_trace, current_trace_id
+
+    _trace_id = trace_id or current_trace_id() or ""
+    _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
+    with _trace_cm:
+        async for sse in _run_router_inner(
+            message,
+            thread_id,
+            checkpointer=checkpointer,
+            permission_mode=permission_mode,
+            agent_mode=agent_mode,
+            workspace_path=workspace_path,
+            revoked_paths=revoked_paths,
+            chat_model=chat_model,
+        ):
+            yield sse
 
 
 async def _load_history_from_checkpointer(

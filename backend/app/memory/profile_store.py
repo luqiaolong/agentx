@@ -309,11 +309,9 @@ async def add(
     async with lock:
         if workspace_path:
             store = _load_workspace(workspace_path)
-            file_path = _workspace_profile_path(workspace_path)
             save_fn = lambda s: _save_workspace(s, workspace_path)  # noqa: E731
         else:
             store = _load("global")
-            file_path = _PROFILE_FILE
             save_fn = _save_global
 
         if any(e.key == entry.key for e in store.entries):
@@ -540,8 +538,29 @@ def build_profile_prompt(workspace_path: str | None = None) -> str:
           - [category] content
           - [category] content
           ...
+
+    工作区画像来源：
+    - 全局画像（data/config/profile.json）
+    - 工作区记忆文件（``.agentx/memory/*.md``），由 ``workspace.memory_store`` 读取
     """
-    entries = get_all(workspace_path=workspace_path)
+    # 全局画像
+    global_entries = get_all(workspace_path=None)
+
+    # 工作区画像（.agentx/memory/*.md）
+    ws_entries: list[Any] = []
+    if workspace_path:
+        try:
+            from app.workspace.memory_store import list_entries
+            ws_entries = list_entries(workspace_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("workspace_memory.build_prompt_failed", workspace=workspace_path, error=str(exc))
+
+    # 合并：工作区优先，同 key 覆盖全局
+    merged: dict[str, Any] = {e.key: e for e in global_entries}
+    for e in ws_entries:
+        merged[e.key] = e
+
+    entries = list(merged.values())
     if not entries:
         return ""
     sorted_entries = sorted(
@@ -551,7 +570,9 @@ def build_profile_prompt(workspace_path: str | None = None) -> str:
     )[:_PROFILE_MAX_INJECT]
     lines = ["用户画像（请遵循以下偏好与约定）:"]
     for entry in sorted_entries:
-        lines.append(f"- [{entry.category}] {entry.content}")
+        content = getattr(entry, "content", "")
+        category = getattr(entry, "category", "custom")
+        lines.append(f"- [{category}] {content}")
     return "\n".join(lines)
 
 

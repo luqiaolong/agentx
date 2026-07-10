@@ -30,6 +30,7 @@ __all__ = [
     "_build_project_context",
     "_build_team_experts_description",
     "_looks_like_dangerous_task",
+    "_strip_agent_prefix_from_todos",
     "_todos_to_team_tasks",
     "_validate_task",
 ]
@@ -97,6 +98,31 @@ _ORCHESTRATOR_SYSTEM_PROMPT = """你是一个任务拆解专家（Orchestrator�
 
 # [agent:xxx] 前缀正则：匹配 [agent:code] / [agent:deep] / [agent:custom-mycoder] 等
 _AGENT_PREFIX_RE = re.compile(r"^\s*\[agent:([a-zA-Z0-9_\-]+)\]\s*(.*)", re.DOTALL)
+
+
+def _strip_agent_prefix_from_todos(todos: list[dict]) -> list[dict]:
+    """剥离 todos 列表中每个 todo content 的 ``[agent:xxx]`` 前缀。
+
+    Orchestrator 的 ``write_todos`` 要求 content 以 ``[agent:类型]`` 开头，
+    但前端 ``todo_update`` 事件应展示纯净的任务描述。本函数在 ``_plan_node``
+    返回前清洗 ``state.todos``，确保 SSE 透传到前端的 content 不含前缀。
+
+    Args:
+        todos: deepagents 原生 Todo 列表 ``[{content, status}, ...]``
+
+    Returns:
+        清洗后的 todos 副本（原列表不变），content 为剥离前缀后的纯文本。
+    """
+    cleaned: list[dict] = []
+    for todo in todos or []:
+        if not isinstance(todo, dict):
+            cleaned.append(todo)
+            continue
+        content = todo.get("content", "")
+        match = _AGENT_PREFIX_RE.match(content)
+        stripped = match.group(2).strip() if match else content
+        cleaned.append({**todo, "content": stripped})
+    return cleaned
 
 
 def _build_project_context() -> str:

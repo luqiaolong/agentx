@@ -25,7 +25,7 @@ from app.deepagent.factory import (
     ensure_harness_profile,
     resolve_backend,
     resolve_memory_paths,
-    resolve_skills_dir,
+    resolve_skills_sources,
 )
 from app.deepagent.tool_assembly import DANGEROUS_TOOLS
 from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
@@ -130,18 +130,33 @@ def test_resolve_memory_paths_none_workspace() -> None:
     assert resolve_memory_paths(None) == []
 
 
-def test_resolve_skills_dir_returns_data_skills(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``resolve_skills_dir`` 返回 ``DATA_DIR/skills`` 绝对路径。"""
+def test_resolve_skills_sources_returns_global_and_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``resolve_skills_sources`` 返回全局 ``DATA_DIR/skills`` + 工作区 ``.agentx/skills``。"""
     monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    assert resolve_skills_dir() == str(skills_dir)
+    ws_skills = tmp_path / ".agentx" / "skills"
+    ws_skills.mkdir(parents=True)
+    sources = resolve_skills_sources(str(tmp_path))
+    assert str(skills_dir) in sources
+    assert str(ws_skills) in sources
+    # 工作区在后（优先级更高）
+    assert sources.index(str(ws_skills)) > sources.index(str(skills_dir))
 
 
-def test_resolve_skills_dir_none_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``data/skills`` 不存在时返回 None。"""
+def test_resolve_skills_sources_global_only_when_no_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """无 workspace 时仅返回全局 skills 目录。"""
     monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
-    assert resolve_skills_dir() is None
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    assert resolve_skills_sources(None) == [str(skills_dir)]
+
+
+def test_resolve_skills_sources_empty_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """skills 目录不存在时返回空列表。"""
+    monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
+    assert resolve_skills_sources(None) == []
+    assert resolve_skills_sources(str(tmp_path)) == []
 
 
 def test_resolve_backend_returns_authorized_local_shell_backend(tmp_path: Path) -> None:
@@ -170,7 +185,7 @@ def test_resolve_backend_none_when_no_workspace() -> None:
 
 @pytest.mark.asyncio
 async def test_create_agent_passes_correct_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``create_agent`` 正确组装所有 deepagents 参数。"""
+    """``create_agent`` 正确组装所有 deepagents 参数，含 SkillsMiddleware。"""
     monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
@@ -206,9 +221,12 @@ async def test_create_agent_passes_correct_config(tmp_path: Path, monkeypatch: p
         assert kwargs["name"] == "test_agent"
         assert kwargs["interrupt_on"] == build_interrupt_config()
         assert kwargs["memory"] == resolve_memory_paths(str(tmp_path))
-        # skills 参数已移除（项目自研 skill 系统替代 deepagents SkillsMiddleware）
-        assert "skills" not in kwargs
         assert kwargs["backend"] is not None
+
+        # 验证 SkillsMiddleware 已注入 middleware 列表
+        from deepagents.middleware.skills import SkillsMiddleware
+        middleware_types = [type(mw) for mw in kwargs["middleware"]]
+        assert SkillsMiddleware in middleware_types
 
         # 验证 memory 非空
         assert len(kwargs["memory"]) == 1
@@ -231,8 +249,8 @@ async def test_create_agent_uses_default_name_and_none_backend(tmp_path: Path, m
         assert kwargs["name"] == "deep_agent"
         assert kwargs["backend"] is None
         assert kwargs["memory"] is None
-        # skills 参数已移除
-        assert "skills" not in kwargs
+        # 无 skills 目录时 middleware 为空（不含 SkillsMiddleware）
+        assert kwargs["middleware"] == []
 
 
 # ============================================================
@@ -276,9 +294,11 @@ async def test_create_agent_rubric_injects_rubric_middleware(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
-async def test_create_agent_no_rubric_yields_empty_middleware(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``rubric=`` 为 None 时 ``middleware`` 为空列表（不注入 RubricMiddleware）。"""
+async def test_create_agent_no_rubric_yields_skills_middleware(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``rubric=`` 为 None 时 ``middleware`` 仅含 SkillsMiddleware（skills 目录存在）。"""
     monkeypatch.setattr("app.deepagent.factory.DATA_DIR", tmp_path)
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
     with patch("app.deepagent.factory.create_deep_agent") as mock_create:
         mock_create.return_value = MagicMock()
         create_agent(
@@ -289,7 +309,9 @@ async def test_create_agent_no_rubric_yields_empty_middleware(tmp_path: Path, mo
             # rubric=None
         )
         _, kwargs = mock_create.call_args
-        assert kwargs["middleware"] == []
+        from deepagents.middleware.skills import SkillsMiddleware
+        assert len(kwargs["middleware"]) == 1
+        assert isinstance(kwargs["middleware"][0], SkillsMiddleware)
 
 
 @pytest.mark.asyncio

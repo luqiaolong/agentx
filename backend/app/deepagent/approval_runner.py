@@ -172,6 +172,12 @@ async def run_agent_with_approval(
         SSE 事件 dict: ``{event: str, data: str}``
     """
     from app.sandbox import get_sandbox
+    from app.observability.trace import bind_trace, current_trace_id
+
+    # 显式绑定 trace_id：LangGraph 内部节点/子协程不会自动继承外层 ContextVar
+    _trace_id = current_trace_id() or ""
+    if _trace_id:
+        bind_trace(_trace_id)  # 设置当前协程的 ContextVar
 
     # 跨 stream 调用共享的"已 yield 消息签名"集合（避免 astream resume
     # 时重发历史消息被重复 yield，root cause: trace=64851677fced422c）。

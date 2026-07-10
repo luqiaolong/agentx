@@ -86,6 +86,89 @@ RULES_README_TEMPLATE = """\
 ```
 """
 
+# skills/README.md 模板：说明如何添加技能文件
+SKILLS_README_TEMPLATE = """\
+# Skills 目录
+
+本目录用于存放项目级 Agent Skills，遵循 agentskills.io 规范。
+
+## 目录结构
+
+每个技能是一个独立子目录，包含 ``SKILL.md`` 文件：
+
+```text
+skills/
+├── my-skill/
+│   ├── SKILL.md          # 必需：YAML frontmatter + Markdown 指令
+│   ├── scripts/            # 可选：可执行脚本
+│   ├── references/         # 可选：参考文档
+│   └── assets/             # 可选：静态资源
+└── another-skill/
+    └── SKILL.md
+```
+
+## SKILL.md 格式
+
+```markdown
+---
+name: my-skill
+description: 简短描述技能用途和触发时机
+---
+
+# My Skill
+
+## When to Use
+
+- 当用户要求...时使用
+
+## Instructions
+
+- 步骤一
+- 步骤二
+```
+
+## 使用方式
+
+1. 在输入框中通过 ``@skill:<name>`` 显式触发（如 ``@skill:my-skill``）
+2. 技能内容会自动注入到当前会话的 system prompt 中
+"""
+
+# memory/README.md 模板：说明如何添加工作区记忆文件
+MEMORY_README_TEMPLATE = """\
+# Memory 目录
+
+本目录用于存放工作区记忆（Workspace Memory），每个记忆条目是一个独立的 ``.md`` 文件。
+这些文件会自动加载到 AI 的上下文中，帮助 AI 理解项目背景、技术栈、用户偏好等。
+
+## 文件格式
+
+每个 ``.md`` 文件包含 YAML frontmatter + Markdown 内容：
+
+```markdown
+---
+key: workspace_tech
+category: project
+source: manual
+updated_at: "2026-07-10T16:00:00+00:00"
+---
+
+项目使用 FastAPI + React + Tauri 2.x 技术栈，Python 版本 >= 3.11。
+```
+
+## 字段说明
+
+- ``key``: 条目唯一标识（字母、数字、下划线、连字符，1-64 字符）
+- ``category``: 分类，可选 ``project`` / ``preference`` / ``fact`` / ``custom``
+- ``source``: 来源，``manual``（手动）或 ``llm_extracted``（LLM 自动抽取）
+- ``updated_at``: 最后更新时间（ISO 8601 格式）
+
+## 使用方式
+
+1. 在前端「设置 → 记忆 → 工作区记忆」中新增/编辑/删除条目
+2. 或手动在本目录下创建 ``.md`` 文件
+3. 下次发送消息时自动生效（无需重启）
+"""
+
 # 所有模板的映射，供 generator 使用
 TEMPLATES: dict[str, str] = {
     "AGENTS.md": AGENTS_MD_TEMPLATE,
@@ -94,6 +177,8 @@ TEMPLATES: dict[str, str] = {
     "tools.json": TOOLS_JSON_TEMPLATE,
     "system_prompt.md": SYSTEM_PROMPT_TEMPLATE,
     "rules/README.md": RULES_README_TEMPLATE,
+    "skills/README.md": SKILLS_README_TEMPLATE,
+    "memory/README.md": MEMORY_README_TEMPLATE,
 }
 
 

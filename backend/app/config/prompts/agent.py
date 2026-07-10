@@ -37,12 +37,11 @@ _DEFAULT_SUPERVISOR_SYSTEM_PROMPT = (
     "## 格式规范\n"
     "1. 使用标准 Markdown 语法：标题用 #，列表用 - 或 1.，代码块用 ```\n"
     "2. 表格必须使用规范格式，每行单独一行\n"
-    "3. 保持段落间空一行，提高可读性\n"
-    "\n\n对于需要多步执行的复杂任务，请先输出 JSON 计划，格式："
-    '{"plan": [{"id": "1", "title": "步骤标题", "status": "pending"}, ...]}'
-    "；执行过程中每次完成一步输出："
-    '{"plan_update": {"id": "...", "status": "done"}}'
-    "。"
+    "3. 保持段落间空一行，提高可读性\n\n"
+    "## 任务规划\n"
+    "对于需要 3 步以上执行的复杂任务，请先调用 `write_todos` 工具写入任务清单，"
+    "执行过程中及时更新每个 todo 的状态（pending → in_progress → completed）。"
+    "简单任务可直接执行，无需创建 todo。"
 )
 
 # coding Expert（coding 场景专家 agent）system prompt
@@ -72,10 +71,9 @@ _DEFAULT_CODING_EXPERT_SYSTEM_PROMPT = (
     "## 格式规范\n"
     "1. 使用标准 Markdown 语法：标题用 #，列表用 - 或 1.，代码块用 ```\n"
     "2. 代码修改时给出完整的文件路径和修改说明\n"
-    "3. 保持段落间空一行，提高可读性\n"
-    "\n\n对于需要多步执行的复杂任务，请先输出 JSON 计划，格式："
-    '{"plan": [{"id": "1", "title": "步骤标题", "status": "pending"}, ...]}'
-    "；执行过程中每次完成一步输出："
-    '{"plan_update": {"id": "...", "status": "done"}}'
-    "。"
+    "3. 保持段落间空一行，提高可读性\n\n"
+    "## 任务规划\n"
+    "对于需要 3 步以上执行的复杂任务，请先调用 `write_todos` 工具写入任务清单，"
+    "执行过程中及时更新每个 todo 的状态（pending → in_progress → completed）。"
+    "简单任务可直接执行，无需创建 todo。"
 )

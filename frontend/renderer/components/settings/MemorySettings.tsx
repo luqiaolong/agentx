@@ -35,8 +35,8 @@ const MEMORY_TABS: MemoryTabDef[] = [
   },
   {
     id: "project",
-    label: "项目记忆",
-    desc: "项目背景与上下文",
+    label: "工作区记忆",
+    desc: "工作区背景与上下文",
     Icon: Briefcase,
   },
 ];

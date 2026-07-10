@@ -7,10 +7,10 @@ const CATEGORY = "project";
 export function ProjectMemoryManager() {
   const crud = useProfileCrud(CATEGORY, CONTENT_MAX);
   return (
-    <MemoryList crud={crud} config={profileListConfig(Briefcase, "项目记忆（data/config/profile.json）", {
-      emptyText: "暂无项目记忆，点击「新建项目」添加项目背景",
-      newItemLabel: "新建项目", contentMax: CONTENT_MAX, contentRows: 6,
-      contentPlaceholder: "项目背景、技术栈、关键约定等上下文信息...",
+    <MemoryList crud={crud} config={profileListConfig(Briefcase, "工作区记忆（data/config/profile.json）", {
+      emptyText: "暂无工作区记忆，点击「新建工作区」添加工作区背景",
+      newItemLabel: "新建工作区", contentMax: CONTENT_MAX, contentRows: 6,
+      contentPlaceholder: "工作区背景、技术栈、关键约定等上下文信息...",
       keyPlaceholder: "agentx_project",
       renderBadges: (e) => (<>
         <span className="rounded-full bg-brand-600/10 px-1.5 py-0.5 font-medium text-brand-500" style={{ fontSize: "var(--fs-settings-badge)" }}>{CATEGORY}</span>

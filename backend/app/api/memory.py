@@ -121,18 +121,65 @@ def register_memory_routes(app: FastAPI) -> None:
         category: str | None = None,
         workspace_path: str | None = Query(None, description="工作区路径；非空则合并工作区画像"),
     ) -> dict[str, Any]:
-        """返回画像条目（合并工作区 + 全局）；可选按 category 过滤。"""
-        from app.memory.profile_store import get_all
+        """返回画像条目（合并工作区 + 全局）；可选按 category 过滤。
 
-        entries = get_all(category, workspace_path=workspace_path)
-        return {"entries": [e.model_dump(mode="json") for e in entries]}
+        工作区级画像改为从 ``.agentx/memory/*.md`` 读取，全局级仍走 ``profile.json``。
+        """
+        from app.memory.profile_store import get_all as get_all_profile
+
+        # 全局画像（data/config/profile.json）
+        global_entries = get_all_profile(category, workspace_path=None)
+
+        # 工作区画像（.agentx/memory/*.md）
+        ws_entries: list[Any] = []
+        if workspace_path:
+            from app.workspace.memory_store import list_entries
+
+            try:
+                ws_entries = list_entries(workspace_path, category=category)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("workspace_memory.list_failed", workspace=workspace_path, error=str(exc))
+
+        # 合并：工作区优先，同 key 覆盖全局
+        merged: dict[str, Any] = {e.key: e for e in global_entries}
+        for e in ws_entries:
+            merged[e.key] = e
+
+        # 统一序列化为前端兼容的 dict 格式
+        result = []
+        for e in merged.values():
+            if hasattr(e, "model_dump"):
+                result.append(e.model_dump(mode="json"))
+            elif hasattr(e, "to_dict"):
+                d = e.to_dict()
+                d["created_at"] = d.get("updated_at", "")
+                d["scope"] = "workspace" if workspace_path else "global"
+                result.append(d)
+            else:
+                result.append(dict(e))
+        return {"entries": result}
 
     @app.post("/api/memory/profile")
     async def memory_profile_add(
         req: ProfileEntryRequest,
         workspace_path: str | None = Query(None, description="工作区路径；非空则写入工作区级"),
     ) -> dict[str, Any]:
-        """新建画像条目；key 重复 → 409。``workspace_path`` 非空 → 写入工作区级。"""
+        """新建画像条目；key 重复 → 409。``workspace_path`` 非空 → 写入工作区级 ``.agentx/memory/*.md``。"""
+        if workspace_path:
+            from app.workspace.memory_store import get_entry, save_entry
+
+            existing = get_entry(workspace_path, req.key)
+            if existing is not None:
+                raise HTTPException(status_code=409, detail=f"key 已存在: {req.key}，请用 PUT 更新")
+            try:
+                entry = await save_entry(
+                    workspace_path, req.key, req.category, req.content, source="manual"
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            return {"ok": True, "entry": {**entry.to_dict(), "created_at": entry.updated_at, "scope": "workspace"}}
+
+        # 全局画像仍走 profile.json
         from app.memory.profile_store import add
 
         entry = ProfileEntry(
@@ -144,11 +191,10 @@ def register_memory_routes(app: FastAPI) -> None:
             updated_at="",
         )
         try:
-            new_entry = await add(entry, workspace_path=workspace_path)
+            new_entry = await add(entry, workspace_path=None)
         except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except ValueError as exc:
-            # key 已存在
             raise HTTPException(status_code=409, detail=str(exc))
         return {"ok": True, "entry": new_entry.model_dump(mode="json")}
 
@@ -159,10 +205,24 @@ def register_memory_routes(app: FastAPI) -> None:
         workspace_path: str | None = Query(None),
     ) -> dict[str, Any]:
         """更新画像条目（优先工作区，回退全局）；不存在 → 404。"""
+        if workspace_path:
+            from app.workspace.memory_store import get_entry, save_entry
+
+            existing = get_entry(workspace_path, key)
+            if existing is not None:
+                try:
+                    entry = await save_entry(
+                        workspace_path, key, req.category or existing.category, req.content, source="manual"
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
+                return {"ok": True, "entry": {**entry.to_dict(), "created_at": entry.updated_at, "scope": "workspace"}}
+
+        # 回退全局
         from app.memory.profile_store import update
 
         try:
-            updated = await update(key, req.content, req.category, workspace_path=workspace_path)
+            updated = await update(key, req.content, req.category, workspace_path=None)
         except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except KeyError as exc:
@@ -175,10 +235,21 @@ def register_memory_routes(app: FastAPI) -> None:
         workspace_path: str | None = Query(None),
     ) -> dict[str, Any]:
         """删除画像条目（优先工作区，回退全局）。"""
+        if workspace_path:
+            from app.workspace.memory_store import delete_entry
+
+            try:
+                deleted = await delete_entry(workspace_path, key)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            if deleted:
+                return {"ok": True, "deleted": True}
+            # 工作区不存在则回退全局删除
+
         from app.memory.profile_store import delete as profile_delete
 
         try:
-            deleted = await profile_delete(key, workspace_path=workspace_path)
+            deleted = await profile_delete(key, workspace_path=None)
         except ProfileKeyInvalid as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"ok": True, "deleted": deleted}
@@ -188,14 +259,31 @@ def register_memory_routes(app: FastAPI) -> None:
         req: ExtractRequest,
         workspace_path: str | None = Query(None, description="工作区路径；非空则写入工作区级"),
     ) -> dict[str, Any]:
-        """LLM 抽取画像条目并写入。``workspace_path`` 非空 → 写入工作区级。"""
-        from app.memory.profile_store import upsert_from_llm
+        """LLM 抽取画像条目并写入。``workspace_path`` 非空 → 写入工作区级 ``.agentx/memory/*.md``。"""
         from app.memory.profile_extractor import extract_profile_via_llm
 
         try:
             entries = await extract_profile_via_llm(req.message, req.assistant_reply)
-            written = await upsert_from_llm(entries, workspace_path=workspace_path)
-        except Exception as exc:  # noqa: BLE001 — 抽取失败不报错
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("profile extract via llm failed", error=str(exc))
+            return {"extracted": 0}
+
+        if workspace_path:
+            from app.workspace.memory_store import upsert_from_llm
+
+            try:
+                written = await upsert_from_llm(workspace_path, entries)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("workspace_memory.extract_upsert_failed", workspace=workspace_path, error=str(exc))
+                return {"extracted": 0}
+            return {"extracted": written}
+
+        # 全局画像仍走 profile.json
+        from app.memory.profile_store import upsert_from_llm
+
+        try:
+            written = await upsert_from_llm(entries, workspace_path=None)
+        except Exception as exc:  # noqa: BLE001
             logger.warning("profile extract endpoint failed", error=str(exc))
             return {"extracted": 0}
         return {"extracted": written}

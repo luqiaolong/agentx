@@ -7,7 +7,8 @@
 - HarnessProfile: 注册模型 profile，排除指定工具 + 禁用默认 subagent
 - build_interrupt_config: 从 DANGEROUS_TOOLS 动态生成 interrupt_on
 - resolve_memory_paths: 解析 .agentx/AGENTS.md + rules 路径列表
-- resolve_skills_dir: 解析 data/skills/ 路径
+- resolve_skills_sources: 解析全局 data/skills/ + 工作区 .agentx/skills/ 路径，
+  供 deepagents SkillsMiddleware 使用（遵循 agentskills.io 规范）
 - resolve_backend: 构建 AuthorizedLocalShellBackend 启用 Context Offloading + execute 工具 +
   内置 fs 工具（带 SessionSandbox 动态授权）
 - create_agent: 主入口，封装 create_deep_agent
@@ -20,6 +21,13 @@
 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 AuthorizedLocalShellBackend
 自动注入，无需在 tools 列表中声明。AuthorizedLocalShellBackend.override 6 个 fs 方法，
 注入 thread_id 级动态授权（通过 current_thread_id contextvar 传递）。
+
+Skills 加载:
+- 使用 deepagents SkillsMiddleware + FilesystemBackend 加载技能目录
+- 全局技能: data/skills/（项目级共享技能）
+- 工作区技能: <workspace>/.agentx/skills/（项目级覆盖，优先级高于全局）
+- SkillsMiddleware 通过独立 backend 读取，不受 workspace_path 的 root_dir 限制
+- 同时保留 @skill:<name> 标签解析用于显式技能内容注入（router/graph.py）
 """
 
 from __future__ import annotations
@@ -34,6 +42,8 @@ from deepagents import (
     create_deep_agent,
     register_harness_profile,
 )
+from deepagents.backends.filesystem import FilesystemBackend
+from deepagents.middleware.skills import SkillsMiddleware
 
 from app.config import DATA_DIR, get_settings
 from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
@@ -47,7 +57,7 @@ __all__ = [
     "ensure_harness_profile",
     "resolve_backend",
     "resolve_memory_paths",
-    "resolve_skills_dir",
+    "resolve_skills_sources",
 ]
 
 # 已注册 profile key 集合，保证 register_harness_profile 幂等
@@ -113,8 +123,11 @@ def build_interrupt_config() -> dict[str, bool]:
 def resolve_memory_paths(workspace_path: str | None) -> list[str]:
     """解析 deepagents memory 路径列表。
 
-    返回 ``[.agentx/AGENTS.md] + sorted(.agentx/rules/*.md)``。
+    返回 ``[.agentx/AGENTS.md] + sorted(.agentx/rules/*.md) + sorted(.agentx/memory/*.md)``。
     若 workspace_path 为 None 或 .agentx 目录不存在，返回空列表。
+
+    ``.agentx/memory/*.md`` 为工作区记忆文件，由前端「设置 → 记忆 → 工作区记忆」管理，
+    被 DeepAgents 框架自动加载到 agent system prompt 中。
     """
     if not workspace_path:
         return []
@@ -130,15 +143,36 @@ def resolve_memory_paths(workspace_path: str | None) -> list[str]:
     if rules_dir.exists():
         for rule_file in sorted(rules_dir.glob("*.md")):
             paths.append(str(rule_file))
+    memory_dir = agentx_dir / "memory"
+    if memory_dir.exists():
+        for mem_file in sorted(memory_dir.glob("*.md")):
+            paths.append(str(mem_file))
     return paths
 
 
-def resolve_skills_dir() -> str | None:
-    """解析 data/skills/ 路径，目录不存在时返回 None。"""
-    skills_dir = DATA_DIR / "skills"
-    if skills_dir.exists():
-        return str(skills_dir)
-    return None
+def resolve_skills_sources(workspace_path: str | None = None) -> list[str]:
+    """解析技能目录来源列表，供 deepagents SkillsMiddleware 使用。
+
+    返回全局 ``data/skills/`` 和工作区 ``.agentx/skills/`` 路径（存在才加入）。
+    工作区路径在后（优先级更高），符合 SkillsMiddleware "last one wins" 的覆盖语义。
+
+    Args:
+        workspace_path: 工作区路径；非空时检查 ``<workspace>/.agentx/skills/``。
+
+    Returns:
+        技能目录绝对路径列表（可能为空）。
+    """
+    sources: list[str] = []
+    global_skills = DATA_DIR / "skills"
+    if global_skills.exists():
+        sources.append(str(global_skills))
+
+    if workspace_path:
+        ws_skills = Path(workspace_path) / ".agentx" / "skills"
+        if ws_skills.exists():
+            sources.append(str(ws_skills))
+
+    return sources
 
 
 def resolve_backend(workspace_path: str | None) -> AuthorizedLocalShellBackend | None:
@@ -184,11 +218,6 @@ def create_agent(
     - None 或空：全部内置 fs 工具启用（主 agent 路径）
     - FORBIDDEN_SUBAGENT_TOOLS：隐藏写工具（子代理只读路径）
 
-    注意：不传递 ``skills`` 参数。deepagents 的 SkillsMiddleware 通过 backend 读取技能
-    目录，但 AuthorizedLocalShellBackend 的 root_dir 限制为 workspace_path，而项目 skills 目录
-    （data/skills/）位于项目根目录，不一定在当前 workspace_path 下，会导致 Path outside
-    root directory 错误。项目自研 skill 系统（skills_loader + skills_store）已覆盖此功能。
-
     Args:
         model: ChatOpenAI 实例（已配置 temperature/streaming）。
         tools: 项目自研工具列表（git + rag + web + delete_file + 委派工具）。
@@ -221,6 +250,27 @@ def create_agent(
             model=_grader,
             max_iterations=get_settings().rubric_max_iterations,
         ))
+
+    # 使用 deepagents SkillsMiddleware 加载技能目录
+    # 独立 FilesystemBackend（virtual_mode=False）不受 workspace_path 的 root_dir 限制
+    skills_sources = resolve_skills_sources(workspace_path)
+    if skills_sources:
+        skills_backend = FilesystemBackend(virtual_mode=False)
+        labeled_sources: list[str | tuple[str, str]] = []
+        for src in skills_sources:
+            if str(DATA_DIR / "skills") == src:
+                labeled_sources.append((src, "Global"))
+            else:
+                labeled_sources.append((src, "Project"))
+        middleware.append(SkillsMiddleware(
+            backend=skills_backend,
+            sources=labeled_sources,
+        ))
+        logger.info(
+            "skills_middleware.enabled",
+            sources=skills_sources,
+            source_labels=[s[1] if isinstance(s, tuple) else s for s in labeled_sources],
+        )
 
     return create_deep_agent(
         model=model,
