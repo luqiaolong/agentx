@@ -46,6 +46,8 @@ def _build_parser() -> argparse.ArgumentParser:
   agentx eval run --suite=smoke   # 运行评测套件
   agentx eval list                # 列出所有评测套件
   agentx eval show smoke          # 显示套件详情
+  agentx eval run-trace <run_id>  # 评测已执行的轨迹（不重跑）
+  agentx eval export-trace <run_id> # 导出轨迹为 YAML
   agentx config show               # 显示当前配置
 """,
     )
@@ -284,6 +286,44 @@ def _build_eval_parser() -> argparse.ArgumentParser:
         help="回溯天数（默认 30）",
     )
     export_parser.add_argument(
+        "--output-dir",
+        default="tests/eval/suites",
+        help="YAML 输出目录（相对 cwd，默认 tests/eval/suites/）",
+    )
+    # eval run-trace：从 observation DB 读取已执行的轨迹直接打分（不重跑）
+    run_trace_parser = sub.add_parser(
+        "run-trace",
+        help="从 observation DB 读取已执行轨迹 → Judge 打分（不重跑）",
+    )
+    run_trace_parser.add_argument("run_id", help="observation run_id（= trace_id）")
+    run_trace_parser.add_argument(
+        "--rubric",
+        default=None,
+        help="自定义 rubric（默认从 thumb_down feedback 读取，再兜底 _DEFAULT_RUBRIC）",
+    )
+    run_trace_parser.add_argument(
+        "--format",
+        default="console",
+        help="输出格式：console|md|json，逗号分隔多格式",
+    )
+    run_trace_parser.add_argument(
+        "--no-rubric",
+        dest="no_rubric",
+        action="store_true",
+        help="跳过 L2 RubricJudge，只跑 L1 断言",
+    )
+    # eval export-trace：导出轨迹为 YAML
+    export_trace_parser = sub.add_parser(
+        "export-trace",
+        help="导出 observation 轨迹为 EvalSuite YAML（含完整 trace_events）",
+    )
+    export_trace_parser.add_argument("run_id", help="observation run_id（= trace_id）")
+    export_trace_parser.add_argument(
+        "--rubric",
+        default=None,
+        help="自定义 rubric（默认从 thumb_down feedback 读取，再兜底 _DEFAULT_RUBRIC）",
+    )
+    export_trace_parser.add_argument(
         "--output-dir",
         default="tests/eval/suites",
         help="YAML 输出目录（相对 cwd，默认 tests/eval/suites/）",
