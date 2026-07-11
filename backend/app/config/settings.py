@@ -112,10 +112,8 @@ class Settings(BaseSettings):
     milvus_hnsw_ef_construction: int = Field(default=200, ge=16, le=1024)
     milvus_hnsw_ef_search: int = Field(default=64, ge=16, le=1024)
 
-    # ---- 危险操作审批 ----
-    # 0=禁用（无限期暂停等用户操作）；>0 时倒计时归零自动批准
     # ---- 审批超时（T8）----
-    approval_max_wait: float = 300.0  # 0=无限等待
+    approval_max_wait: float = 300.0  # 审批最大等待秒数；0=使用绝对上限 3600s（由 flow.py::_resolve_max_wait 转换）
 
     # ---- 系统提示词（T7）----
     default_system_prompt: str = (

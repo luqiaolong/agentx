@@ -19,8 +19,9 @@ deepagents 内置 ``execute`` 工具承担；Git 写操作在 ``SafeLocalShellBa
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
-from app.config import get_settings
+from app.config import UPLOADS_DIR, WORKSPACE_DIR, get_settings
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.sandbox.path_guard import PathNotAuthorized
@@ -34,8 +35,9 @@ __all__ = [
     "_load_mcp_tools",
 ]
 
-# 沙箱根目录保护：禁止删除这两个目录本身（允许删除其下的子项）
-_GUARDED_ROOTS = frozenset({"data/workspace", "data/uploads"})
+# 沙箱根目录保护：禁止删除这两个目录本身（允许删除其下的子项）。
+# 用 resolve() 后的 Path 做路径级比较，避免字符串后缀匹配失效（C4-b 修复）。
+_GUARDED_ROOT_PATHS = [WORKSPACE_DIR.resolve(), UPLOADS_DIR.resolve()]
 
 
 def compute_runtime_dangerous(
@@ -126,11 +128,14 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
         from app.sandbox.path_guard import normalize_path
         full_path = normalize_path(path, base=ws_base)
 
-        # 3. 根目录保护：禁止删除 data/workspace / data/uploads 本身
-        norm_str = str(full_path).replace("\\", "/")
-        for guarded in _GUARDED_ROOTS:
-            if norm_str == guarded or norm_str.endswith("/" + guarded):
-                return f"删除失败：禁止删除沙箱根目录 {guarded}"
+        # 3. 根目录保护：禁止删除沙箱根目录或当前工作区根目录本身
+        full_path_resolved = Path(full_path).resolve()
+        for guarded_path in _GUARDED_ROOT_PATHS:
+            if full_path_resolved == guarded_path:
+                return f"删除失败：禁止删除沙箱根目录 {guarded_path}"
+        # 同时保护当前 workspace_path 根目录（防止 delete_file(path=".") 删除整个工作区）
+        if ws_base and full_path_resolved == Path(ws_base).resolve():
+            return f"删除失败：禁止删除工作区根目录 {ws_base}"
 
         # 4. 路径不存在
         if not full_path.exists():

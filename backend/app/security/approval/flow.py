@@ -29,10 +29,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from app.security.approval import (
+    ApprovalDecision,
     is_aborted,
     pop_approval,
 )
@@ -213,8 +215,8 @@ async def _await_approval(
     bug #6 修复：``max_wait`` 不再接受 ``float("inf")``；调用方应传入有限值。
     ``approval_max_wait=0`` 时由调用方转为 ``_ABSOLUTE_MAX_WAIT``（3600s）。
     """
-    elapsed = 0.0
-    while elapsed < max_wait:
+    deadline = time.monotonic() + max_wait
+    while time.monotonic() < deadline:
         # abort 检查
         if await is_aborted(thread_id):
             return None
@@ -222,7 +224,6 @@ async def _await_approval(
         if decision is not None:
             return decision
         await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
     return None
 
 
@@ -408,6 +409,16 @@ async def _handle_directory_extension(
             except ValueError as exc:
                 logger.warning("authorize session failed", path=path, error=str(exc))
                 return _ExtensionResult(events=events, denied=True)
+    elif decision.decision == ApprovalDecision.FULL_TRUST:
+        # 完全信任：会话级写授权所有越界路径 + 设置 full_trust 标志（H8 修复）
+        for path in unauthorized_paths:
+            try:
+                await sandbox.authorize(thread_id, path, writable=True)
+            except ValueError as exc:
+                logger.warning("authorize full_trust failed", path=path, error=str(exc))
+                return _ExtensionResult(events=events, denied=True)
+        if hasattr(sandbox, "set_full_trust"):
+            await sandbox.set_full_trust(thread_id, True)
 
     return _ExtensionResult(events=events)
 

@@ -195,41 +195,37 @@ class SessionSandbox:
         if is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
-        matched = False
+        matched = False  # 任何匹配（只读或可写），用于错误消息区分
         async with self._lock:
             if thread_id in self._full_trust_threads:
                 return
             for whitelist_path in DEFAULT_WHITELIST:
                 if is_under(resolved, whitelist_path):
                     return
+            # 遍历所有授权源，找到第一个 writable=True 的匹配即返回。
+            # 只读匹配不跳过后续授权源（C4-a 修复）。
             for auth_path, writable in self._get_authorized_set(thread_id, "_authorized_dirs"):
                 if is_under(resolved, auth_path):
                     matched = True
                     if writable:
-                        return  # 命中 writable 后立即返回（break 修复）
-            if not matched:
-                for auth_path, writable in self._get_authorized_set(thread_id, "_temp_authorized"):
+                        return
+            for auth_path, writable in self._get_authorized_set(thread_id, "_temp_authorized"):
+                if is_under(resolved, auth_path):
+                    matched = True
+                    if writable:
+                        return
+            parent_tid = self._resolve_parent(thread_id, parent_thread_id)
+            if parent_tid is not None and parent_tid != thread_id:
+                for auth_path, writable in self._get_authorized_set(parent_tid, "_authorized_dirs"):
                     if is_under(resolved, auth_path):
                         matched = True
                         if writable:
-                            return  # 命中 writable 后立即返回
-            # 查父 thread 授权
-            if not matched:
-                parent_tid = self._resolve_parent(thread_id, parent_thread_id)
-                if parent_tid is not None and parent_tid != thread_id:
-                    for auth_path, writable in self._get_authorized_set(parent_tid, "_authorized_dirs"):
-                        if is_under(resolved, auth_path):
-                            matched = True
-                            if writable:
-                                return  # 命中 writable 后立即返回
-                            break
-                    if not matched:
-                        for auth_path, writable in self._get_authorized_set(parent_tid, "_temp_authorized"):
-                            if is_under(resolved, auth_path):
-                                matched = True
-                                if writable:
-                                    return
-                                break
+                            return
+                for auth_path, writable in self._get_authorized_set(parent_tid, "_temp_authorized"):
+                    if is_under(resolved, auth_path):
+                        matched = True
+                        if writable:
+                            return
         self._deny(thread_id, path, "deny_write")
         if matched:
             raise PathNotAuthorized(
@@ -298,40 +294,36 @@ class SessionSandbox:
         if is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
-        matched = False
+        matched = False  # 任何匹配（只读或可写），用于错误消息区分
         if thread_id in self._full_trust_threads:
             return
         for whitelist_path in DEFAULT_WHITELIST:
             if is_under(resolved, whitelist_path):
                 return
+        # 遍历所有授权源，找到第一个 writable=True 的匹配即返回。
+        # 只读匹配不跳过后续授权源（C4-a 修复）。
         for auth_path, writable in self._get_authorized_set(thread_id, "_authorized_dirs"):
             if is_under(resolved, auth_path):
                 matched = True
                 if writable:
-                    return  # 命中 writable 后立即返回（break 修复）
-        if not matched:
-            for auth_path, writable in self._get_authorized_set(thread_id, "_temp_authorized"):
+                    return
+        for auth_path, writable in self._get_authorized_set(thread_id, "_temp_authorized"):
+            if is_under(resolved, auth_path):
+                matched = True
+                if writable:
+                    return
+        parent_tid = self._resolve_parent(thread_id, parent_thread_id)
+        if parent_tid is not None and parent_tid != thread_id:
+            for auth_path, writable in self._get_authorized_set(parent_tid, "_authorized_dirs"):
                 if is_under(resolved, auth_path):
                     matched = True
                     if writable:
-                        return  # 命中 writable 后立即返回
-        # 查父 thread 授权
-        if not matched:
-            parent_tid = self._resolve_parent(thread_id, parent_thread_id)
-            if parent_tid is not None and parent_tid != thread_id:
-                for auth_path, writable in self._get_authorized_set(parent_tid, "_authorized_dirs"):
-                    if is_under(resolved, auth_path):
-                        matched = True
-                        if writable:
-                            return  # 命中 writable 后立即返回
-                        break
-                if not matched:
-                    for auth_path, writable in self._get_authorized_set(parent_tid, "_temp_authorized"):
-                        if is_under(resolved, auth_path):
-                            matched = True
-                            if writable:
-                                return
-                            break
+                        return
+            for auth_path, writable in self._get_authorized_set(parent_tid, "_temp_authorized"):
+                if is_under(resolved, auth_path):
+                    matched = True
+                    if writable:
+                        return
         self._deny(thread_id, path, "deny_write")
         if matched:
             raise PathNotAuthorized(
