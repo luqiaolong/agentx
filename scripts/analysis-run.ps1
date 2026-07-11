@@ -35,6 +35,15 @@ param(
     [string]$PermissionMode = "plan"
 )
 
+# === 关键：让 PowerShell 5.1 写管道到外部进程时用 UTF-8 编码 ===
+# 默认 [Console]::OutputEncoding = 系统 ANSI 代码页（中文 Windows = GBK）。
+# `$str | external.exe` 会用该编码把 .NET String 重编码成字节写 stdin，
+# Node.js claude.exe 收到 GBK 字节却按 UTF-8 解码 → 中文变 "?"。
+# 同时设置 InputEncoding 防止反向污染；OutputEncoding 是核心修复点。
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 Set-Location $ProjectRoot
 
 Write-Host ""
