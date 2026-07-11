@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useTasksStore, type Task } from "@/stores/tasks";
 import { useChatStore } from "@/stores/chat";
+import type { TodoStatus } from "@/lib/utils";
 import { formatTime } from "@/lib/format";
 
 const STATUS_CONFIG: Record<
@@ -65,12 +66,57 @@ function formatAgentRole(role: string | undefined): string | null {
 
 /**
  * 单条 Todo 项（高密度列表内嵌展示）
+ *
+ * 约束（用户偏好记忆）：
+ * - 序号位于勾选框（badge）右侧
+ * - 序号从父级传下来，子任务内独立从 1 开始编号（不跨任务累加）
+ * - task 已结束（done / failed）时支持点击切换 pending ↔ completed
+ *   （running 时禁用，避免与后端 SSE 推送打架）
  */
-function TodoItemRow({ todo }: { todo: { content: string; status: string } }) {
+function TodoItemRow({
+  todo,
+  index,
+  taskId,
+  todoIndex,
+  interactive,
+}: {
+  todo: { content: string; status: TodoStatus };
+  index: number;
+  taskId: string;
+  todoIndex: number;
+  interactive: boolean;
+}) {
   const isCompleted = todo.status === "completed";
   const isInProgress = todo.status === "in_progress";
+  const updateTaskTodo = useTasksStore((s) => s.updateTaskTodo);
+
+  const handleClick = () => {
+    if (!interactive) return;
+    // pending <-> completed 二态切换；in_progress 不参与（保留后端语义）
+    const next: TodoStatus = isCompleted ? "pending" : "completed";
+    updateTaskTodo(taskId, todoIndex, { status: next });
+  };
+
   return (
-    <li className="flex items-start gap-1.5 py-0.5" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
+    <li
+      className={`flex items-start gap-1.5 py-0.5 rounded transition-colors ${
+        interactive ? "cursor-pointer hover:bg-hover-soft" : ""
+      }`}
+      style={{ fontSize: 'var(--fs-ws-task-meta)' }}
+      onClick={interactive ? handleClick : undefined}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (!interactive) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleClick();
+        }
+      }}
+      aria-disabled={!interactive}
+      title={interactive ? (isCompleted ? "点击取消完成" : "点击标记完成") : undefined}
+    >
+      {/* 勾选框（badge） */}
       <span className="mt-0.5 shrink-0">
         {isCompleted ? (
           <CheckCircle2 className="h-2.5 w-2.5 text-emerald-600 dark:text-emerald-400" />
@@ -79,6 +125,13 @@ function TodoItemRow({ todo }: { todo: { content: string; status: string } }) {
         ) : (
           <CircleDot className="h-2.5 w-2.5 text-muted-c" />
         )}
+      </span>
+      {/* 序号：等宽数字列，位于勾选框右侧，子任务内独立从 1 开始 */}
+      <span
+        className="mt-0.5 w-4 shrink-0 text-right tabular-nums text-muted-c"
+        style={{ fontSize: 'var(--fs-ws-task-meta)' }}
+      >
+        {index}.
       </span>
       <span className={isCompleted ? "text-muted-c line-through" : "text-secondary-c"}>
         {todo.content}
@@ -89,26 +142,42 @@ function TodoItemRow({ todo }: { todo: { content: string; status: string } }) {
 
 /**
  * 高密度任务行（主任务 + 子任务共用）
+ *
+ * 约束（用户偏好记忆）：
+ * - 主任务：前面无任何序号
+ * - 子任务（isChild=true）：勾选框（状态图标）右侧显示独立编号（每个主任务的
+ *   子任务从 1 开始重新计数，不跨主任务累加）；隐藏时间戳
+ * - 子任务（isChild=true）的 todos 默认折叠，无论 status；
+ *   主任务保留原行为：running 时展开，其他状态折叠
+ * - 子任务（isChild=true）整体缩进（border-l + 左内边距），与主任务形成层次感
+ * - 序号参数：主任务传 null（不渲染）；子任务传 number（从 1 开始）
  */
 function TaskRow({
   task,
   isChild = false,
+  index,
 }: {
   task: Task;
   isChild?: boolean;
+  /** 序号：主任务为 null（不渲染）；子任务为 number（每个父任务独立从 1 开始） */
+  index: number | null;
 }) {
-  const [expanded, setExpanded] = useState(task.status === "running");
+  // 子代理步骤默认折叠；主任务保留原行为（running 展开）
+  const [expanded, setExpanded] = useState(
+    !isChild && task.status === "running",
+  );
   const removeTask = useTasksStore((s) => s.removeTask);
 
   const cfg = STATUS_CONFIG[task.status];
   const completedTodos = task.todos?.filter((x) => x.status === "completed").length ?? 0;
   const totalTodos = task.todos?.length ?? 0;
-  const progress = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
   const hasTodos = totalTodos > 0;
   const roleLabel = formatAgentRole(task.agentRole);
   const isDone = task.status === "done";
   const isFailed = task.status === "failed";
   const isInactive = isDone || isFailed;
+  // 仅在 task 已结束时允许手动勾选 todo，避免与运行中 SSE 推送打架
+  const todoInteractive = isInactive;
 
   return (
     <li className={`group ${isChild ? "ml-3 border-l border-default pl-2" : ""}`}>
@@ -122,6 +191,16 @@ function TaskRow({
         <cfg.Icon
           className={`h-3 w-3 shrink-0 ${cfg.color} ${cfg.spin ? "animate-spin" : ""}`}
         />
+
+        {/* 序号（仅子任务展示，位于状态图标右侧；主任务不渲染） */}
+        {isChild && index !== null && (
+          <span
+            className="shrink-0 text-muted-c tabular-nums"
+            style={{ fontSize: 'var(--fs-ws-task-meta)' }}
+          >
+            {index}.
+          </span>
+        )}
 
         {/* 标题 / 角色 */}
         <span
@@ -144,8 +223,8 @@ function TaskRow({
           </span>
         )}
 
-        {/* 时间 */}
-        {task.createdAt > 0 && (
+        {/* 时间（仅主任务展示，子任务隐藏以减少视觉噪音） */}
+        {!isChild && task.createdAt > 0 && (
           <span
             className="shrink-0 text-muted-c tabular-nums"
             style={{ fontSize: 'var(--fs-ws-task-meta)' }}
@@ -181,21 +260,18 @@ function TaskRow({
         </button>
       </div>
 
-      {/* 迷你进度条（有 todos 时显示） */}
-      {hasTodos && (
-        <div className="mx-1.5 mb-0.5 h-0.5 overflow-hidden rounded-full bg-subtle">
-          <div
-            className={`h-full rounded-full transition-all duration-300 ${cfg.barColor}`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      )}
-
-      {/* 展开的 Todo 列表 */}
+      {/* 展开的 Todo 列表（每个 todo 独立编号从 1 开始；task 结束时可点击切换状态） */}
       {hasTodos && expanded && (
         <ul className="pb-1 pt-0.5">
           {task.todos?.map((todo, i) => (
-            <TodoItemRow key={i} todo={todo} />
+            <TodoItemRow
+              key={i}
+              todo={todo}
+              index={i + 1}
+              taskId={task.id}
+              todoIndex={i}
+              interactive={todoInteractive}
+            />
           ))}
         </ul>
       )}
@@ -251,11 +327,12 @@ export function TaskTimeline() {
     <ul className="divide-y divide-default">
       {mainTasks.map((t) => {
         const children = childTasksByParent.get(t.id) ?? [];
+        // 主任务不显示序号；每个主任务的子任务独立从 1 开始编号（不跨主任务累加）
         return (
           <div key={t.id}>
-            <TaskRow task={t} />
-            {children.map((c) => (
-              <TaskRow key={c.id} task={c} isChild />
+            <TaskRow task={t} index={null} />
+            {children.map((c, i) => (
+              <TaskRow key={c.id} task={c} isChild index={i + 1} />
             ))}
           </div>
         );

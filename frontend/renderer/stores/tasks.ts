@@ -38,6 +38,17 @@ interface TasksState {
   tasks: Task[];
   addTask: (task: Task) => void;
   updateTask: (id: string, patch: Partial<Task>) => void;
+  /**
+   * 原子更新单个 todo 的状态（仅用户在前端手动勾选/取消勾选时调用）。
+   * - 通过 todoIndex 定位，避免外部依赖 content 字符串
+   * - 保留其它字段不动，避免覆盖后端后续 SSE 推送
+   * - task 处于 running / pending 状态时调用方应自行判断是否允许手动改
+   */
+  updateTaskTodo: (
+    taskId: string,
+    todoIndex: number,
+    patch: { status?: TodoStatus },
+  ) => void;
   removeTask: (id: string) => void;
   clearTasks: () => void;
   /** 清除已完成任务；传入 sessionId 时只清除该会话的任务 */
@@ -122,6 +133,17 @@ export const useTasksStore = create<TasksState>()(
             tasks: s.tasks.map((t) =>
               t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t,
             ),
+          })),
+        updateTaskTodo: (taskId, todoIndex, patch) =>
+          set((s) => ({
+            tasks: s.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              if (!t.todos || todoIndex < 0 || todoIndex >= t.todos.length) return t;
+              const nextTodos = t.todos.map((todo, i) =>
+                i === todoIndex ? { ...todo, ...patch } : todo,
+              );
+              return { ...t, todos: nextTodos, updatedAt: Date.now() };
+            }),
           })),
         removeTask: (id) => set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) })),
         clearTasks: () => set({ tasks: [] }),
