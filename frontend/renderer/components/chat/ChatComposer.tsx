@@ -345,8 +345,11 @@ export function ChatComposer({
           .filter((p) => p.type === "text")
           .map((p) => (p.type === "text" ? p.text : ""))
           .join("");
-        const match = lastUserText.match(/<workspace>.*?<\/workspace>\s?(.*)/);
-        const text = match?.[1] ?? lastUserText;
+        // 剥离 <workspace> 和 <file> 标签，与 handleSend 的 rawQuery 处理对齐
+        const text = lastUserText
+          .replace(/<workspace>.*?<\/workspace>\s?/g, "")
+          .replace(/<file>.*?<\/file>\s?/g, "")
+          .trim();
         setInput(text);
         // 删除上一条用户消息及之后的所有消息（因为即将重新发送）
         const idx = msgs.findIndex((m) => m.id === lastUser.id);
@@ -615,7 +618,7 @@ export function ChatComposer({
                     }}
                   />
                 </div>
-                {isStreaming && isPaused ? (
+                {isPaused ? (
                   <button
                     type="button"
                     onClick={onResume}

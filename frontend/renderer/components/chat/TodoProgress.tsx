@@ -11,19 +11,33 @@ import type { TodoItem } from "@/hooks/useChatStream";
  * 提取逻辑：取 ``-team-<role>-<idx>`` 中的 role 段，作为子代理/任务角色标签。
  * 若没有 role 段，则展示 task_id 后 8 字符作为短 id。
  *
+ * role 取值兼容新旧 source 命名（AGENTS.md §13）：
+ *   - 旧值：deep / code / agent（已废弃但后端 task_id 可能仍用）
+ *   - 新值：work / coding / rag / web
+ *
  * 导出供测试（TodoProgress.test.tsx）使用。
  */
 export function formatTaskLabel(taskId: string | undefined): string {
   if (!taskId) return "任务";
-  const match = taskId.match(/-team-([a-z]+)-(\d+)$/);
+  const match = taskId.match(/-team-([a-z_]+)-(\d+)$/);
   if (match) {
     const role = match[1]!;
     const idx = match[2]!;
     const roleLabel: Record<string, string> = {
       deep: "DeepAgent",
       code: "代码子任务",
+      coding: "代码子任务",
+      agent: "Agent",
+      work: "Work Agent",
       rag: "知识库检索",
       web: "网页搜索",
+      frontend_dev: "前端开发",
+      backend_dev: "后端开发",
+      tester: "测试",
+      architect: "架构",
+      devops: "DevOps",
+      ui_designer: "UI 设计",
+      product_manager: "产品",
     };
     const label = roleLabel[role] ?? role;
     return `${label} #${idx}`;

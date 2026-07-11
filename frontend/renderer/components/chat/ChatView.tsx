@@ -540,6 +540,20 @@ export function ChatView() {
     // 清除暂停标记，让 handleSend 可以执行
     setIsPaused(false);
 
+    // 恢复前清理：删除暂停时留下的半截 assistant 消息，避免恢复后与新的
+    // pending assistant 消息并存导致内容重复/错位。暂停事件（paused SSE）
+    // 只调用 markReasoningDone + markRunningToolCallsComplete 收尾，不删除消息，
+    // 因此这里需要手动清理最后一条 assistant 消息。
+    if (sess && resumeContent.trim()) {
+      const lastAssistantMsg = sess.messages
+        .slice()
+        .reverse()
+        .find((m) => m.role === "assistant");
+      if (lastAssistantMsg) {
+        deleteMessagesAfter(lastAssistantMsg.id);
+      }
+    }
+
     if (resumeContent.trim()) {
       // 复用 handleSend 走完整发送流程（创建 pending、SSE 流式、checkpointer 恢复）
       await handleSend(resumeContent);
