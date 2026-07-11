@@ -5,16 +5,20 @@
   作为危险工具走 DeepAgent ``interrupt_on`` 审批。
 - ``full_trust`` 模式：跳过路径授权检查，但仍受以下约束保护：
   - 命令黑名单（删除/格式化/关机等极度危险命令直接拒绝）
-  - 禁止 shell 元字符 / 管道 / 重定向
+  - 沙箱模式 off 时跳过全部策略检查
   - 拒绝系统关键目录
   - 超时与输出长度限制
 
 子代理也可使用此工具（走各自审批流）。
+
+风险策略统一委托给 :class:`RiskClassifier`：argv 模式下元字符策略自动
+短路（参数不经 shell 解析），黑名单 / git 写 / 路径策略仍生效。
 """
 
 from __future__ import annotations
 
 import asyncio
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,8 +27,10 @@ from app.config import PROJECT_ROOT, get_settings
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox import PathNotAuthorized, get_sandbox, is_critical
-from app.security.command_filter import get_forbidden_chars, has_forbidden_args, is_command_blocked
 from app.sandbox.path_guard import normalize_path
+from app.security.context import build_cli_execute_context
+from app.security.reporter import aggregate as aggregate_risk
+from app.security.risk import RiskClassifier, RiskLevel
 
 __all__ = ["LLM_CLI_TOOL_NAME", "cli_execute"]
 
@@ -127,33 +133,26 @@ async def cli_execute(
     if not command:
         return "command 不能为空"
 
-    if is_command_blocked(command):
-        logger.warning(
-            "cli_execute.blocked",
-            thread_id=thread_id,
-            command=command,
-            reason="blocklist",
-        )
-        return f"命令 '{command}' 在黑名单中，禁止执行（删除/格式化/提权等极度危险操作）"
-
     arguments = list(arguments) if arguments else []
-    for idx, arg in enumerate(arguments):
-        if has_forbidden_args(arg):
-            forbidden = get_forbidden_chars(arg)
+
+    # 统一风险策略评估：argv 模式下元字符策略短路，黑名单 / git 写 / 路径仍生效。
+    # 沙箱 off 模式在 classifier.assess 内部短路（is_path_unrestricted → 空列表）。
+    sandbox = get_sandbox()
+    ctx = build_cli_execute_context(thread_id, sandbox)
+    # 拼接 command + arguments 成单字符串供策略扫描（PathPolicy 需要扫描参数中的路径）。
+    command_str = command if not arguments else f"{command} {shlex.join(arguments)}"
+    assessments = RiskClassifier.default().assess(command_str, ctx)
+    if assessments:
+        high_or_above = [a for a in assessments if a.level >= RiskLevel.HIGH]
+        if high_or_above:
             logger.warning(
                 "cli_execute.blocked",
                 thread_id=thread_id,
                 command=command,
-                reason="forbidden_chars",
-                matched_chars=forbidden,
-                arg_index=idx,
+                reason="risk_classifier",
+                levels=[a.level.name for a in assessments],
             )
-            return (
-                f"参数 [{idx}] 包含非法字符: {arg!r}\n"
-                f"被拦截字符: {', '.join(repr(c) for c in forbidden)}\n"
-                f"提示: 沙箱禁止管道(|)、重定向(<>)、变量($)、命令链(;&`)等元字符，"
-                f"请拆分复杂命令为多个简单命令，或使用 Python 标准库替代"
-            )
+            return aggregate_risk(assessments, command_str, ctx)
 
     resolved_cwd = _resolve_cwd(cwd, workspace_path)
     if _is_critical_dir(resolved_cwd):

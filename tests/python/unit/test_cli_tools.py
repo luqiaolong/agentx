@@ -110,9 +110,16 @@ async def test_cli_execute_empty_command(fresh_sandbox) -> None:
 
 
 async def test_cli_execute_forbidden_arg(fresh_sandbox) -> None:
-    """参数含 shell 元字符返回错误。"""
+    """argv 模式下参数含 shell 元字符不拦截（不经 shell 解析，是字面字符）。
+
+    新策略：RiskClassifier 的 MetacharPolicy 在 argv 模式下短路。
+    命令会继续走到 cwd 授权检查，而非被元字符拦截。
+    """
     result = await cli_execute("t1", "git", ["status; rm -rf /"])
-    assert "非法字符" in result
+    # argv 模式下 `;` 是字面字符，不被沙箱拦截
+    assert "非法字符" not in result
+    # 命令继续执行，最终因 cwd 未授权被拒绝（而非被元字符拦截）
+    assert "未授权" in result
 
 
 # ============================================================

@@ -24,59 +24,16 @@ from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox.path_guard import (
     DEFAULT_WHITELIST,
+    SCRATCH_DIR,
     PathNotAuthorized,
     is_critical,
     is_under,
     normalize_path,
 )
 from app.sandbox.store import SandboxStore, get_sandbox_store
+from app.security.path_hint import format_unauthorized_hint
 
 __all__ = ["SessionSandbox", "get_sandbox"]
-
-
-def _unauthorized_read_hint(path: str | Path, resolved: Path) -> str:
-    """User-friendly error for an unauthorized read path.
-
-    Distinguishes "outside any whitelist" from "looks like an absolute path
-    that the LLM probably should rewrite as a relative / data/workspace path".
-    """
-    raw = str(path).strip()
-    p = Path(raw)
-    if p.is_absolute():
-        return (
-            f"路径 {path} 未授权；沙箱只允许读取已授权目录。\n"
-            f"请改用相对路径（如 'data/workspace/foo.txt'）"
-            f"或写入 'data/workspace/.scratch/' 下的临时文件，"
-            f"或通过 dialog 授权该目录后重试。"
-        )
-    return (
-        f"路径 {path}（解析为 {resolved}）未授权；"
-        f"请通过 dialog 选择目录后重试，"
-        f"或改用 data/workspace/ 下的相对路径。"
-    )
-
-
-def _unauthorized_write_hint(path: str | Path, resolved: Path) -> str:
-    """User-friendly error for an unauthorized write path.
-
-    Mirrors :func:`_unauthorized_read_hint` and steers the LLM toward
-    writable scratch space first, then user-authorized dirs.
-    """
-    raw = str(path).strip()
-    p = Path(raw)
-    if p.is_absolute():
-        return (
-            f"路径 {path} 未授权写入；沙箱只允许写入已授权目录或 "
-            f"data/workspace/.scratch/ 临时工作区。\n"
-            f"请改用相对路径（如 'data/workspace/foo.txt'）"
-            f"或 'data/workspace/.scratch/{raw.split('/')[-1] or 'tmp'}'，"
-            f"或通过 dialog 授权该目录（勾选允许写入）后重试。"
-        )
-    return (
-        f"路径 {path}（解析为 {resolved}）未授权写入；"
-        f"请改用 data/workspace/ 或 data/workspace/.scratch/ 下的相对路径，"
-        f"或通过 dialog 授权该目录（勾选允许写入）后重试。"
-    )
 
 
 def _manual_read_hint(path: str | Path) -> str:
@@ -137,6 +94,10 @@ class SessionSandbox:
         """是否处于 full_trust 模式。"""
         async with self._lock:
             return thread_id in self._full_trust_threads
+
+    def is_full_trust_sync(self, thread_id: str) -> bool:
+        """同步快照：用于构建 ExecutionContext（不持锁，CPython 原子读）。"""
+        return thread_id in self._full_trust_threads
 
     # ---- 临时授权 ----
 
@@ -251,7 +212,12 @@ class SessionSandbox:
         if _is_sandbox_manual():
             raise PathNotAuthorized(_manual_read_hint(path))
         raise PathNotAuthorized(
-            _unauthorized_read_hint(path, resolved)
+            format_unauthorized_hint(
+                path,
+                "read",
+                list(self._get_authorized_set(thread_id, "_authorized_dirs")),
+                SCRATCH_DIR,
+            )
         )
 
     async def check_write(
@@ -313,7 +279,12 @@ class SessionSandbox:
                 f"路径 {path} 仅授权读取；写入请改用 data/workspace 或在授权时勾选允许写入"
             )
         raise PathNotAuthorized(
-            _unauthorized_write_hint(path, resolved)
+            format_unauthorized_hint(
+                path,
+                "write",
+                list(self._get_authorized_set(thread_id, "_authorized_dirs")),
+                SCRATCH_DIR,
+            )
         )
 
     # ---- 同步版本（供 AuthorizedLocalShellBackend 在同步 fs 方法中调用）----
@@ -362,7 +333,12 @@ class SessionSandbox:
         if _is_sandbox_manual():
             raise PathNotAuthorized(_manual_read_hint(path))
         raise PathNotAuthorized(
-            _unauthorized_read_hint(path, resolved)
+            format_unauthorized_hint(
+                path,
+                "read",
+                list(self._get_authorized_set(thread_id, "_authorized_dirs")),
+                SCRATCH_DIR,
+            )
         )
 
     def check_write_sync(
@@ -423,7 +399,12 @@ class SessionSandbox:
                 f"路径 {path} 仅授权读取；写入请改用 data/workspace 或在授权时勾选允许写入"
             )
         raise PathNotAuthorized(
-            _unauthorized_write_hint(path, resolved)
+            format_unauthorized_hint(
+                path,
+                "write",
+                list(self._get_authorized_set(thread_id, "_authorized_dirs")),
+                SCRATCH_DIR,
+            )
         )
 
     async def authorize(
@@ -529,6 +510,13 @@ class SessionSandbox:
                 self._get_authorized_set(thread_id, "_authorized_dirs"),
                 key=lambda e: str(e[0]),
             )
+
+    def list_authorized_sync(self, thread_id: str) -> list[tuple[Path, bool]]:
+        """同步快照：用于构建 ExecutionContext（不持锁，CPython 原子读）。"""
+        return sorted(
+            self._get_authorized_set(thread_id, "_authorized_dirs"),
+            key=lambda e: str(e[0]),
+        )
 
     async def restore(self, thread_id: str, dirs: list[str]) -> None:
         """从 checkpoint 恢复授权目录列表（dirs 为 path 字符串列表，默认 read-only）。"""

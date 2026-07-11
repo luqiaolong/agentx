@@ -60,7 +60,7 @@ class TestSafeShellBackendSecurity:
         backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
         result = backend.execute("echo a | cat")
         assert result.exit_code == 126
-        assert "非法 shell 元字符" in result.output
+        assert "元字符" in result.output
         assert "|" in result.output
 
     def test_python_string_metachar_allowed(self, tmp_path) -> None:
@@ -74,7 +74,8 @@ class TestSafeShellBackendSecurity:
         backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
         result = backend.execute("git commit -m test")
         assert result.exit_code == 126
-        assert "git 写操作需审批" in result.output
+        assert "写操作" in result.output
+        assert "审批" in result.output
 
     def test_wrapper_blocked_command_rejected(self, tmp_path) -> None:
         """通过 cmd /c 包装的危险命令同样被拦截。"""
