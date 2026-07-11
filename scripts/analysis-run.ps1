@@ -50,7 +50,7 @@ Write-Host ""
 Write-Host "---- Claude 复盘报告 ----" -ForegroundColor Green
 Write-Host ""
 
-$prompt = Get-Content -Raw $PromptFile
+$prompt = Get-Content -Raw -Encoding UTF8 $PromptFile
 $prompt | claude -p --model sonnet --permission-mode $PermissionMode --max-turns 25
 
 Write-Host ""
