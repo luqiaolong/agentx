@@ -355,34 +355,37 @@ const SessionItem = memo(function SessionItem({
           </div>
         </div>
         <span
-          className="shrink-0 pr-4 text-muted-c"
+          className="ml-auto shrink-0 pl-4 pr-2 text-muted-c tabular-nums transition-opacity duration-150 group-hover:opacity-0"
           style={{ fontSize: 'var(--fs-sidebar-meta)' }}
           title={new Date(s.createdAt).toLocaleString()}
         >
           {relativeTime}
         </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRename(s.id, s.title);
-          }}
-          className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-brand-500/10 hover:text-brand-500 group-hover:opacity-100"
-          aria-label={`重命名会话 ${s.title}`}
-        >
-          <Pencil className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(s.id, s.title);
-          }}
-          className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-500 group-hover:opacity-100"
-          aria-label={`删除会话 ${s.title}`}
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
+        {/* 操作按钮：absolute 浮层，不参与 flex 流 → 时间紧贴右边缘，仅靠 pr-2 留与按钮的视觉间距 */}
+        <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded bg-subtle/90 px-1 py-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRename(s.id, s.title);
+            }}
+            className="rounded p-0.5 text-muted-c hover:bg-brand-500/10 hover:text-brand-500"
+            aria-label={`重命名会话 ${s.title}`}
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(s.id, s.title);
+            }}
+            className="rounded p-0.5 text-muted-c hover:bg-rose-500/10 hover:text-rose-500"
+            aria-label={`删除会话 ${s.title}`}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
       </div>
     </li>
   );

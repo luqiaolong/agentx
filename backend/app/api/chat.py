@@ -158,6 +158,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 
             # FR-4.3/4.4/4.5: dual_trace 包裹 run_router，自动写 observation_run.start/end
             assistant_content_parts: list[str] = []
+            logger.info("chat.before_dual_trace", thread_id=req.thread_id)
             with dual_trace(
                 thread_id=req.thread_id,
                 agent_mode=effective_agent_mode,
@@ -167,6 +168,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 run_id=trace_id,
             ) as obs_ctx:
                 try:
+                    logger.info("chat.before_run_router", thread_id=req.thread_id)
                     async for event in run_router(
                         req.message,
                         req.thread_id,

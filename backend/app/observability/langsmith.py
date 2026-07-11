@@ -240,6 +240,7 @@ def dual_trace(
             user_message=user_message,
             workspace_path=workspace_path,
         )
+        logger.debug("dual_trace.start_run_sync.done", run_id=run_id)
     except Exception as exc:  # noqa: BLE001 — 本地写失败不阻塞 agent
         logger.warning("observation start_run failed: {}", exc)
 
