@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 from app.config import get_settings
 from app.observability.logger import logger
+from app.sse.events import make_sse_event
 from app.team.aggregator import _build_summary
 from app.team.blackboard import TeamSubtaskResult
 from app.utils.text import extract_chunk_text
@@ -255,9 +256,13 @@ async def _run_team_role_subtask(
     # 有专属配置：build_custom_agent + astream_events v2
     from app.subagents.custom_agent import build_custom_agent
 
+    # H11: 使用隔离的 child_thread_id，避免与父 thread 或同类型并行子任务冲突
+    child_thread_id = f"{thread_id}-team-role-{task.agent}-{task_index}"
+    await _inherit_workspace(child_thread_id, workspace_path)
+
     agent_obj = build_custom_agent(
         key=task.agent,
-        thread_id=thread_id,
+        thread_id=child_thread_id,
         system_prompt=cfg.system_prompt,
         tools=cfg.tools,
         temperature=cfg.temperature,
@@ -265,8 +270,10 @@ async def _run_team_role_subtask(
     )
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": task.input}]}
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": child_thread_id}}
     try:
+        # M25: abort 检查在每个事件回调中执行；LLM 长调用期间无法响应中止，
+        # 需要 asyncio.cancel 机制才能根本修复，当前为缓解方案。
         async for event in agent_obj.astream_events(inputs, version="v2", config=config):
             if abort_event.is_set():
                 return _done(False, "用户中止")
@@ -277,9 +284,36 @@ async def _run_team_role_subtask(
                 content = extract_chunk_text(edata.get("chunk"), strip=False)
                 if content:
                     collected_text.append(content)
+                    # H12: 透传 token 事件供前端实时展示子任务输出
+                    writer(make_sse_event("token", content))
             elif kind in ("on_tool_start", "on_tool_end"):
                 trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
                 tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
+                # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
+                if kind == "on_tool_start":
+                    writer(
+                        make_sse_event(
+                            "tool_call",
+                            {
+                                "name": ename,
+                                "args": trace_data,
+                                "source": task.agent,
+                                "parent_task_id": thread_id,
+                            },
+                        )
+                    )
+                else:
+                    writer(
+                        make_sse_event(
+                            "tool_result",
+                            {
+                                "name": ename,
+                                "result": trace_data,
+                                "source": task.agent,
+                                "parent_task_id": thread_id,
+                            },
+                        )
+                    )
     except Exception as exc:  # noqa: BLE001
         return _done(False, f"团队角色 {task.agent} 子任务异常: {exc}")
 

@@ -209,13 +209,17 @@ def _make_subtask_state_update(result: TeamSubtaskResult, task_index: int) -> di
 
     包含 ``todos`` 部分更新（``{"_index": task_index, "status": "completed"}``），
     由 ``_merge_todos`` reducer 归并到全局 ``state.todos``。
+
+    findings/errors/subtask_results 的 key 使用 ``f"{agent}-{task_index}"``，
+    避免多个同类型并行子任务（如两个 code 子任务）结果互相覆盖。
     """
     todo_update = [{"_index": task_index, "status": "completed"}]
+    key = f"{result.agent}-{task_index}"
     if result.success:
         return {
-            "findings": {result.agent: result.payload},
+            "findings": {key: result.payload},
             "subtask_results": {
-                result.agent: {
+                key: {
                     "success": True,
                     "payload": result.payload,
                 },
@@ -223,15 +227,19 @@ def _make_subtask_state_update(result: TeamSubtaskResult, task_index: int) -> di
             "todos": todo_update,
         }
     return {
-        "errors": {result.agent: result.payload},
+        "errors": {key: result.payload},
         "subtask_results": {
-            result.agent: {
+            key: {
                 "success": False,
                 "payload": result.payload,
             },
         },
         "todos": todo_update,
     }
+
+
+# AGENTS.md §13: source 旧值 code/deep/agent 已废弃，映射为新值
+_SOURCE_MAP: dict[str, str] = {"code": "coding", "deep": "work", "agent": "work"}
 
 
 def _emit_todo_in_progress(
@@ -255,8 +263,10 @@ def _emit_todo_in_progress(
                          前端据此把子任务 todo 嵌套到父任务卡片下。
         agent_role: 子任务角色（如 ``"deep"`` / ``"code"`` / ``"rag"`` / ``"web"``
                    / ``"frontend_dev"`` / ``"backend_dev"`` 等），作为 ``source`` 注入 payload，
-                   前端据此按角色分组渲染子任务。
+                   前端据此按角色分组渲染子任务。旧值 ``code``/``deep``/``agent``
+                   自动映射为 ``coding``/``work``/``work``（AGENTS.md §13）。
     """
+    mapped_source = _SOURCE_MAP.get(agent_role, agent_role)
     updated = list(todos)
     if 0 <= task_index < len(updated):
         updated[task_index] = {**updated[task_index], "status": "in_progress"}
@@ -264,7 +274,7 @@ def _emit_todo_in_progress(
         make_todo_update_event(
             updated,
             task_id=parent_thread_id,
-            source=agent_role,
+            source=mapped_source,
             parent_task_id=parent_thread_id,
         )
     )
@@ -468,6 +478,9 @@ async def _aggregate_node(state: TeamState) -> dict:
         writer(sse)
 
     has_error = bool(errors)
+    # 到达此处时 findings 必非空（上方 not findings 分支已 return），
+    # 故 has_error and not findings 恒为 False。
+    # 设计意图：部分子任务失败但仍有成功结果 → status="done"（前端不支持 "partial" 状态）。
     writer(
         make_sse_event(
             "team_done",
