@@ -61,6 +61,16 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
         )}
         <span>{dispatched ? "已发送" : sending ? "发送中" : "复盘"}</span>
       </button>
+      {error && (
+        <span
+          className="max-w-[200px] truncate text-red-500"
+          style={{ fontSize: "var(--fs-msg-assist, 11px)" }}
+          title={error}
+          data-testid="trace-review-error"
+        >
+          {error}
+        </span>
+      )}
     </div>
   );
 });
