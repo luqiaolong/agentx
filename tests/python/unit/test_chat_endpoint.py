@@ -31,6 +31,7 @@ def _make_fake_run_router(captured: dict):
         agent_mode: str = "work",
         workspace_path: str | None = None,
         revoked_paths: list[str] | None = None,
+        trace_id: str | None = None,
     ) -> AsyncIterator[dict[str, str]]:
         captured["message"] = message
         captured["thread_id"] = thread_id
@@ -38,6 +39,7 @@ def _make_fake_run_router(captured: dict):
         captured["workspace_path"] = workspace_path
         captured["permission_mode"] = permission_mode
         captured["revoked_paths"] = revoked_paths
+        captured["trace_id"] = trace_id
         yield {"event": "done", "data": "{}"}
 
     return fake_run_router

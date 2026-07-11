@@ -126,6 +126,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     reaper_task = start_reaper()
 
+    # 0.7. 启动画像抽取后台工作器（持久化队列，避免 kill -9 / OOM 丢失）
+    from app.memory.extract_queue import start_worker, drain_queue
+
+    profile_extract_worker = start_worker(poll_interval=1.0)
+
     # 1. 嵌入客户端：get_embedding_client() 懒构造，此处显式 warmup 记日志
     logger.info("embedding client initialized", url=settings.embedding_url)
 
@@ -170,14 +175,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # 关闭：先 drain 画像抽取任务，再 reaper，再 Milvus 后 embedding 后 checkpointer（逆序）
-        # 画像抽取是 fire-and-forget，关闭前给它们 5s 完成窗口，避免数据丢失
+        # 关闭：先停止画像抽取工作器并 drain 队列，再 reaper，再 Milvus 后 embedding 后 checkpointer（逆序）
+        # 队列持久化在 SQLite 中；工作器取消后，未完成的任务仍保留，下次启动会重试
         try:
-            from app.deepagent.agent import drain_extract_tasks
+            from app.memory.extract_queue import drain_queue
 
-            await drain_extract_tasks(timeout=5.0)
+            await drain_queue(timeout=5.0)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("drain extract tasks failed on shutdown: {}", exc)
+            logger.warning("drain profile extract queue failed on shutdown: {}", exc)
+        if profile_extract_worker is not None:
+            profile_extract_worker.cancel()
+            try:
+                await profile_extract_worker
+            except asyncio.CancelledError:
+                pass
         reaper_task.cancel()
         try:
             await reaper_task

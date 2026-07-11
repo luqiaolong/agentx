@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.config import get_settings
@@ -43,14 +42,9 @@ _DEEP_SYSTEM_PROMPT = (
     "请根据用户任务规划步骤，调用合适的工具完成。"
 )
 
-# T10：异步画像抽取任务引用集合，防止被 GC 回收
-_extract_tasks: set[asyncio.Task] = set()
-
-
 __all__ = [
     "DANGEROUS_TOOLS",
     "build_deep_agent",
-    "drain_extract_tasks",
     "run_deep_path",
     "trigger_profile_auto_extract",
 ]
@@ -98,82 +92,43 @@ async def build_deep_agent(
     )
 
 
-def trigger_profile_auto_extract(
+async def trigger_profile_auto_extract(
     agent: Any,
     config: dict,
     message: str,
     workspace_path: str | None = None,
 ) -> None:
-    """异步触发用户画像自动提取（fire-and-forget）。
+    """异步触发用户画像自动提取（持久化队列）。
 
-    从 agent 的 checkpointer 读取最后一轮 assistant 回复，通过 LLM 提取画像条目：
+    从 agent 的 checkpointer 读取最后一轮 assistant 回复，将抽取请求落到
+    SQLite 队列，由后台工作器异步调用 LLM 提取并写入画像存储。
+    即使进程被 kill -9 / OOM，只要 checkpoint 中的 assistant 回复已写入，
+    队列中的任务会在下次启动时被重新消费。
+
     - ``workspace_path`` 非空 → 写入 ``.agentx/memory/<key>.md``（工作区记忆）
     - ``workspace_path`` 为空 → 写入 ``data/config/profile.json``（全局画像）
-
-    任务加入 ``_extract_tasks`` 集合防止 GC 回收。
 
     三条路径（deep / coding / work）在 SSE 流结束后调用此函数。
     """
     if not get_settings().profile_auto_extract:
         return
 
-    from app.memory.profile_extractor import (
-        extract_last_assistant_reply,
-        extract_profile_via_llm,
-    )
+    from app.memory.extract_queue import enqueue
+    from app.memory.profile_extractor import extract_last_assistant_reply
 
-    async def _do_extract() -> None:
-        try:
-            assistant_reply = await extract_last_assistant_reply(agent, config)
-            if not assistant_reply:
-                return
-            entries = await extract_profile_via_llm(message, assistant_reply)
-            if not entries:
-                return
-            if workspace_path:
-                from app.workspace.memory_store import upsert_from_llm
-                written = await upsert_from_llm(workspace_path, entries)
-                logger.info(
-                    "workspace_memory.auto_extracted",
-                    count=written,
-                    workspace=workspace_path,
-                )
-            else:
-                from app.memory.profile_store import upsert_from_llm
-                await upsert_from_llm(entries, workspace_path=None)
-                logger.info(
-                    "profile auto extracted",
-                    count=len(entries),
-                    scope="global",
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("profile auto extract failed", error=str(exc))
-
-    task = asyncio.create_task(_do_extract())
-    _extract_tasks.add(task)
-    task.add_done_callback(_extract_tasks.discard)
-
-
-async def drain_extract_tasks(timeout: float = 5.0) -> None:
-    """等待所有 pending 的画像抽取任务完成（lifespan 关闭时调用）。
-
-    Args:
-        timeout: 最大等待时间（秒），超时后强制取消剩余任务。
-    """
-    if not _extract_tasks:
+    try:
+        assistant_reply = await extract_last_assistant_reply(agent, config)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("profile auto extract read assistant reply failed", error=str(exc))
         return
-    logger.info("draining profile extract tasks", count=len(_extract_tasks))
-    done, pending = await asyncio.wait(
-        list(_extract_tasks),
-        timeout=timeout,
+    if not assistant_reply:
+        return
+
+    await enqueue(
+        message=message,
+        assistant_reply=assistant_reply,
+        workspace_path=workspace_path,
     )
-    for task in pending:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    logger.info("profile extract tasks drained", done=len(done), cancelled=len(pending))
 
 
 async def run_deep_path(
@@ -257,4 +212,4 @@ async def run_deep_path(
         if is_full_trust:
             await sandbox.set_full_trust(thread_id, False)
 
-    trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)
+    await trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)
