@@ -561,9 +561,17 @@ class SqliteObservationSink:
     async def append_event(
         self, run_id: str, seq: int, event_type: str, payload: dict[str, Any]
     ) -> None:
-        # 热路径优化：持久连接 + Lock 下 INSERT < 0.5ms，
-        # 直接 inline 执行避免 asyncio.to_thread 每 call ~0.3ms 开销（NFR-1）
-        self._append_event_sync(run_id, seq, event_type, payload)
+        # B5 修复：原注释写"热路径优化：持久连接 + Lock 下 INSERT < 0.5ms，
+        # 直接 inline 执行避免 asyncio.to_thread 每 call ~0.3ms 开销"，实际上
+        # async 函数 inline 跑同步 sqlite write + Lock + WAL fsync，会在 LLM
+        # token 流每个 event 都阻塞 event loop。当前写入频率（每个 token / tool_call
+        # 一条）下，< 0.5ms × N 会聚合成几十 ms 阻塞，显著影响 SSE 流速。
+        # 修复：退回 asyncio.to_thread（每 call ~0.3ms 开销 < 阻塞整个 loop）。
+        # 后续若 profile 证实 hot path 受 to_thread 调度影响，可改为批量 flush
+        # 队列（commit / 100ms）。
+        await asyncio.to_thread(
+            self._append_event_sync, run_id, seq, event_type, payload
+        )
 
     async def record_prompt(
         self,

@@ -174,6 +174,13 @@ async def _run_router_inner(
                     thread_id=thread_id,
                     workspace=effective_workspace,
                 )
+                # B6 修复：fallback 隐藏 bug — 用户曾授权 A 后切走，下条消息无 workspace
+                # 自动操作 A，违反用户意图。通过 token 事件通知前端（沿用 /reset 路径约定，
+                # §13 SSE 事件契约不引入新类型）。前端展示在工作区徽章 / toast。
+                yield make_sse_event(
+                    "token",
+                    f"[工作区恢复] 未指定工作区，已自动恢复历史授权目录：{effective_workspace}",
+                )
         if effective_workspace:
             _revoked: set[str] = set()
             for p in (revoked_paths or []):
@@ -400,10 +407,12 @@ async def _run_router_inner(
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("observation end snapshot failed", error=str(exc))
 
-        # ---- 8. 统一 yield done ----
-        # 注意：chat.py 在 run_router 循环退出后会再 yield 一个带 token_count 的 done 事件，
-        # 这里保留 done 是为了 direct caller（如测试）的兼容性。
-        # H3 双重 done 问题需在 chat.py 侧过滤或测试更新后才能移除此 yield。
+        # ---- 8. 统一 yield done（保留 yield，chat.py 侧已过滤）----
+        # H3: chat.py 在 _event_generator 主循环里用 `if event.get("event") == "done": continue`
+        # 过滤 router 自发的 done 事件，前端只收到 chat.py 在循环结束后 yield 的
+        # 那条带 token_count 的 done，避免 markReasoningDone / markRunningToolCallsComplete /
+        # ensureAgentxGenerated 等副作用双发。
+        # 此处 yield 保留是为了 direct caller（如测试、CLI）能拿到流结束信号。
         yield make_sse_event("done", "{}")
 
 
@@ -458,7 +467,8 @@ async def _load_history_from_checkpointer(
     if hasattr(checkpointer, "aget"):
         checkpoint = await checkpointer.aget(config)
     elif hasattr(checkpointer, "get"):
-        checkpoint = checkpointer.get(config)
+        # 同步 SqliteSaver.get() 用 asyncio.to_thread 避免阻塞事件循环
+        checkpoint = await asyncio.to_thread(checkpointer.get, config)
     else:
         return []
 

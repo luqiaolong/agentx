@@ -192,7 +192,34 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                             await clear_abort(req.thread_id)
                             return
                         if event.get("event") == "token":
-                            assistant_content_parts.append(str(event.get("data", "")))
+                            # B6 修复：router 在 workspace_fallback 时 yield 的
+                            # "[工作区恢复] ..." 通知 token 仅用于前端展示（提示用户
+                            # 当前 workspace 是自动恢复的历史授权），不应被计入
+                            # assistant_content_parts（否则会污染 observation_run.result_text）。
+                            # 前端 useChatStream.ts 见到此前缀会跳过渲染为 message part，
+                            # 仅展示在工作区徽章 / toast。
+                            token_data = str(event.get("data", ""))
+                            if not token_data.startswith("[工作区恢复]"):
+                                assistant_content_parts.append(token_data)
+                        elif event.get("event") == "reasoning":
+                            try:
+                                payload = json.loads(event.get("data", "{}"))
+                                content = payload.get("content", "") if isinstance(payload, dict) else ""
+                            except json.JSONDecodeError:
+                                content = ""
+                            if content:
+                                assistant_content_parts.append(content)
+                        elif event.get("event") == "reasoning_delta":
+                            try:
+                                payload = json.loads(event.get("data", "{}"))
+                                delta = payload.get("delta", "") if isinstance(payload, dict) else ""
+                            except json.JSONDecodeError:
+                                delta = ""
+                            if delta:
+                                assistant_content_parts.append(delta)
+                        # 过滤 run_router 自行发送的 done，统一由 chat.py 收口
+                        if event.get("event") == "done":
+                            continue
                         yield event
                     # FR-4.4: 正常出口写 result_text + token_count
                     obs_ctx.add_metadata(
@@ -234,6 +261,19 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             stream_lock.release()
             await clear_abort(req.thread_id)
             await clear_pause(req.thread_id)
+            # B12 修复：清残留审批决策。若 pause 之前已有 pending approval（用户在
+            # 审批弹窗点击暂停），approval_runner pause 分支走完后未调 pop_approval，
+            # 下次会话首个 pop_approval 会拿到上次的残留决策并误用。
+            # chat.py finally 兜底清空，与 approval_runner pause 分支的双保险保持一致。
+            try:
+                from app.security.approval import pop_approval
+                await pop_approval(req.thread_id)
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.warning(
+                    "chat finally pop_approval failed",
+                    thread_id=req.thread_id,
+                    error=str(exc),
+                )
 
 
 def register_chat_routes(app: FastAPI) -> None:

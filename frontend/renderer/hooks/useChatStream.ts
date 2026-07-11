@@ -143,8 +143,18 @@ export function useChatStream(args: UseChatStreamArgs) {
       switch (e.type) {
         case "token": {
           // token 事件 data 是纯字符串
+          // B6 修复：后端 router 在 workspace_fallback 时 yield 的 "[工作区恢复] ..." 通知
+          // token 仅用于提示用户当前 workspace 是自动恢复的历史授权（§13 SSE 契约
+          // 未引入新事件类型，避免破坏前后端对齐）。
+          // 前端识别此前缀后跳过渲染为 message text part，改由工作区徽章 / toast
+          // 组件订阅 store 单独展示（具体组件实现由后续 PR 完成，本处仅过滤避免污染文本流）。
+          const tokenStr = String(e.data ?? "");
+          if (tokenStr.startsWith("[工作区恢复]")) {
+            // 暂不消费，后续接入工作区徽章 / toast 时再处理
+            break;
+          }
           if (pendingIdRef.current) {
-            appendPartText(pendingIdRef.current, "text", String(e.data ?? ""));
+            appendPartText(pendingIdRef.current, "text", tokenStr);
           }
           callbacksRef.current.setPaused?.(false);
           break;

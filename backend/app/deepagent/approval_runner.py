@@ -235,6 +235,9 @@ async def run_agent_with_approval(
     _recent_calls_history: list[list[dict]] = []
     _REPEAT_DETECTION_WINDOW = 3  # 最近 3 次迭代
     _REPEAT_THRESHOLD = 2  # 有 2 次重复即判定为循环
+    # 连续停滞检测：避免单次偶发 msg_count 未推进就误判为 stuck state。
+    _stalled_count = 0
+    _STALL_THRESHOLD = 2  # 连续 2 次停滞才强制停止
     # 跟踪已 yield 后的 state.values.messages 数量，作为"是否有新消息"的基线。
     # 初始 stream 后初始化为初始 state 长度；后续每次 stream 完成后更新。
     _yielded_msg_count: int = -1
@@ -296,19 +299,32 @@ async def run_agent_with_approval(
         # 恢复由前端重新发送消息触发，LangGraph 从 checkpoint 自动恢复
         if await is_paused(thread_id):
             yield await _forward(make_sse_event("paused", {}))
-            # 消费可能残留的 HITL interrupt，避免下次调用 stuck
+            # B3 修复：原 pause 分支调 `_make_hitl_resume_decisions(reject, "会话已暂停")` +
+            # agent.astream resume，会把 message 写入 ToolMessage → resume 后用户重发消息时
+            # LLM 看到这条错误 ToolMessage 污染后续推理。
+            #
+            # 修复策略：注入 ``decision_type="reject"`` 但 ``message=None``，
+            # 这样 HumanInTheLoopMiddleware 会消费 interrupt 但不向 state 写入 ToolMessage
+            # （pause 是"用户主动停下"，不是"AI 拒绝执行"）。
+            # 注意：不能用 approve（会执行 tool_call，违背 pause 语义）。
             try:
                 if await _is_int(agent, config):
                     pending = await _get_calls(agent, config)
                     if pending:
                         async for _ in agent.astream(
                             _make_hitl_resume_decisions(
-                                pending, decision_type="reject", message="会话已暂停"
+                                pending, decision_type="reject", message=""
                             ),
                             config=config,
                             stream_mode="values",
                         ):
                             pass
+            except Exception:  # noqa: BLE001
+                pass
+            # 清残留审批决策，避免下次会话首个决策污染（B12 修复同步在 chat.py finally）
+            try:
+                from app.security.approval import pop_approval
+                await pop_approval(thread_id)
             except Exception:  # noqa: BLE001
                 pass
             # 结束 SSE 流，不 wait_for_resume；恢复走重新发送消息路径
@@ -674,7 +690,8 @@ async def run_agent_with_approval(
         # 防御性检查：若 resume 后 state 未推进（msg_count 未增长）
         # 且仍被中断，说明 LangGraph interrupt 可能 stuck（如
         # HumanInTheLoopMiddleware 的 interrupt 未被正确消费）。
-        # 此时强制 break 避免无限循环（root cause: trace=7c742e6f60dc4d96）。
+        # 连续 2 次停滞才强制停止，避免偶发 async 调度延迟导致误判
+        # （root cause: trace=7c742e6f60dc4d96）。
         # 注意：msg_count < 0 表示无法读取 state（如测试 mock），跳过此检查。
         # current_msg_count = 本轮开始时的值（旧），_yielded_msg_count = resume 后的值（新）。
         # state 推进 → _yielded > current → 条件 False；state 未推进 → _yielded <= current → 条件 True。
@@ -684,23 +701,35 @@ async def run_agent_with_approval(
             and _yielded_msg_count <= current_msg_count
         )
         if _state_stalled and await _is_int(agent, config):
+            _stalled_count += 1
+            if _stalled_count >= _STALL_THRESHOLD:
+                logger.warning(
+                    "agent resume did not clear interrupt for %d consecutive iterations, forcing stop",
+                    _stalled_count,
+                    thread_id=thread_id,
+                    source=source,
+                    iteration=iteration,
+                )
+                await _inject_msgs(
+                    agent,
+                    config,
+                    "执行流程中断状态未正常解除，已强制终止。请重试或联系支持。",
+                )
+                yield await _forward(
+                    make_error_event(
+                        "执行流程中断状态未正常解除，已强制终止。请重试或联系支持。"
+                    )
+                )
+                return
             logger.warning(
-                "agent resume did not clear interrupt, possible stuck state",
+                "agent resume did not clear interrupt, waiting for next iteration (stalled_count=%d)",
+                _stalled_count,
                 thread_id=thread_id,
                 source=source,
                 iteration=iteration,
             )
-            await _inject_msgs(
-                agent,
-                config,
-                "执行流程中断状态未正常解除，已强制终止。请重试或联系支持。",
-            )
-            yield await _forward(
-                make_error_event(
-                    "执行流程中断状态未正常解除，已强制终止。请重试或联系支持。"
-                )
-            )
-            return
+        else:
+            _stalled_count = 0
 
         await _sandbox.clear_temp(thread_id)
 

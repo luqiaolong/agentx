@@ -67,6 +67,32 @@ _READONLY_TOOLS: frozenset[str] = frozenset(
     {"ls", "read_file", "glob", "grep"}
 )
 
+# 需要 writable=True 检查的工具集合（写操作 / execute / cli_execute）。
+# _handle_directory_extension 多处复用，避免 next(...) 推断错误。
+_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "write_file", "edit_file", "delete_file",
+        "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit",
+        "execute", "cli_execute",
+    }
+)
+
+
+def _path_needs_writable(pending_calls: list[dict], path: str, workspace_path: str | None) -> bool:
+    """返回 path 是否需要 writable=True 检查。
+
+    B4 修复：原实现 `next(tc for tc in pending_calls if path in _extract_paths_from_tool_call(...))`
+    只取首个匹配 path 的 tool_call，若同一路径被只读 + 写工具同时调用（如先 read_file
+    再 write_file）会推断错（只读通过预检但执行层要求 writable=True）。
+    修复：遍历所有匹配 path 的 tool_calls，任一为写操作即返回 True。
+    """
+    for tc in pending_calls:
+        if path not in _extract_paths_from_tool_call(tc, workspace_path):
+            continue
+        if tc.get("name", "") in _WRITE_TOOLS:
+            return True
+    return False
+
 
 # ============================================================
 # 辅助函数（从 deep/approval.py 迁移 + bug 修复）
@@ -292,13 +318,14 @@ async def _handle_directory_extension(
     unauthorized_paths: list[str] = []
     seen: set[str] = set()
     for tc in pending_calls:
-        name = tc.get("name", "")
         paths = _extract_paths_from_tool_call(tc, workspace_path)
         if not paths:
             continue
         # 根据工具类型决定 writable 检查：写操作/execute 需要 writable=True
-        needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+        # B4 修复：同一路径被只读+写工具混合调用时，必须按"任一写操作 → writable=True"
+        # 取并集（用 _path_needs_writable helper），而不是只看当前 tc。
         for path in paths:
+            needs_writable = _path_needs_writable(pending_calls, path, workspace_path)
             if await sandbox.is_path_authorized(
                 thread_id,
                 path,
@@ -319,13 +346,9 @@ async def _handle_directory_extension(
     # 这些路径。重新检查所有越界路径，若全部已授权则自动放行。
     still_unauthorized: list[str] = []
     for path in unauthorized_paths:
-        # 使用同样的 needs_writable 逻辑重新检查
-        tc_for_path = next(
-            (tc for tc in pending_calls if path in _extract_paths_from_tool_call(tc, workspace_path)),
-            {},
-        )
-        name = tc_for_path.get("name", "")
-        needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+        # 使用同样的 needs_writable 逻辑重新检查（B4 修复：用 _path_needs_writable
+        # 取并集而非 next() 取首个，避免 read+write 混合路径推断错）
+        needs_writable = _path_needs_writable(pending_calls, path, workspace_path)
         if await sandbox.is_path_authorized(
             thread_id,
             path,
@@ -345,7 +368,8 @@ async def _handle_directory_extension(
     # 第二步：批量 yield 所有越界审批请求（前端可展示为批量审批对话框）
     events: list[dict[str, str]] = []
     for path in unauthorized_paths:
-        # 用第一个涉及该路径的 tool_call 构造审批事件
+        # 用第一个涉及该路径的 tool_call 构造审批事件（B4 修复：writable 用
+        # _path_needs_writable 取并集，preview/preview 文案仍用首个 tool_call）
         representative_tc = next(
             (
                 tc
@@ -354,8 +378,7 @@ async def _handle_directory_extension(
             ),
             {},
         )
-        name = representative_tc.get("name", "")
-        needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+        needs_writable = _path_needs_writable(pending_calls, path, workspace_path)
         events.append(
             _make_approval_event(
                 representative_tc,
@@ -385,13 +408,9 @@ async def _handle_directory_extension(
     if decision.decision in ("once", "approve"):
         for path in unauthorized_paths:
             try:
-                # 使用第一个涉及该路径的 tool_call 决定 writable
-                tc_for_path = next(
-                    (tc for tc in pending_calls if path in _extract_paths_from_tool_call(tc, workspace_path)),
-                    {},
-                )
-                name = tc_for_path.get("name", "")
-                needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+                # B4 修复：用 _path_needs_writable 取并集推断 writable，避免 read+write
+                # 混合路径推断错
+                needs_writable = _path_needs_writable(pending_calls, path, workspace_path)
                 await sandbox.authorize_temp(thread_id, path, writable=needs_writable)
             except ValueError as exc:
                 logger.warning("authorize_temp failed", path=path, error=str(exc))
@@ -399,12 +418,7 @@ async def _handle_directory_extension(
     elif decision.decision == "session":
         for path in unauthorized_paths:
             try:
-                tc_for_path = next(
-                    (tc for tc in pending_calls if path in _extract_paths_from_tool_call(tc, workspace_path)),
-                    {},
-                )
-                name = tc_for_path.get("name", "")
-                needs_writable = name in ("write_file", "edit_file", "delete_file", "git_clone", "git_pull", "git_checkout", "git_stage", "git_commit", "execute", "cli_execute")
+                needs_writable = _path_needs_writable(pending_calls, path, workspace_path)
                 await sandbox.authorize(thread_id, path, writable=needs_writable)
             except ValueError as exc:
                 logger.warning("authorize session failed", path=path, error=str(exc))
