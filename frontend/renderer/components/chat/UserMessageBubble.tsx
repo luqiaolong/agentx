@@ -1,7 +1,44 @@
 import { memo, useState, useCallback, useRef, useEffect } from "react";
-import { Pencil, Send } from "lucide-react";
+import { Pencil, Send, Sparkles } from "lucide-react";
 import type { ChatMessage } from "@/stores/chat";
 import { ModelToggle } from "./ModelToggle";
+
+/**
+ * 将文本中的 /skill:name 标记渲染为特殊 pill 样式。
+ */
+function renderTextWithSkillTags(text: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const regex = /(\/skill:[^\s/]+)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    // 匹配前的普通文本
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    // skill 标记渲染为 pill
+    const skillName = match[0].slice(7); // 去掉 "/skill:" 前缀
+    parts.push(
+      <span
+        key={match.index}
+        className="inline-flex items-center gap-1 rounded-md border border-accent-500/30 bg-accent-500/15 px-1.5 py-0.5 align-text-bottom font-medium text-accent-400"
+        style={{ fontSize: '0.85em' }}
+      >
+        <Sparkles className="h-3 w-3" />
+        {skillName}
+      </span>
+    );
+    lastIndex = regex.lastIndex;
+  }
+
+  // 剩余文本
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : text;
+}
 
 /**
  * 用户消息气泡（支持就地编辑）。
@@ -112,7 +149,7 @@ export const UserMessageBubble = memo(function UserMessageBubble({
       onMouseLeave={() => setHovered(false)}
     >
       <div className="relative max-w-[80%] rounded-xl rounded-br-md bg-brand-700 px-3 py-2 leading-snug text-brand-100 shadow-soft" style={{ fontSize: 'var(--fs-msg-user)' }}>
-        {userText}
+        {renderTextWithSkillTags(userText)}
       </div>
       {/* 编辑按钮：消息右侧，hover 时显示 */}
       <button

@@ -35,6 +35,7 @@ export function useContextFiles() {
   const fetchSkills = useSkillsStore((s) => s.fetchSkills);
 
   const [profileEntries, setProfileEntries] = useState<ProfileEntry[]>([]);
+  const [preferenceEntries, setPreferenceEntries] = useState<ProfileEntry[]>([]);
 
   // 拉取技能列表（仅在尚未加载时触发）
   useEffect(() => {
@@ -45,7 +46,7 @@ export function useContextFiles() {
     }
   }, [skills.length, fetchSkills]);
 
-  // 拉取当前工作区的记忆条目（只读工作区级，不掺全局画像）
+  // 拉取当前工作区的记忆条目（工作区级，不分 category）
   useEffect(() => {
     let cancelled = false;
     memory
@@ -54,8 +55,25 @@ export function useContextFiles() {
         if (!cancelled) setProfileEntries(res.entries ?? []);
       })
       .catch((e) => {
-        logger.warn("useContextFiles: getProfile failed", e);
+        logger.warn("useContextFiles: getProfile (memory) failed", e);
         if (!cancelled) setProfileEntries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspacePath]);
+
+  // 拉取当前工作区的偏好条目（preference category，工作区级）
+  useEffect(() => {
+    let cancelled = false;
+    memory
+      .getProfile("preference", workspacePath, "workspace")
+      .then((res) => {
+        if (!cancelled) setPreferenceEntries(res.entries ?? []);
+      })
+      .catch((e) => {
+        logger.warn("useContextFiles: getProfile (preference) failed", e);
+        if (!cancelled) setPreferenceEntries([]);
       });
     return () => {
       cancelled = true;
@@ -84,8 +102,13 @@ export function useContextFiles() {
   );
 
   const memoryFiles = useMemo<CategorizedFile[]>(
-    () => mapProfileToFiles(profileEntries),
+    () => mapProfileToFiles(profileEntries, "memory_files"),
     [profileEntries],
+  );
+
+  const preferenceFiles = useMemo<CategorizedFile[]>(
+    () => mapProfileToFiles(preferenceEntries, "preference_files"),
+    [preferenceEntries],
   );
 
   return {
@@ -93,11 +116,13 @@ export function useContextFiles() {
     skill_files: skillFiles,
     session_summary: sessionSummary,
     memory_files: memoryFiles,
+    preference_files: preferenceFiles,
     /** 原始数据：用于详情弹框查找完整内容 */
     _raw: {
       skills,
       sessionTasks,
       profileEntries,
+      preferenceEntries,
     },
   };
 }
@@ -139,12 +164,12 @@ function mapTasksToSummary(
   });
 }
 
-function mapProfileToFiles(entries: ProfileEntry[]): CategorizedFile[] {
+function mapProfileToFiles(entries: ProfileEntry[], category: "memory_files" | "preference_files" = "memory_files"): CategorizedFile[] {
   return entries.map((e) => ({
     id: `profile-${e.key}`,
-    name: e.key,
+    name: e.title?.trim() || e.key,
     path: "",
-    category: "memory_files" as const,
+    category,
     ts: Date.parse(e.updated_at) || Date.now(),
     meta: e.category,
   }));

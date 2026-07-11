@@ -63,10 +63,12 @@ def get_os_hint() -> str:
         return (
             f"\n\n## 运行环境\n"
             f"当前操作系统：{os_name}。"
-            "执行 CLI 命令时请使用 Windows 命令（PowerShell / CMD 语法）：\n"
-            "- 查看进程：tasklist、Get-Process（而非 ps）\n"
-            "- 查看内存：wmic OS get TotalVisibleMemorySize（或使用 PowerShell Get-CimInstance）\n"
-            "- 查看磁盘：wmic logicaldisk get size,freespace（或使用 Get-Volume）\n"
+            "执行 CLI 命令时请使用 Windows 命令（PowerShell / CMD 语法），"
+            "且避免使用管道符 |（沙箱禁止 shell 元字符）：\n"
+            "- 查看总内存：powershell -Command (Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize\n"
+            "- 查看可用内存：powershell -Command (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory\n"
+            "- 查看磁盘：powershell -Command (Get-CimInstance Win32_LogicalDisk).Size 与 .FreeSpace\n"
+            "- 查看进程：tasklist、powershell -Command Get-Process\n"
             "- 文件操作：Get-ChildItem、Select-Object、Get-Content 等\n"
             "- 避免使用 Linux/macOS 专属命令（ls、cat、grep、ps、top、free、df 等）"
         )

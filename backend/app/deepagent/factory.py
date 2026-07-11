@@ -188,10 +188,18 @@ def resolve_backend(workspace_path: str | None) -> AuthorizedLocalShellBackend |
       （通过 ``current_thread_id`` contextvar 传递 thread_id）。
     - ``virtual_mode=True`` 使 backend 内部 fs 操作（Context Offloading）使用虚拟路径语义。
     - ``root_dir=workspace_path`` 限制 shell 命令工作目录和 fs 操作根目录。
+    - ``timeout`` / ``max_output_bytes`` 复用 settings 中 CLI 工具配置，避免使用
+      deepagents 默认的 120s / 100KB。
     """
     if workspace_path is None:
         return None
-    return AuthorizedLocalShellBackend(root_dir=workspace_path, virtual_mode=True)
+    settings = get_settings()
+    return AuthorizedLocalShellBackend(
+        root_dir=workspace_path,
+        virtual_mode=True,
+        timeout=settings.cli_tool_timeout,
+        max_output_bytes=settings.cli_tool_max_output_chars,
+    )
 
 
 def create_agent(

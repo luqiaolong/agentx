@@ -7,6 +7,7 @@ import {
   FolderPlus,
   X,
   Send,
+  Sparkles,
 } from "lucide-react";
 import { CommandPicker } from "./CommandPicker";
 import { MentionPicker } from "./MentionPicker";
@@ -506,6 +507,17 @@ export function ChatComposer({
 
   const canSend = input.trim().length > 0 && !isStreaming && !isPaused;
 
+  // 检测输入中的 /skill: 标记，用于 UI 指示
+  const activeSkills = useMemo(() => {
+    const matches: string[] = [];
+    const regex = /\/skill:([^\s/]+)/g;
+    let match;
+    while ((match = regex.exec(input)) !== null) {
+      matches.push(match[1]);
+    }
+    return matches;
+  }, [input]);
+
   return (
     <div className="bg-surface px-3 py-2">
       <div className="mx-auto max-w-3xl">
@@ -521,6 +533,7 @@ export function ChatComposer({
             <CommandPicker
               onSelect={handleEntrySelect}
               onClose={handleClosePicker}
+              workspacePath={workspacePath}
             />
           )}
 
@@ -543,6 +556,22 @@ export function ChatComposer({
               className="input-borderless relative z-20 block w-full resize-none overflow-y-auto pb-2"
               style={{ height: `${textareaHeight}px` }}
             />
+
+            {/* 技能激活指示器：当输入包含 /skill: 标记时显示 */}
+            {activeSkills.length > 0 && (
+              <div className="absolute bottom-0 left-0 z-30 flex items-center gap-1.5 px-0 py-1">
+                {activeSkills.map((name) => (
+                  <span
+                    key={name}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent-500/30 bg-accent-500/10 px-1.5 py-0.5 font-medium text-accent-500"
+                    style={{ fontSize: 'var(--fs-composer-chip)' }}
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    {name}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {/* 底部 Toolbar：左 = workspace，右 = context + Model + Permission + Send */}
             <div className="mt-1.5 flex items-center justify-between gap-1.5 pt-1.5">

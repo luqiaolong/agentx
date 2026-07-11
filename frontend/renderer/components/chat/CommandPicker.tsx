@@ -27,6 +27,8 @@ interface Props {
   onSelect: (entry: CommandEntry) => void;
   /** 关闭面板回调 */
   onClose: () => void;
+  /** 当前工作区路径；非空时合并工作区技能 */
+  workspacePath?: string | null;
 }
 
 /**
@@ -38,7 +40,7 @@ interface Props {
  * - 通过 stores/commands 的 useCommandPickerStore 共享 query / activeIndex 状态，
  *   避免命令面板与输入框之间的双向 prop drilling
  */
-export function CommandPicker({ onSelect, onClose }: Props) {
+export function CommandPicker({ onSelect, onClose, workspacePath }: Props) {
   const skills = useSkillsStore((s) => s.skills);
   const loading = useSkillsStore((s) => s.loading);
   const error = useSkillsStore((s) => s.error);
@@ -51,10 +53,15 @@ export function CommandPicker({ onSelect, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (skills.length === 0) {
-      void fetchSkills();
+    // 面板打开时：若技能未加载，或 workspacePath 与上次加载的不同，都重新拉取
+    const current = useSkillsStore.getState();
+    if (current.skills.length === 0 || current.workspacePath !== workspacePath) {
+      void fetchSkills(workspacePath).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("[CommandPicker] fetchSkills failed:", err);
+      });
     }
-  }, [skills.length, fetchSkills]);
+  }, [fetchSkills, workspacePath]);
 
   const entries = useMemo(
     () => buildCommandList(query, skills),
@@ -81,14 +88,13 @@ export function CommandPicker({ onSelect, onClose }: Props) {
 
   return (
     <div className="absolute bottom-full left-0 z-30 mb-2 w-[28rem] overflow-hidden rounded-xl border border-default bg-surface shadow-pop">
-      {/* 头部 */}
+      {/* 头部 — 精简 */}
       <div className="flex items-center gap-2 border-b border-default px-3 py-1.5">
-        <Search className="h-3.5 w-3.5 text-muted-c" />
         <span className="flex-1 font-semibold text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
           命令与技能
         </span>
         <span className="text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
-          ↑↓ 选择 · Enter 确认 · Esc 关闭
+          ↑↓ · Enter · Esc
         </span>
         <button
           type="button"
@@ -101,25 +107,25 @@ export function CommandPicker({ onSelect, onClose }: Props) {
       </div>
 
       {/* 内容 */}
-      <div className="max-h-96 overflow-y-auto py-1" ref={containerRef}>
+      <div className="max-h-[28rem] overflow-y-auto py-1" ref={containerRef}>
         {loading && (
-          <div className="flex items-center gap-2 px-3 py-4 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
+          <div className="flex items-center gap-2 px-3 py-2 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             加载技能…
           </div>
         )}
         {error && (
-          <div className="px-3 py-3 text-rose-500" style={{ fontSize: 'var(--fs-popover-item)' }}>{error}</div>
+          <div className="px-3 py-2 text-rose-500" style={{ fontSize: 'var(--fs-popover-item)' }}>{error}</div>
         )}
         {!loading && entries.length === 0 && (
-          <div className="px-3 py-4 text-center text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
+          <div className="px-3 py-3 text-center text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
             没有匹配的命令或技能
           </div>
         )}
 
         {builtins.length > 0 && (
           <>
-            <SectionHeader label="内置命令" />
+            <SectionHeader label="内置命令" count={builtins.length} />
             <ul>
               {builtins.map((entry) => {
                 const globalIndex = entries.indexOf(entry);
@@ -140,7 +146,7 @@ export function CommandPicker({ onSelect, onClose }: Props) {
 
         {skillEntries.length > 0 && (
           <>
-            <SectionHeader label="技能" />
+            <SectionHeader label="技能" count={skillEntries.length} />
             <ul>
               {skillEntries.map((entry) => {
                 const globalIndex = entries.indexOf(entry);
@@ -163,10 +169,15 @@ export function CommandPicker({ onSelect, onClose }: Props) {
   );
 }
 
-function SectionHeader({ label }: { label: string }) {
+function SectionHeader({ label, count }: { label: string; count?: number }) {
   return (
-    <div className="sticky top-0 z-10 bg-subtle px-3 py-0.5 font-semibold uppercase tracking-wider text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
-      {label}
+    <div className="sticky top-0 z-10 flex items-center justify-between bg-subtle px-3 py-0.5" style={{ fontSize: 'var(--fs-popover-hint)' }}>
+      <span className="font-semibold uppercase tracking-wider text-muted-c">
+        {label}
+      </span>
+      {count !== undefined && (
+        <span className="text-muted-c/60">{count}</span>
+      )}
     </div>
   );
 }
@@ -185,6 +196,7 @@ function CommandRow({
   onClick: () => void;
 }) {
   const Icon = ICON_MAP[entry.iconKey];
+  const isSkill = entry.kind === "skill";
   return (
     <li>
       <button
@@ -192,34 +204,41 @@ function CommandRow({
         data-cmd-index={index}
         onMouseEnter={onHover}
         onClick={onClick}
-        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+        className={`flex w-full items-start gap-2 px-3 py-1 text-left transition-colors ${
           active ? "bg-hover-soft" : ""
         }`}
       >
         <div
-          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${
+          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm ${
             entry.kind === "builtin"
               ? "bg-[rgba(79,70,229,0.1)] text-[#4f46e5]"
               : "bg-accent-500/10 text-accent-500"
           }`}
         >
-          <Icon className="h-3 w-3" />
+          <Icon className="h-2.5 w-2.5" />
         </div>
-        <span className="shrink-0 truncate font-medium text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
-          {entry.kind === "builtin" ? "/" : ""}
-          {entry.title}
-        </span>
-        {entry.kind === "builtin" && entry.builtin?.takesArgument && (
-          <span className="shrink-0 rounded bg-subtle px-1 py-0.5 font-mono text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
-            {entry.builtin.argumentHint}
-          </span>
-        )}
-        <ScopeBadge scope={entry.scope} />
-        {entry.description && (
-          <span className="min-w-0 flex-1 truncate pl-2 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
-            {entry.description}
-          </span>
-        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="shrink-0 font-medium text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
+              {entry.kind === "builtin" ? "/" : ""}
+              {entry.title}
+            </span>
+            {entry.kind === "builtin" && entry.builtin?.takesArgument && (
+              <span className="shrink-0 rounded bg-subtle px-1 py-0 font-mono text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
+                {entry.builtin.argumentHint}
+              </span>
+            )}
+            <ScopeBadge scope={entry.scope} />
+          </div>
+          {/* 技能显示触发条件，命令显示描述 */}
+          {entry.description && (
+            <span className="block truncate text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
+              {isSkill && entry.description.startsWith("触发：") 
+                ? entry.description 
+                : entry.description}
+            </span>
+          )}
+        </div>
       </button>
     </li>
   );

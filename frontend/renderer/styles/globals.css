@@ -452,7 +452,7 @@
 
   /* Chat composer — 隐形边框设计
      默认边框色与背景同色，放大/高对比度时可见轮廓
-     hover/focus 时边框明显高亮 */
+     hover 时边框轻微高亮；focus 时保持默认色（无光圈、无变色） */
   .chat-composer {
     border: 1px solid var(--border-default);
     background-color: var(--bg-surface);
@@ -464,9 +464,13 @@
     border-color: var(--border-strong);
   }
   .chat-composer:focus-within {
-    border-color: var(--color-brand-500);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 10%, transparent),
-      0 1px 2px 0 rgb(0 0 0 / 0.04);
+    /* focus 时不切换边框颜色（与默认状态保持一致） */
+    border-color: var(--border-default);
+    box-shadow: none;
+  }
+  /* chat composer 内部不显示全局 :focus-visible 外发光（已由 .chat-composer:focus-within 的 border 取代） */
+  .chat-composer :focus-visible {
+    outline: none;
   }
   .chat-composer.is-drop-target {
     border-color: var(--color-brand-500);

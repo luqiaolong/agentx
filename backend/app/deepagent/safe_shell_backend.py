@@ -162,10 +162,23 @@ class SafeLocalShellBackend(LocalShellBackend):
     """
 
     def __init__(self, *args, **kwargs) -> None:
-        """初始化时注入脱敏环境变量，避免空环境导致 Windows 系统命令找不到。"""
+        """初始化时注入脱敏环境变量，避免空环境导致 Windows 系统命令找不到。
+
+        若调用方未显式传入 timeout / max_output_bytes，则复用 settings 中
+        CLI 工具的同一份配置（用户设置面板中的“CLI 工具超时”与“最大输出字符数”
+        同时作用于 deepagents 内置 ``execute`` 工具）。
+        """
         # 若调用方未显式传入 env，则注入脱敏后的最小环境变量
         if "env" not in kwargs:
             kwargs["env"] = _build_safe_env()
+        # 未显式指定 timeout / max_output_bytes 时，从 settings 读取
+        if "timeout" not in kwargs or "max_output_bytes" not in kwargs:
+            # 延迟导入避免循环依赖：app.config 初始化链会间接 import security
+            from app.config import get_settings
+
+            settings = get_settings()
+            kwargs.setdefault("timeout", settings.cli_tool_timeout)
+            kwargs.setdefault("max_output_bytes", settings.cli_tool_max_output_chars)
         super().__init__(*args, **kwargs)
 
     def execute(self, command: str, **kwargs) -> ExecuteResponse:

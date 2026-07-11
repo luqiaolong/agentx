@@ -4,8 +4,6 @@ import {
   X,
   Folder,
   GitBranch,
-  Heart,
-  Briefcase,
 } from "lucide-react";
 import { useTasksStore, type Task } from "@/stores/tasks";
 import { useGitStore } from "@/stores/git";
@@ -15,7 +13,6 @@ import { GitPanel } from "./GitPanel";
 import { TaskTimeline } from "./TaskTimeline";
 import { ContextTabPanel } from "./ContextTabPanel";
 import { ProjectConfigBadge } from "./ProjectConfigBadge";
-import { MemoryReferencesPanel } from "./MemoryReferencesPanel";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]) as readonly Task[];
 
@@ -23,7 +20,7 @@ const EMPTY_TASKS: readonly Task[] = Object.freeze([]) as readonly Task[];
 /*  WorkspacePanel — 主组件                                              */
 /* ------------------------------------------------------------------ */
 
-type Tab = "tasks" | "files" | "git" | "preference" | "memory";
+type Tab = "tasks" | "files" | "git";
 
 export function WorkspacePanel({
   onFileClick,
@@ -102,8 +99,6 @@ export function WorkspacePanel({
             {tabBtn("tasks", "任务", ListChecks)}
             {tabBtn("files", "文件", Folder)}
             {tabBtn("git", "Git", GitBranch, gitRepoStatus.isGitRepo && !gitRepoStatus.clean ? 1 : undefined)}
-            {tabBtn("preference", "偏好", Heart)}
-            {tabBtn("memory", "记忆", Briefcase)}
           </div>
         </div>
       </div>
@@ -164,12 +159,6 @@ export function WorkspacePanel({
           <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
             <GitPanel />
           </div>
-        )}
-        {active === "preference" && (
-          <MemoryReferencesPanel category="preference" />
-        )}
-        {active === "memory" && (
-          <MemoryReferencesPanel category="project" />
         )}
       </div>
     </div>

@@ -188,7 +188,7 @@ export function buildCommandList(
       kind: "skill",
       title: s.name,
       description: s.description || "已加载技能",
-      insert: `${s.name} `,
+      insert: `/skill:${s.name} `,
       scope: "skill",
       iconKey: "sparkles" as const,
     }));

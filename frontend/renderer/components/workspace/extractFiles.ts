@@ -8,7 +8,8 @@ export type FileCategory =
   | "tool_files"      // 工具读取的文件（grep/glob/read_file 等）
   | "skill_files"     // 技能/Agent 规范文件
   | "session_summary" // 会话摘要
-  | "memory_files";   // 记忆文件
+  | "memory_files"    // 记忆文件（工作区记忆）
+  | "preference_files"; // 偏好文件
 
 export interface CategorizedFile {
   id: string;
