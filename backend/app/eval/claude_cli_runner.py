@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -28,8 +29,9 @@ from app.sse.events import make_error_event
 __all__ = ["ClaudeCliRunner", "ClaudeCliError", "claude_cli_available"]
 
 # 单次 SSE 事件之间的最大空闲间隔（防止子进程僵死后 readline 永远阻塞）。
-# 设计上 30s 远大于正常 LLM token 间隔；超期即判定 cmd.exe 僵尸化，强制 kill + 收尾。
-_IDLE_HEARTBEAT_SECONDS = 30.0
+# LLM 生成长文本时单次调用可能 60-90s 无 stdout 输出（思考阶段），120s 足够覆盖；
+# 超期即判定子进程僵尸化，强制 kill + 收尾。
+_IDLE_HEARTBEAT_SECONDS = 120.0
 
 # spawn 失败后的重试间隔（cmd.exe 偶发 ENOENT/EBUSY 一次性兜底）。
 _SPAWN_RETRY_DELAY_SECONDS = 2.0
@@ -82,6 +84,52 @@ def claude_cli_available() -> bool:
     return shutil.which("claude") is not None
 
 
+def _resolve_npm_wrapper(wrapper_path: str) -> tuple[str, str] | None:
+    """解析 npm 全局安装的 ``.cmd``/``.ps1`` 包装脚本，提取 ``node.exe`` + ``cli.js`` 路径。
+
+    npm 安装的 CLI 工具（如 ``@anthropic-ai/claude-code``）会在全局 bin 目录生成
+    3 个入口文件：``claude``（bash）、``claude.cmd``（cmd 批处理）、``claude.ps1``（PS 脚本）。
+    它们的核心都是 ``node "$basedir/node_modules/<pkg>/cli.js" $args``。
+
+    本函数读取包装脚本内容，用正则提取 ``cli.js`` 的相对路径，再定位 ``node.exe``：
+    - ``cli.js`` 路径：从脚本内容匹配 ``node_modules/.../cli.js``
+    - ``node.exe``：优先 ``$basedir/node.exe``（npm 随包安装的 node），回退 ``PATH`` 中的 ``node``
+
+    Returns:
+        ``(node_exe_path, cli_js_path)`` 或 ``None``（解析失败）。
+    """
+    try:
+        basedir = os.path.dirname(wrapper_path)
+        with open(wrapper_path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
+
+        # 匹配 cli.js 路径（npm 包装脚本中一定引用它）
+        # .cmd 格式:  "...node_modules\@anthropic-ai\claude-code\cli.js"
+        # .ps1 格式:  "$basedir/node_modules/@anthropic-ai/claude-code/cli.js"
+        match = re.search(
+            r'node_modules[\\/][\w@\-./\\]+cli\.js',
+            content,
+        )
+        if not match:
+            return None
+        cli_js_rel = match.group(0).replace("\\", "/")
+        cli_js = os.path.normpath(os.path.join(basedir, cli_js_rel))
+        if not os.path.isfile(cli_js):
+            return None
+
+        # 定位 node.exe：优先 basedir/node.exe，回退 PATH
+        local_node = os.path.join(basedir, "node.exe")
+        if os.path.isfile(local_node):
+            return local_node, cli_js
+        path_node = shutil.which("node") or shutil.which("node.exe")
+        if path_node:
+            return path_node, cli_js
+
+        return None
+    except OSError:
+        return None
+
+
 @dataclass
 class ClaudeCliResult:
     """Claude CLI 调用的最终汇总结果（来自 stream-json 的 result 事件）。"""
@@ -132,12 +180,14 @@ class ClaudeCliRunner:
     def _build_command(self) -> list[str]:
         """构造 ``claude -p`` 命令行参数。
 
-        Windows 上 npm 全局安装的 ``claude`` 可能是 ``claude.cmd`` 批处理文件或
-        ``claude.ps1`` PowerShell 脚本。``asyncio.create_subprocess_exec`` 底层调
-        ``CreateProcess`` 不会搜索 PATHEXT，因此需要：
-        - ``.cmd/.bat``：用 ``cmd /c`` 前缀让 cmd.exe 解析
-        - ``.ps1``：用 ``powershell/pwsh -File`` 执行
-        - 其他/无扩展名：直接作为可执行文件路径传递
+        Windows 上 npm 全局安装的 ``claude`` 实际是 ``claude.cmd``/``claude.ps1``
+        包装脚本，内部执行 ``node.exe cli.js``。如果用 ``cmd /c`` 或 ``pwsh -File``
+        调用，``asyncio.create_subprocess_exec`` 拿到的是 ``cmd.exe``/``pwsh.exe``
+        进程句柄——``proc.kill()`` 只杀中间壳，``node.exe`` 变孤儿继续持有 stdout
+        pipe，导致 ``proc.wait()`` 永远不返回（root cause: trace=58b541423f57425e）。
+
+        解决：解析包装脚本，直接用 ``node.exe`` + ``cli.js`` 路径调用，
+        ``proc`` 就是 ``node.exe`` 本身，``kill()`` 精准生效。
         """
         args = [
             "-p",
@@ -159,15 +209,18 @@ class ClaudeCliRunner:
 
         if sys.platform == "win32":
             ext = os.path.splitext(exe)[1].lower()
-            if ext == ".ps1":
+            if ext in (".cmd", ".bat", ".ps1"):
+                # 解析 npm 包装脚本，提取 node.exe + cli.js 路径
+                resolved = _resolve_npm_wrapper(exe)
+                if resolved:
+                    node_exe, cli_js = resolved
+                    return [node_exe, cli_js, *args]
+                # 解析失败时回退到 cmd /c（不如直调安全，但至少能跑）
+                if ext in (".cmd", ".bat"):
+                    return ["cmd", "/c", exe, *args]
                 ps = shutil.which("pwsh") or shutil.which("powershell")
-                if not ps:
-                    raise ClaudeCliError(
-                        "claude CLI 是 PowerShell 脚本，但系统未找到 powershell/pwsh。"
-                    )
-                return [ps, "-ExecutionPolicy", "Bypass", "-File", exe, *args]
-            if ext in (".cmd", ".bat"):
-                return ["cmd", "/c", exe, *args]
+                if ps:
+                    return [ps, "-ExecutionPolicy", "Bypass", "-File", exe, *args]
             return [exe, *args]
 
         return [exe, *args]
