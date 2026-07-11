@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import sys
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal
 
@@ -83,9 +85,16 @@ class ClaudeCliRunner:
         self.permission_mode = permission_mode
 
     def _build_command(self) -> list[str]:
-        """构造 ``claude -p`` 命令行参数。"""
-        return [
-            "claude",
+        """构造 ``claude -p`` 命令行参数。
+
+        Windows 上 npm 全局安装的 ``claude`` 可能是 ``claude.cmd`` 批处理文件或
+        ``claude.ps1`` PowerShell 脚本。``asyncio.create_subprocess_exec`` 底层调
+        ``CreateProcess`` 不会搜索 PATHEXT，因此需要：
+        - ``.cmd/.bat``：用 ``cmd /c`` 前缀让 cmd.exe 解析
+        - ``.ps1``：用 ``powershell/pwsh -File`` 执行
+        - 其他/无扩展名：直接作为可执行文件路径传递
+        """
+        args = [
             "-p",
             "--output-format", "stream-json",
             "--verbose",
@@ -96,6 +105,27 @@ class ClaudeCliRunner:
             "--no-session-persistence",  # 一次性调用，不写盘
             "--permission-mode", self.permission_mode,
         ]
+        exe = shutil.which("claude")
+        if not exe:
+            raise ClaudeCliError(
+                "claude CLI 未安装或不在 PATH 中。"
+                "请安装 Claude Code CLI：npm install -g @anthropic-ai/claude-code"
+            )
+
+        if sys.platform == "win32":
+            ext = os.path.splitext(exe)[1].lower()
+            if ext == ".ps1":
+                ps = shutil.which("pwsh") or shutil.which("powershell")
+                if not ps:
+                    raise ClaudeCliError(
+                        "claude CLI 是 PowerShell 脚本，但系统未找到 powershell/pwsh。"
+                    )
+                return [ps, "-ExecutionPolicy", "Bypass", "-File", exe, *args]
+            if ext in (".cmd", ".bat"):
+                return ["cmd", "/c", exe, *args]
+            return [exe, *args]
+
+        return [exe, *args]
 
     async def run_stream(
         self,
