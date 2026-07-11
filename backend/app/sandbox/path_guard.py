@@ -1,19 +1,38 @@
-"""沙箱路径归一化 + 关键目录保护（纯函数）。
+"""Sandbox path normalization and critical-directory protection (pure functions).
 
-从 ``app.utils.security`` 迁移而来，与 ``deep/`` / ``team/`` / ``tools/`` 平行。
+Migrated from ``app.utils.security``; sits parallel to ``deep/``, ``team/``, ``tools/``.
 
-公共 API：
-- ``PathNotAuthorized``：路径未授权异常
-- ``normalize_path``：路径归一化（委托 ``app.utils.paths``）
-- ``is_under``：判断 child 是否在 parent 下（用 ``relative_to``，非字符串前缀）
-- ``is_critical``：判断是否为系统关键目录
-- ``CRITICAL_DIRS``：平台相关关键目录列表
-- ``DEFAULT_WHITELIST``：始终可读写白名单（WORKSPACE_DIR + UPLOADS_DIR）
+Public API:
+- ``PathNotAuthorized``: raised when a path is not authorized.
+- ``normalize_path``: normalize a path (delegates to ``app.utils.paths``).
+- ``is_under``: check whether ``child`` equals ``base`` or lives under it
+  (uses ``relative_to``, not string prefix).
+- ``is_critical``: is the path a system-critical directory / ancestor / descendant?
+- ``CRITICAL_DIRS``: platform-dependent critical directory list.
+- ``SCRATCH_DIR``: scratch workspace under ``WORKSPACE_DIR``
+  (default: ``data/workspace/.scratch``).
+- ``DEFAULT_WHITELIST``: always-read-writable whitelist
+  (``WORKSPACE_DIR`` + ``UPLOADS_DIR`` + ``SCRATCH_DIR``).
 
-Linux bug 修复：
-    原 ``_critical_dirs()`` 在非 win32 平台把 ``Path("/")`` 纳入候选，
-    ``_is_under(resolved, "/")`` 对任何绝对路径都成功 → Linux 下沙箱不可用。
-    修复：对根目录（``parent == self``）仅拒绝 ``path == root``，不拒绝后代。
+Linux bug fix:
+    The original ``_critical_dirs()`` included ``Path("/")`` on non-win32
+    platforms; ``_is_under(resolved, "/")`` succeeded for any absolute path,
+    so the sandbox became unusable on Linux. Fix: for root paths
+    (``parent == self``), reject only ``path == root`` itself, not its
+    descendants.
+
+O2 improvement (scratch directory):
+    New ``SCRATCH_DIR = WORKSPACE_DIR / ".scratch"`` acts as the agent's
+    always-authorized scratch area (read+write, no user grant needed).
+    Combined with ``SafeLocalShellBackend``'s ``rm/del/unlink`` path check,
+    the agent can clean up its own scratch files without polluting the
+    authorized directory.
+
+    User rule: scratch files may live under ``WORKSPACE_DIR``; if
+    ``WORKSPACE_DIR`` is empty, fall back to ``<startup_dir>/WORKSPACE_DIR``.
+    The current implementation always resolves ``WORKSPACE_DIR`` via
+    ``app.config.settings`` (no runtime fallback needed). If runtime
+    redirection is ever added, wire the fallback here.
 """
 
 from __future__ import annotations
@@ -29,18 +48,37 @@ __all__ = [
     "is_under",
     "is_critical",
     "CRITICAL_DIRS",
+    "SCRATCH_DIR",
     "DEFAULT_WHITELIST",
 ]
 
 
+def _resolve_scratch_dir() -> Path:
+    """Resolve the scratch directory, creating it if missing.
+
+    Always returns ``WORKSPACE_DIR / ".scratch"`` (resolved). Falls back to
+    ``PROJECT_ROOT / "WORKSPACE_DIR"`` if ``WORKSPACE_DIR`` is empty/missing
+    (per user rule: if ``WORKSPACE_DIR`` is empty, use
+    ``<startup_dir>/WORKSPACE_DIR``; ``PROJECT_ROOT`` is the startup dir).
+    """
+    base = WORKSPACE_DIR if WORKSPACE_DIR and str(WORKSPACE_DIR).strip() else PROJECT_ROOT / "WORKSPACE_DIR"
+    scratch = (base / ".scratch").resolve()
+    try:
+        scratch.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return scratch
+
+
 class PathNotAuthorized(Exception):
-    """路径未授权。"""
+    """Path not authorized."""
 
 
 def is_under(child: Path, base: Path) -> bool:
-    """child 是否等于 base 或位于 base 之下（prefix match）。
+    """Return True if ``child`` equals ``base`` or lives under it.
 
-    使用 ``relative_to`` 而非字符串前缀，避免 ``d:/docs`` 误匹配 ``d:/docs-other``。
+    Uses ``relative_to`` rather than string prefix to avoid
+    ``d:/docs`` accidentally matching ``d:/docs-other``.
     """
     try:
         child.relative_to(base)
@@ -50,7 +88,7 @@ def is_under(child: Path, base: Path) -> bool:
 
 
 def _build_critical_dirs() -> list[Path]:
-    """返回当前 OS 的系统关键目录列表（已规范化）。"""
+    """Return the OS-specific system critical directory list (normalized)."""
     home = Path.home().resolve()
     if sys.platform == "win32":
         candidates = [
@@ -74,52 +112,62 @@ def _build_critical_dirs() -> list[Path]:
     return [c.resolve() for c in candidates]
 
 
-# 模块级常量：启动时计算一次
+# Module-level constants: computed once at import time.
 CRITICAL_DIRS: list[Path] = _build_critical_dirs()
-DEFAULT_WHITELIST: list[Path] = [WORKSPACE_DIR.resolve(), UPLOADS_DIR.resolve()]
+SCRATCH_DIR: Path = _resolve_scratch_dir()
+DEFAULT_WHITELIST: list[Path] = [
+    WORKSPACE_DIR.resolve(),
+    UPLOADS_DIR.resolve(),
+    SCRATCH_DIR,
+]
 
 
 def is_critical(path: Path) -> bool:
-    """路径是否为系统关键目录、其祖先或其后代。
+    """Whether the path is a system-critical directory / ancestor / descendant.
 
-    - 根目录（``parent == self``，如 Linux ``/`` 或 Windows ``C:/``）：
-      仅拒绝 ``path == root`` 本身，不拒绝后代（修复 Linux 沙箱不可用 bug）。
-    - 系统目录（C:/Windows 等）：拒绝 resolved 是 crit 本身、其祖先（如 C:/）或
-      其后代（如 C:/Windows/System32），即双向 ``is_under``。
-    - 用户主目录：仅拒绝 resolved 是 home 本身或其祖先（如 C:/Users），
-      不拒绝 home 的子目录（用户可授权 C:/Users/me/Projects）。
+    - Root paths (``parent == self``): only reject ``path == root`` itself, not
+      descendants (Linux bug fix).
+    - System dirs (C:/Windows, etc.): reject ``resolved`` as the dir itself,
+      its ancestor (e.g. ``C:/``), or its descendant (e.g.
+      ``C:/Windows/System32``) -- bidirectional ``is_under``.
+    - User home: only reject ``resolved`` as home itself or its ancestor
+      (e.g. ``C:/Users``); do not reject home subdirectories (so the user
+      can grant ``C:/Users/me/Projects``).
     """
     resolved = path.resolve()
     home = Path.home().resolve()
     for crit in CRITICAL_DIRS:
-        # 根目录：仅拒绝本身，不拒绝后代（Linux bug 修复）
+        # Root: only reject itself, not descendants (Linux bug fix).
         if crit.parent == crit:
             if resolved == crit:
                 return True
             continue
         if crit == home:
-            # home：仅拒绝授权 home 本身或其上级（防止授权整个用户目录）
+            # home: only reject home itself or its parent.
             if is_under(crit, resolved):
                 return True
             continue
-        # 系统目录：双向拒绝（祖先与后代均不可）
+        # System dirs: reject both ancestors and descendants.
         if is_under(resolved, crit) or is_under(crit, resolved):
             return True
     return False
 
 
 def normalize_path(path: str | Path, base: str | Path | None = None) -> Path:
-    """规范化路径。相对路径基于 ``base`` 或 PROJECT_ROOT 解析（非 CWD）。
+    """Normalize a path. Relative paths resolve against ``base`` or ``PROJECT_ROOT``.
 
-    Windows 平台额外做大小写和分隔符归一化，避免 ``D:/workspace`` 与
-    ``d:\workspace`` 被判定为不同路径（BUG-3 修复）。
+    On Windows we additionally normalize the drive letter (lowercase) and
+    separator (forward slash) so that ``D:/workspace`` and ``d:\\workspace``
+    are treated as the same path (BUG-3 fix).
 
     Args:
-        path: 输入路径（字符串或 Path 对象）。
-        base: 可选的基准目录；传入时相对路径基于该目录解析，否则基于 PROJECT_ROOT。
+        path: Input path (string or ``Path``).
+        base: Optional base directory. If provided, relative paths resolve
+            against this directory; otherwise against ``PROJECT_ROOT``.
 
     Returns:
-        规范化后的绝对 Path（经 ``resolve()`` 解析 ``..`` / 符号链接 / 大小写）。
+        Normalized absolute ``Path`` (via ``resolve()`` to handle ``..``,
+        symlinks, and case).
     """
     p = Path(path)
     if not p.is_absolute():
@@ -127,7 +175,7 @@ def normalize_path(path: str | Path, base: str | Path | None = None) -> Path:
         p = root / p
     resolved = p.resolve()
 
-    # Windows 路径归一化：统一小写 drive letter 和正斜杠分隔符
+    # Windows path normalization: lowercase drive letter + forward slash separator.
     if sys.platform == "win32" and resolved.parts:
         drive = resolved.parts[0]
         if len(drive) == 2 and drive[1] == ":":

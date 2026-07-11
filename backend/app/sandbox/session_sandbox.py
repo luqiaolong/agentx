@@ -34,6 +34,51 @@ from app.sandbox.store import SandboxStore, get_sandbox_store
 __all__ = ["SessionSandbox", "get_sandbox"]
 
 
+def _unauthorized_read_hint(path: str | Path, resolved: Path) -> str:
+    """User-friendly error for an unauthorized read path.
+
+    Distinguishes "outside any whitelist" from "looks like an absolute path
+    that the LLM probably should rewrite as a relative / data/workspace path".
+    """
+    raw = str(path).strip()
+    p = Path(raw)
+    if p.is_absolute():
+        return (
+            f"路径 {path} 未授权；沙箱只允许读取已授权目录。\n"
+            f"请改用相对路径（如 'data/workspace/foo.txt'）"
+            f"或写入 'data/workspace/.scratch/' 下的临时文件，"
+            f"或通过 dialog 授权该目录后重试。"
+        )
+    return (
+        f"路径 {path}（解析为 {resolved}）未授权；"
+        f"请通过 dialog 选择目录后重试，"
+        f"或改用 data/workspace/ 下的相对路径。"
+    )
+
+
+def _unauthorized_write_hint(path: str | Path, resolved: Path) -> str:
+    """User-friendly error for an unauthorized write path.
+
+    Mirrors :func:`_unauthorized_read_hint` and steers the LLM toward
+    writable scratch space first, then user-authorized dirs.
+    """
+    raw = str(path).strip()
+    p = Path(raw)
+    if p.is_absolute():
+        return (
+            f"路径 {path} 未授权写入；沙箱只允许写入已授权目录或 "
+            f"data/workspace/.scratch/ 临时工作区。\n"
+            f"请改用相对路径（如 'data/workspace/foo.txt'）"
+            f"或 'data/workspace/.scratch/{raw.split('/')[-1] or 'tmp'}'，"
+            f"或通过 dialog 授权该目录（勾选允许写入）后重试。"
+        )
+    return (
+        f"路径 {path}（解析为 {resolved}）未授权写入；"
+        f"请改用 data/workspace/ 或 data/workspace/.scratch/ 下的相对路径，"
+        f"或通过 dialog 授权该目录（勾选允许写入）后重试。"
+    )
+
+
 class SessionSandbox:
     """会话级沙箱授权目录管理。按 thread_id 隔离，async + Lock 并发安全。
 
@@ -175,7 +220,9 @@ class SessionSandbox:
                     if is_under(resolved, auth_path):
                         return
         self._deny(thread_id, path, "deny_read")
-        raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
+        raise PathNotAuthorized(
+            _unauthorized_read_hint(path, resolved)
+        )
 
     async def check_write(
         self,
@@ -229,9 +276,11 @@ class SessionSandbox:
         self._deny(thread_id, path, "deny_write")
         if matched:
             raise PathNotAuthorized(
-                f"路径 {path} 仅授权读取，写入请使用 data/workspace 或在授权时勾选允许写入"
+                f"路径 {path} 仅授权读取；写入请改用 data/workspace 或在授权时勾选允许写入"
             )
-        raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
+        raise PathNotAuthorized(
+            _unauthorized_write_hint(path, resolved)
+        )
 
     # ---- 同步版本（供 AuthorizedLocalShellBackend 在同步 fs 方法中调用）----
 
@@ -274,7 +323,9 @@ class SessionSandbox:
                 if is_under(resolved, auth_path):
                     return
         self._deny(thread_id, path, "deny_read")
-        raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
+        raise PathNotAuthorized(
+            _unauthorized_read_hint(path, resolved)
+        )
 
     def check_write_sync(
         self,
@@ -327,9 +378,11 @@ class SessionSandbox:
         self._deny(thread_id, path, "deny_write")
         if matched:
             raise PathNotAuthorized(
-                f"路径 {path} 仅授权读取，写入请使用 data/workspace 或在授权时勾选允许写入"
+                f"路径 {path} 仅授权读取；写入请改用 data/workspace 或在授权时勾选允许写入"
             )
-        raise PathNotAuthorized(f"路径 {path} 未授权，请通过 dialog 选择目录后重试")
+        raise PathNotAuthorized(
+            _unauthorized_write_hint(path, resolved)
+        )
 
     async def authorize(
         self, thread_id: str, path: str | Path, writable: bool = False, source: str = "manual"

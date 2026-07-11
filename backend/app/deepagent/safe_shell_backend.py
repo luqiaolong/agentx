@@ -24,7 +24,7 @@ import shlex
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 
-from app.security.command_filter import get_forbidden_chars, has_forbidden_args, is_command_blocked, is_git_write_command
+from app.security.command_filter import get_forbidden_chars, has_forbidden_args, is_command_blocked, is_destructive_target_in_scratch, is_git_write_command
 from app.security.sandbox_escalation import analyze_sandbox_failure
 
 __all__ = ["SafeLocalShellBackend"]
@@ -219,14 +219,22 @@ class SafeLocalShellBackend(LocalShellBackend):
         # 对原始命令名和包装器内部命令名都做检查
         if is_command_blocked(cmd_name) or is_command_blocked(inner_cmd_name):
             blocked_name = cmd_name if is_command_blocked(cmd_name) else inner_cmd_name
-            return ExecuteResponse(
-                output=(
-                    f"命令 '{blocked_name}' 在黑名单中，禁止执行"
-                    "（删除/格式化/提权等极度危险操作）"
-                ),
-                exit_code=126,
-                truncated=False,
+            # O4: scratch 目录豁免：rm/del/unlink 等破坏性命令仅作用于
+            # SCRATCH_DIR（data/workspace/.scratch）时允许执行，用于 agent
+            # 清理自己创建的临时文件。系统路径仍被拦截。
+            targeted_in_scratch = (
+                is_destructive_target_in_scratch(command)
+                or is_destructive_target_in_scratch(inner_command)
             )
+            if not targeted_in_scratch:
+                return ExecuteResponse(
+                    output=(
+                        f"命令 '{blocked_name}' 在黑名单中，禁止执行"
+                        "（删除/格式化/提权等极度危险操作）"
+                    ),
+                    exit_code=126,
+                    truncated=False,
+                )
 
         # 3. 元字符过滤（阻断 shell 注入：; & | ` $ < >）
         # execute 使用 shell=True，引号内字符对 shell 是字面值，因此使用引号感知模式，

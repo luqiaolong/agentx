@@ -63,6 +63,13 @@ class TestSafeShellBackendSecurity:
         assert "非法 shell 元字符" in result.output
         assert "|" in result.output
 
+    def test_python_string_metachar_allowed(self, tmp_path) -> None:
+        """python -c 字符串字面量中的 ; 不应被拦截。"""
+        backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
+        result = backend.execute('python -c "print(\'a;b;c\')"')
+        assert result.exit_code == 0
+        assert "a;b;c" in result.output
+
     def test_git_write_command_rejected(self, tmp_path) -> None:
         backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
         result = backend.execute("git commit -m test")
