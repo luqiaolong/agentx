@@ -269,3 +269,64 @@ def test_dual_trace_run_id_equals_trace_id(
     run = tmp_sink.get_run_sync("r-anchor-000000007")
     assert run is not None
     assert run["trace_id"] == run["run_id"]  # DB 中也一致
+
+
+# ============================================================
+# FR-3.7: remote trace_span metadata 含 agentx_trace_id 反查锚点
+# ============================================================
+
+
+def test_dual_trace_remote_metadata_includes_agentx_trace_id(
+    tmp_sink: SqliteObservationSink,
+    with_credentials: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """凭证存在时 trace_span 收到的 metadata 必须含 agentx_trace_id（16 hex 本地 SSOT），
+    让 LangSmith UI 能反查本地 ObservationStore.run_id。
+
+    验证：
+    - 外部传 run_id 时：agentx_trace_id == run_id
+    - 内部生成 trace_id 时：agentx_trace_id == 自动生成的 16 hex
+    """
+    import app.observability.langsmith as mod
+
+    captured: list[dict] = []
+
+    @contextmanager
+    def mock_trace_span(name, **kwargs):
+        captured.append({"name": name, **kwargs})
+        yield {"name": name, "metadata": kwargs}
+
+    monkeypatch.setattr(mod, "trace_span", mock_trace_span)
+
+    # 1. 外部传 run_id（chat.py:114 路径）
+    captured.clear()
+    with dual_trace(
+        thread_id="t-meta-link-1",
+        agent_mode="chat",
+        user_message="meta-link external",
+        run_id="r-meta-link-ext00001",  # 任意字符串（不一定 16 hex）
+    ):
+        pass
+
+    assert len(captured) == 1
+    assert captured[0]["agentx_trace_id"] == "r-meta-link-ext00001"
+    assert captured[0]["thread_id"] == "t-meta-link-1"
+    assert captured[0]["agent_mode"] == "chat"
+    assert captured[0]["user_message"] == "meta-link external"
+
+    # 2. 内部自动生成 trace_id（new_trace_id → 16 hex）
+    captured.clear()
+    with dual_trace(
+        thread_id="t-meta-link-2",
+        agent_mode="deep_task",
+        user_message="meta-link auto",
+    ) as ctx:
+        # 16 hex SSOT
+        assert len(ctx.run_id) == 16
+        assert all(c in "0123456789abcdef" for c in ctx.run_id)
+
+    assert len(captured) == 1
+    # agentx_trace_id 必须等于 ctx.run_id（即本轮生成的 16 hex）
+    assert captured[0]["agentx_trace_id"] == ctx.run_id
+    assert len(captured[0]["agentx_trace_id"]) == 16

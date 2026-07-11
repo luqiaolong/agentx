@@ -1,7 +1,7 @@
 /**
- * 观测中心分析流：复盘 / 自进化 SSE 接收。
+ * 观测中心分析流：复盘 / 执行优化 SSE 接收。
  *
- * 对应后端 POST /api/observation/review 和 POST /api/observation/self-evolve。
+ * 对应后端 POST /api/observation/review 和 POST /api/observation/apply-optimization。
  * 事件契约与 /api/chat 一致（reasoning / token / done / error），但独立连接，
  * 不经过 chat.ts 的连接池（避免与正常对话流互斥中止）。
  *
@@ -11,14 +11,25 @@ import { API_BASE } from "../api-constants";
 
 /** 分析流事件回调（调用方实现，写入 chat store parts）。 */
 export interface AnalysisStreamHandlers {
-  /** reasoning 事件：一次性思考方向说明（独立 part）。 */
+  /** reasoning 事件：新建独立 reasoning part（think 块开始 / 状态提示）。 */
   onReasoning: (content: string) => void;
+  /** reasoning_delta 事件：思考增量（追加到当前未 done 的 reasoning part）。 */
+  onReasoningDelta: (delta: string) => void;
   /** token 事件：LLM 正文增量（追加到 text part）。 */
   onToken: (text: string) => void;
   /** done 事件：流结束（标记 reasoning done + 清理 running 态）。 */
-  onDone: () => void;
+  onDone: (meta?: AnalysisDoneMeta) => void;
   /** error 事件：异常（含消息）。 */
   onError: (msg: string) => void;
+}
+
+/** done 事件携带的元数据（Claude CLI 返回的 cost / duration / session_id）。 */
+export interface AnalysisDoneMeta {
+  cost_usd?: number;
+  duration_ms?: number;
+  num_turns?: number;
+  session_id?: string;
+  result_text?: string;
 }
 
 interface StreamOpts {
@@ -75,13 +86,29 @@ async function consumeSse(
             }
             break;
           }
+          case "reasoning_delta": {
+            try {
+              const obj = JSON.parse(dataStr) as { delta?: unknown };
+              handlers.onReasoningDelta(String(obj.delta ?? ""));
+            } catch {
+              handlers.onReasoningDelta(dataStr);
+            }
+            break;
+          }
           case "token": {
             handlers.onToken(dataStr);
             break;
           }
           case "done": {
             receivedDone = true;
-            handlers.onDone();
+            // done 事件可能携带元数据（cost / duration / session_id）
+            let meta: AnalysisDoneMeta | undefined;
+            try {
+              meta = JSON.parse(dataStr) as AnalysisDoneMeta;
+            } catch {
+              /* dataStr 可能是 "{}" 或非 JSON，忽略 */
+            }
+            handlers.onDone(meta);
             break;
           }
           case "error": {
@@ -112,7 +139,7 @@ async function consumeSse(
   }
 }
 
-/** 复盘指定 run 的执行轨迹（SSE 流式）。 */
+/** 复盘指定 run 的执行轨迹（SSE 流式，调 Claude CLI 分析）。 */
 export async function streamTraceReview(opts: StreamOpts): Promise<void> {
   let res: Response;
   try {
@@ -142,14 +169,25 @@ export async function streamTraceReview(opts: StreamOpts): Promise<void> {
   await consumeSse(res, opts.handlers);
 }
 
-/** 自进化：结合 agentx 代码分析轨迹问题（SSE 流式）。 */
-export async function streamTraceSelfEvolve(opts: StreamOpts): Promise<void> {
+interface ApplyOptimizationOpts extends StreamOpts {
+  /** 复盘报告中产出的优化方案全文。 */
+  optimizationPlan: string;
+}
+
+/** 执行优化：用户确认后 Claude CLI 执行优化方案（SSE 流式）。 */
+export async function streamApplyOptimization(
+  opts: ApplyOptimizationOpts,
+): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/api/observation/self-evolve`, {
+    res = await fetch(`${API_BASE}/api/observation/apply-optimization`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_id: opts.runId, thread_id: opts.threadId ?? null }),
+      body: JSON.stringify({
+        run_id: opts.runId,
+        thread_id: opts.threadId ?? null,
+        optimization_plan: opts.optimizationPlan,
+      }),
       signal: opts.signal,
     });
   } catch (err) {

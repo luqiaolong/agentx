@@ -325,29 +325,12 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
 }) {
   const items = useMemo(() => buildRenderItems(message.parts), [message.parts]);
 
-  const hasContent = items.length > 0;
-
-  // 空状态：独立加载卡片
-  if (items.length === 0 && !hasContent && isStreamingLast) {
-    return (
-      <div className="group flex justify-start items-start gap-1">
-        <div className="flex w-[95%]">
-          <div className="flex w-full items-center gap-1.5 rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
-            <span className="flex gap-0.5">
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500" />
-            </span>
-            思考中…
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // 按 delegation 分组：同一个子代理的 parts 包裹在同一个容器中
   // 子代理容器包含：delegation + reasoning + tool-call/tool-call-group/orphan-tool-result
   // 最终 text 输出独立在卡片外
+  // NOTE: 此 useMemo 必须在下面的条件 return 之前调用，否则 React Hooks
+  // 调用顺序会在 isStreamingLast / items 变化时不一致，触发
+  // "Rendered more hooks than during the previous render" 运行时错误。
   const groups = useMemo(() => {
     const result: { delegationIdx: number; items: RenderItem[] }[] = [];
     let currentGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
@@ -379,6 +362,24 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
 
     return result;
   }, [items]);
+
+  // 空状态：独立加载卡片（items 为空且仍在流式中）
+  if (items.length === 0 && isStreamingLast) {
+    return (
+      <div className="group flex justify-start items-start gap-1">
+        <div className="flex w-[95%]">
+          <div className="flex w-full items-center gap-1.5 rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft text-muted-c" style={{ fontSize: 'var(--fs-msg-assist)' }}>
+            <span className="flex gap-0.5">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.3s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500 [animation-delay:-0.15s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-500" />
+            </span>
+            思考中…
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="group flex justify-start items-start gap-1">
@@ -484,7 +485,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
           {/*
            * 底部操作区：
            * - 左侧（常驻展示）：观测中心反馈按钮（MessageFeedback 👍/👎）
-           *   + 竖向分隔条 + 执行轨迹分析按钮（TraceAnalysisButtons：复盘 / 自进化）
+           *   + 竖向分隔条 + 执行轨迹分析按钮（TraceAnalysisButtons：复盘 / 执行优化）
            * - 右侧：本次请求统计信息（MessageStats：traceId / token / 耗时，右对齐紧凑展示）
            *
            * 行为：
@@ -492,7 +493,8 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
              MessageStats 耗时实时递增（每 500ms tick），token 跟随 parts 累积
            * - runId 缺失（已完成的旧消息迁移数据）→ 反馈/分析按钮 disabled；
              MessageStats 仍可展示 ts→lastPart 的耗时
-           * - 复盘/自进化：点击后在当前会话追加一条 assistant 消息流式展示分析结果
+           * - 复盘：点击后调 Claude CLI 分析执行轨迹+相关代码，输出问题与优化方案；
+             复盘完成的消息上出现「执行优化」按钮，用户确认后 Claude CLI 执行代码修改
            *
            * 视觉分隔：feedback 与 trace-analysis 是两类不同性质的按钮（一个是消息级反馈，
            * 一个是轨迹级分析），用 1px 竖向分隔条 + 更大间距（gap-3）拉开，避免误触。
@@ -506,7 +508,11 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
                 className="h-3 w-px shrink-0 bg-border-default"
                 data-testid="feedback-trace-divider"
               />
-              <TraceAnalysisButtons runId={message.traceId} isStreaming={isStreamingLast} />
+              <TraceAnalysisButtons
+                runId={message.traceId}
+                isStreaming={isStreamingLast}
+                messageId={message.id}
+              />
             </div>
             <MessageStats message={message} isStreamingLast={isStreamingLast} />
           </div>

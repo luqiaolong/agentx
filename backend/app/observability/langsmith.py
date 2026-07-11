@@ -254,6 +254,8 @@ def dual_trace(
 
     # 2. Remote LangSmith trace（凭证存在时）— enter/exit 与 yield 解耦，
     #    remote 失败不阻止 yield（降级为本地 only）
+    #    metadata 加 agentx_trace_id（16 hex 本地 SSOT），让 LangSmith UI 能反查本地
+    #    ObservationStore.run_id（langsmith run.id 默认 UUID v7 36 字符，与本地 16 hex 解耦）。
     remote_cm = None
     if remote_enabled:
         try:
@@ -263,6 +265,7 @@ def dual_trace(
                 thread_id=thread_id,
                 agent_mode=agent_mode,
                 user_message=user_message,
+                agentx_trace_id=trace_id,  # 16 hex 本地 SSOT 反查锚点
             )
             remote_cm.__enter__()
         except Exception as exc:  # noqa: BLE001 — remote enter 失败降级

@@ -46,21 +46,17 @@ fn inject_credentials(app: &AppHandle, env: &mut HashMap<String, String>) {
     // LangSmith 凭证注入：langsmith SDK 读 LANGSMITH_API_KEY / LANGSMITH_ENDPOINT /
     // LANGSMITH_TRACING；settings.py 读 AGENTX_LANGSMITH_*（pydantic-settings env_prefix=AGENTX_）。
     // 双向注入保证：① SDK 拿到正确 endpoint ② settings._langsmith_available() 判定通过。
-    // endpoint 硬编码为 myserver 自托管实例（myserver 是固定部署目标）。
+    // endpoint = LangSmith SaaS（https://api.smith.langchain.com），lsv2_pt_ PAT key；
+    // 自托管实例切换：把这行改为 "http://192.168.1.4:21984"（myserver 自托管 port）。
+    let langsmith_endpoint = "https://api.smith.langchain.com".to_string();
     if let Some(k) = credentials::get_api_key(app, "langsmith") {
         env.insert("LANGSMITH_API_KEY".into(), k.clone());
         env.insert("AGENTX_LANGSMITH_API_KEY".into(), k);
     }
     env.insert("LANGSMITH_TRACING".into(), "true".into());
     env.insert("AGENTX_LANGSMITH_TRACING".into(), "true".into());
-    env.insert(
-        "LANGSMITH_ENDPOINT".into(),
-        "http://192.168.1.4:21984".into(),
-    );
-    env.insert(
-        "AGENTX_LANGSMITH_ENDPOINT".into(),
-        "http://192.168.1.4:21984".into(),
-    );
+    env.insert("LANGSMITH_ENDPOINT".into(), langsmith_endpoint.clone());
+    env.insert("AGENTX_LANGSMITH_ENDPOINT".into(), langsmith_endpoint);
     env.insert("LANGSMITH_PROJECT".into(), "agentx".into());
 
     let (milvus_user, milvus_password) = credentials::get_milvus_credentials(app);
