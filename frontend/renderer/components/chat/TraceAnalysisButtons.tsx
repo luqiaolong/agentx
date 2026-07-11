@@ -23,7 +23,7 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
   runId,
   isStreaming,
 }: TraceAnalysisButtonsProps) {
-  const { dispatched, error, review } = useTraceAnalysis();
+  const { dispatched, sending, error, review } = useTraceAnalysis();
 
   const disabledReason = !runId
     ? "无可分析的执行轨迹（traceId 缺失）"
@@ -36,6 +36,8 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
     ? `复盘失败：${error}`
     : dispatched
     ? "复盘已发送到 PowerShell 窗口"
+    : sending
+    ? "正在发送中…"
     : disabledReason ?? "复盘这条执行轨迹（在 PowerShell 中启动 Claude CLI）";
 
   return (
@@ -43,7 +45,7 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
       <button
         type="button"
         onClick={() => runId && review(runId)}
-        disabled={isDisabled || dispatched}
+        disabled={isDisabled || dispatched || sending}
         title={title}
         aria-label="复盘这条执行轨迹"
         data-testid="trace-review-btn"
@@ -52,10 +54,12 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
       >
         {dispatched ? (
           <Check className="h-3 w-3 text-emerald-500" />
+        ) : sending ? (
+          <RotateCcw className="h-3 w-3 animate-spin" />
         ) : (
           <RotateCcw className="h-3 w-3" />
         )}
-        <span>{dispatched ? "已发送" : "复盘"}</span>
+        <span>{dispatched ? "已发送" : sending ? "发送中" : "复盘"}</span>
       </button>
     </div>
   );

@@ -15,6 +15,8 @@ import { API_BASE } from "@/lib/api-constants";
 export interface UseTraceAnalysisResult {
   /** 是否已成功发送到 PowerShell。 */
   dispatched: boolean;
+  /** 是否正在发送中（防止重复点击）。 */
+  sending: boolean;
   /** 错误信息（发送失败时）。 */
   error: string | null;
   /** 触发复盘。runId = 目标消息的 traceId。 */
@@ -23,10 +25,13 @@ export interface UseTraceAnalysisResult {
 
 export function useTraceAnalysis(): UseTraceAnalysisResult {
   const [dispatched, setDispatched] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const review = useCallback(async (runId: string) => {
     if (!runId) return;
+    if (sending || dispatched) return; // 防止重复点击
+    setSending(true);
     setError(null);
     try {
       // 1. 调后端导出 trace prompt 文件
@@ -46,11 +51,15 @@ export function useTraceAnalysis(): UseTraceAnalysisResult {
       setDispatched(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送失败");
+      console.error("[useTraceAnalysis] review failed:", err);
+    } finally {
+      setSending(false);
     }
-  }, []);
+  }, [sending, dispatched]);
 
   return {
     dispatched,
+    sending,
     error,
     review,
   };
