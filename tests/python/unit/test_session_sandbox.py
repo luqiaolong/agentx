@@ -429,3 +429,107 @@ async def test_persistence_disabled_no_db_write(tmp_path: Path) -> None:
         assert len(entries) == 0  # DB 未写入
     finally:
         settings.sandbox_persistence_enabled = original
+
+
+# ---- sandbox_mode 全局模式测试 ----
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_off_skips_checks(sandbox: SessionSandbox) -> None:
+    """sandbox_mode=off 时跳过所有路径校验。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.sandbox_mode
+    settings.sandbox_mode = "off"
+    try:
+        # 未授权路径在 off 模式下不抛异常
+        await sandbox.check_read("t1", "d:/secrets/passwords.txt")
+        await sandbox.check_write("t1", "d:/secrets/out.txt")
+        # is_path_authorized 也返回 True
+        assert await sandbox.is_path_authorized("t1", "d:/secrets/x")
+    finally:
+        settings.sandbox_mode = original
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_manual_read_hint(sandbox: SessionSandbox) -> None:
+    """sandbox_mode=manual 时读取拒绝返回人工执行提示。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.sandbox_mode
+    settings.sandbox_mode = "manual"
+    try:
+        with pytest.raises(PathNotAuthorized) as exc_info:
+            await sandbox.check_read("t1", "d:/secrets/passwords.txt")
+        assert "人工执行" in str(exc_info.value)
+    finally:
+        settings.sandbox_mode = original
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_manual_write_hint(sandbox: SessionSandbox) -> None:
+    """sandbox_mode=manual 时写入拒绝返回人工执行提示。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.sandbox_mode
+    settings.sandbox_mode = "manual"
+    try:
+        with pytest.raises(PathNotAuthorized) as exc_info:
+            await sandbox.check_write("t1", "d:/secrets/out.txt")
+        assert "人工执行" in str(exc_info.value)
+    finally:
+        settings.sandbox_mode = original
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_off_sync_checks(sandbox: SessionSandbox) -> None:
+    """sandbox_mode=off 时同步版 check_read_sync/check_write_sync 也跳过。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.sandbox_mode
+    settings.sandbox_mode = "off"
+    try:
+        sandbox.check_read_sync("t1", "d:/secrets/passwords.txt")
+        sandbox.check_write_sync("t1", "d:/secrets/out.txt")
+    finally:
+        settings.sandbox_mode = original
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_manual_sync_hint(sandbox: SessionSandbox) -> None:
+    """sandbox_mode=manual 时同步版拒绝返回人工执行提示。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.sandbox_mode
+    settings.sandbox_mode = "manual"
+    try:
+        with pytest.raises(PathNotAuthorized) as exc_info:
+            sandbox.check_read_sync("t1", "d:/secrets/passwords.txt")
+        assert "人工执行" in str(exc_info.value)
+        with pytest.raises(PathNotAuthorized) as exc_info:
+            sandbox.check_write_sync("t1", "d:/secrets/out.txt")
+        assert "人工执行" in str(exc_info.value)
+    finally:
+        settings.sandbox_mode = original
+
+
+@pytest.mark.asyncio
+async def test_sandbox_mode_off_still_rejects_critical(sandbox: SessionSandbox) -> None:
+    """sandbox_mode=off 仍然拒绝系统关键目录。"""
+    import sys as _sys
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.sandbox_mode
+    settings.sandbox_mode = "off"
+    try:
+        critical = "C:/Windows/System32" if _sys.platform == "win32" else "/etc"
+        with pytest.raises(PathNotAuthorized):
+            await sandbox.check_read("t1", critical)
+    finally:
+        settings.sandbox_mode = original

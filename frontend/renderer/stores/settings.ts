@@ -3,8 +3,12 @@ import { devtools, persist, createJSONStorage } from "zustand/middleware";
 
 type Theme = "light" | "dark";
 
+/** 沙箱模式：全局生效，对所有会话适用。 */
+export type SandboxMode = "sandbox" | "off" | "manual";
+
 interface SettingsState {
   persistAuthorizedDirs: boolean;
+  sandboxMode: SandboxMode;
   milvusConfigured: boolean;
   maxUploadBytes: number;
   theme: Theme;
@@ -15,6 +19,7 @@ interface SettingsState {
    */
   pendingSettingsTab: string | null;
   setPersistAuthorizedDirs: (v: boolean) => void;
+  setSandboxMode: (v: SandboxMode) => void;
   setMilvusConfigured: (v: boolean) => void;
   setMaxUploadBytes: (v: number) => void;
   setTheme: (v: Theme) => void;
@@ -28,12 +33,14 @@ export const useSettingsStore = create<SettingsState>()(
     persist(
       (set) => ({
         persistAuthorizedDirs: true,
+        sandboxMode: "sandbox",
         milvusConfigured: false,
         maxUploadBytes: 52428800,
         theme: "dark",
         isSettingsOpen: false,
         pendingSettingsTab: null,
         setPersistAuthorizedDirs: (v) => set({ persistAuthorizedDirs: v }),
+        setSandboxMode: (v) => set({ sandboxMode: v }),
         setMilvusConfigured: (v) => set({ milvusConfigured: v }),
         setMaxUploadBytes: (v) => set({ maxUploadBytes: v }),
         setTheme: (v) => set({ theme: v }),
@@ -47,6 +54,7 @@ export const useSettingsStore = create<SettingsState>()(
         // isSettingsOpen 是 UI 临时状态，不应持久化（避免重启后弹窗自动打开）
         partialize: (s) => ({
           persistAuthorizedDirs: s.persistAuthorizedDirs,
+          sandboxMode: s.sandboxMode,
           milvusConfigured: s.milvusConfigured,
           maxUploadBytes: s.maxUploadBytes,
           theme: s.theme,

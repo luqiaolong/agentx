@@ -22,6 +22,7 @@ pub fn build_env(app: &AppHandle, port: u16) -> HashMap<String, String> {
     inject_credentials(app, &mut env);
     inject_llm_config(app, &mut env);
     inject_approval_config(app, &mut env);
+    inject_sandbox_config(app, &mut env);
     inject_knowledge_config(app, &mut env);
     inject_json_configs(app, &mut env);
     inject_model_extra(app, &mut env);
@@ -94,6 +95,12 @@ fn inject_approval_config(app: &AppHandle, env: &mut HashMap<String, String>) {
         "AGENTX_MAX_UPLOAD_BYTES".into(),
         approval.max_upload_bytes.to_string(),
     );
+}
+
+/// 注入沙箱模式配置（sandboxMode）。
+fn inject_sandbox_config(app: &AppHandle, env: &mut HashMap<String, String>) {
+    let mode = store::get_sandbox_mode(app);
+    env.insert("AGENTX_SANDBOX_MODE".into(), mode);
 }
 
 /// 注入知识库配置（Milvus 连接参数 + embeddingUrl）。

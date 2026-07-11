@@ -46,6 +46,8 @@ def register_config_reload_routes(app: FastAPI) -> None:
             env_overrides["AGENTX_APPROVAL_MAX_WAIT"] = str(req.approval_max_wait)
         if req.max_upload_bytes is not None:
             env_overrides["AGENTX_MAX_UPLOAD_BYTES"] = str(req.max_upload_bytes)
+        if req.sandbox_mode is not None:
+            env_overrides["AGENTX_SANDBOX_MODE"] = req.sandbox_mode
         if req.default_system_prompt is not None:
             env_overrides["AGENTX_DEFAULT_SYSTEM_PROMPT"] = req.default_system_prompt
         if req.subagents_config is not None:

@@ -28,6 +28,7 @@ vi.hoisted(() => {
 beforeEach(() => {
   useSettingsStore.setState({
     persistAuthorizedDirs: true,
+    sandboxMode: "sandbox",
     milvusConfigured: false,
     maxUploadBytes: 52428800,
     theme: "dark",
@@ -62,6 +63,16 @@ describe("settings store", () => {
   it("setPersistAuthorizedDirs", () => {
     useSettingsStore.getState().setPersistAuthorizedDirs(false);
     expect(useSettingsStore.getState().persistAuthorizedDirs).toBe(false);
+  });
+
+  it("setSandboxMode 切换沙箱模式", () => {
+    expect(useSettingsStore.getState().sandboxMode).toBe("sandbox");
+    useSettingsStore.getState().setSandboxMode("off");
+    expect(useSettingsStore.getState().sandboxMode).toBe("off");
+    useSettingsStore.getState().setSandboxMode("manual");
+    expect(useSettingsStore.getState().sandboxMode).toBe("manual");
+    useSettingsStore.getState().setSandboxMode("sandbox");
+    expect(useSettingsStore.getState().sandboxMode).toBe("sandbox");
   });
 
   it("setSettingsOpen 切换弹窗", () => {

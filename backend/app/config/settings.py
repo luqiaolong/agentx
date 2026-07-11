@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -157,6 +157,11 @@ class Settings(BaseSettings):
     # ---- 沙箱 ----
     # 跨会话保留授权目录开关（默认开启：/reset 写 checkpoint 保留，删除会话才 clear）
     persist_authorized_dirs: bool = True
+    # 沙箱模式（全局，对所有会话生效）：
+    # - sandbox：沙箱中运行，路径校验强制（默认）
+    # - off：沙箱外运行，跳过所有路径校验
+    # - manual：沙箱拒绝后人工执行，拒绝时返回提示引导 agent 建议用户手动执行
+    sandbox_mode: Literal["sandbox", "off", "manual"] = "sandbox"
 
     # ---- 子代理与工具配置（T1：从 electron-store 注入 env，重启生效）----
     # AGENTX_SUBAGENTS_CONFIG: JSON 字符串，如 {"code":{"enabled":false,"temperature":0.5,...}}

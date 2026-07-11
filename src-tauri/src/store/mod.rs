@@ -285,6 +285,16 @@ pub fn set_dev_mode(app: &AppHandle, v: bool) {
     set_value(app, "devMode", Value::Bool(v));
 }
 
+/// 读取沙箱模式（默认 "sandbox"）。
+pub fn get_sandbox_mode(app: &AppHandle) -> String {
+    get_string(app, "sandbox.mode", "sandbox")
+}
+
+/// 写入沙箱模式。
+pub fn set_sandbox_mode(app: &AppHandle, mode: &str) {
+    set_value(app, "sandbox.mode", Value::String(mode.to_string()));
+}
+
 // =============================================================================
 // 配置 setter（对应 store.ts 的 setXxx 函数）
 // =============================================================================

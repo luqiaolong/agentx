@@ -244,6 +244,10 @@ pub async fn app_reload_backend_config(app: AppHandle) -> Result<Value, String> 
         "max_upload_bytes".into(),
         Value::from(approval.max_upload_bytes),
     );
+    payload.insert(
+        "sandbox_mode".into(),
+        Value::String(store::get_sandbox_mode(&app)),
+    );
     if !system_prompt.is_empty() {
         payload.insert("default_system_prompt".into(), Value::String(system_prompt));
     }

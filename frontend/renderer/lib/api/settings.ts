@@ -129,6 +129,16 @@ export function removeCustomSubagent(key: string): Promise<{ ok: boolean; key: s
   return invoke("settings_remove_custom_subagent", { key });
 }
 
+// ---- Sandbox ----
+
+export function getSandboxConfig(): Promise<{ sandboxMode: string }> {
+  return invoke<{ sandboxMode: string }>("settings_get_sandbox_config");
+}
+
+export function setSandboxConfig(sandboxMode: string): Promise<void> {
+  return invoke("settings_set_sandbox_config", { sandboxMode });
+}
+
 // ---- Tools / Profile ----
 
 export function getToolsConfig(): Promise<ToolsConfig> {

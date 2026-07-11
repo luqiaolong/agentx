@@ -54,7 +54,7 @@ const TABS: TabDef[] = [
   { id: "tools", label: "工具", desc: "工具启用与禁用", Icon: Wrench },
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
-  { id: "sandbox", label: "沙箱目录", desc: "持久化授权目录", Icon: FolderLock },
+  { id: "sandbox", label: "沙箱", desc: "沙箱模式与持久化授权目录", Icon: FolderLock },
 ];
 
 const PANEL_ID = "settings-tabpanel";

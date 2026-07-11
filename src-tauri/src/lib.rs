@@ -78,6 +78,8 @@ pub fn run() {
             commands::settings::settings_set_system_prompt,
             commands::settings::settings_get_approval_config,
             commands::settings::settings_set_approval_config,
+            commands::settings::settings_get_sandbox_config,
+            commands::settings::settings_set_sandbox_config,
             commands::settings::settings_get_knowledge_config,
             commands::settings::settings_set_knowledge_config,
             commands::settings::settings_get_subagents_config,

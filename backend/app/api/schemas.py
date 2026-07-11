@@ -169,6 +169,8 @@ class ConfigReloadRequest(BaseModel):
     # 审批
     approval_max_wait: float | None = None
     max_upload_bytes: int | None = None
+    # 沙箱模式（全局）
+    sandbox_mode: Literal["sandbox", "off", "manual"] | None = None
     # 系统提示词
     default_system_prompt: str | None = None
     # 子代理 + 工具 + 用户画像

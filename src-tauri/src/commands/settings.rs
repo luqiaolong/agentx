@@ -129,6 +129,27 @@ pub fn settings_set_approval_config(app: AppHandle, cfg: Value) -> Result<OkResu
 }
 
 // =============================================================================
+// 沙箱配置（2 个）
+// =============================================================================
+
+/// `settings:getSandboxConfig` → 读取沙箱模式。
+#[tauri::command]
+pub fn settings_get_sandbox_config(app: AppHandle) -> serde_json::Value {
+    serde_json::json!({ "sandboxMode": store::get_sandbox_mode(&app) })
+}
+
+/// `settings:setSandboxConfig` → 写入沙箱模式。
+#[tauri::command]
+pub fn settings_set_sandbox_config(app: AppHandle, sandbox_mode: String) -> Result<OkResult, String> {
+    let mode = sandbox_mode.as_str();
+    if mode != "sandbox" && mode != "off" && mode != "manual" {
+        return Err(format!("invalid sandbox_mode: {}", mode));
+    }
+    store::set_sandbox_mode(&app, mode);
+    Ok(OkResult::ok())
+}
+
+// =============================================================================
 // 知识库配置（2 个）
 // =============================================================================
 

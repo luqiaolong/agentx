@@ -79,6 +79,32 @@ def _unauthorized_write_hint(path: str | Path, resolved: Path) -> str:
     )
 
 
+def _manual_read_hint(path: str | Path) -> str:
+    """manual 模式：沙箱拒绝后引导 agent 建议用户手动执行。"""
+    return (
+        f"沙箱模式为「人工执行」，已拒绝读取路径 {path}。\n"
+        f"请向用户说明需要读取的文件路径，由用户手动提供文件内容或授权该目录。"
+    )
+
+
+def _manual_write_hint(path: str | Path) -> str:
+    """manual 模式：沙箱拒绝后引导 agent 建议用户手动执行。"""
+    return (
+        f"沙箱模式为「人工执行」，已拒绝写入路径 {path}。\n"
+        f"请向用户说明需要写入的文件路径与内容，由用户手动执行写入或授权该目录。"
+    )
+
+
+def _is_sandbox_off() -> bool:
+    """全局沙箱模式是否为 off（跳过所有路径校验）。"""
+    return get_settings().sandbox_mode == "off"
+
+
+def _is_sandbox_manual() -> bool:
+    """全局沙箱模式是否为 manual（拒绝后人工执行）。"""
+    return get_settings().sandbox_mode == "manual"
+
+
 class SessionSandbox:
     """会话级沙箱授权目录管理。按 thread_id 隔离，async + Lock 并发安全。
 
@@ -198,6 +224,8 @@ class SessionSandbox:
         if is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
+        if _is_sandbox_off():
+            return
         async with self._lock:
             if thread_id in self._full_trust_threads:
                 return
@@ -220,6 +248,8 @@ class SessionSandbox:
                     if is_under(resolved, auth_path):
                         return
         self._deny(thread_id, path, "deny_read")
+        if _is_sandbox_manual():
+            raise PathNotAuthorized(_manual_read_hint(path))
         raise PathNotAuthorized(
             _unauthorized_read_hint(path, resolved)
         )
@@ -242,6 +272,8 @@ class SessionSandbox:
         if is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
+        if _is_sandbox_off():
+            return
         matched = False  # 任何匹配（只读或可写），用于错误消息区分
         async with self._lock:
             if thread_id in self._full_trust_threads:
@@ -274,6 +306,8 @@ class SessionSandbox:
                         if writable:
                             return
         self._deny(thread_id, path, "deny_write")
+        if _is_sandbox_manual():
+            raise PathNotAuthorized(_manual_write_hint(path))
         if matched:
             raise PathNotAuthorized(
                 f"路径 {path} 仅授权读取；写入请改用 data/workspace 或在授权时勾选允许写入"
@@ -302,6 +336,8 @@ class SessionSandbox:
         if is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
+        if _is_sandbox_off():
+            return
         if thread_id in self._full_trust_threads:
             return
         for whitelist_path in DEFAULT_WHITELIST:
@@ -323,6 +359,8 @@ class SessionSandbox:
                 if is_under(resolved, auth_path):
                     return
         self._deny(thread_id, path, "deny_read")
+        if _is_sandbox_manual():
+            raise PathNotAuthorized(_manual_read_hint(path))
         raise PathNotAuthorized(
             _unauthorized_read_hint(path, resolved)
         )
@@ -345,6 +383,8 @@ class SessionSandbox:
         if is_critical(resolved):
             self._deny(thread_id, path, "deny_critical")
             raise PathNotAuthorized(f"路径 {path} 是系统关键目录，不可访问")
+        if _is_sandbox_off():
+            return
         matched = False  # 任何匹配（只读或可写），用于错误消息区分
         if thread_id in self._full_trust_threads:
             return
@@ -376,6 +416,8 @@ class SessionSandbox:
                     if writable:
                         return
         self._deny(thread_id, path, "deny_write")
+        if _is_sandbox_manual():
+            raise PathNotAuthorized(_manual_write_hint(path))
         if matched:
             raise PathNotAuthorized(
                 f"路径 {path} 仅授权读取；写入请改用 data/workspace 或在授权时勾选允许写入"
@@ -535,6 +577,8 @@ class SessionSandbox:
             return False
         if is_critical(resolved):
             return False
+        if _is_sandbox_off():
+            return True
         async with self._lock:
             if thread_id in self._full_trust_threads:
                 return True
