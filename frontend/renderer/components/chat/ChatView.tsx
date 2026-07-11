@@ -603,7 +603,8 @@ export function ChatView() {
             parentRef={scrollContainerRef}
           />
         )}
-        <div ref={bottomRef} />
+        {/* 底部留白：最后一条消息与输入区之间保持距离，避免贴底 */}
+        <div ref={bottomRef} className="pb-24" />
 
         {/* 右侧分段导航 + 一键回到底部 */}
         <ChatNavigation
