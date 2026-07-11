@@ -1,7 +1,7 @@
 //! AgentX Tauri 主进程入口
 //!
 //! 注册 10 个官方插件 + 日志，在 `setup()` 中启动 Python 后端，
-//! 注册全部 45 个 Tauri 命令（settings/system/app）。
+//! 注册全部 46 个 Tauri 命令（settings/system/app）。
 
 pub mod backend;
 pub mod commands;
@@ -92,6 +92,8 @@ pub fn run() {
             commands::settings::settings_set_tools_config,
             commands::settings::settings_get_profile_auto_extract,
             commands::settings::settings_set_profile_auto_extract,
+            commands::settings::settings_get_dream_enabled,
+            commands::settings::settings_set_dream_enabled,
             commands::settings::settings_get_mcp_servers_config,
             commands::settings::settings_set_mcp_servers_config,
             commands::settings::settings_get_model_entries,
@@ -104,6 +106,8 @@ pub fn run() {
             commands::dialog::dialog_open_folder,
             commands::dialog::dialog_save_file,
             commands::dialog::dialog_save_dropped_file,
+            // === Analysis 命令（1 个）===
+            commands::analysis::analysis_launch_powershell,
             // === Shell 命令（3 个）===
             commands::shell::shell_reveal_in_folder,
             commands::shell::shell_open_in_editor,

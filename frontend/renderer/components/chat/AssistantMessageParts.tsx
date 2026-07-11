@@ -508,7 +508,6 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
               <TraceAnalysisButtons
                 runId={message.traceId}
                 isStreaming={isStreamingLast}
-                messageId={message.id}
               />
             </div>
             <MessageStats message={message} isStreamingLast={isStreamingLast} />
