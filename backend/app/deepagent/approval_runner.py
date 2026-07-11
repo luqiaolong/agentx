@@ -18,7 +18,6 @@ from langgraph.types import Command
 from app.security.approval import (
     is_aborted,
     is_paused,
-    wait_for_resume,
 )
 from app.security.approval.flow import (
     _APPROVAL_POLL_INTERVAL,
@@ -61,12 +60,16 @@ def _make_hitl_resume_decisions(pending_calls: list[dict], decision_type: str = 
 
 
 async def _stream_default(
-    agent: Any, inputs: Any, config: dict, source: str = "deep"
+    agent: Any, inputs: Any, config: dict, source: str = "deep", **kwargs: Any
 ) -> AsyncIterator[dict[str, str]]:
-    """默认 stream_fn：委托到 ``app.deepagent.streaming._stream_agent_events``。"""
+    """默认 stream_fn：委托到 ``app.deepagent.streaming._stream_agent_events``。
+
+    ``**kwargs`` 透传 ``seen_signatures`` 等跨 resume 去重参数，避免
+    ``_stream`` 包装器因签名不匹配触发 TypeError 降级，导致去重集合每次重建为空。
+    """
     from app.deepagent.streaming import _stream_agent_events
 
-    async for sse in _stream_agent_events(agent, inputs, config, source=source):
+    async for sse in _stream_agent_events(agent, inputs, config, source=source, **kwargs):
         yield sse
 
 
@@ -173,11 +176,17 @@ async def run_agent_with_approval(
     """
     from app.sandbox import get_sandbox
     from app.observability.trace import bind_trace, current_trace_id
+    from app.deepagent.context import current_parent_thread_id
 
     # 显式绑定 trace_id：LangGraph 内部节点/子协程不会自动继承外层 ContextVar
     _trace_id = current_trace_id() or ""
     if _trace_id:
         bind_trace(_trace_id)  # 设置当前协程的 ContextVar
+
+    # 设置 parent_thread_id contextvar，供 AuthorizedLocalShellBackend._check_auth
+    # 读取（Team 子代理通过 AuthorizedLocalShellBackend 执行 fs 操作时继承父线程授权）。
+    # 与 bind_trace 同样在入口处设置；每次调用都会覆盖上一次的值。
+    current_parent_thread_id.set(parent_thread_id)
 
     # 跨 stream 调用共享的"已 yield 消息签名"集合（避免 astream resume
     # 时重发历史消息被重复 yield，root cause: trace=64851677fced422c）。
@@ -187,16 +196,21 @@ async def run_agent_with_approval(
     _base_stream = stream_fn or _stream_default
 
     async def _stream(agent: Any, inputs: Any, config: dict, source: str) -> AsyncIterator[dict[str, str]]:
-        """包装原 stream_fn 注入共享 seen_signatures。"""
+        """包装原 stream_fn 注入共享 seen_signatures。
+
+        TypeError 仅在函数调用阶段捕获：async generator function 被传入不支持的
+        kwarg 时会在调用时（而非迭代时）抛 TypeError。若把整个 ``async for``
+        包进 try，迭代期间的 TypeError 会被误捕获并重新迭代，导致重复事件。
+        """
         try:
-            async for sse in _base_stream(
+            gen = _base_stream(
                 agent, inputs, config, source, seen_signatures=_seen_signatures
-            ):
-                yield sse
+            )
         except TypeError:
             # 自定义 stream_fn（测试桩）不支持 seen_signatures kwarg，降级调用
-            async for sse in _base_stream(agent, inputs, config, source):
-                yield sse
+            gen = _base_stream(agent, inputs, config, source)
+        async for sse in gen:
+            yield sse
 
     _is_int = is_interrupted_fn or _is_interrupted
     _get_calls = get_pending_calls_fn or _get_pending_tool_calls
@@ -251,6 +265,21 @@ async def run_agent_with_approval(
         logger.exception("agent initial stream failed", thread_id=thread_id, source=source)
         await _inject_msgs(agent, config, f"执行失败: {exc}")
         yield await _forward(make_error_event( f"执行失败: {exc}"))
+        # 消费可能残留的 HITL interrupt，避免下次调用 stuck
+        try:
+            if await _is_int(agent, config):
+                pending = await _get_calls(agent, config)
+                if pending:
+                    async for _ in agent.astream(
+                        _make_hitl_resume_decisions(
+                            pending, decision_type="reject", message="执行失败"
+                        ),
+                        config=config,
+                        stream_mode="values",
+                    ):
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
         return
     # 初始化已 yield 基线：取初始 stream 后的 state.messages 数量。
     # 后续 stream 完成时刷新；重复检测用此判断"是否有新消息生成"。
@@ -267,6 +296,21 @@ async def run_agent_with_approval(
         # 恢复由前端重新发送消息触发，LangGraph 从 checkpoint 自动恢复
         if await is_paused(thread_id):
             yield await _forward(make_sse_event("paused", {}))
+            # 消费可能残留的 HITL interrupt，避免下次调用 stuck
+            try:
+                if await _is_int(agent, config):
+                    pending = await _get_calls(agent, config)
+                    if pending:
+                        async for _ in agent.astream(
+                            _make_hitl_resume_decisions(
+                                pending, decision_type="reject", message="会话已暂停"
+                            ),
+                            config=config,
+                            stream_mode="values",
+                        ):
+                            pass
+            except Exception:  # noqa: BLE001
+                pass
             # 结束 SSE 流，不 wait_for_resume；恢复走重新发送消息路径
             return
 
@@ -510,10 +554,12 @@ async def run_agent_with_approval(
                     await _inject_call(agent, config, tc, "用户拒绝执行危险操作")
                 yield await _forward(make_error_event( "用户拒绝执行危险操作"))
                 # 消费 HITL interrupt，避免 stuck state
+                # 注意：必须用 pending_calls（全部待处理调用）而非仅 dangerous_calls，
+                # 否则非危险工具的 HITL interrupt 不会被消费，导致下次调用 stuck
                 try:
                     async for _ in agent.astream(
                         _make_hitl_resume_decisions(
-                            dangerous_calls, decision_type="reject", message="用户拒绝执行危险操作"
+                            pending_calls, decision_type="reject", message="用户拒绝执行危险操作"
                         ),
                         config=config,
                         stream_mode="values",
@@ -595,6 +641,22 @@ async def run_agent_with_approval(
             logger.exception("agent resume failed", thread_id=thread_id)
             await _inject_msgs(agent, config, f"恢复失败: {exc}")
             yield await _forward(make_error_event( f"恢复失败: {exc}"))
+            # 消费残留 HITL interrupt，避免下次调用 stuck
+            # （仿照 full_trust 模式异常处理，pending_calls 在此作用域可用）
+            try:
+                if await _is_int(agent, config):
+                    async for _ in agent.astream(
+                        _make_hitl_resume_decisions(
+                            pending_calls,
+                            decision_type="reject",
+                            message="执行异常",
+                        ),
+                        config=config,
+                        stream_mode="values",
+                    ):
+                        pass
+            except Exception:  # noqa: BLE001
+                pass
             return
 
         logger.info(

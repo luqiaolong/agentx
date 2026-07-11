@@ -11,7 +11,7 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 
-from app.deepagent.context import current_thread_id
+from app.deepagent.context import current_parent_thread_id, current_thread_id
 from app.deepagent.safe_shell_backend import SafeLocalShellBackend
 from app.sandbox.path_guard import PathNotAuthorized
 from app.sandbox.session_sandbox import get_sandbox
@@ -28,17 +28,26 @@ class AuthorizedLocalShellBackend(SafeLocalShellBackend):
     """
 
     def _check_auth(self, path: str, write: bool) -> None:
-        """从 contextvar 取 thread_id，调 SessionSandbox 同步校验。
+        """从 contextvar 取 thread_id / parent_thread_id，调 SessionSandbox 同步校验。
+
+        ``parent_thread_id`` 不是 contextvar 的派生值，需由调用方
+        （``run_agent_with_approval``）在入口处显式设置，供 Team 子代理
+        继承父线程授权。
 
         Raises:
             PathNotAuthorized: 路径未通过 sandbox 授权校验。
         """
         thread_id = current_thread_id.get()
+        parent_thread_id = current_parent_thread_id.get()
         sandbox = get_sandbox()
         if write:
-            sandbox.check_write_sync(thread_id, path, base=str(self.cwd))
+            sandbox.check_write_sync(
+                thread_id, path, base=str(self.cwd), parent_thread_id=parent_thread_id
+            )
         else:
-            sandbox.check_read_sync(thread_id, path, base=str(self.cwd))
+            sandbox.check_read_sync(
+                thread_id, path, base=str(self.cwd), parent_thread_id=parent_thread_id
+            )
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         try:
