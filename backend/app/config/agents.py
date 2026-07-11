@@ -59,8 +59,9 @@ BUILTIN_TEAM_KEYS: frozenset[str] = frozenset({"coding"})
 class SupervisorSettings(BaseModel):
     """work 场景 Supervisor（全能 agent）配置。
 
-    Supervisor 基于 ``create_react_agent`` 构建，自带完整工具集 +
-    ``delegate_to_expert`` / ``delegate_to_subagent`` 委派工具。
+    Supervisor 基于 ``create_deep_agent`` 构建，自带完整工具集 +
+    ``delegate_to_expert`` 委派工具 + ``task`` 子代理委派工具
+    （由 ``SubAgentMiddleware`` 注入 rag/web/custom 子代理）。
     写操作走 ``interrupt_on`` 审批流。
 
     ``rubric`` 字段为可选自纠规则文本，透传到 ``build_work_supervisor`` →
@@ -80,8 +81,8 @@ class ExpertSettings(BaseModel):
     """场景绑定 Expert（专家 agent）配置。
 
     Expert 基于 ``build_deep_agent`` 构建，替换 system prompt 为领域专用。
-    每个 Expert 绑定唯一场景，可调用 rag/web 子代理（通过 ``delegate_to_subagent``）。
-    Expert 不可委派其他 Expert，也不可触发 AgentTeam。
+    每个 Expert 绑定唯一场景，可调用 rag/web 子代理（通过 ``task`` 工具，
+    由 ``SubAgentMiddleware`` 注入）。Expert 不可委派其他 Expert，也不可触发 AgentTeam。
 
     ``rubric`` 字段为可选自纠规则文本，透传到 ``build_deep_agent`` →
     ``create_agent``，非空时挂载 RubricMiddleware 启用运行时自纠。

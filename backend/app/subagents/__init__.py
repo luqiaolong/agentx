@@ -2,7 +2,8 @@
 
 场景化架构（Supervisor + Expert）下，code 子代理已被 coding Expert 取代，
 路径 B（SINGLE_TOOL）分发逻辑已删除。本包仅保留 rag/web 子代理与自定义子代理工厂，
-供 Supervisor / Expert 通过 delegate_to_subagent 工具调用。
+供 Supervisor / Expert 通过 deepagents ``SubAgentMiddleware`` 的 ``task`` 工具调用
+（子代理声明由 ``_build_subagent_runnables`` / ``_build_subagents`` 构建）。
 
 实际实现收敛在 ``app.subagents.base.build_builtin_subagent`` /
 ``run_builtin_subagent`` 工厂函数；``rag_agent`` / ``web_agent`` 模块为薄 re-export，

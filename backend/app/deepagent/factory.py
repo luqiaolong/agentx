@@ -63,6 +63,23 @@ __all__ = [
 # 已注册 profile key 集合，保证 register_harness_profile 幂等
 _registered_keys: set[str] = set()
 
+# 自定义 task 工具描述：去除 deepagents 默认描述中的 general-purpose 引导文本，
+# 避免 LLM 幻觉调用不存在的 `general-purpose` 子代理类型。
+# {available_agents} 占位符由 deepagents SubAgentMiddleware 替换为实际可用的子代理列表。
+_CUSTOM_TASK_TOOL_DESCRIPTION = """Launch an ephemeral subagent to handle complex, multi-step independent tasks with isolated context windows.
+
+Available agent types and the tools they have access to:
+{available_agents}
+
+When using the task tool, you must specify a subagent_type parameter to select which agent type to use. The subagent_type MUST be one of the available agent types listed above — do NOT use "general-purpose" or any other name not in the list.
+
+## Usage notes:
+1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
+2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
+3. Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
+4. The agent's outputs should generally be trusted
+5. Clearly tell the agent whether you expect it to create content, perform analysis, or just do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent"""
+
 
 def _profile_key(excluded_tools: frozenset[str] | None) -> str:
     """根据 excluded_tools 生成唯一 profile key。
@@ -84,7 +101,10 @@ def ensure_harness_profile(
       （ls/read_file/write_file/edit_file/glob/grep 由 backend 注入）。
     - excluded_tools 非空 → per-call profile，排除指定工具
       （子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具）。
-    - general_purpose_subagent: 禁用默认 subagent（项目使用自研委派工具链）
+    - general_purpose_subagent: 禁用默认 subagent（项目使用 SubAgentMiddleware
+      的 task 工具注入 rag/web/custom 子代理）
+    - tool_description_overrides["task"]: 自定义 task 工具描述，去除 deepagents
+      默认描述中的 general-purpose 引导文本，避免 LLM 幻觉调用不存在的子代理类型
 
     重复注册同一 key 会被 deepagents 覆盖，此处用 ``_registered_keys`` 跳过
     二次注册，保持日志干净并避免潜在的 profile 竞争。
@@ -98,6 +118,7 @@ def ensure_harness_profile(
     profile = HarnessProfile(
         excluded_tools=frozenset(excluded_tools) if excluded_tools else frozenset(),
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+        tool_description_overrides={"task": _CUSTOM_TASK_TOOL_DESCRIPTION},
     )
     register_harness_profile(key, profile)
     _registered_keys.add(key)

@@ -7,7 +7,7 @@
 4. key 与内置冲突时被拒绝
 
 场景化架构下 ``select_subagent`` 路径 B 分发逻辑已删除，
-本测试不再覆盖子代理选择逻辑（由 Supervisor/Expert 的 delegate_to_subagent 工具接管）。
+本测试不再覆盖子代理选择逻辑（由 Supervisor/Expert 的 ``task`` 工具接管，子代理声明通过 ``SubAgentMiddleware`` 注入）。
 """
 
 from __future__ import annotations

@@ -84,11 +84,33 @@ def test_harness_profile_subagent_excludes_forbidden_tools() -> None:
 
 
 def test_harness_profile_disables_default_subagent() -> None:
-    """``HarnessProfile`` 禁用默认通用子代理，项目使用自研委派工具。"""
+    """``HarnessProfile`` 禁用默认通用子代理，项目使用 ``task`` 工具注入 rag/web/custom 子代理。"""
     with patch("app.deepagent.factory.register_harness_profile") as mock_register:
         ensure_harness_profile("openai")
         profile = mock_register.call_args[0][1]
         assert profile.general_purpose_subagent.enabled is False
+
+
+def test_harness_profile_overrides_task_tool_description() -> None:
+    """``HarnessProfile`` 注入自定义 task 工具描述，去除 general-purpose 引导文本。
+
+    deepagents 默认 ``TASK_TOOL_DESCRIPTION`` 包含大量 ``general-purpose`` 示例，
+    诱导 LLM 调用不存在的子代理类型。项目通过 ``tool_description_overrides["task"]``
+    覆盖描述，明确要求 subagent_type 必须是 Available agent types 列表中的实际名称。
+    """
+    with patch("app.deepagent.factory.register_harness_profile") as mock_register:
+        ensure_harness_profile(None)
+        profile = mock_register.call_args[0][1]
+        overrides = dict(profile.tool_description_overrides)
+        assert "task" in overrides
+        desc = overrides["task"]
+        # 必须包含 {available_agents} 占位符，供 SubAgentMiddleware 替换
+        assert "{available_agents}" in desc
+        # 明确禁止使用 general-purpose
+        assert "general-purpose" in desc
+        assert "do NOT use" in desc or "禁止" in desc or "must be one of" in desc
+        # 不应包含 deepagents 默认描述中的 general-purpose 引导示例
+        assert "When only the general-purpose agent is provided" not in desc
 
 
 def test_ensure_harness_profile_is_idempotent() -> None:
