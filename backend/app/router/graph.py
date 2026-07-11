@@ -9,11 +9,11 @@ DEEP_TASK / AgentTeam 四路径分类，而是根据前端传入的 ``agent_mode
 - ``agent_mode == "coding_team"`` → ``run_coding_team``（coding 场景级 AgentTeam）
 
 Router 保留的公共职责：
-1. ``@skill:<name>`` 标记解析（仅 work 场景注入 system prompt）
+1. ``/skill:<name>`` 标记解析（仅 work 场景注入 system prompt）
 2. workspace 授权同步
 3. 用户画像加载
 4. 从 checkpointer 加载历史 messages + 截断（仅用于 coding_team 子任务上下文 + 观测）
-5. 统一 yield ``done`` 事件
+5. 统一 yield ``done`` 事件（chat.py 侧需过滤避免双重 done，见 H3）
 
 work / coding 路径的 checkpointer 历史加载 + 新消息写回由 LangGraph astream 自动处理，
 Router 不再传 history 也不手动写回（避免双重写入）。
@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+from pathlib import Path
 
 from langchain_core.messages import trim_messages
 from typing import TYPE_CHECKING, Any, AsyncIterator
@@ -59,7 +60,7 @@ _VALID_AGENT_MODES: frozenset[str] = frozenset({"work", "coding", "coding_team"}
 _SKILL_CONTENT_MAX = 4000
 
 # /skill:<name> 标记正则
-_SKILL_TAG_RE = re.compile(r"/skill:(\S+)")
+_SKILL_TAG_RE = re.compile(r"/skill:([^\s/]+)")
 
 
 def _load_skill_def(name: str) -> SkillDef | None:
@@ -119,9 +120,8 @@ def _parse_skill_tag(message: str) -> tuple[str, str | None]:
             break  # 仅注入首个存在的技能
 
     # 移除所有 /skill:<name> 标记（含不存在的），剩余文本作为用户消息
+    # 注意：不合并内部空白，避免破坏代码块换行和缩进
     cleaned = _SKILL_TAG_RE.sub("", message).strip()
-    # 合并多余空白（移除标记后可能留下连续空格）
-    cleaned = " ".join(cleaned.split())
     return (cleaned, skill_content)
 
 
@@ -175,8 +175,17 @@ async def _run_router_inner(
                     workspace=effective_workspace,
                 )
         if effective_workspace:
-            _revoked = {str(p).strip().lower() for p in (revoked_paths or [])}
-            if effective_workspace.strip().lower() in _revoked:
+            _revoked: set[str] = set()
+            for p in (revoked_paths or []):
+                try:
+                    _revoked.add(str(Path(p).resolve()).strip().lower())
+                except Exception:  # noqa: BLE001
+                    _revoked.add(str(p).strip().lower())
+            try:
+                ws_normalized = str(Path(effective_workspace).resolve()).strip().lower()
+            except Exception:  # noqa: BLE001
+                ws_normalized = effective_workspace.strip().lower()
+            if ws_normalized in _revoked:
                 logger.info(
                     "router.workspace_skipped_revoked",
                     thread_id=thread_id,
@@ -202,7 +211,9 @@ async def _run_router_inner(
 
         # ---- 4. 读取用户画像 + 项目级 system_prompt ----
         try:
-            profile_prompt = build_profile_prompt(workspace_path=effective_workspace)
+            profile_prompt = await asyncio.to_thread(
+                build_profile_prompt, workspace_path=effective_workspace
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
@@ -210,7 +221,6 @@ async def _run_router_inner(
         project_system_prompt = ""
         if effective_workspace:
             try:
-                from pathlib import Path
                 project_config = await asyncio.to_thread(
                     load_project_config, Path(effective_workspace)
                 )
@@ -247,14 +257,36 @@ async def _run_router_inner(
                 history = []
 
         settings = get_settings()
-        max_msgs = settings.context_max_messages
-        if len(history) > max_msgs:
-            history = trim_messages(
-                history,
-                max_tokens=max_msgs,
-                token_counter=len,
-                strategy="last",
-            )
+        try:
+            # 第一轮：按消息条数截断
+            max_msgs = settings.context_max_messages
+            if len(history) > max_msgs:
+                history = trim_messages(
+                    history,
+                    max_tokens=max_msgs,
+                    token_counter=len,
+                    strategy="last",
+                    include_system=True,
+                )
+            # 第二轮：按 token 数截断（如果 chat_model 提供了 token 计数方法）
+            if chat_model and hasattr(chat_model, "get_num_tokens_from_messages"):
+                max_tokens = settings.context_max_tokens
+                try:
+                    token_count = chat_model.get_num_tokens_from_messages(history)
+                    if token_count > max_tokens:
+                        history = trim_messages(
+                            history,
+                            max_tokens=max_tokens,
+                            token_counter=chat_model.get_num_tokens_from_messages,
+                            strategy="last",
+                            include_system=True,
+                        )
+                except Exception:  # noqa: BLE001
+                    pass  # token 计数失败时回退到条数截断
+        except Exception:  # noqa: BLE001
+            logger.exception("trim_messages failed, fallback to simple slice")
+            max_msgs = settings.context_max_messages
+            history = history[-max_msgs:] if len(history) > max_msgs else history
 
         logger.info(
             "router dispatch",
@@ -266,6 +298,7 @@ async def _run_router_inner(
 
         # ---- 5.5 观测中心 ----
         run_id = current_trace_id() or ""
+        sink = None  # 预初始化，避免 start 块异常时 end 块引用未定义变量
         if run_id:
             history_preview = "\n".join(
                 f"{getattr(m, 'type', '?')}: {str(getattr(m, 'content', ''))[:200]}"
@@ -289,74 +322,86 @@ async def _run_router_inner(
                 logger.warning("observation record_prompt/start failed", error=str(exc))
 
         # ---- 6. 场景分发 ----
-        if agent_mode == "work":
-            async for sse in run_work_supervisor(
-                cleaned_message,
-                thread_id,
-                profile_prompt=profile_prompt,
-                permission_mode=permission_mode,
-                workspace_path=workspace_path,
-                chat_model=chat_model,
-                checkpointer=checkpointer,
-            ):
-                yield sse
-        elif agent_mode == "coding":
-            async for sse in run_coding_expert(
-                cleaned_message,
-                thread_id,
-                profile_prompt=profile_prompt,
-                permission_mode=permission_mode,
-                workspace_path=workspace_path,
-                chat_model=chat_model,
-                checkpointer=checkpointer,
-            ):
-                yield sse
-        else:  # coding_team
-            assistant_content_parts: list[str] = []
-
-            async def _collect_team_sse(
-                path_generator: AsyncIterator[dict[str, str]],
-            ) -> AsyncIterator[dict[str, str]]:
-                async for sse in path_generator:
-                    if sse.get("event") == "token":
-                        assistant_content_parts.append(str(sse.get("data", "")))
-                    yield sse
-
-            async for sse in _collect_team_sse(
-                run_coding_team(
+        try:
+            if agent_mode == "work":
+                async for sse in run_work_supervisor(
                     cleaned_message,
                     thread_id,
                     profile_prompt=profile_prompt,
-                    history=history,
                     permission_mode=permission_mode,
-                    workspace_path=workspace_path,
+                    workspace_path=effective_workspace,
                     chat_model=chat_model,
-                )
-            ):
-                yield sse
+                    checkpointer=checkpointer,
+                ):
+                    yield sse
+            elif agent_mode == "coding":
+                async for sse in run_coding_expert(
+                    cleaned_message,
+                    thread_id,
+                    profile_prompt=profile_prompt,
+                    permission_mode=permission_mode,
+                    workspace_path=effective_workspace,
+                    chat_model=chat_model,
+                    checkpointer=checkpointer,
+                ):
+                    yield sse
+            else:  # coding_team
+                # M11: token 事件已由 scheduler._route_event_for_node 过滤，
+                # 到达此处的 token 事件均来自 aggregator 的最终汇总输出，
+                # 因此直接收集即可，无需按子代理分组。
+                assistant_content_parts: list[str] = []
+                has_error = False
 
-            assistant_content = "".join(assistant_content_parts).strip()
-            if assistant_content and checkpointer is not None:
-                from langchain_core.messages import AIMessage, HumanMessage
-                new_messages = [
-                    HumanMessage(content=cleaned_message),
-                    AIMessage(content=assistant_content),
-                ]
-                await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
+                async def _collect_team_sse(
+                    path_generator: AsyncIterator[dict[str, str]],
+                ) -> AsyncIterator[dict[str, str]]:
+                    nonlocal has_error
+                    async for sse in path_generator:
+                        if sse.get("event") == "token":
+                            assistant_content_parts.append(str(sse.get("data", "")))
+                        elif sse.get("event") == "error":
+                            has_error = True
+                        yield sse
 
-        # ---- 7. 观测中心 end ----
-        if run_id:
-            try:
-                if checkpointer is not None and hasattr(checkpointer, "aget"):
-                    cp_config = {"configurable": {"thread_id": thread_id}}
-                    checkpoint = await checkpointer.aget(cp_config)
-                    if checkpoint and isinstance(checkpoint, dict):
-                        channel_values = checkpoint.get("channel_values", {}) or {}
-                        await sink.record_state_snapshot(run_id, "end", channel_values)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("observation end snapshot failed", error=str(exc))
+                async for sse in _collect_team_sse(
+                    run_coding_team(
+                        cleaned_message,
+                        thread_id,
+                        profile_prompt=profile_prompt,
+                        history=history,
+                        permission_mode=permission_mode,
+                        workspace_path=effective_workspace,
+                        chat_model=chat_model,
+                    )
+                ):
+                    yield sse
+
+                # M10: 仅在无 error 事件时写回 checkpointer，避免部分内容被持久化
+                assistant_content = "".join(assistant_content_parts).strip()
+                if assistant_content and checkpointer is not None and not has_error:
+                    from langchain_core.messages import AIMessage, HumanMessage
+                    new_messages = [
+                        HumanMessage(content=cleaned_message),
+                        AIMessage(content=assistant_content),
+                    ]
+                    await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
+        finally:
+            # ---- 7. 观测中心 end（best-effort，确保异常/断连时也能执行）----
+            if run_id and sink is not None:
+                try:
+                    if checkpointer is not None and hasattr(checkpointer, "aget"):
+                        cp_config = {"configurable": {"thread_id": thread_id}}
+                        checkpoint = await checkpointer.aget(cp_config)
+                        if checkpoint and isinstance(checkpoint, dict):
+                            channel_values = checkpoint.get("channel_values", {}) or {}
+                            await sink.record_state_snapshot(run_id, "end", channel_values)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("observation end snapshot failed", error=str(exc))
 
         # ---- 8. 统一 yield done ----
+        # 注意：chat.py 在 run_router 循环退出后会再 yield 一个带 token_count 的 done 事件，
+        # 这里保留 done 是为了 direct caller（如测试）的兼容性。
+        # H3 双重 done 问题需在 chat.py 侧过滤或测试更新后才能移除此 yield。
         yield make_sse_event("done", "{}")
 
 
@@ -425,6 +470,43 @@ async def _load_history_from_checkpointer(
     return list(messages) if messages else []
 
 
+# ============================================================
+# checkpointer 写入锁 + 编译图缓存（M14 + Low 5）
+# ============================================================
+
+_checkpoint_locks: dict[str, asyncio.Lock] = {}
+_checkpoint_locks_guard = asyncio.Lock()
+# 按 checkpointer id 缓存编译后的 passthrough graph（Low 5）
+_compiled_graph_cache: dict[int, Any] = {}
+
+
+async def _get_checkpoint_lock(thread_id: str) -> asyncio.Lock:
+    """获取 per-thread_id 的 asyncio.Lock，防止并发 read-modify-write 丢失更新。"""
+    async with _checkpoint_locks_guard:
+        if thread_id not in _checkpoint_locks:
+            _checkpoint_locks[thread_id] = asyncio.Lock()
+        return _checkpoint_locks[thread_id]
+
+
+async def _passthrough_node(state: Any) -> dict:  # noqa: ARG001
+    """passthrough 节点：不修改 state，仅用于触发 checkpointer 写入。"""
+    return {"messages": []}
+
+
+def _get_compiled_passthrough_graph(checkpointer: Any) -> Any:
+    """获取编译后的 passthrough StateGraph（按 checkpointer id 缓存，Low 5）。"""
+    from langgraph.graph import END, START, MessagesState, StateGraph
+
+    cache_key = id(checkpointer)
+    if cache_key not in _compiled_graph_cache:
+        graph = StateGraph(MessagesState)
+        graph.add_node("passthrough", _passthrough_node)
+        graph.add_edge(START, "passthrough")
+        graph.add_edge("passthrough", END)
+        _compiled_graph_cache[cache_key] = graph.compile(checkpointer=checkpointer)
+    return _compiled_graph_cache[cache_key]
+
+
 async def _append_messages_to_checkpointer(
     checkpointer: Any, thread_id: str, new_messages: list
 ) -> None:
@@ -436,29 +518,25 @@ async def _append_messages_to_checkpointer(
     通过 LangGraph 编译最小 ``StateGraph``（含 messages channel），调用
     ``graph.ainvoke`` 让 LangGraph 内部 schema 机制负责 channel_versions /
     checkpoint_id / checkpoint_ns 等字段的正确序列化。
+
+    M14: 使用 per-thread_id asyncio.Lock 保护 read-modify-write，防止并发丢失更新。
     """
     from langchain_core.runnables import RunnableConfig
-    from langgraph.graph import END, START, MessagesState, StateGraph
 
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
 
-    existing = await checkpointer.aget(config)
+    lock = await _get_checkpoint_lock(thread_id)
+    async with lock:
+        existing = await checkpointer.aget(config)
 
-    existing_msgs: list = []
-    if existing and isinstance(existing, dict):
-        channel_values = existing.get("channel_values", {}) or {}
-        existing_msgs = list(channel_values.get("messages", []) or [])
-    combined_msgs = [*existing_msgs, *new_messages]
+        existing_msgs: list = []
+        if existing and isinstance(existing, dict):
+            channel_values = existing.get("channel_values", {}) or {}
+            existing_msgs = list(channel_values.get("messages", []) or [])
+        combined_msgs = [*existing_msgs, *new_messages]
 
-    async def _passthrough(state: MessagesState) -> dict:  # noqa: ARG001
-        return {"messages": []}
-
-    graph = StateGraph(MessagesState)
-    graph.add_node("passthrough", _passthrough)
-    graph.add_edge(START, "passthrough")
-    graph.add_edge("passthrough", END)
-    compiled = graph.compile(checkpointer=checkpointer)
-    await compiled.ainvoke({"messages": combined_msgs}, config=config)
+        compiled = _get_compiled_passthrough_graph(checkpointer)
+        await compiled.ainvoke({"messages": combined_msgs}, config=config)
 
 
 

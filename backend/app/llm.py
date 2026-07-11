@@ -21,6 +21,28 @@ from typing import Any
 
 from app.config import get_settings
 
+# 模块级缓存：key 为 (model, temperature, streaming)，value 为 (model_instance, settings_sig)
+# settings_sig 用于检测配置变更（reload_settings 后签名不同 → 缓存失效）
+_chat_model_cache: dict[tuple[str, float, bool], tuple[Any, tuple]] = {}
+
+
+def _settings_sig(settings: Any) -> tuple:
+    """提取影响模型构造的 settings 字段签名（用于缓存失效检测）。"""
+    return (
+        settings.deepseek_api_key,
+        settings.kimi_api_key,
+        settings.glm_api_key,
+        settings.openai_api_key,
+        settings.openai_base_url,
+        settings.max_output_tokens,
+        settings.llm_timeout,
+    )
+
+
+def clear_chat_model_cache() -> None:
+    """清除 chat model 缓存（reload_settings 时调用）。"""
+    _chat_model_cache.clear()
+
 
 def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     """返回 LangChain ChatModel 实例。
@@ -34,6 +56,13 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     """
     settings = get_settings()
     model = settings.default_model
+    cache_key = (model, temperature, streaming)
+    current_sig = _settings_sig(settings)
+
+    # 缓存命中：仅当 key 和 settings 签名都匹配时才返回缓存实例
+    cached = _chat_model_cache.get(cache_key)
+    if cached is not None and cached[1] == current_sig:
+        return cached[0]
 
     # DeepSeek：OpenAI 兼容接口
     if model.startswith("deepseek"):
@@ -51,7 +80,9 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["max_tokens"] = settings.max_output_tokens
         if settings.llm_timeout is not None:
             kwargs["timeout"] = settings.llm_timeout
-        return ChatOpenAI(**kwargs)
+        instance = ChatOpenAI(**kwargs)
+        _chat_model_cache[cache_key] = (instance, current_sig)
+        return instance
 
     # Kimi Coding Plan（Moonshot 编程套餐，独立服务）：OpenAI 兼容接口
     # base_url / 密钥与通用 api.moonshot.cn/v1 完全分离；凭证为 Coding Plan 平台领取的 KIMI_API_CODE
@@ -70,7 +101,9 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["max_tokens"] = settings.max_output_tokens
         if settings.llm_timeout is not None:
             kwargs["timeout"] = settings.llm_timeout
-        return ChatOpenAI(**kwargs)
+        instance = ChatOpenAI(**kwargs)
+        _chat_model_cache[cache_key] = (instance, current_sig)
+        return instance
 
     # GLM Coding Plan（智谱编程套餐）：OpenAI 兼容接口，Coding Plan 专用端点
     if model.startswith("glm"):
@@ -88,7 +121,9 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["max_tokens"] = settings.max_output_tokens
         if settings.llm_timeout is not None:
             kwargs["timeout"] = settings.llm_timeout
-        return ChatOpenAI(**kwargs)
+        instance = ChatOpenAI(**kwargs)
+        _chat_model_cache[cache_key] = (instance, current_sig)
+        return instance
 
     # OpenAI 系列：gpt-* / o1-* / o3-*
     # 优先使用 settings.openai_base_url（允许自定义中转/代理），未设置时走官方 endpoint
@@ -108,7 +143,9 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["max_tokens"] = settings.max_output_tokens
         if settings.llm_timeout is not None:
             kwargs["timeout"] = settings.llm_timeout
-        return ChatOpenAI(**kwargs)
+        instance = ChatOpenAI(**kwargs)
+        _chat_model_cache[cache_key] = (instance, current_sig)
+        return instance
 
     # 兜底：若有 openai_api_key 则按 OpenAI 兼容处理（支持自定义 base_url）
     # 适用场景：MiniMax Token Plan / 其他 OpenAI 兼容中转服务
@@ -126,7 +163,9 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
             kwargs["max_tokens"] = settings.max_output_tokens
         if settings.llm_timeout is not None:
             kwargs["timeout"] = settings.llm_timeout
-        return ChatOpenAI(**kwargs)
+        instance = ChatOpenAI(**kwargs)
+        _chat_model_cache[cache_key] = (instance, current_sig)
+        return instance
 
     raise ValueError(
         f"无法为 model={model!r} 找到可用的 API key，"
@@ -134,4 +173,4 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     )
 
 
-__all__ = ["get_chat_model"]
+__all__ = ["get_chat_model", "clear_chat_model_cache"]
