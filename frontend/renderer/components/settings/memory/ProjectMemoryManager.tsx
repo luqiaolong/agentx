@@ -1,6 +1,6 @@
 import { Briefcase } from "lucide-react";
 import { useChatStore } from "@/stores/chat";
-import { useProfileCrud, profileListConfig, MemoryList } from "./MemoryList";
+import { profileListConfig, MemoryList, useProfileCrud } from "./MemoryList";
 
 const CONTENT_MAX = 2000;
 const CATEGORY = "project";
@@ -16,6 +16,7 @@ export function ProjectMemoryManager() {
   const workspacePath = sessionWorkspacePath ?? homeWorkspacePath ?? null;
 
   const crud = useProfileCrud(CATEGORY, CONTENT_MAX, undefined, workspacePath);
+
   return (
     <MemoryList
       crud={crud}
@@ -26,9 +27,9 @@ export function ProjectMemoryManager() {
           : "工作区记忆（未选择工作区）",
         {
           emptyText: workspacePath
-            ? "暂无工作区记忆，点击「新建工作区」添加工作区背景"
+            ? "暂无工作区记忆，点击「新建记忆」添加工作区背景"
             : "请先在侧边栏选择一个工作区目录，再管理工作区记忆",
-          newItemLabel: "新建工作区",
+          newItemLabel: "新建记忆",
           contentMax: CONTENT_MAX,
           contentRows: 6,
           contentPlaceholder: "工作区背景、技术栈、关键约定等上下文信息...",

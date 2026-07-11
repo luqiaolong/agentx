@@ -78,7 +78,7 @@ def setup_logger(level: str = "INFO") -> None:
             ),
             rotation="10 MB",
             retention=3,
-            enqueue=True,  # 异步写入，避免阻塞事件循环
+            enqueue=True,
             backtrace=True,
             diagnose=False,
         )

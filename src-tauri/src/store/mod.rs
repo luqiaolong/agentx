@@ -264,6 +264,16 @@ pub fn set_profile_auto_extract(app: &AppHandle, v: bool) {
     set_value(app, "profile.autoExtract", Value::Bool(v));
 }
 
+/// 读取 profile.dreamEnabled（默认 true）。
+pub fn get_dream_enabled(app: &AppHandle) -> bool {
+    get_bool(app, "profile.dreamEnabled", true)
+}
+
+/// 写入 profile.dreamEnabled。
+pub fn set_dream_enabled(app: &AppHandle, v: bool) {
+    set_value(app, "profile.dreamEnabled", Value::Bool(v));
+}
+
 /// 读取 devMode（默认 false）。开启时 Rust 改用 PowerShell 启动 Python 后端，
 /// 保留控制台窗口方便开发者实时看日志。
 pub fn get_dev_mode(app: &AppHandle) -> bool {

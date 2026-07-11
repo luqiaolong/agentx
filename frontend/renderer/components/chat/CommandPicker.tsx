@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
   Sparkles,
-  X,
-  Search,
   Loader2,
   Trash2,
   RefreshCw,
@@ -25,10 +23,15 @@ import {
 interface Props {
   /** 选择条目后回调：接收 entry，由 ChatComposer 负责把 entry.insert 写入输入框 */
   onSelect: (entry: CommandEntry) => void;
-  /** 关闭面板回调 */
+  /** 关闭面板回调（外部点击 / Esc 都会触发） */
   onClose: () => void;
   /** 当前工作区路径；非空时合并工作区技能 */
   workspacePath?: string | null;
+  /**
+   * 触发该面板的输入框 ref（如 ChatComposer 的 textarea）。
+   * 点击落在该元素上时**不**触发外部点击关闭，避免用户回到输入框继续过滤时被误关。
+   */
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
 /**
@@ -39,8 +42,12 @@ interface Props {
  * - 支持键盘上下选择 / Enter 确认 / Esc 关闭（监听在 ChatComposer）
  * - 通过 stores/commands 的 useCommandPickerStore 共享 query / activeIndex 状态，
  *   避免命令面板与输入框之间的双向 prop drilling
+ *
+ * UI 约束（M-近期）：
+ * - 顶部标题栏（命令与技能 / ↑↓ · Enter · Esc / ×）已移除
+ * - 点击面板外部（且不在触发输入框内）自动关闭面板
  */
-export function CommandPicker({ onSelect, onClose, workspacePath }: Props) {
+export function CommandPicker({ onSelect, onClose, workspacePath, triggerRef }: Props) {
   const skills = useSkillsStore((s) => s.skills);
   const loading = useSkillsStore((s) => s.loading);
   const error = useSkillsStore((s) => s.error);
@@ -50,7 +57,7 @@ export function CommandPicker({ onSelect, onClose, workspacePath }: Props) {
   const activeIndex = useCommandPickerStore((s) => s.activeIndex);
   const setActiveIndex = useCommandPickerStore((s) => s.setActiveIndex);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // 面板打开时：若技能未加载，或 workspacePath 与上次加载的不同，都重新拉取
@@ -75,39 +82,45 @@ export function CommandPicker({ onSelect, onClose, workspacePath }: Props) {
     }
   }, [activeIndex, entries.length, setActiveIndex]);
 
-  // 滚动到当前选中项
+  // 滚动到当前选中项（rootRef 是外层 div，querySelector 仍能命中内部 [data-cmd-index]）
   useEffect(() => {
-    const el = containerRef.current?.querySelector<HTMLElement>(
+    const el = rootRef.current?.querySelector<HTMLElement>(
       `[data-cmd-index="${activeIndex}"]`,
     );
     el?.scrollIntoView({ block: "nearest" });
   }, [activeIndex]);
 
+  // 点击面板外部时自动关闭面板。
+  // 触发输入框（triggerRef）作为面板的"触发源"，点击它不视为外部点击，
+  // 否则用户切回 textarea 继续打字过滤时会被误关。
+  //
+  // 与 usePopover 同构，但通过 props 注入 triggerRef，而不是把 trigger 包在同一个 rootRef 里。
+  useEffect(() => {
+    const onDocPointerDown = (e: MouseEvent) => {
+      const root = rootRef.current;
+      const trigger = triggerRef?.current;
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (root?.contains(target)) return; // 点击在面板内部
+      if (trigger?.contains(target)) return; // 点击回到触发输入框
+      onClose();
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+    };
+  }, [onClose, triggerRef]);
+
   const builtins = entries.filter((e) => e.kind === "builtin");
   const skillEntries = entries.filter((e) => e.kind === "skill");
 
   return (
-    <div className="absolute bottom-full left-0 z-30 mb-2 w-[28rem] overflow-hidden rounded-xl border border-default bg-surface shadow-pop">
-      {/* 头部 — 精简 */}
-      <div className="flex items-center gap-2 border-b border-default px-3 py-1.5">
-        <span className="flex-1 font-semibold text-primary-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
-          命令与技能
-        </span>
-        <span className="text-muted-c" style={{ fontSize: 'var(--fs-popover-hint)' }}>
-          ↑↓ · Enter · Esc
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="btn-ghost"
-          aria-label="关闭"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      {/* 内容 */}
-      <div className="max-h-[28rem] overflow-y-auto py-1" ref={containerRef}>
+    <div
+      ref={rootRef}
+      className="absolute bottom-full left-0 z-30 mb-2 w-[28rem] overflow-hidden rounded-xl border border-default bg-surface shadow-pop"
+    >
+      {/* 内容（原头部「命令与技能 / ↑↓ · Enter · Esc / ×」已移除，详见组件 JSDoc） */}
+      <div className="max-h-[28rem] overflow-y-auto py-1">
         {loading && (
           <div className="flex items-center gap-2 px-3 py-2 text-muted-c" style={{ fontSize: 'var(--fs-popover-item)' }}>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

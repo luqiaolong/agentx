@@ -151,6 +151,8 @@ class Settings(BaseSettings):
     # ---- 观测中心（agent-observation-store）----
     # observation TTL（天）：超过 TTL 的 run/event/tool_call 自动清理，feedback 永久保留
     observation_ttl_days: int = Field(default=30, ge=1)
+    # checkpointer TTL（天）：超过 TTL 未活动的 thread checkpoint 自动清理
+    checkpoint_ttl_days: int = Field(default=30, ge=1)
 
     # ---- 沙箱 ----
     # 跨会话保留授权目录开关（默认开启：/reset 写 checkpoint 保留，删除会话才 clear）
@@ -166,6 +168,8 @@ class Settings(BaseSettings):
     tools_config: dict[str, bool] = Field(default_factory=dict)
     # AGENTX_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
     profile_auto_extract: bool = True
+    # AGENTX_DREAM_ENABLED: 是否启用 Dream 记忆整理功能
+    dream_enabled: bool = True
     # AGENTX_MCP_SERVERS_CONFIG: JSON 字符串，MCP server 配置数组
     # 见 app.mcp.config.McpServerConfig，由 Electron Main 从 electron-store 注入
     mcp_servers_config: list[Any] = Field(default_factory=list)

@@ -141,9 +141,7 @@ async def _run_router_inner(
     chat_model: BaseChatModel | None,
 ) -> AsyncIterator[dict[str, str]]:
     """run_router 实际逻辑（被外层 trace bind 包裹）。"""
-    logger.info("router.inner.enter", thread_id=thread_id, agent_mode=agent_mode)
     with trace_span("router.run", thread_id=thread_id, message_len=len(message), agent_mode=agent_mode):
-        logger.info("router.inner.after_trace_span", thread_id=thread_id)
         # ---- 1. 校验 agent_mode ----
         if agent_mode not in _VALID_AGENT_MODES:
             logger.warning(
@@ -160,11 +158,9 @@ async def _run_router_inner(
 
         # ---- 2. 解析 /skill 标记 ----
         cleaned_message, skill_content = _parse_skill_tag(message)
-        logger.info("router.inner.after_skill_parse", thread_id=thread_id, cleaned_len=len(cleaned_message))
 
         # ---- 3. workspace 授权同步 ----
         effective_workspace = (workspace_path or "").strip() or None
-        logger.info("router.inner.workspace_check", thread_id=thread_id, workspace_path=workspace_path, effective=effective_workspace)
         if not effective_workspace:
             from app.sandbox import get_sandbox as _get_sandbox_fallback
             try:
@@ -199,7 +195,6 @@ async def _run_router_inner(
                 from app.sandbox import get_sandbox
                 sandbox = get_sandbox()
                 try:
-                    logger.info("router.inner.before_sandbox_authorize", thread_id=thread_id, workspace=effective_workspace)
                     await sandbox.authorize(thread_id, effective_workspace, writable=True, source="chip")
                     logger.info(
                         "router.workspace_authorized",
@@ -215,7 +210,6 @@ async def _run_router_inner(
                     )
 
         # ---- 4. 读取用户画像 + 项目级 system_prompt ----
-        logger.info("router.inner.before_profile_prompt", thread_id=thread_id)
         try:
             profile_prompt = await asyncio.to_thread(
                 build_profile_prompt, workspace_path=effective_workspace
@@ -223,16 +217,13 @@ async def _run_router_inner(
         except Exception as exc:  # noqa: BLE001
             logger.warning("build_profile_prompt failed", error=str(exc))
             profile_prompt = ""
-        logger.info("router.inner.after_profile_prompt", thread_id=thread_id, profile_len=len(profile_prompt))
 
         project_system_prompt = ""
         if effective_workspace:
             try:
-                logger.info("router.inner.before_load_project_config", thread_id=thread_id, workspace=effective_workspace)
                 project_config = await asyncio.to_thread(
                     load_project_config, Path(effective_workspace)
                 )
-                logger.info("router.inner.after_load_project_config", thread_id=thread_id, exists=project_config.exists)
                 if project_config.exists and project_config.system_prompt:
                     merged = merge_configs(get_settings(), project_config)
                     project_system_prompt = merged.default_system_prompt

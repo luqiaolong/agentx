@@ -214,6 +214,7 @@ pub async fn app_reload_backend_config(app: AppHandle) -> Result<Value, String> 
     let custom_subagents_config = store::get_custom_subagents(&app);
     let tools_config = store::get_tools_config(&app);
     let profile_auto_extract = store::get_profile_auto_extract(&app);
+    let dream_enabled = store::get_dream_enabled(&app);
     let mcp_servers_config = store::get_mcp_servers_config(&app);
     let openai_key = store::credentials::get_api_key(&app, "openai");
     let deepseek_key = store::credentials::get_api_key(&app, "deepseek");
@@ -265,6 +266,10 @@ pub async fn app_reload_backend_config(app: AppHandle) -> Result<Value, String> 
     payload.insert(
         "profile_auto_extract".into(),
         Value::Bool(profile_auto_extract),
+    );
+    payload.insert(
+        "dream_enabled".into(),
+        Value::Bool(dream_enabled),
     );
     payload.insert(
         "mcp_servers_config".into(),

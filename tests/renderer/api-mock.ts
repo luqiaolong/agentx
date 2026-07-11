@@ -76,6 +76,8 @@ const commandRoutes: Record<string, (args: Record<string, unknown>, api: AnyMock
   settings_set_tools_config: (a, api) => api.settings.setToolsConfig(a.cfg),
   settings_get_profile_auto_extract: (_a, api) => api.settings.getProfileAutoExtract(),
   settings_set_profile_auto_extract: (a, api) => api.settings.setProfileAutoExtract(a.value),
+  settings_get_dream_enabled: (_a, api) => api.settings.getDreamEnabled?.() ?? Promise.resolve(true),
+  settings_set_dream_enabled: (a, api) => api.settings.setDreamEnabled?.(a.value) ?? Promise.resolve(),
   settings_get_mcp_servers_config: (_a, api) => api.settings.getMcpServersConfig(),
   settings_set_mcp_servers_config: (a, api) => api.settings.setMcpServersConfig(a.servers),
   settings_get_model_entries: (_a, api) => api.settings.getModelEntries(),

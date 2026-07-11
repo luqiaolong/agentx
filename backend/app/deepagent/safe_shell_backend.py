@@ -229,8 +229,10 @@ class SafeLocalShellBackend(LocalShellBackend):
             )
 
         # 3. 元字符过滤（阻断 shell 注入：; & | ` $ < >）
-        if has_forbidden_args(command):
-            forbidden = get_forbidden_chars(command)
+        # execute 使用 shell=True，引号内字符对 shell 是字面值，因此使用引号感知模式，
+        # 避免 Python 字符串字面量中的 ; 等字符被误拦截。
+        if has_forbidden_args(command, respect_quotes=True):
+            forbidden = get_forbidden_chars(command, respect_quotes=True)
             return ExecuteResponse(
                 output=(
                     f"命令包含非法 shell 元字符: {command!r}\n"

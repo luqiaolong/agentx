@@ -123,6 +123,46 @@ def test_has_forbidden_args_blocks_newline(payload: str) -> None:
 
 
 # ============================================================
+# 3a. has_forbidden_args — 引号感知模式
+# ============================================================
+
+
+def test_has_forbidden_args_respecting_quotes_allows_python_semicolon() -> None:
+    """python -c 字符串字面量中的 ; 不应被拦截。"""
+    assert not has_forbidden_args('python -c "print(\'a;b;c\')"', respect_quotes=True)
+
+
+def test_has_forbidden_args_respecting_quotes_allows_python_redirects() -> None:
+    """python -c 字符串字面量中的 < > 不应被拦截。"""
+    assert not has_forbidden_args('python -c "print(\'<tag>\')"', respect_quotes=True)
+
+
+def test_has_forbidden_args_respecting_quotes_blocks_shell_separator() -> None:
+    """未加引号的 ; 仍应被拦截。"""
+    assert has_forbidden_args("echo a; echo b", respect_quotes=True)
+
+
+def test_has_forbidden_args_respecting_quotes_blocks_pipe() -> None:
+    """未加引号的 | 仍应被拦截。"""
+    assert has_forbidden_args("echo a | cat", respect_quotes=True)
+
+
+def test_has_forbidden_args_respecting_quotes_blocks_dollar_in_double_quotes() -> None:
+    """双引号内的 $ 仍可能被 shell 解释，继续拦截。"""
+    assert has_forbidden_args('echo "$(whoami)"', respect_quotes=True)
+
+
+def test_has_forbidden_args_respecting_quotes_allows_single_quote_block() -> None:
+    """单引号内全部字面化。"""
+    assert not has_forbidden_args("echo 'a;b|c&d'", respect_quotes=True)
+
+
+def test_has_forbidden_args_respecting_quotes_fallback_on_unbalanced() -> None:
+    """未闭合引号安全降级为严格模式。"""
+    assert has_forbidden_args('python -c "print(a;b)', respect_quotes=True)
+
+
+# ============================================================
 # 4. redact_args — write_file / edit_file
 # ============================================================
 

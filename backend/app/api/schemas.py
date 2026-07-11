@@ -177,6 +177,7 @@ class ConfigReloadRequest(BaseModel):
     custom_subagents_config: dict[str, Any] | None = None
     tools_config: dict[str, Any] | None = None
     profile_auto_extract: bool | None = None
+    dream_enabled: bool | None = None
     # MCP
     mcp_servers_config: list[Any] | None = None
 

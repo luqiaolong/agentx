@@ -331,17 +331,24 @@ const SessionItem = memo(function SessionItem({
         <span className="h-3.5 w-3 shrink-0" aria-hidden />
         <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
           {s.isRunning ? (
-            <span className="h-2 w-2 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" aria-hidden />
+            <span
+              className="h-2 w-2 animate-spin rounded-full border-2 border-t-transparent"
+              style={{ borderColor: 'var(--color-brand-500)', opacity: 0.7 }}
+              aria-hidden
+            />
           ) : s.hasNewResult ? (
             <span
               className="h-1.5 w-1.5 rounded-full"
-              style={{ backgroundColor: 'var(--color-brand-500)', opacity: 0.5 }}
+              style={{ backgroundColor: 'var(--color-brand-400)', opacity: 0.5 }}
               aria-hidden
             />
           ) : (
             <span
               className="h-1.5 w-1.5 rounded-full"
-              style={{ backgroundColor: active ? 'var(--color-brand-500)' : 'var(--text-muted)' }}
+              style={{
+                backgroundColor: active ? 'var(--color-brand-500)' : 'var(--color-brand-700)',
+                opacity: active ? 0.85 : 0.6,
+              }}
               aria-hidden
             />
           )}

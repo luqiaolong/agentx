@@ -128,6 +128,9 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
         stream_lock = await _get_stream_lock(req.thread_id)
         await stream_lock.acquire()
         try:
+            # 更新 thread 最后活跃时间（供 checkpointer TTL 清理使用）
+            from app.memory.checkpointer_view import touch_thread
+            await touch_thread(req.thread_id)
             # /reset：清空 checkpointer + 沙箱（当不持久化时）
             if req.message.startswith("/reset"):
                 await _clear_thread_state(req.thread_id)
@@ -158,7 +161,6 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 
             # FR-4.3/4.4/4.5: dual_trace 包裹 run_router，自动写 observation_run.start/end
             assistant_content_parts: list[str] = []
-            logger.info("chat.before_dual_trace", thread_id=req.thread_id)
             with dual_trace(
                 thread_id=req.thread_id,
                 agent_mode=effective_agent_mode,
@@ -168,7 +170,6 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 run_id=trace_id,
             ) as obs_ctx:
                 try:
-                    logger.info("chat.before_run_router", thread_id=req.thread_id)
                     async for event in run_router(
                         req.message,
                         req.thread_id,

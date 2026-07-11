@@ -534,6 +534,7 @@ export function ChatComposer({
               onSelect={handleEntrySelect}
               onClose={handleClosePicker}
               workspacePath={workspacePath}
+              triggerRef={textareaRef}
             />
           )}
 

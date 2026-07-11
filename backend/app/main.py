@@ -156,6 +156,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("observation sink init failed on startup: {}", exc)
 
+    # 3.5. Checkpointer TTL 清理：删除超过 TTL 未活动的 thread checkpoint
+    checkpoint_reaper_task = None
+    try:
+        from app.memory.checkpointer_view import cleanup_expired_checkpoints, start_checkpoint_reaper
+        deleted_cp = await cleanup_expired_checkpoints()
+        if deleted_cp > 0:
+            logger.info("checkpoint cleanup removed {} expired threads on startup", deleted_cp)
+        checkpoint_reaper_task = start_checkpoint_reaper(interval_hours=6.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("checkpoint cleanup init failed on startup: {}", exc)
+
     try:
         yield
     finally:
@@ -176,6 +187,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             observation_reaper_task.cancel()
             try:
                 await observation_reaper_task
+            except asyncio.CancelledError:
+                pass
+        if checkpoint_reaper_task is not None:
+            checkpoint_reaper_task.cancel()
+            try:
+                await checkpoint_reaper_task
             except asyncio.CancelledError:
                 pass
         if milvus._connected:  # noqa: SLF001 — 单例内部状态检查
@@ -273,7 +290,7 @@ class UTF8JSONBodyMiddleware:
                 return
         if not body:
             # 空 body：用包装后的 receive 透传（保持 consumed 语义）
-            await self.app(scope, _make_single_body_receive(b""), send)
+            await self.app(scope, _make_single_body_receive(b"", receive), send)
             return
         # 1. 优先 UTF-8
         try:
@@ -311,11 +328,16 @@ class UTF8JSONBodyMiddleware:
             # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
             new_body = text.encode("utf-8")
         # 用包装后的 receive 把转换后的 body 注入下游
-        await self.app(scope, _make_single_body_receive(new_body), send)
+        await self.app(scope, _make_single_body_receive(new_body, receive), send)
 
 
-def _make_single_body_receive(body: bytes):
-    """构造一个只返回一次 http.request 事件的 receive callable。"""
+def _make_single_body_receive(body: bytes, original_receive):
+    """构造一个返回 body 后委托给原始 receive 的 receive callable。
+
+    第一次调用返回 body（http.request），后续调用委托给 ``original_receive``，
+    确保 ``EventSourceResponse._listen_for_disconnect`` 等消费者能正确收到
+    ``http.disconnect`` 事件，避免 busy-loop 饿死事件循环。
+    """
     consumed = False
 
     async def wrapped_receive():
@@ -323,7 +345,7 @@ def _make_single_body_receive(body: bytes):
         if not consumed:
             consumed = True
             return {"type": "http.request", "body": body, "more_body": False}
-        return {"type": "http.request", "body": b"", "more_body": False}
+        return await original_receive()
 
     return wrapped_receive
 

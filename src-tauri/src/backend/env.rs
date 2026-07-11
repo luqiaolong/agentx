@@ -157,6 +157,11 @@ fn inject_json_configs(app: &AppHandle, env: &mut HashMap<String, String>) {
         "AGENTX_PROFILE_AUTO_EXTRACT".into(),
         auto_extract.to_string(),
     );
+    let dream_enabled = store::get_dream_enabled(app);
+    env.insert(
+        "AGENTX_DREAM_ENABLED".into(),
+        dream_enabled.to_string(),
+    );
 }
 
 /// 注入当前激活模型的 `maxOutputTokens`（正有限数才注入）。

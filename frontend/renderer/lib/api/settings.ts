@@ -147,6 +147,14 @@ export function setProfileAutoExtract(value: boolean): Promise<void> {
   return invoke("settings_set_profile_auto_extract", { value });
 }
 
+export function getDreamEnabled(): Promise<boolean> {
+  return invoke("settings_get_dream_enabled");
+}
+
+export function setDreamEnabled(value: boolean): Promise<void> {
+  return invoke("settings_set_dream_enabled", { value });
+}
+
 // ---- MCP ----
 
 export function getMcpServersConfig(): Promise<McpServerConfig[]> {

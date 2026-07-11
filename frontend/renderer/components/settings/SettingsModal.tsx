@@ -47,7 +47,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { id: "prompt", label: "系统提示词", desc: "agent 的全局系统提示", Icon: MessageSquare },
   { id: "models", label: "模型", desc: "LLM 服务商、API Key 与激活模型", Icon: Cpu },
-  { id: "memory", label: "记忆", desc: "会话状态、用户画像、偏好与工作区记忆", Icon: Brain },
+  { id: "memory", label: "记忆", desc: "会话状态、用户画像、用户偏好与工作区记忆", Icon: Brain },
   { id: "skills", label: "技能", desc: "data/skills/*.md 技能文件管理", Icon: FileText },
   { id: "mcp", label: "MCP", desc: "外部 MCP server 配置与连接", Icon: Plug },
   { id: "subagents", label: "子代理", desc: "code/rag/web 子代理配置", Icon: Bot },

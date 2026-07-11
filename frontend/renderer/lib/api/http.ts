@@ -396,4 +396,22 @@ export const memory = {
     });
     return (await r.json()) as { extracted: number };
   },
+  dream: async (
+    workspacePath?: string,
+  ): Promise<{ ok: boolean; promoted: number; compressed: number; removed: number; summary: string }> => {
+    const qs = workspacePath
+      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
+      : "";
+    const r = await fetch(`${API_BASE}/api/memory/dream${qs}`, {
+      method: "POST",
+    });
+    await assertOk(r);
+    return (await r.json()) as {
+      ok: boolean;
+      promoted: number;
+      compressed: number;
+      removed: number;
+      summary: string;
+    };
+  },
 };

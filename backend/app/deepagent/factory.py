@@ -123,11 +123,12 @@ def build_interrupt_config() -> dict[str, bool]:
 def resolve_memory_paths(workspace_path: str | None) -> list[str]:
     """解析 deepagents memory 路径列表。
 
-    返回 ``[.agentx/AGENTS.md] + sorted(.agentx/rules/*.md) + sorted(.agentx/memory/*.md)``。
+    返回 ``[.agentx/AGENTS.md] + sorted(.agentx/rules/*.md)``。
     若 workspace_path 为 None 或 .agentx 目录不存在，返回空列表。
 
-    ``.agentx/memory/*.md`` 为工作区记忆文件，由前端「设置 → 记忆 → 工作区记忆」管理，
-    被 DeepAgents 框架自动加载到 agent system prompt 中。
+    注意：``.agentx/memory/*.md`` 工作区记忆文件**不**通过此路径注入，
+    而是由 ``build_profile_prompt`` 统一合并（全局 + 工作区）后注入 system prompt，
+    避免双重注入导致 token 浪费。
     """
     if not workspace_path:
         return []
@@ -143,10 +144,6 @@ def resolve_memory_paths(workspace_path: str | None) -> list[str]:
     if rules_dir.exists():
         for rule_file in sorted(rules_dir.glob("*.md")):
             paths.append(str(rule_file))
-    memory_dir = agentx_dir / "memory"
-    if memory_dir.exists():
-        for mem_file in sorted(memory_dir.glob("*.md")):
-            paths.append(str(mem_file))
     return paths
 
 

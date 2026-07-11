@@ -12,14 +12,16 @@ Checkpointer 子模块与「编辑历史消息」功能使用。
 
 from __future__ import annotations
 
+import asyncio
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
-from app.config import DATA_DIR
+from app.config import DATA_DIR, get_settings
 from app.memory.checkpointer import _DB_FILENAME, _db_path
 from app.observability.logger import logger
 
@@ -288,10 +290,139 @@ async def rewind_thread(thread_id: str, keep_messages_count: int) -> dict[str, A
         raise
 
 
+async def _ensure_thread_meta_table(conn: aiosqlite.Connection) -> None:
+    """确保 thread_meta 表存在。"""
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS thread_meta (
+            thread_id       TEXT PRIMARY KEY,
+            last_active_at  TEXT NOT NULL
+        )
+        """
+    )
+    await conn.commit()
+
+
+async def touch_thread(thread_id: str) -> None:
+    """更新 thread 的最后活跃时间（在 chat 请求入口调用）。
+
+    使用 ``INSERT OR REPLACE`` upsert；失败不阻塞主流程。
+    """
+    try:
+        _validate_thread_id(thread_id)
+    except ThreadIdInvalid:
+        return
+    db_path = _get_db_path()
+    if not db_path.exists():
+        return
+    try:
+        async with aiosqlite.connect(str(db_path)) as conn:
+            await _ensure_thread_meta_table(conn)
+            now = datetime.now(tz=timezone.utc).isoformat()
+            await conn.execute(
+                "INSERT OR REPLACE INTO thread_meta (thread_id, last_active_at) VALUES (?, ?)",
+                (thread_id, now),
+            )
+            await conn.commit()
+    except sqlite3.Error as exc:
+        logger.warning("touch_thread failed", thread_id=thread_id, error=str(exc))
+
+
+async def cleanup_expired_checkpoints(ttl_days: int | None = None) -> int:
+    """清理超过 TTL 未活动的 thread checkpoint。
+
+    - 从 ``thread_meta`` 表获取每个 thread 的 ``last_active_at``
+    - 未在 ``thread_meta`` 中的旧 thread：opportunistic 补录（grace period，本轮不删）
+    - ``last_active_at`` 早于 cutoff 的 thread：删除其 checkpoints + writes + meta
+
+    Args:
+        ttl_days: TTL 天数；None 时从 ``settings.checkpoint_ttl_days`` 读取。
+
+    Returns:
+        实际删除的 thread 数量。
+    """
+    days = ttl_days
+    if days is None:
+        days = getattr(get_settings(), "checkpoint_ttl_days", 30)
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).isoformat()
+
+    db_path = _get_db_path()
+    if not db_path.exists():
+        return 0
+    try:
+        async with aiosqlite.connect(str(db_path)) as conn:
+            await _ensure_thread_meta_table(conn)
+
+            # 1. 对未在 meta 中的旧 thread 补录（grace period，本轮不删）
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO thread_meta (thread_id, last_active_at)
+                SELECT DISTINCT thread_id, ? FROM checkpoints WHERE checkpoint_ns = ?
+                """,
+                (datetime.now(tz=timezone.utc).isoformat(), _MAIN_NS),
+            )
+            await conn.commit()
+
+            # 2. 查询待删除的 thread_id 列表
+            cur = await conn.execute(
+                "SELECT thread_id FROM thread_meta WHERE last_active_at < ?",
+                (cutoff,),
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+            expired_ids = [r[0] for r in rows]
+            if not expired_ids:
+                return 0
+
+            # 3. 逐个删除（先 writes → checkpoints → meta）
+            deleted = 0
+            for tid in expired_ids:
+                try:
+                    await conn.execute(
+                        "DELETE FROM writes WHERE thread_id = ?", (tid,)
+                    )
+                    await conn.execute(
+                        "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?",
+                        (tid, _MAIN_NS),
+                    )
+                    await conn.execute(
+                        "DELETE FROM thread_meta WHERE thread_id = ?", (tid,)
+                    )
+                    deleted += 1
+                except sqlite3.Error as exc:
+                    logger.warning("cleanup_thread failed", thread_id=tid, error=str(exc))
+            await conn.commit()
+            logger.info("checkpoint cleanup removed {} expired threads", deleted)
+            return deleted
+    except sqlite3.Error as exc:
+        logger.warning("cleanup_expired_checkpoints failed", error=str(exc))
+        return 0
+
+
+def start_checkpoint_reaper(interval_hours: float = 6.0) -> asyncio.Task:
+    """启动后台周期清理任务（每 6h 执行一次 ``cleanup_expired_checkpoints``）。
+
+    lifespan 关闭时 cancel。
+    """
+
+    async def _reaper_loop() -> None:
+        while True:
+            await asyncio.sleep(interval_hours * 3600)
+            try:
+                await cleanup_expired_checkpoints()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("checkpoint reaper error: {}", exc)
+
+    return asyncio.create_task(_reaper_loop())
+
+
 __all__ = [
     "ThreadIdInvalid",
+    "cleanup_expired_checkpoints",
     "delete_thread",
     "get_db_size",
     "list_threads",
     "rewind_thread",
+    "start_checkpoint_reaper",
+    "touch_thread",
 ]

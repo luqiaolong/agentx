@@ -32,6 +32,9 @@ from app.observability.logger import logger
 # key 严格校验正则（与技能名一致）
 _KEY_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
+# content 最大字符数（工作区记忆比全局画像放宽到 2000）
+_CONTENT_MAX = 2000
+
 # 合法 category / source 取值
 _VALID_CATEGORIES = {"preference", "project", "fact", "custom"}
 _VALID_SOURCES = {"manual", "llm_extracted"}
@@ -87,6 +90,15 @@ def _validate_source(source: str) -> str:
     return source
 
 
+def _validate_content(content: str) -> str:
+    """校验 content 长度。"""
+    if not isinstance(content, str):
+        raise ValueError("content 必须为字符串")
+    if len(content) > _CONTENT_MAX:
+        raise ValueError(f"content 超过 {_CONTENT_MAX} 字符")
+    return content
+
+
 @dataclass
 class MemoryEntry:
     """单条工作区记忆条目。"""
@@ -96,9 +108,12 @@ class MemoryEntry:
     content: str
     source: str
     updated_at: str
+    created_at: str = ""
     title: str | None = None
     keywords: list[str] = field(default_factory=list)
     scenarios: list[str] = field(default_factory=list)
+    # scope 固定为 "workspace"（memory_store 只管工作区级），与 profile_store 对齐
+    scope: str = "workspace"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -107,9 +122,11 @@ class MemoryEntry:
             "content": self.content,
             "source": self.source,
             "updated_at": self.updated_at,
+            "created_at": self.created_at,
             "title": self.title,
             "keywords": list(self.keywords),
             "scenarios": list(self.scenarios),
+            "scope": self.scope,
         }
 
 
@@ -141,6 +158,8 @@ def _serialize_entry(entry: MemoryEntry) -> str:
         "source": entry.source,
         "updated_at": entry.updated_at,
     }
+    if entry.created_at:
+        frontmatter["created_at"] = entry.created_at
     if entry.title is not None:
         frontmatter["title"] = entry.title
     if entry.keywords:
@@ -174,6 +193,8 @@ def _read_entry_file(file_path: Path) -> MemoryEntry | None:
     category = str(frontmatter.get("category", "custom"))
     source = str(frontmatter.get("source", "manual"))
     updated_at = str(frontmatter.get("updated_at", _now_iso()))
+    # created_at：旧文件缺失时回退为 updated_at
+    created_at = str(frontmatter.get("created_at", updated_at))
     # 新字段：缺失时补默认值（兼容旧 frontmatter）
     title_raw = frontmatter.get("title")
     title = str(title_raw) if title_raw is not None else None
@@ -193,6 +214,7 @@ def _read_entry_file(file_path: Path) -> MemoryEntry | None:
         content=content,
         source=source,
         updated_at=updated_at,
+        created_at=created_at,
         title=title,
         keywords=keywords,
         scenarios=scenarios,
@@ -261,18 +283,25 @@ async def save_entry(
     _validate_key(key)
     _validate_category(category)
     _validate_source(source)
+    _validate_content(content)
 
     lock = _get_workspace_lock(workspace_path)
     async with lock:
         mem_dir = _memory_dir(workspace_path)
         mem_dir.mkdir(parents=True, exist_ok=True)
 
+        # 更新时保留 created_at；新建时 created_at = now
+        existing = _read_entry_file(_entry_file_path(workspace_path, key))
+        now = _now_iso()
+        created_at = existing.created_at if existing is not None and existing.created_at else now
+
         entry = MemoryEntry(
             key=key,
             category=category,
             content=content,
             source=source,
-            updated_at=_now_iso(),
+            updated_at=now,
+            created_at=created_at,
             title=title,
             keywords=list(keywords) if keywords is not None else [],
             scenarios=list(scenarios) if scenarios is not None else [],
@@ -311,25 +340,6 @@ async def delete_entry(workspace_path: str, key: str) -> bool:
             return True
         except OSError:
             return False
-
-
-def build_memory_paths(workspace_path: str | None) -> list[str]:
-    """返回 ``.agentx/memory/`` 下所有 ``.md`` 文件路径列表。
-
-    供 DeepAgents ``memory=`` 参数使用，让框架自动加载所有记忆文件。
-
-    Args:
-        workspace_path: 工作区根目录绝对路径；None 时返回空列表。
-
-    Returns:
-        绝对路径字符串列表。
-    """
-    if not workspace_path:
-        return []
-    mem_dir = _memory_dir(workspace_path)
-    if not mem_dir.exists():
-        return []
-    return [str(p) for p in sorted(mem_dir.glob("*.md")) if p.is_file()]
 
 
 async def upsert_from_llm(
@@ -373,7 +383,7 @@ async def upsert_from_llm(
                 continue
             try:
                 key = _validate_key(str(raw.get("key", "")))
-                content = str(raw.get("content", ""))
+                content = _validate_content(str(raw.get("content", "")))
                 category = _validate_category(str(raw.get("category", "custom")))
             except ValueError as exc:
                 logger.warning("workspace_memory.llm_extract_invalid", entry=raw, error=str(exc))
@@ -385,12 +395,14 @@ async def upsert_from_llm(
             title = raw.get("title") or (existing.title if existing is not None else None)
             keywords = raw.get("keywords") or (existing.keywords if existing is not None else [])
             scenarios = raw.get("scenarios") or (existing.scenarios if existing is not None else [])
+            created_at = existing.created_at if existing is not None and existing.created_at else now
             entry = MemoryEntry(
                 key=key,
                 category=category,
                 content=content,
                 source="llm_extracted",
                 updated_at=now,
+                created_at=created_at,
                 title=title,
                 keywords=list(keywords),
                 scenarios=list(scenarios),
@@ -410,7 +422,6 @@ async def upsert_from_llm(
 
 __all__ = [
     "MemoryEntry",
-    "build_memory_paths",
     "delete_entry",
     "get_entry",
     "list_entries",

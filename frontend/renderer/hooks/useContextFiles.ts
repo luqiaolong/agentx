@@ -35,7 +35,6 @@ export function useContextFiles() {
   const fetchSkills = useSkillsStore((s) => s.fetchSkills);
 
   const [profileEntries, setProfileEntries] = useState<ProfileEntry[]>([]);
-  const [preferenceEntries, setPreferenceEntries] = useState<ProfileEntry[]>([]);
 
   // 拉取技能列表（仅在尚未加载时触发）
   useEffect(() => {
@@ -47,6 +46,7 @@ export function useContextFiles() {
   }, [skills.length, fetchSkills]);
 
   // 拉取当前工作区的记忆条目（工作区级，不分 category）
+  // preference 子集在此请求结果上客户端过滤，避免冗余 HTTP 请求
   useEffect(() => {
     let cancelled = false;
     memory
@@ -63,22 +63,11 @@ export function useContextFiles() {
     };
   }, [workspacePath]);
 
-  // 拉取当前工作区的偏好条目（preference category，工作区级）
-  useEffect(() => {
-    let cancelled = false;
-    memory
-      .getProfile("preference", workspacePath, "workspace")
-      .then((res) => {
-        if (!cancelled) setPreferenceEntries(res.entries ?? []);
-      })
-      .catch((e) => {
-        logger.warn("useContextFiles: getProfile (preference) failed", e);
-        if (!cancelled) setPreferenceEntries([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspacePath]);
+  // preference 子集：从全量条目客户端过滤
+  const preferenceEntries = useMemo(
+    () => profileEntries.filter((e) => e.category === "preference"),
+    [profileEntries],
+  );
 
   // 只取当前会话的任务用于摘要展示
   const sessionTasks = useMemo(

@@ -158,10 +158,7 @@ def register_memory_routes(app: FastAPI) -> None:
             if hasattr(e, "model_dump"):
                 result.append(e.model_dump(mode="json"))
             elif hasattr(e, "to_dict"):
-                d = e.to_dict()
-                d["created_at"] = d.get("updated_at", "")
-                d["scope"] = "workspace" if workspace_path else "global"
-                result.append(d)
+                result.append(e.to_dict())
             else:
                 result.append(dict(e))
         return {"entries": result}
@@ -319,6 +316,35 @@ def register_memory_routes(app: FastAPI) -> None:
             logger.warning("profile extract endpoint failed", error=str(exc))
             return {"extracted": 0}
         return {"extracted": written}
+
+    # ============================================================
+    # Dream 记忆整理
+    # ============================================================
+
+    @app.post("/api/memory/dream")
+    async def memory_dream(
+        workspace_path: str | None = Query(None, description="工作区路径（可选，提供时同时整理工作区记忆）"),
+    ) -> dict[str, Any]:
+        """整理全部记忆：全局画像 + 工作区记忆。
+
+        - 读取全局 ``data/config/profile.json`` 全部条目
+        - 若提供 workspace_path，同时读取 ``<workspace>/.agentx/memory/*.md``
+        - LLM 分析后输出整理结果：
+          - promoted → 提炼/移动到全局长期记忆
+          - compressed → 压缩/合并后写回原位置
+          - removed → 删除冗余/重复条目
+        """
+        from app.memory.dream import dream_all_memory
+        from app.config import get_settings
+
+        if not get_settings().dream_enabled:
+            raise HTTPException(status_code=403, detail="Dream 功能未启用，请在设置 → 记忆中开启")
+        try:
+            result = await dream_all_memory(workspace_path=workspace_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("dream failed", workspace=workspace_path, error=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc))
+        return {"ok": True, **result}
 
     # ============================================================
     # Checkpointer 状态视图

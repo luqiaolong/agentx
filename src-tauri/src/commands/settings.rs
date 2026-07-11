@@ -249,6 +249,19 @@ pub fn settings_set_profile_auto_extract(app: AppHandle, v: bool) -> OkResult {
     OkResult::ok()
 }
 
+/// `settings:getDreamEnabled` → 读取 profile.dreamEnabled。
+#[tauri::command]
+pub fn settings_get_dream_enabled(app: AppHandle) -> bool {
+    store::get_dream_enabled(&app)
+}
+
+/// `settings:setDreamEnabled` → 写入 profile.dreamEnabled。
+#[tauri::command]
+pub fn settings_set_dream_enabled(app: AppHandle, v: bool) -> OkResult {
+    store::set_dream_enabled(&app, v);
+    OkResult::ok()
+}
+
 // =============================================================================
 // MCP 服务器配置（2 个）
 // =============================================================================

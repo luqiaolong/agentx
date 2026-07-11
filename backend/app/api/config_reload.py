@@ -58,6 +58,8 @@ def register_config_reload_routes(app: FastAPI) -> None:
             env_overrides["AGENTX_TOOLS_CONFIG"] = json.dumps(req.tools_config)
         if req.profile_auto_extract is not None:
             env_overrides["AGENTX_PROFILE_AUTO_EXTRACT"] = str(req.profile_auto_extract)
+        if req.dream_enabled is not None:
+            env_overrides["AGENTX_DREAM_ENABLED"] = str(req.dream_enabled)
         if req.mcp_servers_config is not None:
             env_overrides["AGENTX_MCP_SERVERS_CONFIG"] = json.dumps(req.mcp_servers_config)
 

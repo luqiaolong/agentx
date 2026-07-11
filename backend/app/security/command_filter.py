@@ -63,6 +63,9 @@ DEFAULT_BLOCKLIST: frozenset[str] = frozenset(
 # 从 ``app.tools.cli._FORBIDDEN_ARG_PATTERN`` 迁移，保持一致。
 FORBIDDEN_ARG_PATTERN: re.Pattern[str] = re.compile(r"[;&|`$<>\r\n]")
 
+# 与 FORBIDDEN_ARG_PATTERN 对应的字符集合，用于引号感知模式的逐字符检查。
+FORBIDDEN_CHAR_SET: frozenset[str] = frozenset(";&|`$<>\r\n")
+
 # ---- cli_execute 脱敏正则 ----
 
 # token=xxx / password=xxx：键值对形式（不区分大小写）
@@ -93,20 +96,110 @@ def is_command_blocked(command: str) -> bool:
     return command.strip().lower() in effective_blocklist()
 
 
-def has_forbidden_args(value: str) -> bool:
-    """检查字符串是否包含 shell 元字符。"""
-    return bool(FORBIDDEN_ARG_PATTERN.search(value))
+def has_forbidden_args(value: str, respect_quotes: bool = False) -> bool:
+    """检查字符串是否包含 shell 元字符。
+
+    Args:
+        value: 待检查字符串。
+        respect_quotes: 为 True 时，忽略单引号包裹区域内的字符，并在双引号
+            包裹区域内仅检查 ``$`` 与反引号（其它元字符在双引号中对 shell
+            是字面值）。用于 ``shell=True`` 的 ``execute`` 工具，避免
+            ``python -c "print('a;b;c')"`` 这类命令被误拦截。
+    """
+    if not respect_quotes:
+        return bool(FORBIDDEN_ARG_PATTERN.search(value))
+    return _has_forbidden_respecting_quotes(value)
 
 
-def get_forbidden_chars(value: str) -> list[str]:
-    """提取字符串中所有被禁止的 shell 元字符（去重，保持出现顺序）。"""
+def _has_forbidden_respecting_quotes(value: str) -> bool:
+    """引号感知模式：仅检查未加引号区域，以及双引号内的 ``$`` / 反引号。"""
+    in_double = False
+    in_single = False
+    i = 0
+    n = len(value)
+    while i < n:
+        ch = value[i]
+        if ch == "\\" and i + 1 < n:
+            # 反斜杠转义：跳过被转义字符
+            i += 2
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            i += 1
+            continue
+        if in_single:
+            # 单引号内全部字面化
+            pass
+        elif in_double:
+            # 双引号内仅 $ 与反引号仍可能被 shell 解释
+            if ch in ("$", "`"):
+                return True
+        else:
+            if ch in FORBIDDEN_CHAR_SET:
+                return True
+        i += 1
+
+    # 未闭合引号：安全降级为严格模式
+    if in_double or in_single:
+        return bool(FORBIDDEN_ARG_PATTERN.search(value))
+    return False
+
+
+def get_forbidden_chars(value: str, respect_quotes: bool = False) -> list[str]:
+    """提取字符串中所有被禁止的 shell 元字符（去重，保持出现顺序）。
+
+    Args:
+        value: 待检查字符串。
+        respect_quotes: 同 ``has_forbidden_args``。
+    """
     seen: set[str] = set()
     chars: list[str] = []
-    for m in FORBIDDEN_ARG_PATTERN.finditer(value):
-        ch = m.group(0)
-        if ch not in seen:
-            seen.add(ch)
-            chars.append(ch)
+
+    if not respect_quotes:
+        for m in FORBIDDEN_ARG_PATTERN.finditer(value):
+            ch = m.group(0)
+            if ch not in seen:
+                seen.add(ch)
+                chars.append(ch)
+        return chars
+
+    # 引号感知模式
+    in_double = False
+    in_single = False
+    i = 0
+    n = len(value)
+    while i < n:
+        ch = value[i]
+        if ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            i += 1
+            continue
+        if in_single:
+            pass
+        elif in_double:
+            if ch in ("$", "`") and ch not in seen:
+                seen.add(ch)
+                chars.append(ch)
+        else:
+            if ch in FORBIDDEN_CHAR_SET and ch not in seen:
+                seen.add(ch)
+                chars.append(ch)
+        i += 1
+
+    # 未闭合引号：安全降级为严格模式
+    if in_double or in_single:
+        return get_forbidden_chars(value, respect_quotes=False)
     return chars
 
 

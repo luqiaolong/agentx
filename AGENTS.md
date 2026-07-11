@@ -369,10 +369,51 @@ payload 可选字段：`task_id`（任务分组标识）、`source`（任务来�
 
 ## 15. 常用命令
 
-### 前端 / Tauri
+### 启停脚本（强约束：以后都直接使用脚本启停）
+
+> ✅ **强约束**：本项目所有 AI 代理 / 开发者 / 自动化脚本 **必须**通过
+> [`scripts/`](file:///d:/java/agentprojects/agentx/scripts/) 下的启停脚本操作 AgentX dev session，
+> **禁止**手动 `pnpm tauri dev` / `Stop-Process` / `netstat` / `taskkill` / Ctrl+C 直关。
+>
+> 设计原因（详见 [docs/agents/04-restart-sop.md](file:///d:/java/agentprojects/agentx/docs/agents/04-restart-sop.md) §14.7.8）：
+> - 进程精准筛选必须按 CommandLine（裸 `Stop-Process -Name python` 会误杀同机 Hermes 等其他项目）
+> - uv→python 父子链不杀干净会引发 Errno 10048，必须多轮清理 + 端口复检
+> - 启动入口 `pnpm tauri dev` 必须由脚本封装，禁止直接拼命令
+
+**快捷命令（项目根目录下）**：
+
+| 操作 | 命令 | 说明 |
+|---|---|---|
+| 启动（前台） | `agentx-start` | 阻塞终端，Ctrl+C 中断；自动等待 8123 listen |
+| 启动（后台） | `agentx-start -NoWait` | 立即返回，日志写到 `data/logs/tauri-dev.{log,err}` |
+| 启动（含清理） | `agentx-start -Clean` | 先调 stop.ps1 清残留再启动 |
+| 停止 | `agentx-stop` | 按白名单 + 黑名单精准清理三棵树（Tauri/Vite/Python） |
+| 强制停止 | `agentx-stop -Force` | 跳过优雅等待，立即强杀 |
+| 重启 | `agentx-restart` | 等价于 stop + start（前台） |
+| 后台重启 | `agentx-restart -NoWait` | 等价于 stop + 后台 start |
+| 健康探测 | `agentx-health` | 端口 + 关键端点 + 进程家族探测 |
+| 健康探测（延迟） | `agentx-health -Wait 30` | 启动 30s 后再探测 |
+
+**PowerShell 原生调用**（不带 .cmd 封装，等价功能）：
+
+```powershell
+pwsh scripts/start.ps1             # 启动
+pwsh scripts/start.ps1 -NoWait     # 后台启动
+pwsh scripts/stop.ps1              # 停止
+pwsh scripts/stop.ps1 -Force       # 强制停止
+pwsh scripts/restart.ps1           # 重启
+pwsh scripts/health-check.ps1      # 健康探测
+```
+
+> 所有脚本支持 `pwsh scripts/<name>.ps1 -?` 查看完整参数；所有参数透传到下层。
+>
+> `.cmd` 入口是薄封装，直接调对应 `.ps1`，等价功能 + Windows 友好（无需手敲 `pwsh` 前缀）。
+> 若 shell alias 冲突想卸载，删除对应 `scripts/agentx-*.cmd` 即可，不影响 .ps1。
+
+### 前端 / Tauri（仅调试场景）
 
 ```bash
-pnpm tauri dev          # 推荐：同时启动 vite + Rust 主进程 + Python 后端（含凭证注入）
+pnpm tauri dev          # 仅在排查脚本化启动问题时手动验证；生产场景请用 agentx-start
 pnpm exec vite dev      # 仅启动前端 Vite（端口 5173，被占用自动递增）
 pnpm tauri build        # 生产构建，生成 NSIS 安装包
 pnpm typecheck          # tsc 严格模式（node + web 两套配置）
@@ -380,14 +421,12 @@ pnpm test               # vitest（renderer 单测）
 pnpm dist:win           # Windows NSIS 安装包（等价于 tauri build）
 ```
 
-> **启动/重启前后端**一律走 `pnpm tauri dev`（由 [src-tauri/src/backend/env.rs::build_env](file:///d:/java/agentprojects/agentx/src-tauri/src/backend/env.rs) 自动注入凭证 + 配置）。
-> 重启前的进程清理、8123 端口探测、健康验证脚本等完整 SOP 见
-> [`docs/agents/04-restart-sop.md`](file:///d:/java/agentprojects/agentx/docs/agents/04-restart-sop.md)。
+> 单独启动场景（仅调试）见 [docs/agents/04-restart-sop.md](file:///d:/java/agentprojects/agentx/docs/agents/04-restart-sop.md) §14.7.2。
 
 ### 后端
 
 ```bash
-uv run python -m app.main                              # 启动 FastAPI（8123）
+uv run python -m app.main                              # 仅调试后端（需自注入 AGENTX_* 凭证）
 uv run pytest tests/python/unit -m "not integration"   # 单元测试
 uv run pytest tests/python/integration -m requires_myserver  # 联调测试
 uv run ruff check backend/                              # 风格检查

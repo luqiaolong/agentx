@@ -5,7 +5,23 @@
 
 ---
 
+## §14.7.0 强约束：脚本化启停
+
+> ⚠️ **本项目所有 dev session 操作一律走 [`scripts/`](file:///d:/java/agentprojects/agentx/scripts/) 下的脚本**。
+>
+> - ✅ **推荐**：项目根目录执行 `agentx-start` / `agentx-stop` / `agentx-restart` / `agentx-health`
+> - ✅ **等价**：`pwsh scripts/start.ps1` 等 PowerShell 原生调用
+> - ❌ **禁止**：裸 `pnpm tauri dev` / `Stop-Process -Name python` / `netstat` / `taskkill`
+>
+> 设计原因：进程精准筛选必须按 CommandLine（详见 §14.7.8），
+> 否则会误杀同机的其他项目（Hermes、Qoder IDE 的 python extension 等）。
+>
+> 完整的脚本设计与错误处理表见 §14.7.9。
+
 ## §14.7.1 启动入口
+
+> **首选**：项目根目录 `agentx-start`（详见 §14.7.9）。
+> 下文说明的"内部启动命令"仅供 agentx-start 内部调用，人工排查时也可参考。
 
 - **入口：永远 `pnpm tauri dev`**（即 `npm run tauri dev`），不要直接 `uv run python -m app.main`——
   后端依赖的 `AGENTX_*` 凭证 + 配置由 Rust 主进程通过
@@ -140,18 +156,129 @@ Get-NetTCPConnection -LocalPort 5173,5174 -ErrorAction SilentlyContinue | Select
 
 ⚠️ **禁止** `Get-Process -Name python | Stop-Process -Force`——会误杀同机的其他项目（如 Hermes）。
 
-**推荐做法**（按 CommandLine 精准筛选）：
+> **首选**：直接执行 `agentx-stop`（见 §14.7.9）。脚本内部已实现下面这套白名单 + 黑名单逻辑。
+> 下文的手动诊断命令仅供排查"为什么 stop 没杀掉某进程"时使用，不要直接 Stop-Process。
+
+**白名单 + 黑名单策略**（脚本内部实现细节）：
+
+| 类别 | 关键字 |
+|---|---|
+| 白名单（AgentX dev session 启动参数） | `tauri dev` / `pnpm tauri` / `vite` / `uvicorn` / `app.main` / `backend.app` / `src-tauri` / `target\debug\agentx.exe` / `target\release\agentx.exe` |
+| 黑名单（即使白名单命中也排除） | `.qoder` / `qoder` / `ide\plugins` |
+
+**手动诊断命令**（仅排查用，不要直接 Stop-Process）：
 
 ```powershell
-# agentx 相关 python 进程
-Get-Process -Name python -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like '*agentx*' } |
-    Select-Object Id, ProcessName, CommandLine
+# 查看候选进程（含 CommandLine 完整字段）
+Get-Process -Name python,node,uv,agentx -ErrorAction SilentlyContinue |
+    Select-Object Id, ProcessName, StartTime, CommandLine |
+    Format-Table -AutoSize -Wrap
 
-# agentx 相关 node 进程（Vite）
-Get-Process -Name node -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like '*vite*' -or $_.CommandLine -like '*agentx*' } |
+# 仅看 CommandLine 是否包含 agentx 相关关键字（白名单 + 黑名单粗筛）
+Get-Process -Name python,node,uv -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*tauri dev*' -or $_.CommandLine -like '*vite*' -or $_.CommandLine -like '*uvicorn*' -or $_.CommandLine -like '*app.main*' } |
     Select-Object Id, ProcessName, CommandLine
 ```
 
 > 此规范可沉淀为 [learned_skill_experience] "Windows下精准筛选并重启指定项目进程技能"。
+
+---
+
+## §14.7.9 启停脚本设计（scripts/）
+
+> 创建于 2026-07-11。把 §14.7.3 / §14.7.4 / §14.7.5 / §14.7.8 的手工操作封装为幂等脚本。
+
+### 脚本清单
+
+| 脚本 | 命令别名 | 职责 | 关键行为 |
+|---|---|---|---|
+| [`scripts/start.ps1`](file:///d:/java/agentprojects/agentx/scripts/start.ps1) | `agentx-start` | 启动 dev session | 前台阻塞（或 `-NoWait` 后台）；等 8123 listen；写入 `data/logs/tauri-dev.{log,err}` |
+| [`scripts/stop.ps1`](file:///d:/java/agentprojects/agentx/scripts/stop.ps1) | `agentx-stop` | 停止 dev session | 白名单 + 黑名单精准清理；最多 6 轮 × 2s；端口复检 |
+| [`scripts/restart.ps1`](file:///d:/java/agentprojects/agentx/scripts/restart.ps1) | `agentx-restart` | 重启 dev session | `stop` + `start` 组合；参数透传 |
+| [`scripts/health-check.ps1`](file:///d:/java/agentprojects/agentx/scripts/health-check.ps1) | `agentx-health` | 健康探测 | 端口 + 关键端点 + 进程家族探测；`-Wait` 延迟探测 |
+
+`.cmd` 文件是 PowerShell 脚本的薄封装，方便 Windows cmd / PowerShell 直接输入别名调用。
+
+### start.ps1 退出码约定
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 启动成功（或后台模式已 fork） |
+| 2 | 预检失败（找不到 `package.json`，非项目根目录） |
+| 3 | 端口被占用且未指定 `-Clean` |
+| 4 | 工具链缺失（pnpm/node/cargo） |
+| 5 | 启动异常（捕获到 throw） |
+
+### stop.ps1 退出码约定
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 端口空闲 / 清理成功 |
+| 1 | 部分端口仍占用（TimeWait 或非 AgentX 占用） |
+
+### 进程筛选算法（stop.ps1 / health-check.ps1 共用）
+
+```powershell
+# 伪代码：白名单 + 黑名单双重校验
+function Test-ProjectProcess($proc) {
+    # 1. 项目二进制名兜底
+    if ($proc.ProcessName -in 'agentx', 'AgentX') { return $true }
+
+    # 2. 无 CommandLine（如 System Idle）直接跳过
+    $cl = $proc.CommandLine
+    if (-not $cl) { return $false }
+
+    # 3. 黑名单优先（Qoder IDE 等并行项目）
+    foreach ($kw in $EXCLUDE_KEYWORDS) {     # .qoder / qoder / ide\plugins
+        if ($cl.ToLowerInvariant().Contains($kw)) { return $false }
+    }
+
+    # 4. 白名单：必须命中 AgentX dev 启动参数
+    foreach ($kw in $PROJECT_KEYWORDS) {    # tauri dev / pnpm tauri / vite / uvicorn / app.main / backend.app / src-tauri / target\debug\agentx.exe
+        if ($cl.ToLowerInvariant().Contains($kw)) { return $true }
+    }
+
+    return $false
+}
+```
+
+### 常见使用模式
+
+```powershell
+# 1) 日常开发（前台运行，Ctrl+C 中断）
+agentx-start
+
+# 2) 写代码时后台运行（编辑器内联终端腾出来）
+agentx-start -NoWait
+# 之后查看日志：
+Get-Content data/logs/tauri-dev.log -Wait
+
+# 3) 端口冲突 / dev 残留
+agentx-start -Clean        # 启动前自动 stop
+agentx-stop -Force         # 或手动强制清
+
+# 4) 调试 agent 配置后无需重启整个 Tauri
+#    Tauri 主进程会监听 tauri-plugin-store 配置变化并自动 reload 后端
+Invoke-RestMethod -Method POST -Uri 'http://127.0.0.1:8123/api/config/reload'
+
+# 5) CI / 自动化场景
+agentx-stop                # 确保干净状态
+agentx-start -NoWait       # 后台启动
+Start-Sleep -Seconds 30    # 等 Rust 编译 + uvicorn listen
+agentx-health              # 验证就绪
+```
+
+---
+
+## §14.7.10 脚本错误处理表
+
+| 现象 | 原因 | 解决方法 |
+|---|---|---|
+| `agentx-start` 退出码 3 | 8123/5173 已被占用 | `agentx-stop` 或 `agentx-start -Clean` |
+| `agentx-start` 退出码 4 | 缺 pnpm/node/cargo | 按提示安装（pnpm: `npm i -g pnpm`） |
+| `agentx-start` 等 90s 仍未 listen | Rust 首次编译超过 90s | 改用 `agentx-start -HealthTimeoutSec 240`，或先手动 `pnpm tauri dev` 触发编译 |
+| `agentx-stop` 退出码 1 仍有 LISTEN | TimeWait（1-2 分钟）或非 AgentX 进程占用 | 用 `agentx-health` 查 pid，再 `Stop-Process -Id <pid> -Force` 手动清 |
+| `agentx-stop` 把 Qoder IDE python 进程也杀了 | 旧版本误杀（关键词含 `agentx`） | 已修复：白名单改用启动参数 + 黑名单排除 `.qoder`；升级到 2026-07-11+ 的脚本 |
+| `agentx-restart` 卡住 | start 阶段 dev session 未退出 | 另一终端执行 `agentx-stop -Force` 兜底 |
+| `agentx-health` 报 DEGRADED 但端口 LISTEN | 某个端点超时（TEI/Milvus 慢） | 用 `agentx-health` 输出看具体哪条 FAIL，单独 `/` 或 `/api/skills` 仍 OK 即视为活 |
+| `data/logs/tauri-dev.log` 没有输出 | 后台模式 `-NoWait` 后日志缓冲未 flush | `Get-Content data/logs/tauri-dev.log -Wait` 实时跟；或前台模式 `agentx-start` |
