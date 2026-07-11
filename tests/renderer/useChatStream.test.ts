@@ -179,8 +179,9 @@ describe("useChatStream hook", () => {
     act(() => {
       emitEvent('test-thread', { type: "done", data: {} });
     });
-    // done 事件不再设置全局 isStreaming，而是设置对应 session 的 isRunning
-    expect(useChatStore.getState().isStreaming).toBe(true);
+    // done 事件必须重置全局 isStreaming（修复"思考中…"永远显示的 bug：
+    // isStreamingLast = isStreaming && isLast && role==="assistant"，若不重置则恒为 true）
+    expect(useChatStore.getState().isStreaming).toBe(false);
   });
 
   it("done 事件触发 ensureAgentxGenerated(activeTid)", async () => {
@@ -286,8 +287,8 @@ describe("useChatStream hook", () => {
       emitEvent('test-thread', { type: "error", data: "出错了" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("出错了");
-    // error 事件不再设置全局 isStreaming，而是设置对应 session 的 isRunning
-    expect(useChatStore.getState().isStreaming).toBe(true);
+    // error 事件必须重置全局 isStreaming（与 done 事件同理，SSE 流结束必须解除"思考中…"状态）
+    expect(useChatStore.getState().isStreaming).toBe(false);
     expect(useTasksStore.getState().tasks[0]?.status).toBe("failed");
     expect(currentTaskIdRef.current).toBeNull();
   });

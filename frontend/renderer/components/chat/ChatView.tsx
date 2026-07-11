@@ -492,8 +492,6 @@ export function ChatView() {
         },
       );
     } catch {
-      setStreaming(false);
-      setSessionRunning(tid, false);
       setErrorMsg("发送失败，请检查后端是否运行");
       // 失败时也标记当前任务为 failed
       const failTid = currentTaskIdRef.current;
@@ -501,6 +499,12 @@ export function ChatView() {
         updateTask(failTid, { status: "failed" });
         currentTaskIdRef.current = null;
       }
+    } finally {
+      // 无论 chat.send() 正常返回、抛异常、还是 SSE 流以 done/error 结束，
+      // 都必须重置 isStreaming，否则 AssistantMessageParts 的 isStreamingLast
+      // 恒为 true，导致"思考中…"永远显示。
+      setStreaming(false);
+      setSessionRunning(tid, false);
     }
   };
 

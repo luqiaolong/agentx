@@ -179,7 +179,7 @@ export function SessionList() {
   };
 
   return (
-    <div className="flex h-full flex-col px-1 py-1.5">
+    <div className="flex h-full flex-col px-1 py-1.5" style={{ fontFamily: 'var(--font-sidebar)' }}>
       <div className="mb-0.5 flex items-center justify-between px-1">
         <span className="font-semibold uppercase tracking-wider text-muted-c" style={{ fontSize: 'var(--fs-sidebar-section)' }}>
           会话
@@ -300,6 +300,19 @@ const SessionItem = memo(function SessionItem({
   onRename,
   onDelete,
 }: SessionItemProps) {
+  const relativeTime = useMemo(() => {
+    const now = Date.now();
+    const diff = now - s.createdAt;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days}d`;
+    if (hours > 0) return `${hours}h`;
+    if (minutes > 0) return `${minutes}m`;
+    return `${seconds}s`;
+  }, [s.createdAt]);
+
   return (
     <li>
       <div
@@ -341,6 +354,13 @@ const SessionItem = memo(function SessionItem({
             {s.title}
           </div>
         </div>
+        <span
+          className="shrink-0 pr-4 text-muted-c"
+          style={{ fontSize: 'var(--fs-sidebar-meta)' }}
+          title={new Date(s.createdAt).toLocaleString()}
+        >
+          {relativeTime}
+        </span>
         <button
           type="button"
           onClick={(e) => {

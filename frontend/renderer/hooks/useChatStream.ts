@@ -257,6 +257,9 @@ export function useChatStream(args: UseChatStreamArgs) {
           if (threadId) {
             setSessionRunning(threadId, false);
           }
+          // 重置 isStreaming：done 事件标志着 SSE 流结束，必须解除
+          // "思考中…"状态，否则 isStreamingLast 恒为 true
+          setStreaming(false);
           // 清理 pending message id
           pendingIdRef.current = null;
           // 标记当前任务完成 + 收尾 Team 子任务
@@ -291,6 +294,8 @@ export function useChatStream(args: UseChatStreamArgs) {
           if (threadId) {
             setSessionRunning(threadId, false);
           }
+          // 重置 isStreaming：error 事件也标志着 SSE 流结束
+          setStreaming(false);
           if (pendingIdRef.current) {
             markReasoningDone(pendingIdRef.current);
             // 兜底：error 时也清理残留的 running tool-call
