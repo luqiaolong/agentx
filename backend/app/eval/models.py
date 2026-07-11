@@ -63,6 +63,9 @@ class EvalCase(BaseModel):
     expect: CaseExpect = Field(default_factory=CaseExpect)
     timeout: float = 60.0
     tags: list[str] = Field(default_factory=list)
+    # 已执行的 SSE 事件轨迹（从 observation DB 导出）。非空时 EvalRunner.run_trace
+    # 跳过 run_router 直接交给 Judge 打分，避免重跑已发生的会话。
+    trace_events: list[dict[str, Any]] | None = None
 
 
 class EvalSuite(BaseModel):

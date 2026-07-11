@@ -167,6 +167,55 @@ class EvalRunner:
             duration_ms=duration_ms,
         )
 
+    async def run_trace(
+        self,
+        case: EvalCase,
+        judges: "list[Judge] | None" = None,
+    ) -> CaseResult:
+        """从 ``case.trace_events`` 直接打分，不调 ``run_router`` 重跑。
+
+        用于评测已发生的会话轨迹（从 observation DB 导出）。trace_events 应为
+        SSE 事件列表（``{"event": "token", "data": "..."}`` 格式），由
+        ``cli._db_events_to_sse_events`` 从 observation_event 表转换而来。
+
+        - ``case.trace_events`` 为空 → 记录 error 返回（无轨迹可评）
+        - 有 trace_events + judges → 交给 JudgeChain 打分
+        - 无 judges → 只返回 CaseResult（events 已填充，passed/avg_score 默认值）
+
+        Args:
+            case: 含 ``trace_events`` 的评测用例。
+            judges: 可选 Judge 列表。
+
+        Returns:
+            ``CaseResult``：events 来自 trace_events，judge_results 由 judges 填充。
+        """
+        import time as _time
+
+        start = _time.perf_counter()
+        events = case.trace_events or []
+
+        if not events:
+            return CaseResult(
+                case=case,
+                events=[],
+                duration_ms=0,
+                error="trace_events is empty — 无轨迹可评",
+            )
+
+        result = CaseResult(
+            case=case,
+            events=events,
+            duration_ms=int((_time.perf_counter() - start) * 1000),
+        )
+
+        if judges:
+            from app.eval.judges.composite import JudgeChain
+
+            judge_results = await JudgeChain(judges).evaluate(events, case)
+            result = self.apply_judge_results(result, judge_results)
+
+        return result
+
     async def run_suite(
         self,
         suite: EvalSuite,
