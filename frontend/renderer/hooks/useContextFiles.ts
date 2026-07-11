@@ -8,45 +8,32 @@ import {
   extractCategorizedFiles,
   type CategorizedFile,
 } from "@/components/workspace/extractFiles";
+import { filterUsedSkills } from "@/hooks/usedSkills";
 import type { ProfileEntry, SkillSummary } from "../../shared/api-types";
 
-/**
- * 上下文面板 4 类文件的统一获取层。
- *
- * 数据源：
- * - tool_files: extractCategorizedFiles（本地解析 tool-call args）
- * - skill_files: useSkillsStore（HTTP /api/skills）
- * - session_summary: useTasksStore（todo_update/plan 事件聚合）
- * - memory_files: memory.getProfile()（HTTP /api/memory/profile）
- *
- * 设计：所有数据源统一映射到 CategorizedFile[]，ContextTabPanel 只负责渲染。
- */
 export function useContextFiles() {
   const currentSession = useChatStore((s) =>
     s.currentId ? s.sessions[s.currentId] ?? null : null,
   );
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
-  // 会话显式 workspacePath 优先；Home 会话 workspacePath=null 时回退到 homeWorkspacePath
   const workspacePath = currentSession?.workspacePath ?? homeWorkspacePath ?? null;
   const messages = currentSession?.messages ?? [];
 
   const tasks = useTasksStore((s) => s.tasks);
   const skills = useSkillsStore((s) => s.skills);
+  const skillsWorkspacePath = useSkillsStore((s) => s.workspacePath);
   const fetchSkills = useSkillsStore((s) => s.fetchSkills);
 
   const [profileEntries, setProfileEntries] = useState<ProfileEntry[]>([]);
 
-  // 拉取技能列表（仅在尚未加载时触发）
   useEffect(() => {
-    if (skills.length === 0) {
-      void fetchSkills().catch((e) => {
+    if (skills.length === 0 || skillsWorkspacePath !== workspacePath) {
+      void fetchSkills(workspacePath).catch((e) => {
         logger.warn("useContextFiles: fetchSkills failed", e);
       });
     }
-  }, [skills.length, fetchSkills]);
+  }, [skills.length, skillsWorkspacePath, workspacePath, fetchSkills]);
 
-  // 拉取当前工作区的记忆条目（工作区级，不分 category）
-  // preference 子集在此请求结果上客户端过滤，避免冗余 HTTP 请求
   useEffect(() => {
     let cancelled = false;
     memory
@@ -63,13 +50,11 @@ export function useContextFiles() {
     };
   }, [workspacePath]);
 
-  // preference 子集：从全量条目客户端过滤
   const preferenceEntries = useMemo(
     () => profileEntries.filter((e) => e.category === "preference"),
     [profileEntries],
   );
 
-  // 只取当前会话的任务用于摘要展示
   const sessionTasks = useMemo(
     () => (currentSession ? tasks.filter((t) => t.sessionId === currentSession.id) : []),
     [tasks, currentSession],
@@ -80,9 +65,14 @@ export function useContextFiles() {
     [messages, workspacePath],
   );
 
+  const usedSkills = useMemo(
+    () => filterUsedSkills(skills, messages),
+    [skills, messages],
+  );
+
   const skillFiles = useMemo<CategorizedFile[]>(
-    () => mapSkillsToFiles(skills, workspacePath),
-    [skills, workspacePath],
+    () => mapSkillsToFiles(usedSkills),
+    [usedSkills],
   );
 
   const sessionSummary = useMemo<CategorizedFile[]>(
@@ -106,9 +96,8 @@ export function useContextFiles() {
     session_summary: sessionSummary,
     memory_files: memoryFiles,
     preference_files: preferenceFiles,
-    /** 原始数据：用于详情弹框查找完整内容 */
     _raw: {
-      skills,
+      skills: usedSkills,
       sessionTasks,
       profileEntries,
       preferenceEntries,
@@ -116,16 +105,7 @@ export function useContextFiles() {
   };
 }
 
-/* ------------------------------------------------------------------ */
-/*  类型适配层                                                          */
-/* ------------------------------------------------------------------ */
-
-function mapSkillsToFiles(
-  skills: SkillSummary[],
-  _workspacePath: string | null,
-): CategorizedFile[] {
-  // 直接使用后端 /api/skills 返回的真实路径（DATA_DIR/skills/<name>/SKILL.md）。
-  // 旧实现误用 workspacePath/.qoder/skills/<name>.md 前缀拼路径，导致打开报错。
+function mapSkillsToFiles(skills: SkillSummary[]): CategorizedFile[] {
   return skills.map((s) => ({
     id: `skill-${s.name}`,
     name: s.name,
@@ -153,7 +133,10 @@ function mapTasksToSummary(
   });
 }
 
-function mapProfileToFiles(entries: ProfileEntry[], category: "memory_files" | "preference_files" = "memory_files"): CategorizedFile[] {
+function mapProfileToFiles(
+  entries: ProfileEntry[],
+  category: "memory_files" | "preference_files" = "memory_files",
+): CategorizedFile[] {
   return entries.map((e) => ({
     id: `profile-${e.key}`,
     name: e.title?.trim() || e.key,

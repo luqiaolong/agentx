@@ -45,6 +45,13 @@ const mockFiles = {
       meta: "preference",
     },
   ] satisfies CategorizedFile[],
+  preference_files: [] satisfies CategorizedFile[],
+  _raw: {
+    skills: [],
+    sessionTasks: [],
+    profileEntries: [],
+    preferenceEntries: [],
+  },
 };
 
 vi.mock("@/hooks/useContextFiles", () => ({

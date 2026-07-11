@@ -22,11 +22,11 @@ function renderTextWithSkillTags(text: string): React.ReactNode {
     parts.push(
       <span
         key={match.index}
-        className="inline-flex items-center gap-1 rounded-md border border-accent-500/30 bg-accent-500/15 px-1.5 py-0.5 align-text-bottom font-medium text-accent-400"
-        style={{ fontSize: '0.85em' }}
+        className="inline-flex items-center gap-1.5 rounded-md border border-accent-500/30 bg-accent-500/15 px-2 py-0.5 align-middle font-medium text-accent-400 whitespace-nowrap"
+        style={{ fontSize: '0.85em', lineHeight: 1.4 }}
       >
-        <Sparkles className="h-3 w-3" />
-        {skillName}
+        <Sparkles className="h-3 w-3 shrink-0" />
+        <span>{skillName}</span>
       </span>
     );
     lastIndex = regex.lastIndex;
