@@ -20,11 +20,11 @@ import { ContextDetailModal, type DetailItem } from "./ContextDetailModal";
 
 type ContextSubTab = "tool_files" | "skill_files" | "session_summary" | "memory_files";
 
-const SUBTAB_CONFIG: Record<ContextSubTab, { label: string; Icon: typeof FileText; count?: (data: ReturnType<typeof useContextFiles>) => number }> = {
-  tool_files: { label: "工具", Icon: Wrench, count: (d) => d.tool_files.length },
-  skill_files: { label: "技能", Icon: Sparkles, count: (d) => d.skill_files.length },
-  session_summary: { label: "摘要", Icon: FileText, count: (d) => d.session_summary.length },
-  memory_files: { label: "记忆", Icon: Brain, count: (d) => d.memory_files.length + d.preference_files.length },
+const SUBTAB_CONFIG: Record<ContextSubTab, { label: string; Icon: typeof FileText }> = {
+  tool_files: { label: "工具", Icon: Wrench },
+  skill_files: { label: "技能", Icon: Sparkles },
+  session_summary: { label: "摘要", Icon: FileText },
+  memory_files: { label: "记忆", Icon: Brain },
 };
 
 /* ------------------------------------------------------------------ */
@@ -189,34 +189,31 @@ export function ContextTabPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* 横向 Tab 栏 */}
-      <div className="flex items-center gap-0.5 border-b border-default px-2 pb-1">
+      {/* 横向 Tab 栏 — 极简：图标 + 文字同行，激活态用底部细线指示 */}
+      <div className="flex items-center gap-1 border-b border-default pl-1 pr-3 pt-2">
         {(Object.keys(SUBTAB_CONFIG) as ContextSubTab[]).map((key) => {
           const cfg = SUBTAB_CONFIG[key];
           const isActive = activeSub === key;
-          const badgeCount = cfg.count?.(allFiles) ?? 0;
           return (
             <button
               key={key}
               type="button"
               onClick={() => setActiveSub(key)}
-              className={`relative inline-flex items-center gap-1 rounded px-2 py-1 font-medium transition-colors ${
+              className={`relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t px-2.5 pt-1 pb-1.5 transition-colors ${
                 isActive
-                  ? "bg-brand-600/10 text-brand-500 dark:text-brand-400"
-                  : "text-muted-c hover:bg-hover-soft hover:text-secondary-c"
+                  ? "text-primary-c"
+                  : "text-muted-c hover:text-secondary-c"
               }`}
               style={{ fontSize: 'var(--fs-ws-tab)' }}
             >
-              <cfg.Icon className="h-3 w-3" />
-              <span>{cfg.label}</span>
-              {badgeCount > 0 && (
+              <cfg.Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <span className="font-medium">{cfg.label}</span>
+              {/* 激活态底部细线指示器：1.5px，使用 primary 文字色，不抢眼 */}
+              {isActive && (
                 <span
-                  className={`ml-0.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-bold ${
-                    isActive ? "bg-brand-500 text-white" : "bg-amber-500 text-white"
-                  }`}
-                >
-                  {badgeCount}
-                </span>
+                  aria-hidden
+                  className="absolute inset-x-2 -bottom-px h-px bg-primary-c/70"
+                />
               )}
             </button>
           );
