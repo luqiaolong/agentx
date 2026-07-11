@@ -1,4 +1,0 @@
-# LangSmith 部署敏感文件不进 git
-.env
-.env.local
-*.bak
