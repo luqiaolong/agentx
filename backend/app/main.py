@@ -56,9 +56,8 @@ from typing import AsyncIterator
 
 import httpx  # noqa: F401 — re-export：测试 patch app.main.httpx.AsyncClient（模块级全局生效）
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # ---- lifespan / 中间件依赖 ----
 from app.config import get_settings
@@ -225,54 +224,108 @@ app.add_middleware(
 )
 
 
-class UTF8JSONBodyMiddleware(BaseHTTPMiddleware):
-    """application/json request body 编码探测与解码。
+class UTF8JSONBodyMiddleware:
+    """application/json request body 编码探测与解码（纯 ASGI 中间件）。
 
     背景：Windows Git Bash + curl 在命令行 ``-d '{"name":"测试"}'`` 时会做
     ``locale → wide-char → locale`` 双重转码，导致发送的字节流被序列化为
     GBK（即便 ``Content-Type: application/json`` 没声明 charset）。
     Starlette 默认按声明的 charset 解码 → 400。
 
-    本 middleware 拦截 ``application/json`` 请求：
+    本 middleware 拦截 ``application/json`` 请求的 **request body receive callable**：
     1. UTF-8 解码成功 → 放回 body（正常路径）
     2. UTF-8 失败但 GBK 成功 → 转码为 UTF-8 再放回（兼容 Windows curl）
     3. 都失败 → 400 with 明确错误
 
     非 application/json 请求透传不动，避免误伤 form / multipart / SSE 上行。
+
+    M6: 改为纯 ASGI 中间件（不再继承 BaseHTTPMiddleware）。BaseHTTPMiddleware
+    内部用 memory object stream 桥接 request/response，会延迟 SSE 断连传播
+    （客户端断开后 GeneratorExit 不能及时到达 generator），导致 abort/pause
+    标志泄漏。纯 ASGI 实现只包装 receive callable，response stream 直接透传
+    send callable，断连信号可即时传播到下游 generator。
     """
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        content_type = (request.headers.get("content-type") or "").lower()
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        # 检查是否是 application/json 请求
+        headers = dict(scope.get("headers", []))
+        content_type = headers.get(b"content-type", b"").decode("latin-1", "ignore").lower()
         if not content_type.startswith("application/json"):
-            return await call_next(request)
-
-        raw = await request.body()
-        if not raw:
-            return await call_next(request)
-
+            await self.app(scope, receive, send)
+            return
+        # 读取完整 request body
+        body = b""
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] == "http.request":
+                body += message.get("body", b"")
+                more_body = message.get("more_body", False)
+            else:
+                # http.disconnect 等非 request 事件：直接透传
+                await self.app(scope, receive, send)
+                return
+        if not body:
+            # 空 body：用包装后的 receive 透传（保持 consumed 语义）
+            await self.app(scope, _make_single_body_receive(b""), send)
+            return
         # 1. 优先 UTF-8
         try:
-            raw.decode("utf-8")
+            body.decode("utf-8")
+            new_body = body
         except UnicodeDecodeError:
             # 2. 回退 GBK（Windows cmd / Git Bash 默认）
             try:
-                text = raw.decode("gbk")
+                text = body.decode("gbk")
             except UnicodeDecodeError:
-                from starlette.responses import JSONResponse
-                return JSONResponse(
-                    {"detail": "request body is not valid UTF-8 or GBK"},
-                    status_code=400,
+                # 3. 都失败 → 400 with 明确错误
+                import json as _json
+
+                payload = _json.dumps(
+                    {"detail": "request body is not valid UTF-8 or GBK"}
+                ).encode("utf-8")
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 400,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(payload)).encode("latin-1")),
+                        ],
+                    }
                 )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": payload,
+                        "more_body": False,
+                    }
+                )
+                return
             # GBK 已是正确 Unicode，转回 UTF-8 字节给下游 Pydantic
             new_body = text.encode("utf-8")
-        else:
-            # UTF-8 合法，按原样放回
-            new_body = raw
+        # 用包装后的 receive 把转换后的 body 注入下游
+        await self.app(scope, _make_single_body_receive(new_body), send)
 
-        # 注入新 body 到 request 缓存（Starlette 中间件常用模式，
-        # request._body 是 body() 的缓存字段，写它使下游 body()/json() 读取新字节）
-        request._body = new_body  # noqa: SLF001
-        return await call_next(request)
+
+def _make_single_body_receive(body: bytes):
+    """构造一个只返回一次 http.request 事件的 receive callable。"""
+    consumed = False
+
+    async def wrapped_receive():
+        nonlocal consumed
+        if not consumed:
+            consumed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return wrapped_receive
 
 
 app.add_middleware(UTF8JSONBodyMiddleware)

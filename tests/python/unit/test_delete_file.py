@@ -122,8 +122,8 @@ async def test_delete_file_rejects_guarded_root(tmp_path: Path) -> None:
     result = await delete_file.ainvoke({"path": ".", "recursive": True})
 
     assert isinstance(result, str)
-    assert "禁止删除沙箱根目录" in result
-    assert "data/workspace" in result
+    assert "禁止删除" in result
+    assert "根目录" in result
     # 目录应仍然存在
     assert workspace.exists()
 

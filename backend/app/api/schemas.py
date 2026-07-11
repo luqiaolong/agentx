@@ -54,8 +54,13 @@ class AbortRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="用户消息（/reset 触发会话重置）")
-    thread_id: str = Field(..., description="会话 ID")
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=100000,
+        description="用户消息（/reset 触发会话重置）",
+    )
+    thread_id: str = Field(..., min_length=1, description="会话 ID")
     permission_mode: Literal["standard", "full_trust"] = Field(
         default="standard",
         description='权限模式：standard（审批流）或 full_trust（会话内全量放行）',
@@ -79,6 +84,7 @@ class ChatRequest(BaseModel):
     trace_id: str | None = Field(
         default=None,
         max_length=32,
+        pattern=r"^[a-zA-Z0-9_-]+$",
         description="前端生成的 16 字符 hex trace_id；为空时由后端 _event_generator 自行生成",
     )
 

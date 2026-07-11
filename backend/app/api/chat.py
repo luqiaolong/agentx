@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import uuid
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI
@@ -46,8 +48,32 @@ async def _clear_thread_state(thread_id: str) -> None:
         if hasattr(checkpointer, "adelete_thread"):
             await checkpointer.adelete_thread(thread_id)
             logger.info("checkpoint cleared for thread", thread_id=thread_id)
+        elif hasattr(checkpointer, "conn"):
+            # fallback：直接用 SQL 删除（兼容无 adelete_thread 的同步 SqliteSaver 包装）
+            await asyncio.to_thread(
+                checkpointer.conn.execute,
+                "DELETE FROM checkpoints WHERE thread_id = ?",
+                (thread_id,),
+            )
+            if hasattr(checkpointer.conn, "commit"):
+                await asyncio.to_thread(checkpointer.conn.commit)
+            logger.info("checkpoint cleared via SQL for thread", thread_id=thread_id)
     except Exception as exc:  # noqa: BLE001 — best-effort
         logger.warning("clear checkpoint failed", thread_id=thread_id, error=str(exc))
+
+
+# ---- per-thread_id SSE 流隔离锁（M4）----
+# 同一 thread_id 的并发 SSE 请求会竞态写 checkpoint，用 asyncio.Lock 串行化。
+_stream_locks: dict[str, asyncio.Lock] = {}
+_stream_locks_guard = asyncio.Lock()
+
+
+async def _get_stream_lock(thread_id: str) -> asyncio.Lock:
+    """获取（或创建）指定 thread_id 的 SSE 流锁。"""
+    async with _stream_locks_guard:
+        if thread_id not in _stream_locks:
+            _stream_locks[thread_id] = asyncio.Lock()
+        return _stream_locks[thread_id]
 
 
 async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
@@ -97,6 +123,10 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             agent_mode=req.agent_mode,
         )
 
+        # M4: 同一 thread_id 的并发 SSE 流用锁串行化，避免竞态写 checkpoint。
+        # 等待而非拒绝，因为前端通常会等上一条消息完成。
+        stream_lock = await _get_stream_lock(req.thread_id)
+        await stream_lock.acquire()
         try:
             # /reset：清空 checkpointer + 沙箱（当不持久化时）
             if req.message.startswith("/reset"):
@@ -111,7 +141,9 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 
             # /resume：清除暂停标志，让后续消息正常执行（配合方案C：前端重发消息触发恢复）
             if req.message.startswith("/resume"):
-                from app.security.approval import clear_pause
+                # clear_pause 已在模块顶部 import，无需局部 import
+                # （局部 import 会导致 Python 将 clear_pause 视为整个函数的局部变量，
+                #  finally 块中引用时 UnboundLocalError）
                 await clear_pause(req.thread_id)
                 yield {"event": "token", "data": "已恢复执行"}
                 yield {"event": "done", "data": "{}"}
@@ -192,6 +224,13 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             }
             # 异常分支必须 yield done，否则前端一直显示"..."等待中
             yield {"event": "done", "data": "{}"}
+        finally:
+            # C1: 无论正常退出、异常、还是客户端断连（GeneratorExit 继承自
+            # BaseException 不被 except Exception 捕获），都必须清理 abort/pause
+            # 标志，避免泄漏到下次会话。同时释放 stream_lock（M4）。
+            stream_lock.release()
+            await clear_abort(req.thread_id)
+            await clear_pause(req.thread_id)
 
 
 def register_chat_routes(app: FastAPI) -> None:
@@ -251,7 +290,7 @@ def register_chat_routes(app: FastAPI) -> None:
             span_name,
             thread_id=req.thread_id,
             action=action,
-            decision=req.decision,
+            decision=effective_decision,
             path=req.path,
             args=mark_redacted(),
         ):
@@ -267,7 +306,7 @@ def register_chat_routes(app: FastAPI) -> None:
                 if tc_id:
                     sink.update_tool_call_approval_sync(
                         tool_call_id=tc_id,
-                        approval_decision=req.decision,
+                        approval_decision=effective_decision,
                         approved=req.approval,
                     )
             except Exception as exc:  # noqa: BLE001 — 回填失败不阻塞审批
@@ -345,7 +384,7 @@ def register_chat_routes(app: FastAPI) -> None:
 
         LLM 失败时不写回 checkpoint，返回 ``{ok: false, error: str}``。
         """
-        from langchain_core.messages import SystemMessage
+        from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
         from app.memory import summarize_messages
         # 延迟 import：测试通过 monkeypatch app.main.get_async_checkpointer
@@ -358,8 +397,11 @@ def register_chat_routes(app: FastAPI) -> None:
         try:
             if hasattr(checkpointer, "aget"):
                 checkpoint = await checkpointer.aget(config)
+            elif hasattr(checkpointer, "get"):
+                # H2: 同步 SqliteSaver.get() 用 asyncio.to_thread 避免阻塞事件循环
+                checkpoint = await asyncio.to_thread(checkpointer.get, config)
             else:
-                checkpoint = checkpointer.get(config)
+                checkpoint = None
         except Exception as exc:  # noqa: BLE001
             logger.warning("compact: load checkpoint failed", thread_id=req.thread_id, error=str(exc))
             return {"ok": False, "error": f"加载 checkpoint 失败: {exc}"}
@@ -373,8 +415,22 @@ def register_chat_routes(app: FastAPI) -> None:
             return {"ok": False, "error": "消息不足，无需压缩"}
 
         # 2. 调 LLM 压缩前 N-2 条
-        to_compress = messages[:-2]
+        # M3: 不能盲取最后 2 条 —— 若 keep_recent 第一条是 ToolMessage，
+        # 必须把发起对应 tool_call 的 AIMessage 也移入 keep_recent，
+        # 否则压缩后会留下孤立的 ToolMessage，破坏配对（ToolMessage 必须紧跟
+        # 在发起 tool_call 的 AIMessage 之后，否则 LangGraph 还原状态会报错）。
         keep_recent = messages[-2:]
+        to_compress = messages[:-2]
+        if keep_recent and isinstance(keep_recent[0], ToolMessage):
+            tool_call_id = keep_recent[0].tool_call_id
+            # 向前找对应的 AIMessage（含匹配的 tool_call id）
+            for i in range(len(to_compress) - 1, -1, -1):
+                msg = to_compress[i]
+                if isinstance(msg, AIMessage) and msg.tool_calls:
+                    if any(tc.get("id") == tool_call_id for tc in msg.tool_calls):
+                        keep_recent = [msg] + keep_recent
+                        to_compress = to_compress[:i] + to_compress[i + 1 :]
+                        break
         try:
             summary = await summarize_messages(to_compress)
         except Exception as exc:  # noqa: BLE001
@@ -384,13 +440,33 @@ def register_chat_routes(app: FastAPI) -> None:
         # 3. 写回 checkpoint：[SystemMessage(summary), *keep_recent]
         new_messages = [SystemMessage(content=summary), *keep_recent]
         new_channel_values = {**channel_values, "messages": new_messages}
-        new_checkpoint = {**checkpoint, "channel_values": new_channel_values}
+        # H1: 生成新 checkpoint ID 并设置 parent_checkpoint_id，避免覆盖旧记录、
+        # 破坏历史链（旧实现直接继承 checkpoint["id"]，aput 会覆盖原 checkpoint，
+        # 且 parent_checkpoint_id 为 None，丢失时间旅行能力）。
+        new_checkpoint_id = str(uuid.uuid4())
+        new_checkpoint = {
+            **checkpoint,
+            "id": new_checkpoint_id,
+            "parent_checkpoint_id": checkpoint.get("id"),
+            "channel_values": new_channel_values,
+        }
+        new_config = {
+            **config,
+            "configurable": {
+                **config.get("configurable", {}),
+                "checkpoint_id": new_checkpoint_id,
+            },
+        }
 
         try:
             if hasattr(checkpointer, "aput"):
-                await checkpointer.aput(config, new_checkpoint, {"messages": "any"}, [])
+                # M1: 第四个参数 new_versions 应为 dict 而非 list
+                await checkpointer.aput(new_config, new_checkpoint, {"messages": "any"}, {})
             elif hasattr(checkpointer, "put"):
-                checkpointer.put(config, new_checkpoint, {"messages": "any"}, [])
+                # H2: 同步 SqliteSaver.put() 用 asyncio.to_thread 避免阻塞事件循环
+                await asyncio.to_thread(
+                    checkpointer.put, new_config, new_checkpoint, {"messages": "any"}, {}
+                )
             else:
                 return {"ok": False, "error": "checkpointer 不支持写回"}
         except Exception as exc:  # noqa: BLE001

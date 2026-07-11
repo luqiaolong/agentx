@@ -345,7 +345,7 @@ def test_is_git_write_command_other_write_subcommands() -> None:
     assert is_git_write_command("git checkout main") is True
 
 
-def test_is_git_write_command_shlex_error_returns_false() -> None:
-    """shlex.split 解析失败（不匹配的引号）安全降级返回 False。"""
-    # 不匹配的引号会让 shlex.split 抛 ValueError
-    assert is_git_write_command('git commit -m "unclosed quote') is False
+def test_is_git_write_command_shlex_error_returns_true() -> None:
+    """shlex.split 解析失败（不匹配的引号）安全降级返回 True（拦截）。"""
+    # 不匹配的引号会让 shlex.split 抛 ValueError，安全降级为拦截
+    assert is_git_write_command('git commit -m "unclosed quote') is True
