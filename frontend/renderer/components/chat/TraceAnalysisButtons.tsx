@@ -1,5 +1,5 @@
 /**
- * 执行轨迹分析按钮：复盘。
+ * 执行轨迹分析按钮：评测。
  *
  * 放在 assistant 消息底部操作区，MessageFeedback 右侧。
  * 点击后在独立 PowerShell 窗口中启动 Claude CLI headless 模式，
@@ -7,7 +7,7 @@
  *
  * runId 缺失时按钮 disabled（无轨迹可分析）。
  * 每次点击都会重新弹出 PowerShell 窗口；成功后短暂（约 2s）显示「✓ 已发送」反馈，
- * 然后自动恢复「复盘」状态，允许用户继续点击。
+ * 然后自动恢复「评测」状态，允许用户继续点击。
  */
 import { memo } from "react";
 import { RotateCcw, Check } from "lucide-react";
@@ -35,12 +35,12 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
   const isBusy = sending;
 
   const title = error
-    ? `复盘失败：${error}`
+    ? `评测失败：${error}`
     : justDispatched
-    ? "复盘已发送到 PowerShell 窗口（可继续点击重新发起）"
+    ? "评测已发送到 PowerShell 窗口（可继续点击重新发起）"
     : sending
     ? "正在发送中…"
-    : disabledReason ?? "复盘这条执行轨迹（在 PowerShell 中启动 Claude CLI）";
+    : disabledReason ?? "评测这条执行轨迹（在 PowerShell 中启动 Claude CLI）";
 
   return (
     <div className="flex items-center gap-1.5">
@@ -49,7 +49,7 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
         onClick={() => runId && review(runId)}
         disabled={isDisabled || isBusy}
         title={title}
-        aria-label="复盘这条执行轨迹"
+        aria-label="评测这条执行轨迹"
         data-testid="trace-review-btn"
         className="flex h-5 shrink-0 items-center gap-0.5 rounded-md px-1.5 text-muted-c transition-colors hover:bg-hover-soft hover:text-primary-c disabled:cursor-not-allowed disabled:opacity-30"
         style={{ fontSize: "var(--fs-msg-assist, 11px)" }}
@@ -61,7 +61,7 @@ export const TraceAnalysisButtons = memo(function TraceAnalysisButtons({
         ) : (
           <RotateCcw className="h-3 w-3" />
         )}
-        <span>{justDispatched && !isBusy ? "已发送" : sending ? "发送中" : "复盘"}</span>
+        <span>{justDispatched && !isBusy ? "已发送" : sending ? "发送中" : "评测"}</span>
       </button>
       {error && (
         <span

@@ -1,12 +1,12 @@
 /**
- * 执行轨迹分析 hook：复盘。
+ * 执行轨迹分析 hook：评测。
  *
- * 点击底部「复盘」按钮时触发：
+ * 点击底部「评测」按钮时触发：
  * 1. 调后端 export-trace 端点导出 prompt 文件
  * 2. 调 Tauri command 弹出 PowerShell 窗口执行 claude CLI
  * 3. 短暂显示「✓ 已发送」反馈后恢复可点，允许用户多次重新触发
  *
- * 聊天窗口不渲染任何 trace 内容，复盘在 PowerShell 终端中完成。
+ * 聊天窗口不渲染任何 trace 内容，评测在 PowerShell 终端中完成。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -19,7 +19,7 @@ export interface UseTraceAnalysisResult {
   sending: boolean;
   /** 错误信息（发送失败时）。 */
   error: string | null;
-  /** 触发复盘。runId = 目标消息的 traceId。每次调用都会重新弹一个新窗口。 */
+  /** 触发评测。runId = 目标消息的 traceId。每次调用都会重新弹一个新窗口。 */
   review: (runId: string) => void;
 }
 
