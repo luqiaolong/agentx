@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from app.deepagent.context import current_thread_id
 from app.observability.logger import logger
+from app.sse.events import make_error_event
 from app.team.orchestrator import run_team_path
 
 if TYPE_CHECKING:
@@ -70,14 +71,20 @@ async def run_coding_team(
         message_len=len(message),
     )
 
-    async for sse in run_team_path(
-        message,
-        thread_id,
-        state,
-        profile_prompt=profile_prompt,
-        history=history,
-        permission_mode=permission_mode,
-        workspace_path=workspace_path,
-        chat_model=chat_model,
-    ):
-        yield sse
+    # M24 修复：用 try/except 包裹 run_team_path，异常时 yield error 事件
+    # 而非让异常向上传播到 Router 导致整条 SSE 流中断。
+    try:
+        async for sse in run_team_path(
+            message,
+            thread_id,
+            state,
+            profile_prompt=profile_prompt,
+            history=history,
+            permission_mode=permission_mode,
+            workspace_path=workspace_path,
+            chat_model=chat_model,
+        ):
+            yield sse
+    except Exception as exc:  # noqa: BLE001 — Team 异常不应让 SSE 流中断
+        logger.exception("coding_team failed", thread_id=thread_id)
+        yield make_error_event(f"Team 执行失败: {exc}")

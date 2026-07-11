@@ -20,8 +20,10 @@ __all__ = [
     "MENTION_PATTERN",
 ]
 
-# @mention 正则：匹配 @ 后跟字母/数字/下划线/连字符
-MENTION_PATTERN = re.compile(r"@([a-zA-Z0-9_-]+)")
+# @mention 正则：匹配 @ 后跟字母/数字/下划线/连字符。
+# Low 1 修复：要求 @ 前为行首或空白，避免邮箱地址 user@example.com 中的
+# @example 被误匹配为 @mention。
+MENTION_PATTERN = re.compile(r"(?:^|\s)@([a-zA-Z0-9_-]+)")
 
 
 def parse_mention(message: str) -> tuple[str, tuple[str, str] | None]:

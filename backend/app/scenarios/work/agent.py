@@ -215,28 +215,30 @@ def make_expert_delegation_tool(
         # thread_id 保持原始值（沙箱授权 / approval / pause / abort 都基于原始 thread_id）。
         expert_checkpointer = InMemorySaver()
 
-        async for event in run_coding_expert(
-            task,
-            thread_id,
-            profile_prompt=profile_prompt,
-            history=None,
-            permission_mode=permission_mode,
-            workspace_path=workspace_path,
-            chat_model=chat_model,
-            checkpointer=expert_checkpointer,
-            yield_event=_expert_yield_event,
-        ):
-            # token 从 generator yield 直接收集；
-            # 非 token 事件已通过 _expert_yield_event 回调透传到 Supervisor custom stream。
-            if event.get("event") == "token":
-                content = event.get("data", "")
-                if content:
-                    parts.append(content)
-
-        # Bug 2 修复：Expert 的 finally 可能清除了 full_trust，恢复 Supervisor 的状态。
-        if permission_mode == "full_trust":
-            sandbox = get_sandbox()
-            await sandbox.set_full_trust(thread_id, True)
+        # M21 修复：full_trust 恢复移到 try/finally，确保 run_coding_expert 抛异常时也能恢复。
+        # C2 修复：移除 history=None（run_coding_expert 签名已无 history 参数）。
+        try:
+            async for event in run_coding_expert(
+                task,
+                thread_id,
+                profile_prompt=profile_prompt,
+                permission_mode=permission_mode,
+                workspace_path=workspace_path,
+                chat_model=chat_model,
+                checkpointer=expert_checkpointer,
+                yield_event=_expert_yield_event,
+            ):
+                # token 从 generator yield 直接收集；
+                # 非 token 事件已通过 _expert_yield_event 回调透传到 Supervisor custom stream。
+                if event.get("event") == "token":
+                    content = event.get("data", "")
+                    if content:
+                        parts.append(content)
+        finally:
+            # Bug 2 修复：Expert 的 finally 可能清除了 full_trust，恢复 Supervisor 的状态。
+            if permission_mode == "full_trust":
+                sandbox = get_sandbox()
+                await sandbox.set_full_trust(thread_id, True)
 
         return "".join(parts).strip() or f"Expert '{expert_name}' 未返回结果"
 
@@ -253,6 +255,7 @@ async def build_work_supervisor(
     chat_model: BaseChatModel | None = None,
     rubric: str | None = None,
     grader_model: Any | None = None,
+    permission_mode: str = "standard",
 ) -> Any:
     """构造 work 场景 Supervisor agent。
 
@@ -269,6 +272,8 @@ async def build_work_supervisor(
         workspace_path: 可选当前工作区绝对路径。
         chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
             None 时调用 ``get_chat_model()`` 获取真实 LLM。
+        permission_mode: 权限模式，"standard" 或 "full_trust"。tools is None 时透传给
+            ``make_expert_delegation_tool``，确保内部 delegate_to_expert 与 Supervisor 权限一致。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -285,8 +290,16 @@ async def build_work_supervisor(
 
     if tools is None:
         # 标准工具集（fs + cli + git + rag + web）+ coding Expert 委派
+        # M25 修复：透传 profile_prompt / permission_mode / chat_model，确保
+        # tools is None 分支与 run_work_supervisor 显式构造 expert_tool 的行为一致。
         standard_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-        expert_tool = make_expert_delegation_tool(thread_id, workspace_path)
+        expert_tool = make_expert_delegation_tool(
+            thread_id=thread_id,
+            workspace_path=workspace_path,
+            profile_prompt=profile_prompt,
+            permission_mode=permission_mode,
+            chat_model=chat_model,
+        )
         tools = [*standard_tools, expert_tool]
 
     if checkpointer is None:
@@ -397,7 +410,7 @@ async def run_work_supervisor(
         })
 
         subagent_result = await _run_subagent_for_mention(
-            agent_name, cleaned_message, thread_id, workspace_path
+            agent_name, cleaned_message, thread_id, workspace_path, chat_model=chat_model
         )
 
         # 将子代理结果作为上下文注入 Supervisor
@@ -497,30 +510,102 @@ async def _run_subagent_for_mention(
     task: str,
     thread_id: str,
     workspace_path: str | None,
+    chat_model: Any = None,
 ) -> str:
-    """运行子代理并收集最终文本结果（用于 @mention 子代理委派）。"""
+    """运行子代理并收集最终文本结果（用于 @mention 子代理委派）。
+
+    Bug 修复：
+    - H9：用 try/except 包裹整个子代理调用，异常时返回错误信息字符串而非崩溃 Supervisor；
+      ``error`` 类型事件不静默丢弃，记录 warning 并把错误信息 append 到结果。
+    - M22：接受 ``chat_model`` 参数，透传给子代理 runner。
+      由于 ``run_rag_agent`` / ``run_web_agent`` / ``run_custom_agent`` 当前签名不接受
+      ``chat_model``，用 ``inspect.signature`` 检测：仅当 runner 显式声明 ``chat_model``
+      形参或接受 ``**kwargs`` 时才透传，避免破坏现有签名。
+
+    Args:
+        agent_name: 子代理名（``rag`` / ``web`` / ``<custom_key>``）。
+        task: 要委派给子代理的任务文本。
+        thread_id: 会话 ID。
+        workspace_path: 当前工作区路径（自定义子代理用）。
+        chat_model: 可选注入的 ChatModel（eval/mock 模式）；为 None 时不透传。
+
+    Returns:
+        子代理 token 事件拼接后的文本；异常或 error 事件时返回带 ``[子代理...]`` 前缀的提示串。
+    """
+    import inspect
+    import json
+
     parts: list[str] = []
 
-    if agent_name == "rag":
-        from app.subagents.rag_agent import run_rag_agent
+    def _runner_accepts_chat_model(fn: Any) -> bool:
+        """检查 runner 是否接受 ``chat_model`` 参数（显式形参或 **kwargs）。"""
+        try:
+            sig = inspect.signature(fn)
+        except (ValueError, TypeError):
+            return False
+        return any(
+            p.name == "chat_model" or p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
 
-        async for event in run_rag_agent(thread_id, task, history=None):
-            if event.get("type") == "token":
-                parts.append(event.get("content", ""))
-    elif agent_name == "web":
-        from app.subagents.web_agent import run_web_agent
+    try:
+        if agent_name == "rag":
+            from app.subagents.rag_agent import run_rag_agent
 
-        async for event in run_web_agent(thread_id, task, history=None):
-            if event.get("type") == "token":
-                parts.append(event.get("content", ""))
-    else:
-        # 自定义子代理
-        from app.subagents.custom_agent import run_custom_agent
+            kwargs: dict[str, Any] = {"history": None}
+            if chat_model is not None and _runner_accepts_chat_model(run_rag_agent):
+                kwargs["chat_model"] = chat_model
+            runner = run_rag_agent(thread_id, task, **kwargs)
+        elif agent_name == "web":
+            from app.subagents.web_agent import run_web_agent
 
-        async for event in run_custom_agent(
-            agent_name, thread_id, task, history=None, workspace_path=workspace_path
-        ):
-            if event.get("type") == "token":
-                parts.append(event.get("content", ""))
+            kwargs = {"history": None}
+            if chat_model is not None and _runner_accepts_chat_model(run_web_agent):
+                kwargs["chat_model"] = chat_model
+            runner = run_web_agent(thread_id, task, **kwargs)
+        else:
+            # 自定义子代理
+            from app.subagents.custom_agent import run_custom_agent
 
-    return "".join(parts).strip()
+            kwargs = {"history": None, "workspace_path": workspace_path}
+            if chat_model is not None and _runner_accepts_chat_model(run_custom_agent):
+                kwargs["chat_model"] = chat_model
+            runner = run_custom_agent(agent_name, thread_id, task, **kwargs)
+
+        async for event in runner:
+            # 兼容两种事件契约：
+            # - 内置/自定义子代理：{"type": "token", "content": str}
+            # - Supervisor/Expert：{"event": "token", "data": str}
+            ev_type = event.get("event") or event.get("type") or ""
+            if ev_type == "error":
+                # H9 修复：error 事件不静默丢弃，记录并 append 错误信息。
+                ev_data = event.get("data")
+                if ev_data is None:
+                    ev_data = event.get("content", "")
+                error_msg = (
+                    ev_data
+                    if isinstance(ev_data, str)
+                    else json.dumps(ev_data, ensure_ascii=False)
+                )
+                logger.warning(
+                    "subagent error in mention", error_msg=error_msg, agent_name=agent_name
+                )
+                parts.append(f"[子代理错误: {error_msg}]")
+                continue
+            if ev_type == "token":
+                data = event.get("content")
+                if data is None:
+                    data = event.get("data", "")
+                # data 可能是纯文本，也可能是 JSON 串（部分 runner 会包一层）
+                if isinstance(data, str):
+                    try:
+                        parsed = json.loads(data)
+                        if isinstance(parsed, dict):
+                            data = parsed.get("content", data)
+                    except json.JSONDecodeError:
+                        pass
+                parts.append(data)
+        return "".join(parts).strip()
+    except Exception as exc:  # noqa: BLE001 — 子代理异常不应崩溃 Supervisor
+        logger.exception("subagent runner failed in mention", agent_name=agent_name)
+        return f"[子代理执行失败: {exc}]"
