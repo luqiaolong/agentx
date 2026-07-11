@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type { TodoItem } from "@/hooks/useChatStream";
 
 /**
@@ -16,6 +18,8 @@ import type { TodoItem } from "@/hooks/useChatStream";
  *   - 新值：work / coding / rag / web
  *
  * 导出供测试（TodoProgress.test.tsx）使用。
+ *
+ * 注意：本组件目前不在 UI 上展示 task label，但保留此工具函数供测试和未来扩展使用。
  */
 export function formatTaskLabel(taskId: string | undefined): string {
   if (!taskId) return "任务";
@@ -45,61 +49,78 @@ export function formatTaskLabel(taskId: string | undefined): string {
   return `任务 ${taskId.slice(-8)}`;
 }
 
-function groupTodosByTaskId(todos: TodoItem[]): Map<string | undefined, TodoItem[]> {
-  const groups = new Map<string | undefined, TodoItem[]>();
-  for (const t of todos) {
-    const key = t.taskId;
-    const list = groups.get(key) ?? [];
-    list.push(t);
-    groups.set(key, list);
-  }
-  return groups;
-}
+// 输入框任务进度最大展示条数（超出滚动条）
+const MAX_VISIBLE_TODOS = 5;
 
-function TodoList({ todos }: { todos: TodoItem[] }) {
+/**
+ * 单条 todo 行：序号 + 状态徽标 + 文本
+ *
+ * 序号从父级传下来，全局递增（跨 task_id 分组）。
+ */
+function TodoRow({
+  index,
+  content,
+  status,
+}: {
+  index: number;
+  content: string;
+  status: TodoItem["status"];
+}) {
+  const isCompleted = status === "completed";
+  const isInProgress = status === "in_progress";
+  // pending: 灰色空圆圈；in_progress: 黄色 ◐ + spin；completed: 绿色 ✓
+  const badgeClass = isCompleted
+    ? "border-brand-600 bg-brand-700 text-brand-200"
+    : isInProgress
+      ? "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+      : "border-strong text-muted-c";
   return (
-    <ul className="space-y-1">
-      {todos.map((t, i) => {
-        const isCompleted = t.status === "completed";
-        const isInProgress = t.status === "in_progress";
-        // pending: 灰色空圆圈；in_progress: 黄色 ◐ + spin；completed: 绿色 ✓
-        const badgeClass = isCompleted
-          ? "border-brand-600 bg-brand-700 text-brand-200"
-          : isInProgress
-            ? "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-            : "border-strong text-muted-c";
-        return (
-          <li key={i} className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
-            <span
-              className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${badgeClass} ${
-                isInProgress ? "animate-spin" : ""
-              }`}
-            >
-              {isCompleted && (
-                <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
-                  <path
-                    d="M2.5 6L5 8.5L9.5 3.5"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              )}
-              {isInProgress && (
-                <span className="text-[10px] leading-none">◐</span>
-              )}
-            </span>
-            <span className={isCompleted ? "text-muted-c line-through" : "text-secondary-c"}>
-              {t.content}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <li className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
+      {/* 勾选框（badge） */}
+      <span
+        className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${badgeClass} ${
+          isInProgress ? "animate-spin" : ""
+        }`}
+      >
+        {isCompleted && (
+          <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
+            <path
+              d="M2.5 6L5 8.5L9.5 3.5"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+        {isInProgress && <span className="text-[10px] leading-none">◐</span>}
+      </span>
+      {/* 序号：等宽数字列，位于勾选框右侧，全局递增 */}
+      <span
+        className="mt-0.5 w-5 shrink-0 text-right tabular-nums text-muted-c"
+        style={{ fontSize: 'var(--fs-ws-task-meta)' }}
+      >
+        {index}.
+      </span>
+      <span className={isCompleted ? "text-muted-c line-through" : "text-secondary-c"}>
+        {content}
+      </span>
+    </li>
   );
 }
 
+/**
+ * 输入框下方的任务进度面板。
+ *
+ * 约束（用户偏好记忆）：
+ * - 仅展示"任务进度"标题与计数（completedTodos/total）
+ * - 隐藏横向进度条
+ * - 隐藏 taskId 分组标题（"任务 1a5b5fa5" / "Work Agent #0" 等）
+ * - 每条 todo 前添加全局连续递增序号（1. 2. 3. ...），序号位于勾选框右侧
+ * - 进度面板右上角提供折叠/展开控制按钮（chevron 图标）
+ * - 列表始终展开，最多展示 5 条，超出滚动条（5 条以下不滚动）
+ * - 折叠后仅显示标题栏与计数，列表区域收起
+ */
 export function TodoProgress({
   todos,
   completedTodos,
@@ -107,47 +128,47 @@ export function TodoProgress({
   todos: TodoItem[];
   completedTodos: number;
 }) {
-  const groups = groupTodosByTaskId(todos);
-  const grouped = Array.from(groups.entries());
-  const hasGroups = grouped.length > 1 || (grouped.length === 1 && grouped[0]![0] !== undefined);
-  // T12: 进度条 —— completedTodos / todos.length * 100
-  const totalTodos = todos.length;
-  const progress = totalTodos > 0 ? (completedTodos / totalTodos) * 100 : 0;
-
+  const [collapsed, setCollapsed] = useState(false);
   return (
     <div className="mx-auto w-full max-w-3xl border-t border-default px-4 py-2.5">
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="font-semibold uppercase tracking-wide text-muted-c" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
+        <span
+          className="font-semibold uppercase tracking-wide text-muted-c"
+          style={{ fontSize: 'var(--fs-ws-task-title)' }}
+        >
           任务进度
         </span>
-        <span className="text-muted-c" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
-          {completedTodos}/{todos.length}
-        </span>
-      </div>
-      {/* T12: 进度条 */}
-      <div className="mb-2 h-1 overflow-hidden rounded-full bg-subtle">
-        <div
-          className="h-full rounded-full bg-brand-500 transition-all duration-300 dark:bg-brand-400"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-      {hasGroups ? (
-        <div className="space-y-3">
-          {grouped.map(([taskId, groupTodos], idx) => (
-            <div key={taskId ?? `__ungrouped__${idx}`}>
-              <div
-                className="mb-1 font-medium text-secondary-c"
-                style={{ fontSize: 'var(--fs-ws-task-meta)' }}
-                title={taskId ?? ""}
-              >
-                {formatTaskLabel(taskId)}
-              </div>
-              <TodoList todos={groupTodos} />
-            </div>
-          ))}
+        <div className="flex items-center gap-2">
+          <span className="text-muted-c" style={{ fontSize: 'var(--fs-ws-task-meta)' }}>
+            {completedTodos}/{todos.length}
+          </span>
+          <button
+            type="button"
+            aria-label={collapsed ? "展开任务进度" : "折叠任务进度"}
+            aria-expanded={!collapsed}
+            data-testid="todo-progress-toggle"
+            onClick={() => setCollapsed((v) => !v)}
+            className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-c transition-colors hover:bg-muted-c/10"
+          >
+            <ChevronDown
+              className={`h-3 w-3 transition-transform duration-200 ${collapsed ? "-rotate-90" : "rotate-0"}`}
+            />
+          </button>
         </div>
-      ) : (
-        <TodoList todos={todos} />
+      </div>
+      {/* todo 列表：全局序号，最多展示 MAX_VISIBLE_TODOS 条，超出滚动 */}
+      {!collapsed && (
+        <ul
+          className="space-y-1 overflow-y-auto"
+          style={{
+            // 单行约 fs-ws-task-title 行高 ≈ 18px + 上下 padding，5 条约 110-130px
+            maxHeight: `${MAX_VISIBLE_TODOS * 22 + 8}px`,
+          }}
+        >
+          {todos.map((t, i) => (
+            <TodoRow key={i} index={i + 1} content={t.content} status={t.status} />
+          ))}
+        </ul>
       )}
     </div>
   );
