@@ -21,6 +21,9 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from app.eval.judges.base import Judge
+from app.eval.judges.coding_rubric_judge import CodingRubricJudge
+from app.eval.judges.rubric_judge import RubricJudge
 from app.eval.models import CaseResult, EvalCase, EvalResult, EvalSuite, JudgeResult
 from app.observability.logger import logger
 
@@ -30,6 +33,42 @@ if TYPE_CHECKING:
     from app.eval.judges.base import Judge
 
 __all__ = ["EvalRunner"]
+
+
+def _adapt_judges_for_agent_mode(
+    judges: "list[Judge]", agent_mode: str
+) -> "list[Judge]":
+    """按 agent_mode 替换传入 judges 中的通用 ``RubricJudge`` 为场景专用子类。
+
+    - ``coding`` / ``coding_team`` → ``CodingRubricJudge``（5 维代码任务评审 prompt）
+    - 其他（含 ``work``）→ 保持 ``RubricJudge`` 通用 prompt
+
+    仅替换类型，构造参数（``no_rubric`` / ``grader_model``）从原实例拷贝。
+    非 RubricJudge 实例（如 ``AssertJudge``）原样保留。
+
+    Args:
+        judges: 调用方传入的 Judge 列表（来自 CLI）。
+        agent_mode: 用例的 ``agent_mode`` 字段。
+
+    Returns:
+        替换后的新 list（原 list 不修改）。
+    """
+    adapted: list[Judge] = []
+    needs_replacement = agent_mode in ("coding", "coding_team")
+    for j in judges:
+        if needs_replacement and isinstance(j, RubricJudge) and not isinstance(
+            j, CodingRubricJudge
+        ):
+            # 复制构造参数，注入 coding 专用 system_prompt
+            adapted.append(
+                CodingRubricJudge(
+                    no_rubric=j.no_rubric,
+                    grader_model=j.grader_model,
+                )
+            )
+        else:
+            adapted.append(j)
+    return adapted
 
 
 class EvalRunner:
@@ -110,7 +149,10 @@ class EvalRunner:
         if judges and not result.error:
             from app.eval.judges.composite import JudgeChain
 
-            judge_results = await JudgeChain(judges).evaluate(result.events, case)
+            # 按 case.agent_mode 路由 rubric judge：coding / coding_team → CodingRubricJudge
+            # 痛点 2 + 痛点 3 修复：通用 RubricJudge 注入 coding 专用 prompt + tool_call id 配对
+            case_judges = _adapt_judges_for_agent_mode(list(judges), case.agent_mode)
+            judge_results = await JudgeChain(case_judges).evaluate(result.events, case)
             result = self.apply_judge_results(result, judge_results)
 
         return result
@@ -211,7 +253,10 @@ class EvalRunner:
         if judges:
             from app.eval.judges.composite import JudgeChain
 
-            judge_results = await JudgeChain(judges).evaluate(events, case)
+            # 按 case.agent_mode 路由 rubric judge：coding / coding_team → CodingRubricJudge
+            # trace 评测场景下，case.agent_mode 从 observation_run.agent_mode 透传
+            case_judges = _adapt_judges_for_agent_mode(list(judges), case.agent_mode)
+            judge_results = await JudgeChain(case_judges).evaluate(events, case)
             result = self.apply_judge_results(result, judge_results)
 
         return result

@@ -75,8 +75,32 @@ def _sanitize_for_payload(content: str) -> str:
     return _PAYLOAD_CLOSER_RE.sub(r"<\\/\1", content)
 
 
+def _tool_call_id(msg: Any) -> str:
+    """提取 message 的 tool_call_id（用于 grader 配对 tool_call → tool_result）。
+
+    - ``ToolMessage.tool_call_id`` 字段
+    - ``AIMessage.tool_calls[0]["id"]``（同一消息多个 tool_calls 时取第一个）
+
+    无 id 时返回空串，绝不抛异常（避免在分级失败路径中掩埋真实错误）。
+    """
+    tool_call_id = getattr(msg, "tool_call_id", None)
+    if tool_call_id:
+        return str(tool_call_id)
+    tool_calls = getattr(msg, "tool_calls", None) or []
+    if tool_calls and isinstance(tool_calls, list):
+        first = tool_calls[0]
+        if isinstance(first, dict):
+            return str(first.get("id", "") or "")
+    return ""
+
+
 def _role_label(msg: Any) -> str:
-    """把 LangChain message 类型映射为人类可读角色名。"""
+    """把 LangChain message 类型映射为人类可读角色名。
+
+    ToolMessage 标注为 ``tool:<name>[id=<call_id>]``，便于 grader 在 transcript 中
+    手动对齐 ``AIMessage.tool_call id=<call_id>`` 与对应 ``ToolMessage id=<call_id>``，
+    解决痛点 3（并发工具调用场景下 grader 无法配对 call 与 result）。
+    """
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
     if isinstance(msg, HumanMessage):
@@ -84,7 +108,9 @@ def _role_label(msg: Any) -> str:
     if isinstance(msg, AIMessage):
         return "assistant"
     if isinstance(msg, ToolMessage):
-        return f"tool:{msg.name or 'tool'}"
+        cid = _tool_call_id(msg)
+        suffix = f"[id={cid}]" if cid else ""
+        return f"tool:{msg.name or 'tool'}{suffix}"
     return getattr(msg, "type", "message")
 
 
@@ -92,6 +118,9 @@ def _coerce_text(msg: Any) -> str:
     """最佳努力把 message body 转为纯字符串。
 
     使用 ``msg.content_blocks``（LangChain 标准化块），同时覆盖 text 与 tool_call。
+
+    ``tool_call`` block 渲染时带 ``id=``，与 ``_role_label`` 中的 ``ToolMessage id=``
+    形成可配对的标识符，让 grader 在 transcript 中能精确对齐 call ↔ result。
     """
     parts: list[str] = []
     for block in msg.content_blocks:
@@ -103,7 +132,9 @@ def _coerce_text(msg: Any) -> str:
         elif btype == "tool_call":
             name = block.get("name", "tool")
             args = block.get("args", {})
-            parts.append(f"<tool_call name={name!r} args={args!r}/>")
+            cid = block.get("id", "") or ""
+            id_attr = f" id={cid!r}" if cid else ""
+            parts.append(f"<tool_call{id_attr} name={name!r} args={args!r}/>")
         else:
             # 不透明 block（image / reasoning 等）只显示类型，避免泄露原始字节
             parts.append(f"({btype or 'block'})")
@@ -180,13 +211,20 @@ def _events_to_messages(events: list[dict]) -> list:
 
     事件 → message 映射：
     - ``event=token`` → 连续 token 合并为单条 ``AIMessage``
-    - ``event=tool_call`` → ``AIMessage`` with ``tool_calls``
-    - ``event=tool_result`` → ``ToolMessage``
+    - ``event=tool_call`` → ``AIMessage`` with ``tool_calls``（带 ``id`` 用于配对）
+    - ``event=tool_result`` → ``ToolMessage``（带 ``name`` + ``tool_call_id``，与 call 配对）
     - ``event=done`` / 其他 → 忽略
 
     原始用户消息不在 SSE 事件中，因此前置一条占位 ``HumanMessage``，
     后续由 ``_build_grader_transcript`` 根据 ``RUBRIC_GRADER_MESSAGE_SOURCE``
     过滤（占位消息无该标记，会被当作"原始用户请求"）。
+
+    .. note::
+        痛点 3 修复：``tool_result`` 必须携带 ``name`` 字段（langchain-core
+        v0.3+ 强制），否则 ``ToolMessage`` 在下游 ``content_blocks`` / role 渲染
+        时无法给出可读工具名，grader 无法识别工具来源。本函数先前漏传，
+        与 ``_events_to_messages`` 调用方紧耦合的 ``_role_label`` 会输出
+        ``tool:tool``，已修复。
     """
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -194,6 +232,9 @@ def _events_to_messages(events: list[dict]) -> list:
         HumanMessage(content="(original user message not available in eval events)")
     ]
     current_ai_text: list[str] = []
+    # 配对缓存：把最近一次 tool_call 的 name 按 tool_call_id 缓存，供后续 tool_result 取用
+    # （agentx 的 tool_result 事件本身可能在 SSE schema 中不携带 name）
+    last_tool_name_by_id: dict[str, str] = {}
     for e in events:
         evt = e.get("event")
         if evt == "token":
@@ -204,14 +245,18 @@ def _events_to_messages(events: list[dict]) -> list:
             if current_ai_text:
                 messages.append(AIMessage(content="".join(current_ai_text)))
                 current_ai_text = []
+            cid = e.get("tool_call_id", "")
+            tool_name = e.get("tool", "")
+            if cid and tool_name:
+                last_tool_name_by_id[str(cid)] = str(tool_name)
             messages.append(
                 AIMessage(
                     content="",
                     tool_calls=[
                         {
-                            "name": e.get("tool", ""),
+                            "name": tool_name,
                             "args": e.get("args", {}),
-                            "id": e.get("tool_call_id", ""),
+                            "id": cid,
                         }
                     ],
                 )
@@ -220,10 +265,18 @@ def _events_to_messages(events: list[dict]) -> list:
             if current_ai_text:
                 messages.append(AIMessage(content="".join(current_ai_text)))
                 current_ai_text = []
+            cid = str(e.get("tool_call_id", ""))
+            # 三步取值：event 自带 name → 配对缓存 → 兜底 "tool"
+            tool_name = (
+                e.get("tool")
+                or last_tool_name_by_id.get(cid, "")
+                or "tool"
+            )
             messages.append(
                 ToolMessage(
                     content=str(e.get("result", "")),
-                    tool_call_id=e.get("tool_call_id", ""),
+                    tool_call_id=cid,
+                    name=tool_name,
                 )
             )
     if current_ai_text:
@@ -312,11 +365,29 @@ class RubricJudge:
     Args:
         no_rubric: ``--no-rubric`` 标志，True 时跳过所有 L2 评分。
         grader_model: 可选注入的 grader ChatModel。None 时用 ``get_chat_model(temperature=0)``。
+        system_prompt: 可选注入的 grader system prompt。None 时用 deepagents
+            ``GRADER_SYSTEM_PROMPT``。子类或场景专用评测器可通过该参数注入
+            AgentX 业务特征定制的提示词（如 ``CodingRubricJudge`` 注入 coding
+            场景专属的代码任务评审维度）。
     """
 
-    def __init__(self, no_rubric: bool = False, grader_model: "BaseChatModel | None" = None) -> None:
+    def __init__(
+        self,
+        no_rubric: bool = False,
+        grader_model: "BaseChatModel | None" = None,
+        system_prompt: str | None = None,
+    ) -> None:
         self.no_rubric = no_rubric
         self.grader_model = grader_model
+        self._system_prompt = system_prompt  # None → 懒解析 deepagents 默认
+
+    def _resolve_system_prompt(self) -> str:
+        """解析 system_prompt：未注入时懒加载 deepagents ``GRADER_SYSTEM_PROMPT``。"""
+        if self._system_prompt is not None:
+            return self._system_prompt
+        from deepagents.middleware.rubric import GRADER_SYSTEM_PROMPT
+
+        return GRADER_SYSTEM_PROMPT
 
     async def evaluate(self, events: list[dict], case: EvalCase) -> JudgeResult:
         """评估事件列表，返回 L2 ``JudgeResult``。
@@ -345,15 +416,13 @@ class RubricJudge:
             return _skipped(case, f"get_chat_model error: {exc}")
 
         # 3. 构建 grader agent（用 langchain.agents.create_agent + GraderResponse）
-        from deepagents.middleware.rubric import (
-            GRADER_SYSTEM_PROMPT,
-            GraderResponse,
-        )
+        # system_prompt 由 ``_resolve_system_prompt`` 解析（注入优先，None → deepagents 默认）
+        from deepagents.middleware.rubric import GraderResponse
         from langchain.agents import create_agent
 
         grader = create_agent(
             model=model,
-            system_prompt=GRADER_SYSTEM_PROMPT,
+            system_prompt=self._resolve_system_prompt(),
             tools=[],
             response_format=GraderResponse,
         )
