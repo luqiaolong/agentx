@@ -4,6 +4,7 @@ import { useChatStore } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent, TodoStatus } from "@/lib/utils";
 import { chat, getCurrentTraceId } from "@/lib/api/chat";
+import { stripSkillTag } from "@/lib/skillTag";
 
 export interface TodoItem {
   content: string;
@@ -392,7 +393,11 @@ export function useChatStream(args: UseChatStreamArgs) {
                   .replace(/<workspace>.*?<\/workspace>\s?/g, "")
                   .replace(/<file>.*?<\/file>\s?/g, "")
                   .trim();
-                const title = rawQuery.slice(0, 40) || "深度任务";
+                // 任务名隐藏 /skill:<name> 激活标记，只展示用户实际输入；
+                // 剥离后为空时回退到首个技能名 → 兜底"深度任务"。
+                const { text: skillStripped, fallbackSkillName } = stripSkillTag(rawQuery);
+                const titleBase = skillStripped || fallbackSkillName || "";
+                const title = titleBase.slice(0, 40) || "深度任务";
                 // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离。
                 // 走 currentIdRef 而非闭包 currentId —— 否则 SSE handler 永远拿到首次渲染的
                 // 会话 ID,流结束后到达的延迟 todo_update 会落到 stale 闭包或 ""。

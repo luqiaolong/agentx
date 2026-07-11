@@ -21,6 +21,7 @@ import {
 import { chat, getCurrentTraceId } from "@/lib/api/chat";
 import { parseMentions, buildMentionPayload, stripMentions } from "@/lib/mention";
 import { useMentionPickerStore } from "@/stores/mention";
+import { stripSkillTag } from "@/lib/skillTag";
 import { getVersion, reloadBackendConfig, initAgentsMd } from "@/lib/api/app";
 import { health as healthApi, skills as skillsApi } from "@/lib/api/http";
 import { getModelEntries, activateModel } from "@/lib/api/settings";
@@ -447,7 +448,11 @@ export function ChatView() {
       .replace(/<workspace>.*?<\/workspace>\s?/g, "")
       .replace(/<file>.*?<\/file>\s?/g, "")
       .trim();
-    const title = rawQuery.slice(0, 40) || "对话";
+    // 会话/任务名隐藏 /skill:<name> 激活标记，只展示用户实际输入；
+    // 剥离后为空时回退到首个技能名，再回退到空字符串 → 兜底"对话"。
+    const { text: skillStripped, fallbackSkillName } = stripSkillTag(rawQuery);
+    const titleBase = skillStripped || fallbackSkillName || "";
+    const title = titleBase.slice(0, 40) || "对话";
     const taskSource: "work" | "coding" =
       agentMode === "coding" || agentMode === "coding_team" ? "coding" : "work";
     addTask({
