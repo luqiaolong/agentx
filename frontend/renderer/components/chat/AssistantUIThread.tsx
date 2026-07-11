@@ -47,14 +47,21 @@ function renderMessageItem(
 ) {
   const isLast = i === messages.length - 1;
   const isStreamingLast = isStreaming && isLast && m.role === "assistant";
+  // 复盘/执行优化消息（id 以 analysis- 开头）：加大顶部间距 + 分隔线，
+  // 与原会话的执行轨迹明显区分
+  const isAnalysis = m.id.startsWith("analysis-");
   return (
-    <MessageParts
+    <div
       key={m.id}
-      message={m}
-      isStreamingLast={isStreamingLast}
-      isStreaming={isStreaming}
-      onEditSubmit={onEditSubmit}
-    />
+      className={isAnalysis ? "mt-12 pt-2" : ""}
+    >
+      <MessageParts
+        message={m}
+        isStreamingLast={isStreamingLast}
+        isStreaming={isStreaming}
+        onEditSubmit={onEditSubmit}
+      />
+    </div>
   );
 }
 

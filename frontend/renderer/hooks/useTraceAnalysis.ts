@@ -52,7 +52,6 @@ export function useTraceAnalysis(): UseTraceAnalysisResult {
   const appendPartText = useChatStore((s) => s.appendPartText);
   const markReasoningDone = useChatStore((s) => s.markReasoningDone);
   const markRunningToolCallsComplete = useChatStore((s) => s.markRunningToolCallsComplete);
-  const deleteMessage = useChatStore((s) => s.deleteMessage);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const currentId = useChatStore((s) => s.currentId);
 
@@ -75,10 +74,14 @@ export function useTraceAnalysis(): UseTraceAnalysisResult {
       const pendingId = `analysis-${kind}-${crypto.randomUUID()}`;
       _pendingId = pendingId;
       _analyzingThreadId = threadId;
+      const initialText =
+        kind === "review"
+          ? "开始复盘本次执行轨迹…"
+          : "开始执行优化方案…";
       addMessage({
         id: pendingId,
         role: "assistant",
-        content: "",
+        content: initialText,
         ts: Date.now(),
         traceId: runId,
       });
@@ -138,16 +141,8 @@ export function useTraceAnalysis(): UseTraceAnalysisResult {
           if (_pendingId) {
             markReasoningDone(_pendingId);
             markRunningToolCallsComplete(_pendingId);
-            const session = useChatStore.getState().sessions[threadId];
-            const msg0 = session?.messages.find((m) => m.id === _pendingId);
-            const hasText = msg0?.parts.some(
-              (p) => p.type === "text" && p.text.length > 0,
-            );
-            if (!hasText) {
-              deleteMessage(_pendingId);
-            } else {
-              appendPartText(_pendingId, "text", `\n\n⚠️ 分析失败：${msg}`);
-            }
+            // 始终保留消息并追加错误提示，让用户看到失败原因
+            appendPartText(_pendingId, "text", `\n\n⚠️ 分析失败：${msg}`);
           }
           cleanup();
         },
@@ -192,7 +187,6 @@ export function useTraceAnalysis(): UseTraceAnalysisResult {
       appendPartText,
       markReasoningDone,
       markRunningToolCallsComplete,
-      deleteMessage,
       setSessionRunning,
       currentId,
     ],

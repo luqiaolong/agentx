@@ -94,8 +94,6 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
   }
 
   const items: RenderItem[] = [];
-  // text parts 收集到末尾追加，确保执行轨迹（reasoning/delegation/tool-call）先于最终结论展示
-  const textItems: RenderItem[] = [];
 
   for (const p of parts) {
     switch (p.type) {
@@ -146,7 +144,7 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
         // 已配对的 tool-result 跳过（已在 tool-call case 渲染）
         break;
       case "text":
-        textItems.push({ kind: "text", part: p });
+        items.push({ kind: "text", part: p });
         break;
       case "team":
         items.push({ kind: "team", part: p });
@@ -154,8 +152,7 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
     }
   }
 
-  // text parts 追加在所有非 text items 之后，确保执行轨迹先于最终结论展示
-  const allItems = [...items, ...textItems];
+  const allItems = items;
 
   // 第三遍：扫描连续 ≥3 个相同 toolName 的 tool-call，合并为 tool-call-group
   return collapseToolCallGroups(allItems);
