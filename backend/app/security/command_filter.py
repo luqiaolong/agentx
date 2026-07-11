@@ -135,22 +135,22 @@ def is_git_write_command(command: str) -> bool:
     用 ``shlex.split`` 解析命令，检查第一个 token 是否为 ``git``、
     第二个 token 是否在 ``_GIT_WRITE_SUBCOMMANDS`` 中。
 
-    ``shlex.split`` 解析失败（如不匹配的引号）时返回 False，安全降级为不拦截
-    （后续 blocklist + 元字符过滤仍会兜底）。
+    ``shlex.split`` 解析失败（如不匹配的引号）时返回 True，安全降级为拦截
+    （无法确定命令是否安全时，宁可误拦截也不放行）。
 
     Args:
         command: 完整命令字符串。
 
     Returns:
-        True 表示该命令是 Git 写操作，应被拦截；False 表示不是或无法解析。
+        True 表示该命令是 Git 写操作（或无法解析），应被拦截；False 表示不是。
     """
     if not command or not command.strip():
         return False
     try:
         tokens = shlex.split(command)
     except ValueError:
-        # shlex 解析失败（如不匹配的引号）→ 安全降级，不拦截
-        return False
+        # shlex 解析失败（如不匹配的引号）→ 安全降级为拦截
+        return True
     if len(tokens) < 2:
         return False
     return tokens[0] == "git" and tokens[1] in _GIT_WRITE_SUBCOMMANDS

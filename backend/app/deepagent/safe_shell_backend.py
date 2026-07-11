@@ -19,6 +19,7 @@ deepagents 的 ``LocalShellBackend`` 提供 ``execute`` 工具用 ``subprocess.r
 from __future__ import annotations
 
 import os
+import shlex
 
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
@@ -41,7 +42,8 @@ _SENSITIVE_ENV_PREFIXES = ("AGENTX_",)
 # 敏感子串：变量名包含任一即排除（高置信度敏感标识）
 _SENSITIVE_ENV_SUBSTRINGS = ("api_key", "token", "password", "secret", "credential")
 # 需要两个及以上敏感子串才排除的宽松子串（避免误杀如 "keychain"、"tokenize"）
-_SENSITIVE_LOOSE_SUBSTRINGS = ("auth",)
+# 多元素使 loose_hits >= 2 条件可达（单元素时永远为 False，属死代码）
+_SENSITIVE_LOOSE_SUBSTRINGS = ("auth", "credential", "passwd", "pwd", "apikey")
 
 
 def _build_safe_env() -> dict[str, str]:
@@ -70,6 +72,67 @@ def _build_safe_env() -> dict[str, str]:
         # 保留其他非敏感变量
         safe[key] = value
     return safe
+
+
+# 命令包装器前缀：这些命令通过 /c、-c 等 flag 执行子命令，
+# 需递归解析提取实际子命令再做黑名单检查，防止绕过（如 cmd /c del file.txt）
+_WRAPPER_PREFIXES: dict[str, list[str]] = {
+    "cmd": ["/c", "/k", "-c"],
+    "powershell": ["-command", "-c", "/c"],
+    "pwsh": ["-command", "-c"],
+    "sh": ["-c"],
+    "bash": ["-c"],
+    "python": ["-c"],
+    "python3": ["-c"],
+}
+
+
+def _extract_cmd_name(command: str) -> str:
+    """从命令字符串提取命令名（basename + 去除 Windows 扩展名）。
+
+    用 ``shlex.split`` 解析命令，取第一个 token 的 basename 并去除扩展名。
+    例如 ``C:\\Windows\\System32\\format.com`` → ``format``，``del.exe`` → ``del``。
+
+    ``shlex.split`` 解析失败时降级为 ``command.split()[0]``。
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return command.split()[0] if command else ""
+    if not tokens:
+        return ""
+    cmd_name = os.path.basename(tokens[0])
+    cmd_name = os.path.splitext(cmd_name)[0]
+    return cmd_name
+
+
+def _extract_inner_command(command: str) -> str:
+    """递归解析包装器命令，提取实际执行的子命令。
+
+    对 ``cmd /c``、``powershell -Command``、``python -c``、``sh -c``、``bash -c``
+    等包装器，找到 flag 后的子命令并递归解析，直到不再命中包装器前缀。
+
+    Args:
+        command: 完整命令字符串。
+
+    Returns:
+        提取到的最内层子命令字符串；若不是包装器则返回原命令。
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return command
+    if not tokens:
+        return command
+    cmd = os.path.basename(tokens[0])
+    cmd = os.path.splitext(cmd)[0].lower()
+    if cmd in _WRAPPER_PREFIXES and len(tokens) >= 3:
+        flags = _WRAPPER_PREFIXES[cmd]
+        for i, t in enumerate(tokens[1:], 1):
+            if t.lower() in flags and i + 1 < len(tokens):
+                inner = " ".join(tokens[i + 1:])
+                return _extract_inner_command(inner)
+    return command
 
 
 class SafeLocalShellBackend(LocalShellBackend):
@@ -131,14 +194,21 @@ class SafeLocalShellBackend(LocalShellBackend):
                 truncated=False,
             )
 
-        # 1. 提取命令名（shell=True 下 command 是完整命令字符串，取第一个 token）
-        cmd_name = command.split()[0] if command else ""
+        # 1. 提取命令名（处理完整路径 + Windows 扩展名，如 C:\Windows\System32\format.com → format）
+        cmd_name = _extract_cmd_name(command)
+
+        # 1.5 递归解析包装器命令（cmd /c, powershell -Command, python -c 等），
+        # 提取实际子命令再做黑名单检查，防止通过包装器绕过（如 cmd /c del file.txt）
+        inner_command = _extract_inner_command(command)
+        inner_cmd_name = _extract_cmd_name(inner_command)
 
         # 2. blocklist 检查（exit_code=126 沿用 shell "command cannot execute" 语义）
-        if is_command_blocked(cmd_name):
+        # 对原始命令名和包装器内部命令名都做检查
+        if is_command_blocked(cmd_name) or is_command_blocked(inner_cmd_name):
+            blocked_name = cmd_name if is_command_blocked(cmd_name) else inner_cmd_name
             return ExecuteResponse(
                 output=(
-                    f"命令 '{cmd_name}' 在黑名单中，禁止执行"
+                    f"命令 '{blocked_name}' 在黑名单中，禁止执行"
                     "（删除/格式化/提权等极度危险操作）"
                 ),
                 exit_code=126,
