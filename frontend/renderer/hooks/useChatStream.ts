@@ -81,7 +81,6 @@ export function useChatStream(args: UseChatStreamArgs) {
   const markRunningToolCallsComplete = useChatStore((s) => s.markRunningToolCallsComplete);
   const removeLastTextPart = useChatStore((s) => s.removeLastTextPart);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
-  const setStreaming = useChatStore((s) => s.setStreaming);
   const enqueueApprovalRequest = useChatStore((s) => s.enqueueApprovalRequest);
   const attachApprovalToToolCall = useChatStore((s) => s.attachApprovalToToolCall);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
@@ -265,11 +264,14 @@ export function useChatStream(args: UseChatStreamArgs) {
             // 因连接中断等原因未送达），强制 close 为 complete，让 UI 不再卡在「运行中」
             markRunningToolCallsComplete(pendingIdRef.current);
             // 后端 done 事件可能携带真实 token_count（JSON 对象）
+            // 兼容两种 payload 格式：
+            // 1. data 字段为对象：{ data: { token_count: N } }
+            // 2. payload 展开到顶层：{ token_count: N }（e.data 为 undefined）
             const doneData =
               typeof e.data === "object" && e.data !== null
                 ? (e.data as Record<string, unknown>)
                 : null;
-            const tc = doneData?.token_count;
+            const tc = doneData?.token_count ?? (e as Record<string, unknown>).token_count;
             if (typeof tc === "number" && Number.isFinite(tc)) {
               setMessageTokenCount(pendingIdRef.current, tc);
             }
@@ -278,9 +280,6 @@ export function useChatStream(args: UseChatStreamArgs) {
           if (threadId) {
             setSessionRunning(threadId, false);
           }
-          // 重置 isStreaming：done 事件标志着 SSE 流结束，必须解除
-          // "思考中…"状态，否则 isStreamingLast 恒为 true
-          setStreaming(false);
           // 清理 pending message id
           pendingIdRef.current = null;
           // 标记当前任务完成 + 收尾 Team 子任务
@@ -315,8 +314,6 @@ export function useChatStream(args: UseChatStreamArgs) {
           if (threadId) {
             setSessionRunning(threadId, false);
           }
-          // 重置 isStreaming：error 事件也标志着 SSE 流结束
-          setStreaming(false);
           if (pendingIdRef.current) {
             markReasoningDone(pendingIdRef.current);
             // 兜底：error 时也清理残留的 running tool-call
@@ -371,8 +368,10 @@ export function useChatStream(args: UseChatStreamArgs) {
           const incoming = normalizeTodos(e.todos, taskId);
           if (parentTaskId && source) {
             // Team 子任务路径：创建/更新子任务。
-            // effectiveParentId 优先用 currentTaskIdRef.current（handleSend 预创建的主任务 id，
-            // 前端 UUID），建立正确的父子链接；回退到事件原始 parentTaskId（后端 thread_id）。
+            // M14 修复：优先使用 currentTaskIdRef.current（前端主任务 UUID）作为
+            // parentTaskId，确保父子链接与前端任务 ID 一致。若主任务尚未创建
+            //（ref 为 null），回退到事件 parent_task_id（后端 thread_id），
+            // 避免丢失子任务数据。
             const effectiveParentId = currentTaskIdRef.current ?? parentTaskId;
             const childTaskId = `${effectiveParentId}-child-${source}`;
             const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
@@ -467,6 +466,11 @@ export function useChatStream(args: UseChatStreamArgs) {
             finalizeAgents: true,
             createIfMissing: false,
           });
+          // 安全兜底：team_done 后若 done 事件因故未到达，仍需收尾 reasoning / tool-call，
+          // 避免消息卡在「运行中」状态。不调用 setStreaming/setSessionRunning，
+          // 让后续 done 事件或恢复机制处理流式状态。
+          markReasoningDone(pendingIdRef.current);
+          markRunningToolCallsComplete(pendingIdRef.current);
           break;
         }
         default: {
@@ -488,6 +492,12 @@ export function useChatStream(args: UseChatStreamArgs) {
     });
 
     return () => {
+      // 切换会话 / 卸载前，对当前 pending 消息执行终态收尾，
+      // 避免留下 reasoning 未 done / tool-call 卡 running 的不完整消息状态
+      if (pendingIdRef.current) {
+        markReasoningDone(pendingIdRef.current);
+        markRunningToolCallsComplete(pendingIdRef.current);
+      }
       unsubEvents();
       unsubApproval();
     };

@@ -86,6 +86,24 @@ interface SendMessageOpts {
 }
 
 /**
+ * 带超时的 reader.read()：Promise.race 包装，避免后端停止发送数据时
+ * reader.read() 阻塞等待 TCP keepalive（Windows 上可达数分钟）。
+ * 超时后 reject "SSE_READ_TIMEOUT"，由 catch 块触发断连恢复。
+ */
+function readWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("SSE_READ_TIMEOUT")), timeoutMs);
+  });
+  return Promise.race([reader.read(), timeoutPromise]).finally(() =>
+    clearTimeout(timeoutId),
+  );
+}
+
+/**
  * 发送对话消息并消费 SSE 流。
  *
  * 后端 ChatRequest：`{ message, thread_id, permission_mode, system_prompt, agent_mode, workspace_path }`。
@@ -172,10 +190,12 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   // 改为"任意数据到达即重置计时器"，只有真正无数据时才超时。
   let lastActivityTime = Date.now();
   const INACTIVITY_TIMEOUT = 90000;
+  // 跟踪已收到的 token 总长度，供 tryRecoverResult 切片避免重复发送
+  let receivedTextLength = 0;
 
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithTimeout(reader, INACTIVITY_TIMEOUT);
       if (done) break;
       // 收到任意 chunk 数据，重置活跃计时器
       lastActivityTime = Date.now();
@@ -206,6 +226,10 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
           } catch {
             payload = dataStr;
           }
+        }
+        // 累计 token 事件收到的文本长度，供断连恢复时切片避免重复
+        if (eventType === "token" && typeof payload === "string") {
+          receivedTextLength += payload.length;
         }
         const evt = {
           type: eventType,
@@ -246,11 +270,25 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
       cleanupConnection(threadId);
       return;
     }
+    // SSE_READ_TIMEOUT：reader.read() 阻塞超时，先关闭 reader 再尝试恢复
+    if (err instanceof Error && err.message === "SSE_READ_TIMEOUT") {
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+      conn.reader = null;
+    }
     // 断连恢复：网络中断 / 超时时也尝试拉取最终结果。
     // 后端在 SSE 连接断开（GeneratorExit）后仍会通过 with dual_trace
     // 退出将已收集的 result_text 写入 observation DB，故此处重试拉取。
-    const recovered = await tryRecoverResult(traceId, conn);
+    const recovered = await tryRecoverResult(traceId, conn, receivedTextLength);
     if (recovered) {
+      cleanupConnection(threadId);
+      return;
+    }
+    // 用户已发新消息（traceId 变化），停止恢复旧请求，不报错（用户主动行为）
+    if (conn.traceId !== traceId) {
       cleanupConnection(threadId);
       return;
     }
@@ -263,8 +301,13 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   if (!receivedDone) {
     // SSE 流正常结束（reader.read() 返回 done=true）但未收到 done 事件，
     // 尝试从 observation DB 拉取 result_text 恢复最终输出。
-    const recovered = await tryRecoverResult(traceId, conn);
+    const recovered = await tryRecoverResult(traceId, conn, receivedTextLength);
     if (!recovered) {
+      // 用户已发新消息（traceId 变化），不报错（用户主动行为）
+      if (conn.traceId !== traceId) {
+        cleanupConnection(threadId);
+        return;
+      }
       opts?.onError?.(new Error("连接中断，未收到完成事件"));
     }
   }
@@ -272,7 +315,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
 }
 
 /**
- * 断连恢复：通过 trace_id 从 observation DB 拉取最终输出。
+ * 断连恢复：通过 trace_id 从 observation DB 或 /api/chat/result 拉取最终输出。
  *
  * 后端 chat.py 在每个 token/reasoning 事件后增量更新 result_text 到
  * obs_ctx 内存（dual_trace 上下文），with 块退出时 _finalize_run 写入
@@ -282,23 +325,64 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
  * 本函数在 SSE 流异常结束（未收到 done）时调用，重试拉取 result_text，
  * 补发 token + done 事件给已注册的 handler，让用户看到最终输出。
  *
- * 轮询策略：最多等待 120 秒，每 3 秒一次。通过 ``ended_at`` 字段判断后端
- * 是否完成——后端 ``with dual_trace`` 块退出时才写 ``result_text`` 到 DB，
- * 长运行任务（如 team aggregator）可能需要几十秒才完成。
+ * 双路轮询策略：
+ * 1. observation DB（/api/observation/runs/{traceId}）每 3 秒一次
+ * 2. result 端点（/api/chat/result/{traceId}）每 5 秒一次（更快的恢复路径）
+ * 最多等待 120 秒，通过 ``ended_at`` / ``status`` 字段判断后端是否完成。
+ *
+ * receivedTextLength 用于切片：断连前可能已收到部分 token，恢复时只补发
+ * result_text 中尚未收到的部分（slice(receivedTextLength)），避免重复。
  */
-async function tryRecoverResult(traceId: string, conn: ChatConnection): Promise<boolean> {
+async function tryRecoverResult(
+  traceId: string,
+  conn: ChatConnection,
+  receivedTextLength: number = 0,
+): Promise<boolean> {
   if (!traceId) return false;
-  // 后端 result_text 在 dual_trace with 块退出时才写入 DB（_finalize_run），
-  // 而长运行任务（如 team aggregator）可能需要几十秒甚至几分钟才完成。
-  // 旧实现重试 3 次共 6 秒，远不够覆盖后端完成时间，导致断连后无法恢复。
-  // 改为轮询模式：最多等待 120 秒，每 3 秒一次，通过 ended_at 判断后端是否完成。
   const MAX_WAIT_MS = 120_000;
   const POLL_INTERVAL_MS = 3_000;
+  const ENDPOINT_POLL_INTERVAL_MS = 5_000;
   const start = Date.now();
+  let lastEndpointPoll = 0;
   while (Date.now() - start < MAX_WAIT_MS) {
     await sleep(POLL_INTERVAL_MS);
     // 用户已发新消息（traceId 变化），停止恢复旧请求
     if (conn.traceId !== traceId) return false;
+
+    // 路径 2：轮询 /api/chat/result/{traceId}（每 5 秒一次，更快恢复路径）
+    if (Date.now() - lastEndpointPoll >= ENDPOINT_POLL_INTERVAL_MS) {
+      lastEndpointPoll = Date.now();
+      try {
+        const r = await fetch(`${API_BASE}/api/chat/result/${traceId}`);
+        if (r.ok) {
+          const data = await r.json();
+          if (data.status === "completed") {
+            const resultText: string = data.result_text ?? "";
+            const tokenCount: number | undefined =
+              typeof data.token_count === "number" ? data.token_count : undefined;
+            // 只补发尚未收到的部分，避免与已收到的 token 重复
+            const remainingText = resultText.slice(receivedTextLength);
+            if (remainingText.trim()) {
+              conn.eventHandlers.forEach((h) =>
+                h({ type: "token", data: remainingText } as unknown as ChatEvent),
+              );
+            }
+            // 补发 done 事件（data 为对象，携带 token_count 如果有）
+            conn.eventHandlers.forEach((h) =>
+              h({
+                type: "done",
+                data: tokenCount !== undefined ? { token_count: tokenCount } : {},
+              } as unknown as ChatEvent),
+            );
+            return true;
+          }
+        }
+      } catch {
+        // 网络错误，继续重试
+      }
+    }
+
+    // 路径 1：轮询 observation DB（每 3 秒一次）
     try {
       const r = await fetch(`${API_BASE}/api/observation/runs/${traceId}`);
       if (!r.ok) continue;
@@ -309,17 +393,21 @@ async function tryRecoverResult(traceId: string, conn: ChatConnection): Promise<
       if (!run.ended_at) continue;
       // 后端已完成，补发 token（如果有）+ done 事件
       const resultText: string = run.result_text ?? "";
-      if (resultText.trim()) {
-        // 注意：前端可能已收到部分 token（子代理中间过程），result_text
-        // 是所有 token + reasoning 的拼接，可能有少量重复。这是断连恢复
-        // 的权衡——看到重复内容比看不到最终报告好。
+      const resultTokenCount: number | undefined =
+        typeof run.result_token_count === "number" ? run.result_token_count : undefined;
+      // 只补发尚未收到的部分，避免与已收到的 token 重复
+      const remainingText = resultText.slice(receivedTextLength);
+      if (remainingText.trim()) {
         conn.eventHandlers.forEach((h) =>
-          h({ type: "token", data: resultText } as unknown as ChatEvent),
+          h({ type: "token", data: remainingText } as unknown as ChatEvent),
         );
       }
-      // 补发 done 事件，让前端正常收尾（markReasoningDone / setStreaming(false) 等）
+      // 补发 done 事件（data 为对象，携带 token_count 如果有）
       conn.eventHandlers.forEach((h) =>
-        h({ type: "done", data: "{}" } as unknown as ChatEvent),
+        h({
+          type: "done",
+          data: resultTokenCount !== undefined ? { token_count: resultTokenCount } : {},
+        } as unknown as ChatEvent),
       );
       return true;
     } catch {

@@ -47,18 +47,34 @@ function encodeSSE(events: { event?: string; data: string }[]): Uint8Array {
 describe("chat.send SSE 断开感知", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("流在未收到 done 事件时结束，触发 onError", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      makeStreamResponse([
-        encodeSSE([{ event: "token", data: "hello" }]),
-      ]),
-    );
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      // H5 恢复端点返回 404，让 tryRecoverResult 快速失败后触发 onError
+      if (url.includes("/api/chat/result/") || url.includes("/api/observation/runs/")) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+        } as unknown as Response);
+      }
+      return Promise.resolve(
+        makeStreamResponse([
+          encodeSSE([{ event: "token", data: "hello" }]),
+        ]),
+      );
+    });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const onError = vi.fn();
-    await chat.send({ role: "user", content: "hi" }, { onError });
+    const sendPromise = chat.send({ role: "user", content: "hi" }, { onError });
+    // 快进 120s 轮询周期，让 tryRecoverResult 跑完所有重试后返回 false
+    await vi.advanceTimersByTimeAsync(130_000);
+    await sendPromise;
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]![0]).toBeInstanceOf(Error);
@@ -110,21 +126,38 @@ describe("chat.send SSE 断开感知", () => {
   });
 
   it("SSE 读取过程中 reader 抛错，触发 onError", async () => {
-    const stream = new ReadableStream<Uint8Array>({
-      pull() {
-        throw new Error("stream broken");
-      },
+    vi.useFakeTimers();
+    // 使用 mock reader 替代真实 ReadableStream，避免 Node.js 内部
+    // invokePromiseCallback 产生 unhandled rejection
+    const mockReader = {
+      read: () => Promise.reject(new Error("stream broken")),
+      cancel: () => Promise.resolve(),
+      releaseLock: () => {},
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      // H5 恢复端点返回 404，让 tryRecoverResult 快速失败后触发 onError
+      if (url.includes("/api/chat/result/") || url.includes("/api/observation/runs/")) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+        } as unknown as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        body: { getReader: () => mockReader },
+        text: () => Promise.resolve(""),
+      } as unknown as Response);
     });
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      body: stream,
-      text: () => Promise.resolve(""),
-    } as unknown as Response);
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const onError = vi.fn();
-    await chat.send({ role: "user", content: "hi" }, { onError });
+    const sendPromise = chat.send({ role: "user", content: "hi" }, { onError });
+    // 快进 120s 轮询周期，让 tryRecoverResult 跑完所有重试后返回 false
+    await vi.advanceTimersByTimeAsync(130_000);
+    await sendPromise;
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect((onError.mock.calls[0]![0] as Error).message).toContain("SSE 连接中断");

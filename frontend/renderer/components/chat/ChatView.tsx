@@ -53,6 +53,7 @@ export function ChatView() {
   const addMessage = useChatStore((s) => s.addMessage);
   const clearMessages = useChatStore((s) => s.clearMessages);
   const deleteMessagesAfter = useChatStore((s) => s.deleteMessagesAfter);
+  const deleteMessage = useChatStore((s) => s.deleteMessage);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const isPaused = useChatStore((s) => s.isPaused);
@@ -385,7 +386,7 @@ export function ChatView() {
     }
   };
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, targetThreadId?: string) => {
     if (!content || currentSessionRunning) return;
 
     // 内置命令本地分发，不发后端
@@ -393,7 +394,7 @@ export function ChatView() {
     if (trimmed.startsWith("/")) {
       const cmd = findBuiltinCommand(trimmed);
       if (cmd) {
-        const tid = currentId ?? (await createSession());
+        const tid = targetThreadId ?? currentId ?? (await createSession());
         addMessage({ id: crypto.randomUUID(), role: "user", content, ts: Date.now() });
         await runBuiltinCommand(cmd, trimmed);
         return;
@@ -402,7 +403,8 @@ export function ChatView() {
     }
 
     // 多会话：若当前无会话先创建（createSession 内部会 await 隐式授权）
-    const tid = currentId ?? (await createSession());
+    // targetThreadId 优先（handleResume 场景），避免切会话后发到错误 session
+    const tid = targetThreadId ?? currentId ?? (await createSession());
     // 固定本次流式输出归属的 thread id，避免用户切会话后事件被路由错会话
     activeThreadIdRef.current = tid;
 
@@ -493,7 +495,26 @@ export function ChatView() {
           workspacePath,
           revokedPaths,
           mentionTargets,
-          onError: (err) => setErrorMsg(err.message),
+          onError: (err) => {
+            setErrorMsg(err.message);
+            // M11: 恢复失败后清理空的 pending 消息（无 text parts），避免留下空白气泡
+            const pid = pendingIdRef.current;
+            if (pid) {
+              const state = useChatStore.getState();
+              let hasText = false;
+              for (const sess of Object.values(state.sessions)) {
+                const msg = sess.messages.find((m) => m.id === pid);
+                if (msg) {
+                  hasText = msg.parts.some((p) => p.type === "text");
+                  break;
+                }
+              }
+              if (!hasText) {
+                deleteMessage(pid);
+                pendingIdRef.current = null;
+              }
+            }
+          },
         },
       );
     } catch {
@@ -505,10 +526,8 @@ export function ChatView() {
         currentTaskIdRef.current = null;
       }
     } finally {
-      // 无论 chat.send() 正常返回、抛异常、还是 SSE 流以 done/error 结束，
-      // 都必须重置 isStreaming，否则 AssistantMessageParts 的 isStreamingLast
-      // 恒为 true，导致"思考中…"永远显示。
-      setStreaming(false);
+      // setSessionRunning 已通过 anyRunning 重算 isStreaming，无需额外 setStreaming(false)。
+      // setStreaming(false) 会无条件覆盖 isStreaming，破坏多会话并行场景。
       setSessionRunning(tid, false);
     }
   };
@@ -565,7 +584,8 @@ export function ChatView() {
 
     if (resumeContent.trim()) {
       // 复用 handleSend 走完整发送流程（创建 pending、SSE 流式、checkpointer 恢复）
-      await handleSend(resumeContent);
+      // 传入 tid 确保即使用户切到了其他会话，恢复仍作用于原暂停会话
+      await handleSend(resumeContent, tid);
     } else {
       // 无历史消息时回退到旧 resume API（兜底）
       try {

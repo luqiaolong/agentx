@@ -164,11 +164,16 @@ describe("useChatStream hook", () => {
   });
 
   it("done 事件设置 sessionRunning=false", async () => {
-    useChatStore.getState().setStreaming(true);
+    // H6 修复：done 事件通过 setSessionRunning(threadId, false) 重置流式状态，
+    // isStreaming 派生自 anyRunning（是否有会话 isRunning=true）。
+    // 需先创建会话并标记 running，done 后 anyRunning=false → isStreaming=false。
+    const sid = await useChatStore.getState().createSession();
+    useChatStore.getState().setSessionRunning(sid, true);
+    expect(useChatStore.getState().isStreaming).toBe(true);
 
     renderHook(() =>
       useChatStream({
-        threadId: "test-thread",
+        threadId: sid,
         pendingIdRef: { current: "p" },
         currentTaskIdRef: { current: null },
         lastUserQueryRef: { current: "" },
@@ -177,11 +182,12 @@ describe("useChatStream hook", () => {
     );
 
     act(() => {
-      emitEvent('test-thread', { type: "done", data: {} });
+      emitEvent(sid, { type: "done", data: {} });
     });
     // done 事件必须重置全局 isStreaming（修复"思考中…"永远显示的 bug：
     // isStreamingLast = isStreaming && isLast && role==="assistant"，若不重置则恒为 true）
     expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().sessions[sid]?.isRunning).toBe(false);
   });
 
   it("done 事件触发 ensureAgentxGenerated(activeTid)", async () => {
@@ -259,13 +265,16 @@ describe("useChatStream hook", () => {
   });
 
   it("error 事件写入 errorMsg + 标记任务失败", async () => {
-    useChatStore.getState().setStreaming(true);
+    // H6 修复：error 事件通过 setSessionRunning(threadId, false) 重置流式状态，
+    // isStreaming 派生自 anyRunning。需先创建会话并标记 running。
+    const sid = await useChatStore.getState().createSession();
+    useChatStore.getState().setSessionRunning(sid, true);
     const setErrorMsg = vi.fn();
     const currentTaskIdRef = { current: null as string | null };
 
     renderHook(() =>
       useChatStream({
-        threadId: "test-thread",
+        threadId: sid,
         pendingIdRef: { current: "p" },
         currentTaskIdRef,
         lastUserQueryRef: { current: "test" },
@@ -275,7 +284,7 @@ describe("useChatStream hook", () => {
 
     // 先 emit todo_update 触发任务创建（真实流程：先 todo 后 error）
     act(() => {
-      emitEvent('test-thread', {
+      emitEvent(sid, {
         type: "todo_update",
         todos: [{ content: "step1", status: "pending" }],
       });
@@ -284,7 +293,7 @@ describe("useChatStream hook", () => {
     expect(useTasksStore.getState().tasks[0]?.status).toBe("running");
 
     act(() => {
-      emitEvent('test-thread', { type: "error", data: "出错了" });
+      emitEvent(sid, { type: "error", data: "出错了" });
     });
     expect(setErrorMsg).toHaveBeenCalledWith("出错了");
     // error 事件必须重置全局 isStreaming（与 done 事件同理，SSE 流结束必须解除"思考中…"状态）

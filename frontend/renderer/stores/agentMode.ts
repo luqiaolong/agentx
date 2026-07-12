@@ -25,8 +25,19 @@ export const useAgentModeStore = create<AgentModeState>()(
       {
         name: "agentx-agent-mode",
         storage: createJSONStorage(() => localStorage),
-        // 旧值 "agent" / "agent_team" 重置为 "work"（推倒重来，无兼容层）
-        migrate: (_persisted: unknown, _version: number) => ({ mode: "work" }),
+        // 旧值 "agent" / "agent_team" 重置为 "work"（推倒重来，无兼容层）；
+        // 合法的新值（work/coding/coding_team）保留持久化选择
+        migrate: (persisted: unknown, _version: number) => {
+          const validModes = ["work", "coding", "coding_team"] as const;
+          const persistedMode = (persisted as { mode?: string } | null)?.mode;
+          if (
+            persistedMode &&
+            validModes.includes(persistedMode as (typeof validModes)[number])
+          ) {
+            return { mode: persistedMode as AgentMode };
+          }
+          return { mode: "work" };
+        },
         version: 2,
       },
     ),

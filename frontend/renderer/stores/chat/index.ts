@@ -1176,6 +1176,8 @@ export const useChatStore = create<ChatState>()(
             const anyRunning = Object.values(updatedSessions).some(
               (session) => session.isRunning
             );
+            // 同步 quotaStorage 的 streaming 闸门，与 setStreaming 保持一致
+            setStreamingActive(anyRunning);
             return {
               sessions: updatedSessions,
               isStreaming: anyRunning,

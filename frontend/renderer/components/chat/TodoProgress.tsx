@@ -177,7 +177,12 @@ export function TodoProgress({
           }}
         >
           {todos.map((t, i) => (
-            <TodoRow key={i} index={i + 1} content={t.content} status={t.status} />
+            <TodoRow
+              key={t.taskId ? `${t.taskId}-${t.content}` : t.content}
+              index={i + 1}
+              content={t.content}
+              status={t.status}
+            />
           ))}
         </ul>
       )}

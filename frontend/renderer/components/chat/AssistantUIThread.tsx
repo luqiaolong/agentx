@@ -92,8 +92,8 @@ function VirtualizedThread({
     getItemKey: (index) => messages[index]?.id ?? index,
     // HIGH-1 修复：动态高度内容（reasoning 展开 / tool-call 展开 / 长文本）必须测量实际高度，
     // 否则 estimateSize=200 会导致虚拟项重叠或留白，虚拟化实际不可用。
-    // measureElement 会在每个虚拟项挂载/更新时回调，更新 virtualizer 内部的 size cache。
-    measureElement: (el) => el.getBoundingClientRect().height,
+    // 使用库默认 measureElement（ResizeObserver 驱动，borderBoxSize 回调无同步 reflow），
+    // ref={virtualizer.measureElement} 会在挂载时观察元素并动态更新 size cache。
   });
 
   // NOTE: 不要监听 messages 引用变化来滚动到顶部。
