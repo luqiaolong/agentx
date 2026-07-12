@@ -276,8 +276,10 @@ async def test_create_agent_uses_default_name_and_none_backend(tmp_path: Path, m
         assert kwargs["name"] == "deep_agent"
         assert kwargs["backend"] is None
         assert kwargs["memory"] is None
-        # 无 skills 目录时 middleware 为空（不含 SkillsMiddleware）
-        assert kwargs["middleware"] == []
+        # 无 skills 目录时 middleware 仅含 ReadonlyLoopGuardMiddleware（不含 SkillsMiddleware）
+        from app.deepagent.middleware import ReadonlyLoopGuardMiddleware
+        assert len(kwargs["middleware"]) == 1
+        assert isinstance(kwargs["middleware"][0], ReadonlyLoopGuardMiddleware)
 
 
 # ============================================================
@@ -310,12 +312,11 @@ async def test_create_agent_rubric_injects_rubric_middleware(tmp_path: Path, mon
             rubric="answer must be concise and accurate",
         )
         _, kwargs = mock_create.call_args
-        # middleware 含一个 RubricMiddleware 实例
-        assert len(kwargs["middleware"]) == 1
-        mw = kwargs["middleware"][0]
-        assert isinstance(mw, RubricMiddleware)
+        # middleware 含 RubricMiddleware + ReadonlyLoopGuardMiddleware
+        assert len(kwargs["middleware"]) == 2
+        rubric_mw = next(m for m in kwargs["middleware"] if isinstance(m, RubricMiddleware))
         # max_iterations 默认 3
-        assert mw.max_iterations == 3
+        assert rubric_mw.max_iterations == 3
         # 未传 grader_model 时调用 get_chat_model(temperature=0)
         mock_get_model.assert_called_once_with(temperature=0)
 
@@ -337,8 +338,9 @@ async def test_create_agent_no_rubric_yields_skills_middleware(tmp_path: Path, m
         )
         _, kwargs = mock_create.call_args
         from deepagents.middleware.skills import SkillsMiddleware
-        assert len(kwargs["middleware"]) == 1
-        assert isinstance(kwargs["middleware"][0], SkillsMiddleware)
+        # middleware 含 SkillsMiddleware + ReadonlyLoopGuardMiddleware
+        assert len(kwargs["middleware"]) == 2
+        assert any(isinstance(m, SkillsMiddleware) for m in kwargs["middleware"])
 
 
 @pytest.mark.asyncio

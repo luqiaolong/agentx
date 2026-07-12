@@ -15,14 +15,12 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from loguru import logger
 from langgraph.types import Command
 
-from app.config import get_settings
 from app.security.approval import (
     is_aborted,
     is_paused,
 )
 from app.security.approval.flow import (
     _APPROVAL_POLL_INTERVAL,
-    _READONLY_TOOLS,
     _ExtensionResult,
     _await_approval,
     _extract_paths_from_tool_call,
@@ -137,7 +135,6 @@ async def run_agent_with_approval(
     inject_tool_error_for_call_fn: Callable[[Any, dict, dict, str], Awaitable[None]] | None = None,
     inject_tool_error_messages_fn: Callable[[Any, dict, str], Awaitable[None]] | None = None,
     yield_event: Callable[[dict], Awaitable[None]] | None = None,
-    readonly_streak_threshold: int = 0,
     max_iterations: int = 100,
 ) -> AsyncIterator[dict[str, str]]:
     """统一的 agent 审批执行循环。
@@ -147,7 +144,6 @@ async def run_agent_with_approval(
     2. while 循环检测中断（interrupt_on）
        - 暂停/恢复检查
        - full_trust 模式跳过审批直接恢复
-       - 只读工具循环保护
        - 危险工具审批（directory_extension 或 dangerous_tool）
        - 恢复执行
     3. 达到最大迭代次数或图完成后退出
@@ -169,7 +165,6 @@ async def run_agent_with_approval(
         inject_tool_error_for_call_fn: 单条 tool_call 错误注入函数。
         inject_tool_error_messages_fn: 批量错误注入函数。
         yield_event: 可选的异步回调，每 yield 一个事件时同步调用（用于日志/观察）。
-        readonly_streak_threshold: 只读工具连续调用阈值（0 禁用）。
         max_iterations: 最大迭代次数。
 
     Yields:
@@ -189,9 +184,9 @@ async def run_agent_with_approval(
     # 与 bind_trace 同样在入口处设置；每次调用都会覆盖上一次的值。
     current_parent_thread_id.set(parent_thread_id)
 
-    # 统一注入 recursion_limit，避免使用 LangGraph 默认值 25 导致复杂任务提前终止
-    if "recursion_limit" not in config:
-        config = {**config, "recursion_limit": get_settings().agent_recursion_limit}
+    # recursion_limit 由 deepagents create_deep_agent 默认设为 9999（硬安全网），
+    # 只读工具循环保护由 ReadonlyLoopGuardMiddleware 在模型调用前拦截，
+    # 此处不再覆盖 recursion_limit，避免将 9999 降至 100 导致复杂任务提前终止。
 
     # 跨 stream 调用共享的"已 yield 消息签名"集合（避免 astream resume
     # 时重发历史消息被重复 yield，root cause: trace=64851677fced422c）。
@@ -231,7 +226,6 @@ async def run_agent_with_approval(
 
     is_full_trust = permission_mode == "full_trust"
     iteration = 0
-    readonly_streak = 0
 
     # 循环保护：记录最近几次 pending_calls 以检测重复模式。
     # 重要：仅在 LLM 真正生成新消息后才记录。astream resume 时会重放历史 state，
@@ -414,39 +408,6 @@ async def run_agent_with_approval(
                         )
                     )
                     return
-
-        pending_names = {tc.get("name", "") for tc in pending_calls}
-        has_dangerous = bool(pending_names & runtime_dangerous)
-        all_readonly = pending_names.issubset(_READONLY_TOOLS)
-
-        # 只读工具循环保护
-        if readonly_streak_threshold > 0:
-            if all_readonly and not has_dangerous:
-                readonly_streak += 1
-            else:
-                readonly_streak = 0
-
-            if readonly_streak >= readonly_streak_threshold:
-                logger.warning(
-                    "agent readonly streak exceeded, forcing stop",
-                    thread_id=thread_id,
-                    readonly_streak=readonly_streak,
-                    pending_tools=list(pending_names),
-                )
-                for tc in pending_calls:
-                    await _inject_call(
-                        agent,
-                        config,
-                        tc,
-                        "已获取足够信息，请基于已有结果直接回答用户，不要继续调用工具。",
-                    )
-                yield await _forward(
-                    make_sse_event(
-                        "error",
-                        "工具调用次数过多，已强制停止。请简化您的请求或明确指定目标路径。",
-                    )
-                )
-                return
 
         # full_trust 模式：直接恢复
         if is_full_trust:

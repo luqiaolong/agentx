@@ -257,6 +257,15 @@ def _todos_to_team_tasks(
             invalid_agents=list(errors.keys()),
         )
 
+    max_tasks = settings.agent_team_max_tasks
+    if len(tasks) > max_tasks:
+        logger.warning(
+            "team orchestrator tasks truncated",
+            original_count=len(tasks),
+            max_tasks=max_tasks,
+        )
+        tasks = tasks[:max_tasks]
+
     return tasks, ""
 
 

@@ -1,0 +1,96 @@
+"""只读工具循环保护中间件。
+
+在 LangGraph/deepagents ReAct 循环中，只读工具（ls/read_file/glob/grep）
+不触发 ``interrupt_on`` 中断，全部在图内部自动执行。当 LLM 陷入只读工具
+探测死循环时，会消耗完 ``recursion_limit`` 个 superstep 后抛出
+``GraphRecursionError``，导致用户看到 "Recursion limit reached" 错误。
+
+本中间件通过 ``awrap_model_call`` 在每次模型调用前检查消息历史，
+若连续只读工具调用次数超过阈值，则设置 ``tool_choice="none"`` 强制
+模型生成文本回复（不再调用工具），并在 system prompt 中注入提示。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from loguru import logger
+from langchain.agents.middleware.types import AgentMiddleware
+from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage
+
+from app.security.approval.flow import _READONLY_TOOLS
+
+__all__ = ["ReadonlyLoopGuardMiddleware"]
+
+
+class ReadonlyLoopGuardMiddleware(AgentMiddleware[Any, Any, Any]):
+    """检测只读工具连续调用循环，超过阈值时强制模型停止调用工具。
+
+    工作原理：
+    1. 在 ``awrap_model_call`` 中，检查 ``request.messages`` 末尾连续的
+       只读 ToolMessage 数量（streak）
+    2. 若 streak >= threshold，设置 ``tool_choice="none"`` 并在 system prompt
+       末尾追加提示，强制模型基于已有信息直接回答
+    3. 否则正常调用 handler 执行模型推理
+
+    阈值为 0 时禁用保护（不拦截）。
+    """
+
+    def __init__(self, threshold: int = 10) -> None:
+        self.threshold = threshold
+        self._readonly_tools: frozenset[str] = _READONLY_TOOLS
+
+    def _count_readonly_streak(self, messages: list[AnyMessage]) -> int:
+        """从消息列表末尾统计连续只读 ToolMessage 数量。
+
+        ReAct 循环消息序列示例：
+        ``[user, AIMessage(tc), ToolMessage, AIMessage(tc), ToolMessage, ...]``
+
+        从末尾向前遍历，遇到只读 ToolMessage 则 streak++，
+        遇到非只读 ToolMessage 或非 ToolMessage 则停止。
+        """
+        streak = 0
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                name = getattr(msg, "name", "") or ""
+                if name in self._readonly_tools:
+                    streak += 1
+                else:
+                    break
+            else:
+                break
+        return streak
+
+    async def awrap_model_call(
+        self,
+        request: Any,
+        handler: Any,
+    ) -> Any:
+        """在模型调用前检查只读工具循环。"""
+        if self.threshold <= 0:
+            return await handler(request)
+
+        messages = request.messages or []
+        streak = self._count_readonly_streak(messages)
+
+        if streak < self.threshold:
+            return await handler(request)
+
+        logger.warning(
+            "readonly loop guard: forcing model to stop calling tools",
+            streak=streak,
+            threshold=self.threshold,
+            readonly_tools=sorted(self._readonly_tools),
+        )
+
+        # 在 system prompt 末尾追加提示，引导模型基于已有信息回答
+        original_prompt = request.system_prompt or ""
+        hint = (
+            "\n\n[系统提示] 你已连续调用了多次只读工具（ls/read_file/glob/grep）。"
+            "请基于已获取的信息直接回答用户的问题，不要再调用工具。"
+        )
+        modified = request.override(
+            system_message=SystemMessage(content=original_prompt + hint),
+            tool_choice="none",
+        )
+        return await handler(modified)

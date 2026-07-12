@@ -205,12 +205,15 @@ class Settings(BaseSettings):
     cli_tool_max_output_chars: int = Field(default=50000, ge=500, le=500000)
 
     # ---- 智能体运行时调优（T-P4-1 外置）----
-    # 连续只读工具调用阈值，超过则主动暂停询问用户意图（防止 LLM 死循环只读探测）
+    # 连续只读工具调用阈值，超过则由 ReadonlyLoopGuardMiddleware 强制模型停止调用工具
+    # （设置 tool_choice="none"），防止 LLM 陷入只读工具探测死循环耗尽 recursion_limit
     readonly_streak_threshold: int = Field(default=10, ge=1, le=100)
     # RubricMiddleware 判官自纠最大迭代次数
     rubric_max_iterations: int = Field(default=3, ge=1, le=10)
-    # LangGraph 图递归上限：deepagents ReAct 循环每轮 2 superstep，
-    # 默认 25 仅支持 ~12 轮工具调用，复杂任务会触发 "Recursion limit reached"。
+    # LangGraph 图递归上限：deepagents create_deep_agent 默认设为 9999（硬安全网）。
+    # 此值保留供用户自定义（通过 AGENTX_AGENT_RECURSION_LIMIT env 覆盖），
+    # 但默认不再由 approval_runner 注入，避免将 9999 降至 100 导致复杂任务提前终止。
+    # 只读工具循环保护由 ReadonlyLoopGuardMiddleware 在模型调用前拦截。
     agent_recursion_limit: int = Field(default=100, ge=25, le=500)
 
     @field_validator(

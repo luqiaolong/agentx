@@ -175,6 +175,9 @@ async def _plan_node(state: TeamState) -> dict:
 
     # 剥离 [agent:xxx] 前缀后存入 state.todos，确保 SSE todo_update 透传到前端的是纯文本
     clean_todos = _strip_agent_prefix_from_todos(todos)
+    # 同步截断 clean_todos 到与 tasks 相同数量（_todos_to_team_tasks 可能已按 max_tasks 截断）
+    if len(clean_todos) > len(tasks):
+        clean_todos = clean_todos[:len(tasks)]
 
     # 发射 team_init 事件：前端据此在消息顶部创建 TeamNodeCard（含 plan + agents）
     writer(make_sse_event("team_init", {
@@ -744,7 +747,6 @@ async def run_team_path(
         async for chunk in graph.astream(
             initial_state,
             stream_mode=["custom", "values"],
-            config={"recursion_limit": get_settings().agent_recursion_limit},
         ):
             if not isinstance(chunk, tuple) or len(chunk) != 2:
                 continue

@@ -268,9 +268,18 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 
         except Exception as exc:  # noqa: BLE001 — SSE 兜底，避免连接挂起
             logger.exception("SSE chat error", thread_id=req.thread_id)
+            # GraphRecursionError 特殊处理：提供用户可理解的错误提示
+            _exc_name = type(exc).__name__
+            if _exc_name == "GraphRecursionError":
+                _user_msg = (
+                    "任务步骤过多，已达到执行上限。建议："
+                    "① 简化请求 ② 明确指定目标文件路径 ③ 拆分为多个小任务"
+                )
+            else:
+                _user_msg = f"内部错误: {exc}"
             yield {
                 "event": "error",
-                "data": f"内部错误: {exc} | trace={trace_id}",
+                "data": f"{_user_msg} | trace={trace_id}",
             }
             # 异常分支必须 yield done，否则前端一直显示"..."等待中
             yield {"event": "done", "data": "{}"}

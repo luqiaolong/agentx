@@ -148,7 +148,6 @@ async def run_deep_path(
     current_thread_id.set(thread_id)
     config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
     sandbox = get_sandbox()
-    settings = get_settings()
     is_full_trust = permission_mode == "full_trust"
 
     if is_full_trust:
@@ -205,7 +204,6 @@ async def run_deep_path(
             inputs=inputs,
             sandbox=sandbox,
             parent_thread_id=parent_thread_id,
-            readonly_streak_threshold=settings.readonly_streak_threshold,
         ):
             yield sse
     finally:

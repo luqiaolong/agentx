@@ -219,7 +219,6 @@ async def run_coding_expert(
     # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
     current_thread_id.set(thread_id)
     sandbox = get_sandbox()
-    settings = get_settings()
     is_full_trust = permission_mode == "full_trust"
 
     try:
@@ -281,7 +280,6 @@ async def run_coding_expert(
             sandbox=sandbox,
             parent_thread_id=parent_thread_id,
             stream_fn=_stream_agent_events,
-            readonly_streak_threshold=settings.readonly_streak_threshold,
             yield_event=yield_event,
         ):
             yield sse

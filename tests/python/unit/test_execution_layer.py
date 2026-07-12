@@ -149,18 +149,24 @@ async def test_run_agent_with_approval_full_trust_skips_approval() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_agent_with_approval_readonly_streak_forces_stop() -> None:
-    """只读工具连续调用超过阈值时强制停止。"""
+async def test_run_agent_with_approval_readonly_streak_removed() -> None:
+    """readonly_streak_threshold 参数已移除，保护改由 ReadonlyLoopGuardMiddleware 实现。
+
+    此测试验证：即使不传 readonly_streak_threshold，approval_runner 不再
+    做只读工具循环检测（该职责已移至中间件层）。
+    """
     agent = MagicMock()
     config = {"configurable": {"thread_id": "t1"}}
 
     async def _fake_stream(agent, inputs, config, source):
         yield {"event": "token", "data": "thinking"}
 
-    interrupted = True
+    call_idx = 0
 
     async def _is_interrupted(agent, config):
-        return interrupted
+        nonlocal call_idx
+        call_idx += 1
+        return call_idx <= 1
 
     async def _get_pending(agent, config):
         return [{"name": "read_file", "args": {"path": "/tmp/x"}, "id": "tc1"}]
@@ -169,33 +175,38 @@ async def test_run_agent_with_approval_readonly_streak_forces_stop() -> None:
         with patch("app.deepagent.approval_runner._is_interrupted", _is_interrupted):
             with patch("app.deepagent.approval_runner._get_pending_tool_calls", _get_pending):
                 with patch(
-                    "app.deepagent.approval_runner._inject_tool_error_for_call",
-                    new=AsyncMock(),
-                ) as mock_inject:
-                    with patch(
-                        "app.deepagent.approval_runner._handle_directory_extension",
-                        new=AsyncMock(
-                            return_value=MagicMock(
-                                events=[], denied=False, timed_out=False
-                            )
-                        ),
-                    ):
-                        events = []
-                        async for evt in run_agent_with_approval(
-                            agent,
-                            config,
-                            thread_id="t1",
-                            workspace_path=None,
-                            permission_mode="standard",
-                            runtime_dangerous=set(),
-                            source="deep",
-                            inputs={"messages": []},
-                            readonly_streak_threshold=2,
-                        ):
-                            events.append(evt)
+                    "app.deepagent.approval_runner._handle_directory_extension",
+                    new=AsyncMock(
+                        return_value=MagicMock(
+                            events=[], denied=False, timed_out=False
+                        )
+                    ),
+                ):
+                    msg_count = 0
 
-    assert any(e.get("event") == "error" for e in events)
-    assert mock_inject.call_count >= 1
+                    async def _aget_state(config):
+                        nonlocal msg_count
+                        msg_count += 1
+                        mock_state = MagicMock()
+                        mock_state.values = {"messages": [MagicMock()] * msg_count}
+                        return mock_state
+
+                    agent.aget_state = _aget_state
+                    events = []
+                    async for evt in run_agent_with_approval(
+                        agent,
+                        config,
+                        thread_id="t1",
+                        workspace_path=None,
+                        permission_mode="standard",
+                        runtime_dangerous=set(),
+                        source="deep",
+                        inputs={"messages": []},
+                    ):
+                        events.append(evt)
+
+    # 不应触发 error 事件（readonly 保护已移至中间件）
+    assert not any(e.get("event") == "error" for e in events)
 
 
 @pytest.mark.asyncio

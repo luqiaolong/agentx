@@ -47,6 +47,7 @@ from deepagents.middleware.skills import SkillsMiddleware
 
 from app.config import DATA_DIR, get_settings
 from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
+from app.deepagent.middleware import ReadonlyLoopGuardMiddleware
 from app.deepagent.tool_assembly import DANGEROUS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
@@ -282,6 +283,13 @@ def create_agent(
             model=_grader,
             max_iterations=get_settings().rubric_max_iterations,
         ))
+
+    # 只读工具循环保护：防止 LLM 陷入只读工具（ls/read_file/glob/grep）探测死循环，
+    # 耗尽 recursion_limit 后抛出 GraphRecursionError。中间件在模型调用前检测
+    # 连续只读 ToolMessage 数量，超过阈值时强制 tool_choice="none"。
+    middleware.append(ReadonlyLoopGuardMiddleware(
+        threshold=get_settings().readonly_streak_threshold,
+    ))
 
     # 使用 deepagents SkillsMiddleware 加载技能目录
     # 独立 FilesystemBackend（virtual_mode=False）不受 workspace_path 的 root_dir 限制

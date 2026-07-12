@@ -20,21 +20,27 @@
 当一个能力**已经存在成熟、社区维护活跃的框架/库**时，**必须优先使用现成方案**。
 只有在确认现有方案确实无法满足需求时，才考虑自研或扩展。
 
+**核心原则：DeepAgents 优先**——能用 DeepAgents 现成 API 解决的，绝不绕过它直接调用
+LangGraph/LangChain 底层；DeepAgents 不覆盖的能力，才退化到 LangGraph / LangChain；这三层都
+覆盖不到的，才允许扩展或自研。
+
 **本项目核心框架优先序**（按优先级降序，写代码前必须逐层检查）：
 
 | 优先级 | 框架/库 | 适用场景 | 必须使用的最新特性 |
 |---|---|---|---|
-| P0 | **LangGraph** | 智能体编排、状态图、工作流 | `StateGraph`、`interrupt_before`/`interrupt_after`、人在回路、`SqliteSaver`/`AsyncSqliteSaver` 检查点、流式 `astream_events` |
-| P0 | **DeepAgents** | 高层智能体封装 | `create_react_agent`、`create_deep_agent`、内置工具绑定、审批流集成 |
-| P0 | **LangChain** | LLM 调用、链式组合、RAG、工具定义 | `@tool` 装饰器、`ToolNode`、`BaseTool`、`Runnable` 接口、`ChatPromptTemplate` |
+| **P0** | **DeepAgents** | 高层智能体封装（**首选入口**） | `create_deep_agent`、`create_react_agent`、内置 `TodoListMiddleware` / `FilesystemMiddleware` / `SubAgentMiddleware`、内置工具绑定、子代理委派、规划与回写 |
+| P0 | **LangGraph** | DeepAgents 未覆盖的复杂编排 | `StateGraph`、`interrupt_before`/`interrupt_after`、人在回路、`SqliteSaver`/`AsyncSqliteSaver` 检查点、流式 `astream_events` |
+| P0 | **LangChain** | LLM 调用、链式组合、RAG、工具定义、消息处理 | `@tool` 装饰器、`ToolNode`、`BaseTool`、`Runnable` 接口、`ChatPromptTemplate`、`trim_messages` / `filter_messages`、`with_structured_output` |
 | P1 | **FastAPI** | Web API、SSE 流式响应 | `StreamingResponse`、`Depends`、自动 OpenAPI 生成 |
 | P1 | **Pydantic** | 数据校验、配置管理、API 模型 | `BaseModel`、`pydantic-settings`、`Field` 校验 |
 | P1 | **Tauri 2.x** | 桌面壳、进程管理、安全通信 | `tauri::command`、`invoke()`/`listen()`、`tauri-plugin-store` |
 | P2 | **React 18 + zustand** | 前端 UI、状态管理 | 函数组件、hooks、zustand 原子化状态 |
 
-> **关键原则**：LangChain 生态（LangGraph + DeepAgents + LangChain Core）已覆盖 90%+ 的 AI 编排需求，
-> **写任何 agent 相关代码前必须先查阅官方文档确认是否有现成 API**。禁止因"学习成本高"
-> 或"觉得不够优雅"而绕过框架自研。
+> **关键原则**：LangChain 生态（DeepAgents + LangGraph + LangChain Core）已覆盖 90%+ 的
+> AI 编排需求，**DeepAgents 是首选入口**，LangGraph / LangChain 仅在 DeepAgents 显式不支持时
+> 退化使用。**写任何 agent 相关代码前必须先查阅 DeepAgents 官方文档确认是否有现成 API**；
+> 确认不支持后才退化到 LangGraph / LangChain。禁止因"学习成本高"或"觉得不够优雅"
+> 而绕过 DeepAgents 直接调底层，更禁止自研。
 
 **判断"成熟"的标准**（任一不满足都视为"不成熟"）：
 
@@ -42,11 +48,11 @@
 - 12 个月内仍有发版（非僵尸项目）
 - 官方文档完整、有可运行的快速开始
 
-**LangChain 生态官方文档必查入口**（写新代码前按此顺序查阅）：
+**LangChain 生态官方文档必查入口**（写新代码前按此顺序查阅，**DeepAgents 第一**）：
 
-1. [LangGraph 文档](https://langchain-ai.github.io/langgraph/) — 状态图、检查点、流式、人在回路
-2. [DeepAgents 文档](https://deepagents.readthedocs.io/) — 高层 agent 封装、ReAct、工具绑定
-3. [LangChain 文档](https://python.langchain.com/) — 模型、提示词、工具、RAG、检索器
+1. [DeepAgents 文档](https://deepagents.readthedocs.io/) — **首选**：高层 agent 封装、ReAct、内置 middleware、子代理委派、规划与回写
+2. [LangGraph 文档](https://langchain-ai.github.io/langgraph/) — DeepAgents 不支持时退化：状态图、检查点、流式、人在回路
+3. [LangChain 文档](https://python.langchain.com/) — 模型、提示词、工具、RAG、检索器、消息处理
 4. [LangChain API Reference](https://api.python.langchain.com/) — 精确类/方法签名
 
 ### 1.2 衍生原则
@@ -531,3 +537,47 @@ ErrorBoundary 渲染错误恢复。
 - **claude.md** = 引用本文件的指针（保留以满足"每次会话强制阅读"的项目规则）。
 
 三者互不替代：Claude 在写代码前应同时检查本节与 §1.1「优先用现成框架」。
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **agentx** (15117 symbols, 24309 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/agentx/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/agentx/clusters` | All functional areas |
+| `gitnexus://repo/agentx/processes` | All execution flows |
+| `gitnexus://repo/agentx/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

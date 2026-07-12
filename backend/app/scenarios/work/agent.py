@@ -494,7 +494,6 @@ async def run_work_supervisor(
             source="work",
             inputs=inputs,
             sandbox=sandbox,
-            readonly_streak_threshold=get_settings().readonly_streak_threshold,
         ):
             yield sse
     finally:
