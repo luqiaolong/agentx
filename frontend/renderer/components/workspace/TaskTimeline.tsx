@@ -6,7 +6,6 @@ import {
   ListChecks,
   ChevronDown,
   ChevronRight,
-  X,
   AlertCircle,
 } from "lucide-react";
 import { useTasksStore, type Task } from "@/stores/tasks";
@@ -182,7 +181,6 @@ function TaskRow({
   const [expanded, setExpanded] = useState(
     !isChild && task.status === "running",
   );
-  const removeTask = useTasksStore((s) => s.removeTask);
 
   const cfg = STATUS_CONFIG[task.status];
   const completedTodos = task.todos?.filter((x) => x.status === "completed").length ?? 0;
@@ -280,16 +278,6 @@ function TaskRow({
             )}
           </button>
         )}
-
-        {/* 删除按钮（hover 显示） */}
-        <button
-          type="button"
-          onClick={() => removeTask(task.id)}
-          className="mt-0.5 shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:text-rose-500 group-hover:opacity-100"
-          title="删除任务"
-        >
-          <X className="h-2.5 w-2.5" />
-        </button>
       </div>
 
       {/* 展开的 Todo 列表：每个 todo 独立编号从 1 开始；task 结束时可点击切换状态。
