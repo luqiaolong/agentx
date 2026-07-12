@@ -126,8 +126,8 @@ def test_ensure_harness_profile_is_idempotent() -> None:
 # ============================================================
 
 
-def test_resolve_memory_paths_returns_agents_md_and_rules(tmp_path: Path) -> None:
-    """``resolve_memory_paths`` 返回 ``AGENTS.md`` + 排序后的 ``rules/*.md``。"""
+def test_resolve_memory_paths_returns_agents_md_rules_and_memory(tmp_path: Path) -> None:
+    """``resolve_memory_paths`` 返回 ``AGENTS.md`` + 排序 ``rules/*.md`` + 排序 ``memory/*.md``。"""
     agentx_dir = tmp_path / ".agentx"
     agentx_dir.mkdir()
     (agentx_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
@@ -135,11 +135,16 @@ def test_resolve_memory_paths_returns_agents_md_and_rules(tmp_path: Path) -> Non
     rules_dir.mkdir()
     (rules_dir / "b_rule.md").write_text("b", encoding="utf-8")
     (rules_dir / "a_rule.md").write_text("a", encoding="utf-8")
+    memory_dir = agentx_dir / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "z_mem.md").write_text("z", encoding="utf-8")
+    (memory_dir / "a_mem.md").write_text("a", encoding="utf-8")
 
     paths = resolve_memory_paths(str(tmp_path))
-    assert len(paths) == 3
+    assert len(paths) == 5
     assert Path(paths[0]).name == "AGENTS.md"
-    assert [Path(p).name for p in paths[1:]] == ["a_rule.md", "b_rule.md"]
+    assert [Path(p).name for p in paths[1:3]] == ["a_rule.md", "b_rule.md"]
+    assert [Path(p).name for p in paths[3:]] == ["a_mem.md", "z_mem.md"]
 
 
 def test_resolve_memory_paths_empty_when_no_agentx(tmp_path: Path) -> None:

@@ -144,12 +144,14 @@ def build_interrupt_config() -> dict[str, bool]:
 def resolve_memory_paths(workspace_path: str | None) -> list[str]:
     """解析 deepagents memory 路径列表。
 
-    返回 ``[.agentx/AGENTS.md] + sorted(.agentx/rules/*.md)``。
+    返回 ``[.agentx/AGENTS.md] + sorted(.agentx/rules/*.md) + sorted(.agentx/memory/*.md)``。
     若 workspace_path 为 None 或 .agentx 目录不存在，返回空列表。
 
-    注意：``.agentx/memory/*.md`` 工作区记忆文件**不**通过此路径注入，
-    而是由 ``build_profile_prompt`` 统一合并（全局 + 工作区）后注入 system prompt，
-    避免双重注入导致 token 浪费。
+    ``.agentx/memory/*.md`` 工作区记忆文件通过 ``memory=`` 参数注入，使
+    MemoryMiddleware 加载 raw markdown 内容并启用 ``MEMORY_SYSTEM_PROMPT``
+    引导 LLM 用 ``edit_file`` 自学习更新记忆。全局画像（``data/config/profile.json``）
+    和旧工作区画像（``.agentx/profile.json``）仍由 ``build_profile_prompt``
+    结构化注入 system prompt，避免双重注入。
     """
     if not workspace_path:
         return []
@@ -165,6 +167,10 @@ def resolve_memory_paths(workspace_path: str | None) -> list[str]:
     if rules_dir.exists():
         for rule_file in sorted(rules_dir.glob("*.md")):
             paths.append(str(rule_file))
+    memory_dir = agentx_dir / "memory"
+    if memory_dir.exists():
+        for mem_file in sorted(memory_dir.glob("*.md")):
+            paths.append(str(mem_file))
     return paths
 
 

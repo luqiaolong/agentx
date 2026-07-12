@@ -572,28 +572,15 @@ def build_profile_prompt(workspace_path: str | None = None) -> str:
           - [category] content
           ...
 
-    工作区画像来源（按优先级降序，新格式覆盖旧格式）：
-    - 工作区记忆文件（``.agentx/memory/*.md``），新格式，优先
-    - 旧工作区画像（``.agentx/profile.json``），兼容旧数据
-    - 全局画像（data/config/profile.json）
+    数据来源：
+    - 全局画像（``data/config/profile.json``）
+    - 旧工作区画像（``.agentx/profile.json``，兼容旧数据）
+
+    注意：``.agentx/memory/*.md`` 新格式工作区记忆已由 deepagents ``memory=``
+    参数（MemoryMiddleware）加载，此处不再 overlay，避免双重注入。
+    前端展示仍由 ``/api/memory/profile`` 端点独立合并 memory 文件。
     """
-    # 先取全局 + 旧工作区 profile.json（兼容旧数据）
     entries = get_all(workspace_path=workspace_path)
-
-    # 合并字典，便于后续 overlay 新格式
-    merged: dict[str, Any] = {e.key: e for e in entries}
-
-    # 再 overlay 新格式 .agentx/memory/*.md（同 key 覆盖旧数据）
-    if workspace_path:
-        try:
-            from app.workspace.memory_store import list_entries
-            ws_entries = list_entries(workspace_path)
-            for e in ws_entries:
-                merged[e.key] = e
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("workspace_memory.build_prompt_failed", workspace=workspace_path, error=str(exc))
-
-    entries = list(merged.values())
     if not entries:
         return ""
     sorted_entries = sorted(
