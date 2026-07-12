@@ -15,14 +15,15 @@
 
 | ID | 任务描述 | 涉及文件 | 验收标准 | 状态 |
 |----|---------|---------|---------|------|
-| T1 | 后端：新增 export-trace 端点 | observation.py | POST /api/observation/export-trace/{run_id} 返回 prompt_file 路径 + 文件落盘 | ⬜ |
+| T1 | 后端：新增 export-trace 端点 | observation.py | POST /api/observation/export-trace/{run_id} 返回 prompt_file + report_dir 路径，prompt 落盘到 data/traces/reviews/<run_id>_<timestamp>.md（与报告文件同目录） | ⬜ |
 | T2 | 后端：删除旧 SSE 端点 | observation.py | 删除 review_trace + apply_optimization 端点 + _build_apply_optimization_prompt + ReviewRequest + ApplyOptimizationRequest + _cli_unavailable_stream + _empty_error_stream | ⬜ |
 | T3 | Tauri：新增 analysis_launch_powershell 命令 | commands/analysis.rs, commands/mod.rs, lib.rs | invoke("analysis_launch_powershell") 只接收 prompt_file，从 CARGO_MANIFEST_DIR 推导 project_root，成功 spawn powershell.exe 窗口 | ⬜ |
-| T4 | 脚本：新建 analysis-run.ps1 | scripts/analysis-run.ps1 | 接收 -PromptFile -ProjectRoot 参数，cd 项目根，启动 claude 交互模式 | ⬜ |
+| T4 | 脚本：新建 analysis-run.ps1 | scripts/analysis-run.ps1 | 接收 -PromptFile -ProjectRoot 参数，cd 项目根，阶段 1 跑 claude -p headless 并 Tee-Object 落盘到 <prompt_dir>/<promptBase>_review.md，阶段 2 按 Enter 启动 claude 交互模式 | ⬜ |
 | T5 | 前端：重写 useTraceAnalysis.ts | hooks/useTraceAnalysis.ts | review(runId) 调 export-trace + invoke，返回 dispatched 状态，无 SSE 逻辑 | ⬜ |
 | T6 | 前端：简化 TraceAnalysisButtons.tsx | components/chat/TraceAnalysisButtons.tsx | 只剩 1 个复盘按钮，点击后显示「✓ 已发送」，无执行优化/停止按钮 | ⬜ |
 | T7 | 前端：清理 observation.ts SSE 代码 | lib/api/observation.ts | 删除 streamTraceReview/streamApplyOptimization/consumeSse，文件为空则删除 | ⬜ |
-| T8 | 测试：后端 export-trace 单元测试 | test_observation_export.py | 覆盖成功/未找到/文件写入 3 个场景 | ⬜ |
+| T8 | 测试：后端 export-trace 单元测试 | test_observation_export.py | 覆盖成功/未找到/文件写入 3 个场景，断言 prompt_file.parent.name == "reviews" | ⬜ |
+| T9 | 脚本：阶段 2 initial_prompt 改为主动打印报告 | scripts/analysis-run.ps1 | initial_prompt 明确要求 Claude 用 Read 读 $ReportFile 后**完整**打印 Markdown 全文（用户意图/执行路径/问题诊断/优化方案/优先级排序 5 个章节齐全，不摘要），不等待用户提问；打印完追加落盘路径提示 | ⬜ |
 
 ## 规模判定
 - 涉及文件数: 9 → 规模: M

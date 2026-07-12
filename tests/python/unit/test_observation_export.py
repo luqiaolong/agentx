@@ -78,7 +78,11 @@ class TestExportTrace:
         assert "未找到轨迹数据" in data["error"]
 
     def test_export_trace_file_write(self, app: FastAPI, tmp_path: Path) -> None:
-        """验证文件名格式包含 run_id + 时间戳（YYYYMMDD_HHMMSS）。"""
+        """验证文件名格式包含 run_id + 时间戳（YYYYMMDD_HHMMSS），落盘到 reviews 子目录。
+
+        2026-07-12 调整：prompt 与 Claude CLI 跑出的报告同目录存放，
+        都在 ``data/traces/reviews/`` 下，便于集中查阅复盘报告。
+        """
         mock_run = {
             "run_id": "my-run-id",
             "agent_mode": "work",
@@ -103,5 +107,8 @@ class TestExportTrace:
         # 时间戳格式：YYYYMMDD_HHMMSS
         timestamp_part = prompt_file.stem[len("my-run-id_"):]
         assert re.match(r"^\d{8}_\d{6}$", timestamp_part)
-        # 文件在 traces 子目录下
-        assert prompt_file.parent.name == "traces"
+        # 文件在 reviews 子目录下（与报告文件 _review.md 同目录）
+        assert prompt_file.parent.name == "reviews"
+        assert prompt_file.parent.parent.name == "traces"
+        # report_dir 也返回且等于 reviews 子目录绝对路径
+        assert data["report_dir"] == str(prompt_file.parent.resolve())

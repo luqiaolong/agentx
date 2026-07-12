@@ -295,7 +295,15 @@ def register_observation_routes(app: FastAPI) -> None:
 
     @app.post("/api/observation/export-trace/{run_id}")
     async def export_trace(run_id: str) -> dict[str, Any]:
-        """导出 trace 摘要 + 复盘 prompt 到文件，返回路径。"""
+        """导出 trace 摘要 + 复盘 prompt 到文件，返回路径。
+
+        落盘策略（2026-07-12 调整）：prompt 与 Claude CLI 跑出的报告
+        同目录存放，便于用户在 ``data/traces/reviews/`` 下集中查阅复盘报告。
+        - Prompt 文件：``data/traces/reviews/<run_id>_<timestamp>.md``
+        - 报告文件：  ``data/traces/reviews/<run_id>_<timestamp>_review.md``
+          （由 ``scripts/analysis-run.ps1`` 用 ``Tee-Object`` 追加生成，
+            命名推导：``$promptBase + "_review.md"``，与 prompt 文件同目录）
+        """
         sink = get_observation_sink()
         run = await _async(sink.get_run_sync, run_id)
         events = await _async(sink.list_events_sync, run_id)
@@ -303,14 +311,23 @@ def register_observation_routes(app: FastAPI) -> None:
             return {"ok": False, "error": "未找到轨迹数据"}
         trace_summary = _build_trace_summary(run, events)
         prompt = _build_review_prompt(trace_summary)
-        traces_dir = DATA_DIR / "traces"
-        traces_dir.mkdir(parents=True, exist_ok=True)
+        reviews_dir = DATA_DIR / "traces" / "reviews"
+        reviews_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{run_id}_{timestamp}.md"
-        filepath = traces_dir / filename
+        filepath = reviews_dir / filename
         filepath.write_text(prompt, encoding="utf-8")
-        logger.info("trace exported", run_id=run_id, file=str(filepath))
-        return {"ok": True, "prompt_file": str(filepath.resolve())}
+        logger.info(
+            "trace exported",
+            run_id=run_id,
+            file=str(filepath),
+            report_dir=str(reviews_dir.resolve()),
+        )
+        return {
+            "ok": True,
+            "prompt_file": str(filepath.resolve()),
+            "report_dir": str(reviews_dir.resolve()),
+        }
 
 
 async def _async(fn: Any, *args: Any) -> Any:

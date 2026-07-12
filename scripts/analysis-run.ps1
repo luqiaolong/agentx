@@ -88,16 +88,25 @@ Write-Host "退出交互模式: 输入 /quit 或 Ctrl+C`n" -ForegroundColor Dark
 # 不依赖"最近会话"语义，避免多 PowerShell 实例并发时串台。
 # LLM 收到 initial_prompt 后可主动 Read 报告文件 + 原始 trace 文件继续对话。
 $initialPrompt = @"
-[AgentX 复盘后续对话模式]
+[AgentX 复盘报告已生成 — 请立即打印给用户]
 
-你刚刚完成了一次 AgentX 执行轨迹复盘任务，相关文件：
-- 上一轮复盘报告（Markdown 格式）：$ReportFile
-- 原始执行轨迹 prompt 文件：$PromptFile
+阶段 1 headless 复盘任务已完成，报告已落盘到：
+- 复盘报告 Markdown: $ReportFile
+- 原始 trace prompt: $PromptFile
 
-请先用 Read 工具阅读以上两份文件了解上一轮复盘的结论，然后等待用户继续提问。
-用户接下来可能会：追问报告中的具体问题 / 要求执行某条优化方案 / 要求重新分析某个方面。
+请你按以下步骤立即行动（**不要等待用户提问**）：
 
-如果用户直接发送空消息或只是打招呼，简单确认你已加载报告即可，不要重复复盘内容。
+1. 用 Read 工具读取 $ReportFile
+2. **完整**地把报告内容以 Markdown 格式输出给用户：
+   - **不要**摘要、不要省略任何章节
+   - 必须包含全部 5 个章节：用户意图 / 执行路径 / 问题诊断 / 优化方案 / 优先级排序
+   - 保留原始 Markdown 结构（标题层级、列表、代码块原样输出）
+3. 报告输出完毕后追加一行：
+
+   > 以上是本轮复盘报告全文（已落盘到 $ReportFile）。
+   > 如需追问某个问题 / 执行某条优化方案 / 重新分析某方面，请直接告诉我。
+
+如果用户首条消息是空内容或只是打招呼：仍按上述步骤先打印报告全文，再等待后续问题。
 "@
 
 claude --model sonnet --dangerously-skip-permissions "$initialPrompt"
