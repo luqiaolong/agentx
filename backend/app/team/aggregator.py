@@ -128,6 +128,9 @@ async def _run_aggregator(
     })
 
     think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
+    token_count = 0
+    reasoning_count = 0
+    total_token_chars = 0
     try:
         async for chunk in llm.astream(prompt):
             raw = extract_chunk_text(chunk, strip=False)
@@ -135,12 +138,23 @@ async def _run_aggregator(
             if getattr(think_filter, "_retain_think", False):
                 reasoning = think_filter.take_think()
                 if reasoning:
+                    reasoning_count += 1
                     yield make_sse_event("reasoning", {"content": reasoning, "source": "team"})
             if cleaned:
+                token_count += 1
+                total_token_chars += len(cleaned)
                 yield make_sse_event("token", cleaned)
         tail = think_filter.flush()
         if tail:
+            token_count += 1
+            total_token_chars += len(tail)
             yield make_sse_event("token", tail)
+        logger.info(
+            "team aggregator stream completed",
+            token_events=token_count,
+            reasoning_events=reasoning_count,
+            total_token_chars=total_token_chars,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("team aggregator stream failed", error=str(exc))
         yield make_sse_event("error", {"message": f"Aggregator 流式失败: {exc}"})

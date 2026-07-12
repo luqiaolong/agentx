@@ -26,7 +26,7 @@ from app.team.orchestrator import (
     _validate_task,
     run_team_path,
 )
-from app.team.planner import _todos_to_team_tasks
+from app.team.planner import _parse_todos_from_text, _todos_to_team_tasks
 from app.sse.events import make_sse_event
 
 
@@ -149,6 +149,82 @@ def test_todos_to_team_tasks_invalid_agent_filtered() -> None:
     tasks, _ = _todos_to_team_tasks(todos, settings)
     assert len(tasks) == 1
     assert tasks[0].agent == "code"
+
+
+# ============================================================
+# 1b. _parse_todos_from_text（从 LLM 回复正文解析 [agent:xxx] 任务行）
+# ============================================================
+
+
+def test_parse_todos_from_text_basic() -> None:
+    """基本解析：多行 [agent:xxx] 任务行被正确解析为 Todo 列表。"""
+    text = "[agent:code] 读取 main.py\n[agent:rag] 检索文档\n[agent:deep] 修改 config.py"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 3
+    assert todos[0] == {"content": "[agent:code] 读取 main.py", "status": "pending"}
+    assert todos[1] == {"content": "[agent:rag] 检索文档", "status": "pending"}
+    assert todos[2] == {"content": "[agent:deep] 修改 config.py", "status": "pending"}
+
+
+def test_parse_todos_from_text_empty() -> None:
+    """空文本返回空列表。"""
+    assert _parse_todos_from_text("") == []
+    assert _parse_todos_from_text(None) == []  # type: ignore[arg-type]
+
+
+def test_parse_todos_from_text_skips_non_matching_lines() -> None:
+    """非 [agent:xxx] 格式的行（解释性文字、空行）被跳过。"""
+    text = """这是任务清单：
+[agent:code] 读文件
+
+下面是说明文字，不应被解析。
+[agent:rag] 检索"""
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 2
+    assert todos[0]["content"] == "[agent:code] 读文件"
+    assert todos[1]["content"] == "[agent:rag] 检索"
+
+
+def test_parse_todos_from_text_skips_markdown_codeblock_markers() -> None:
+    """markdown 代码块标记 ``` 被跳过。"""
+    text = """```
+[agent:code] 读文件
+```
+[agent:rag] 检索"""
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 2
+    assert todos[0]["content"] == "[agent:code] 读文件"
+    assert todos[1]["content"] == "[agent:rag] 检索"
+
+
+def test_parse_todos_from_text_skips_empty_task() -> None:
+    """[agent:xxx] 后无任务描述的行被跳过。"""
+    text = "[agent:code]\n[agent:rag] 有效任务"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 1
+    assert todos[0]["content"] == "[agent:rag] 有效任务"
+
+
+def test_parse_todos_from_text_normalizes_agent_case() -> None:
+    """agent 类型被转为小写（CODE → code）。"""
+    text = "[agent:CODE] 读文件"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 1
+    # content 中的 agent 已规范化为小写
+    assert todos[0]["content"] == "[agent:code] 读文件"
+
+
+def test_parse_todos_from_text_feeds_into_todos_to_team_tasks() -> None:
+    """_parse_todos_from_text 产出的 todos 可直接传入 _todos_to_team_tasks。"""
+    settings = _make_validate_settings()
+    text = "[agent:code] 读取 main.py\n[agent:rag] 检索文档"
+    todos = _parse_todos_from_text(text)
+    tasks, _ = _todos_to_team_tasks(todos, settings)
+    assert len(tasks) == 2
+    assert tasks[0].agent == "code"
+    assert tasks[0].input == "读取 main.py"
+    assert tasks[1].agent == "rag"
+    assert tasks[1].input == "检索文档"
 
 
 # ============================================================
@@ -291,20 +367,23 @@ def _patch_orchestrator_to_return_todos(
     monkeypatch: pytest.MonkeyPatch,
     todos: list[dict],
 ) -> MagicMock:
-    """patch deepagents.create_deep_agent 返回 mock orchestrator（ainvoke 返回 todos）。
+    """patch get_chat_model 返回 mock LLM（ainvoke 返回 [agent:xxx] 任务行文本）。
 
-    同时 patch app.team.orchestrator.get_chat_model 返回 mock LLM 供 Aggregator 使用。
+    旧方案 patch ``deepagents.create_deep_agent`` 返回 mock orchestrator（ainvoke
+    返回 ``{"todos": todos}`` dict）。新方案 ``_plan_node`` 直接用 ``llm.ainvoke``
+    调用 LLM，从回复正文解析 ``[agent:xxx]`` 任务行，故 mock LLM 的 ``ainvoke``
+    需返回 ``SimpleNamespace(content=任务行文本)``，模拟 LLM 直接输出任务清单。
+
+    同时 mock LLM 的 ``astream`` 供 Aggregator 使用（返回汇总 chunk）。
     """
     fake_llm = _make_fake_llm_for_aggregator()
+
+    # 构造 ainvoke 响应：把 todos 的 content 拼成文本（模拟 LLM 输出 [agent:xxx] 任务行）
+    todo_lines = "\n".join(t["content"] for t in todos)
+    fake_response = SimpleNamespace(content=todo_lines)
+    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: fake_llm)
-
-    fake_orchestrator = MagicMock()
-    fake_orchestrator.ainvoke = AsyncMock(return_value={"todos": todos})
-
-    def _fake_create_deep_agent(*args: Any, **kwargs: Any) -> Any:
-        return fake_orchestrator
-
-    monkeypatch.setattr("deepagents.create_deep_agent", _fake_create_deep_agent)
     return fake_llm
 
 

@@ -38,20 +38,20 @@ def _patch_orchestrator_to_return_todos(
     monkeypatch: pytest.MonkeyPatch,
     todos: list[dict],
 ) -> MagicMock:
-    """patch deepagents.create_deep_agent 返回 mock orchestrator（ainvoke 返回 todos）。
+    """patch get_chat_model 返回 mock LLM（ainvoke 返回 [agent:xxx] 任务行文本）。
 
-    同时 patch app.team.orchestrator.get_chat_model 返回 mock LLM 供 Aggregator 使用。
+    新方案 _plan_node 直接用 llm.ainvoke 调用 LLM，从回复正文解析 [agent:xxx]
+    任务行。mock LLM 的 ainvoke 返回 SimpleNamespace(content=任务行文本)，
+    astream 返回汇总 chunk 供 Aggregator 使用。
     """
     fake_llm = _make_fake_llm_for_aggregator()
+
+    # 构造 ainvoke 响应：把 todos 的 content 拼成文本（模拟 LLM 输出 [agent:xxx] 任务行）
+    todo_lines = "\n".join(t["content"] for t in todos)
+    fake_response = SimpleNamespace(content=todo_lines)
+    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: fake_llm)
-
-    fake_orchestrator = MagicMock()
-    fake_orchestrator.ainvoke = AsyncMock(return_value={"todos": todos})
-
-    def _fake_create_deep_agent(*args: Any, **kwargs: Any) -> Any:
-        return fake_orchestrator
-
-    monkeypatch.setattr("deepagents.create_deep_agent", _fake_create_deep_agent)
     return fake_llm
 
 

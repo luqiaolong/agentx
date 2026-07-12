@@ -3,9 +3,12 @@
 本模块用 LangGraph 原生 ``Send`` API 替代 ``asyncio.Queue`` + ``Semaphore``
 手工并行，实现可检查点、可调试的 Map-Reduce 子任务编排：
 
-- ``_plan_node``: Orchestrator 使用 ``create_deep_agent`` 拆任务，LLM 调用
-  ``write_todos`` 工具写入 ``state.todos``（deepagents 原生 Todo schema），
-  ``_todos_to_team_tasks`` 从 todos 解析出 ``TeamPlanTask`` 列表。
+- ``_plan_node``: Orchestrator 直接 ``llm.ainvoke`` 调用 LLM，让其在回复正文
+  输出 ``[agent:xxx]`` 任务行，``_parse_todos_from_text`` 解析为 deepagents
+  原生 Todo schema，``_todos_to_team_tasks`` 转换为 ``TeamPlanTask`` 列表。
+  （旧方案用 ``create_deep_agent`` + ``TodoListMiddleware`` 依赖 LLM 调用
+  ``write_todos`` 工具，但 ``WRITE_TODOS_SYSTEM_PROMPT`` 主动建议不调用，
+  导致 99% 失败率。）
 - ``_dispatch_node``: 把每个子任务 fan-out 到对应执行节点，同时传递 ``todos``
   快照供子任务节点构造 ``todo_update`` 事件。
 - ``_deep_node`` / ``_code_node`` / ``_builtin_node`` / ``_team_role_node`` /
@@ -59,6 +62,7 @@ from app.team.planner import (
     _ORCHESTRATOR_SYSTEM_PROMPT,
     _build_project_context,
     _build_team_experts_description,
+    _parse_todos_from_text,
     _strip_agent_prefix_from_todos,
     _todos_to_team_tasks,
     _validate_task,
@@ -90,11 +94,16 @@ if TYPE_CHECKING:
 
 
 async def _plan_node(state: TeamState) -> dict:
-    """Orchestrator 拆任务节点：使用 ``create_deep_agent`` + ``write_todos``。
+    """Orchestrator 拆任务节点：直接 ``llm.ainvoke`` + 文本解析。
 
-    LLM 调用 ``write_todos`` 工具写入 ``state.todos``（deepagents 原生 Todo
-    schema ``{content: str, status: str}``），``_todos_to_team_tasks`` 从 todos
-    解析出 ``TeamPlanTask`` 列表（解析 ``[agent:xxx]`` 前缀）。
+    旧方案使用 ``create_deep_agent`` + ``TodoListMiddleware`` 依赖 LLM 自主调用
+    ``write_todos`` 工具，但 ``TodoListMiddleware`` 注入的 ``WRITE_TODOS_SYSTEM_PROMPT``
+    主动建议 LLM "简单任务不要用 write_todos"，导致 99% 情况下 ``write_todos``
+    未被调用 → ``result.get("todos", [])`` 为空 → 无输出。
+
+    新方案直接用 ``llm.ainvoke`` 调用 LLM，让其在回复正文输出 ``[agent:xxx]``
+    任务行，``_parse_todos_from_text`` 逐行解析为 deepagents 原生 Todo schema，
+    再由 ``_todos_to_team_tasks`` 转换为 ``TeamPlanTask`` 列表。
     """
     writer = get_stream_writer()
     settings = get_settings()
@@ -119,26 +128,22 @@ async def _plan_node(state: TeamState) -> dict:
         context=_build_project_context(),
     )
 
-    # 使用 create_deep_agent（自带 TodoListMiddleware → write_todos 工具）
-    # tools=[] 表示 Orchestrator 只拆任务，不执行项目工具
-    from deepagents import create_deep_agent
-
+    # 直接 llm.ainvoke（不依赖 create_deep_agent + write_todos 工具）
     try:
-        orchestrator = create_deep_agent(
-            model=llm,
-            tools=[],
-            system_prompt=system_prompt,
-        )
-        result = await orchestrator.ainvoke(
-            {"messages": [{"role": "user", "content": state["message"]}]},
-            config={"configurable": {"thread_id": f"{state['thread_id']}-orchestrator"}},
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": state["message"]},
+            ]
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("team orchestrator invoke failed", error=str(exc))
         writer(make_sse_event("error", {"message": f"Orchestrator 调用失败: {exc}"}))
         return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": []}
 
-    todos = result.get("todos", [])
+    # 从回复正文解析 [agent:xxx] 前缀任务行
+    text = response.content if hasattr(response, "content") else str(response)
+    todos = _parse_todos_from_text(text)
     tasks, reasoning = _todos_to_team_tasks(todos, settings)
     if not tasks:
         writer(make_sse_event("error", {"message": "Orchestrator 未生成有效计划"}))
@@ -478,14 +483,17 @@ async def _aggregate_node(state: TeamState) -> dict:
         writer(sse)
 
     has_error = bool(errors)
-    # 到达此处时 findings 必非空（上方 not findings 分支已 return），
-    # 故 has_error and not findings 恒为 False。
-    # 设计意图：部分子任务失败但仍有成功结果 → status="done"（前端不支持 "partial" 状态）。
     writer(
         make_sse_event(
             "team_done",
             {"status": "error" if has_error and not findings else "done"},
         )
+    )
+    logger.info(
+        "team aggregate_node completed",
+        has_error=has_error,
+        findings_count=len(findings),
+        errors_count=len(errors),
     )
     return {}
 
@@ -547,7 +555,7 @@ async def run_team_path(
 ) -> AsyncIterator[dict[str, str]]:
     """AgentTeam 路径入口（LangGraph StateGraph + Send API 编排）。
 
-    1. _plan_node: Orchestrator 用 ``create_deep_agent`` 拆任务 → ``state.todos``
+    1. _plan_node: Orchestrator 用 ``llm.ainvoke`` 拆任务 → ``state.todos``
     2. _dispatch_node: 并行 fan-out 子任务到执行节点
     3. _{deep,code,builtin,team_role,custom}_node: 执行子任务 → todos 状态更新
     4. _aggregate_node: 汇总 → token / reasoning 事件
@@ -634,4 +642,5 @@ __all__ = [
     "_PASSTHROUGH_EVENTS",
     "_BASE_EXPERTS",
     "_ORCHESTRATOR_SYSTEM_PROMPT",
+    "_parse_todos_from_text",
 ]

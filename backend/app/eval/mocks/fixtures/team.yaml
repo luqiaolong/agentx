@@ -1,22 +1,13 @@
 - match: "团队"
-  response: "我将协调 Coding Team 的多个专家并行处理这个任务。"
-  tool_calls:
-    - name: "write_todos"
-      args:
-        todos:
-          - content: "[agent:code] 读取并分析项目结构"
-            status: "pending"
-          - content: "[agent:rag] 检索评测最佳实践"
-            status: "pending"
+  response: |
+    [agent:code] 读取并分析项目结构
+    [agent:rag] 检索评测最佳实践
+  tool_calls: []
 
 - match: "委派"
-  response: "正在把子任务分发给对应专家。"
-  tool_calls:
-    - name: "write_todos"
-      args:
-        todos:
-          - content: "[agent:code] 实现评测框架数据层"
-            status: "pending"
+  response: |
+    [agent:code] 实现评测框架数据层
+  tool_calls: []
 
 - match: "汇总"
   response: "各专家结果已收集完毕，正在生成综合报告。"

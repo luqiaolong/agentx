@@ -220,11 +220,15 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                         # 过滤 run_router 自行发送的 done，统一由 chat.py 收口
                         if event.get("event") == "done":
                             continue
+                        # 增量更新 result_text 到 obs_ctx 内存（不写 DB）：
+                        # 若客户端断连导致 GeneratorExit 中断 yield，with dual_trace
+                        # 退出时 _finalize_run 仍能从内存读取已收集的部分写入 DB，
+                        # 前端可通过 GET /api/observation/runs/{trace_id} 拉取恢复。
+                        obs_ctx.add_metadata(
+                            "result_text", "".join(assistant_content_parts).strip()
+                        )
                         yield event
-                    # FR-4.4: 正常出口写 result_text + token_count
-                    obs_ctx.add_metadata(
-                        "result_text", "".join(assistant_content_parts).strip()
-                    )
+                    # FR-4.4: 正常出口写 result_token_count（result_text 已增量更新）
                     # 修正：result_token_count 不再用 SSE 事件数（len(parts)），
                     # 而是从 observation_event 表读取真实 LLM token_usage.total_tokens。
                     # 若 observation 尚未写入（极端时序），回退到字符估算。
@@ -239,6 +243,13 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                         _real_tc = max(1, len("".join(assistant_content_parts)) // 4)
                     obs_ctx.add_metadata("result_token_count", _real_tc)
                     # done 事件携带真实 token_count，供前端直接展示
+                    logger.info(
+                        "chat done event yielding",
+                        trace_id=trace_id,
+                        agent_mode=effective_agent_mode,
+                        token_count=_real_tc,
+                        result_text_len=len("".join(assistant_content_parts)),
+                    )
                     yield {"event": "done", "data": json.dumps({"token_count": _real_tc})}
                 except Exception as inner_exc:
                     # FR-4.5: 异常分支写 error_type + error_message（在 dual_trace 退出前设置）
@@ -258,6 +269,11 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             # C1: 无论正常退出、异常、还是客户端断连（GeneratorExit 继承自
             # BaseException 不被 except Exception 捕获），都必须清理 abort/pause
             # 标志，避免泄漏到下次会话。同时释放 stream_lock（M4）。
+            logger.info(
+                "chat generator finally",
+                trace_id=trace_id,
+                thread_id=req.thread_id,
+            )
             stream_lock.release()
             await clear_abort(req.thread_id)
             await clear_pause(req.thread_id)

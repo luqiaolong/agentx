@@ -30,6 +30,7 @@ __all__ = [
     "_build_project_context",
     "_build_team_experts_description",
     "_looks_like_dangerous_task",
+    "_parse_todos_from_text",
     "_strip_agent_prefix_from_todos",
     "_todos_to_team_tasks",
     "_validate_task",
@@ -73,13 +74,15 @@ def _build_team_experts_description(settings: Any) -> str:
     return "\n".join(lines)
 
 
-# Orchestrator 系统 prompt（配合 create_deep_agent 使用）
-# TodoListMiddleware 自动注入 write_todos 工具 + WRITE_TODOS_SYSTEM_PROMPT
-# LLM 调用 write_todos 写入 state.todos，_plan_node 从 result 读取 todos
+# Orchestrator 系统 prompt（直接 llm.ainvoke，不依赖 write_todos 工具）
+# 旧方案用 create_deep_agent + TodoListMiddleware 注入 write_todos，但
+# TodoListMiddleware 的 WRITE_TODOS_SYSTEM_PROMPT 主动建议 LLM "简单任务不要用
+# write_todos"，导致 LLM 大多数时候不调用 write_todos → todos 为空 → 无输出。
+# 新方案让 LLM 直接在回复正文输出 [agent:xxx] 任务行，_parse_todos_from_text 解析。
 _ORCHESTRATOR_SYSTEM_PROMPT = """你是一个任务拆解专家（Orchestrator）。
-请把用户请求拆分成若干子任务，使用 write_todos 工具写入任务清单。
+请把用户请求拆分成若干子任务，在回复正文里直接输出任务清单（每行一个子任务，不要输出任何其他内容）。
 
-每个 todo 的 content 必须以 [agent:类型] 开头，格式：
+每个子任务必须独占一行，以 [agent:类型] 开头，格式：
 [agent:code] 读取 src/main.py 并分析入口逻辑
 [agent:deep] 修改 src/main.py 添加日志输出
 [agent:rag] 检索知识库中关于 FastAPI 最佳实践
@@ -93,7 +96,9 @@ _ORCHESTRATOR_SYSTEM_PROMPT = """你是一个任务拆解专家（Orchestrator�
 3. 子任务数量不要超过 {max_tasks} 个
 4. 若任务简单，可只返回一个子任务
 5. 若用户请求涉及多个软件开发环节（如前端+后端+测试），优先使用团队角色（frontend_dev/backend_dev/tester 等）而非通用 code
-6. 所有 todo 的 status 设为 pending
+
+项目上下文：
+{context}
 """
 
 # [agent:xxx] 前缀正则：匹配 [agent:code] / [agent:deep] / [agent:custom-mycoder] 等
@@ -123,6 +128,45 @@ def _strip_agent_prefix_from_todos(todos: list[dict]) -> list[dict]:
         stripped = match.group(2).strip() if match else content
         cleaned.append({**todo, "content": stripped})
     return cleaned
+
+
+def _parse_todos_from_text(text: str) -> list[dict]:
+    """从 LLM 回复正文中解析 ``[agent:xxx]`` 前缀的任务行，构造 deepagents 原生 Todo schema。
+
+    替代旧方案中依赖 LLM 调用 ``write_todos`` 工具的方式：新方案让 LLM 直接在
+    回复正文输出任务行，本函数逐行扫描 ``[agent:类型] 任务描述`` 格式的行，
+    构造 ``{content: "[agent:类型] 任务描述", status: "pending"}`` 列表。
+    不匹配的行（解释性文字、空行、markdown 标记等）自动跳过。
+
+    产出的 todos 格式与 deepagents ``write_todos`` 工具产出一致，可直接传入
+    ``_todos_to_team_tasks`` 解析为 ``TeamPlanTask`` 列表。
+
+    Args:
+        text: LLM 回复正文（可能含多行、markdown 标记等）。
+
+    Returns:
+        deepagents 原生 Todo 列表 ``[{content, status}, ...]``。
+    """
+    todos: list[dict] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # 跳过 markdown 代码块标记
+        if line.startswith("```"):
+            continue
+        match = _AGENT_PREFIX_RE.match(line)
+        if not match:
+            continue
+        agent = match.group(1).strip().lower()
+        task_text = match.group(2).strip()
+        if not task_text:
+            continue
+        todos.append({
+            "content": f"[agent:{agent}] {task_text}",
+            "status": "pending",
+        })
+    return todos
 
 
 def _build_project_context() -> str:

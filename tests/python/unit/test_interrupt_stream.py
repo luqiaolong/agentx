@@ -76,19 +76,11 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         lambda msg: (False, ""),
     )
 
-    # patch deepagents.create_deep_agent 返回 mock orchestrator（ainvoke 返回 todos）
-    # 每个 todo 的 content 以 [agent:deep] 开头，_todos_to_team_tasks 解析为 deep 子任务
-    fake_orchestrator = MagicMock()
-    fake_orchestrator.ainvoke = AsyncMock(
-        return_value={"todos": [{"content": "[agent:deep] subtask", "status": "pending"}]}
-    )
-    monkeypatch.setattr(
-        "deepagents.create_deep_agent",
-        lambda *args, **kwargs: fake_orchestrator,
-    )
-
-    # Aggregator LLM mock（中止场景下不会真正调用，但 _plan_node 会先调 get_chat_model）
+    # mock LLM：ainvoke 返回 [agent:deep] 任务行文本（_plan_node 解析为 deep 子任务）
     fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(
+        return_value=MagicMock(content="[agent:deep] subtask")
+    )
     monkeypatch.setattr(
         orch_module,
         "get_chat_model",

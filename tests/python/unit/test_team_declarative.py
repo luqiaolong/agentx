@@ -119,9 +119,9 @@ def test_orchestrator_system_prompt_includes_team_experts_when_formatted() -> No
     # base experts 也在
     assert "code" in prompt
     assert "rag" in prompt
-    # write_todos 工具使用说明
-    assert "write_todos" in prompt
+    # 新方案直接在回复正文输出 [agent:xxx] 任务行（不再依赖 write_todos 工具）
     assert "[agent:code]" in prompt
+    assert "回复正文" in prompt
 
 
 def test_validate_task_accepts_builtin_team_keys() -> None:

@@ -165,13 +165,20 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   const decoder = new TextDecoder();
   let buffer = "";
   let receivedDone = false;
-  let lastPingTime = Date.now();
-  const PING_TIMEOUT = 90000;
+  // 收到任意 SSE 数据（chunk）都更新 lastActivityTime，而非仅 ping 事件。
+  // 原设计仅 ping 更新 lastPingTime，但 sse_starlette 的 _send_lock 在
+  // _stream_response 长时间 yield 时可能阻塞 _ping task，导致 ping 无法
+  // 及时送达；而 token / tool_result 等事件仍在发，却被误判为超时。
+  // 改为"任意数据到达即重置计时器"，只有真正无数据时才超时。
+  let lastActivityTime = Date.now();
+  const INACTIVITY_TIMEOUT = 90000;
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      // 收到任意 chunk 数据，重置活跃计时器
+      lastActivityTime = Date.now();
       buffer += decoder.decode(value, { stream: true });
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? "";
@@ -189,7 +196,6 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         const dataStr = dataParts.join("\n");
         if (!dataStr && eventType === "message") continue;
         if (eventType === "ping") {
-          lastPingTime = Date.now();
           continue;
         }
         let payload: unknown = dataStr;
@@ -231,12 +237,20 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
           conn.approvalHandlers.forEach((h) => h(req));
         }
       }
-      if (Date.now() - lastPingTime > PING_TIMEOUT) {
-        throw new Error("SSE 连接超时：长时间未收到服务器心跳");
+      if (Date.now() - lastActivityTime > INACTIVITY_TIMEOUT) {
+        throw new Error("SSE 连接超时：长时间未收到服务器数据");
       }
     }
   } catch (err) {
     if ((err as Error).name === "AbortError") {
+      cleanupConnection(threadId);
+      return;
+    }
+    // 断连恢复：网络中断 / 超时时也尝试拉取最终结果。
+    // 后端在 SSE 连接断开（GeneratorExit）后仍会通过 with dual_trace
+    // 退出将已收集的 result_text 写入 observation DB，故此处重试拉取。
+    const recovered = await tryRecoverResult(traceId, conn);
+    if (recovered) {
       cleanupConnection(threadId);
       return;
     }
@@ -247,9 +261,64 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   }
 
   if (!receivedDone) {
-    opts?.onError?.(new Error("连接中断，未收到完成事件"));
+    // SSE 流正常结束（reader.read() 返回 done=true）但未收到 done 事件，
+    // 尝试从 observation DB 拉取 result_text 恢复最终输出。
+    const recovered = await tryRecoverResult(traceId, conn);
+    if (!recovered) {
+      opts?.onError?.(new Error("连接中断，未收到完成事件"));
+    }
   }
   cleanupConnection(threadId);
+}
+
+/**
+ * 断连恢复：通过 trace_id 从 observation DB 拉取最终输出。
+ *
+ * 后端 chat.py 在每个 token/reasoning 事件后增量更新 result_text 到
+ * obs_ctx 内存（dual_trace 上下文），with 块退出时 _finalize_run 写入
+ * observation_run.result_text 字段。即使 SSE 连接断开（GeneratorExit），
+ * with __exit__ 仍会执行，保证已收集的部分写入 DB。
+ *
+ * 本函数在 SSE 流异常结束（未收到 done）时调用，重试拉取 result_text，
+ * 补发 token + done 事件给已注册的 handler，让用户看到最终输出。
+ *
+ * 重试策略：1s / 2s / 3s 三次（后端 _finalize_run 可能在 GeneratorExit
+后异步执行，需等待写入完成）。
+ */
+async function tryRecoverResult(traceId: string, conn: ChatConnection): Promise<boolean> {
+  if (!traceId) return false;
+  const delays = [1000, 2000, 3000];
+  for (const delay of delays) {
+    await sleep(delay);
+    try {
+      const r = await fetch(`${API_BASE}/api/observation/runs/${traceId}`);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (!data.ok || !data.run?.result_text) continue;
+      const resultText: string = data.run.result_text;
+      if (!resultText.trim()) continue;
+      // 补发 token 事件（完整 result_text），让前端正常追加到当前消息。
+      // 注意：前端可能已收到部分 token（子代理中间过程），result_text
+      // 是所有 token + reasoning 的拼接，可能有少量重复。这是断连恢复
+      // 的权衡——看到重复内容比看不到最终报告好。
+      conn.eventHandlers.forEach((h) =>
+        h({ type: "token", data: resultText } as unknown as ChatEvent),
+      );
+      // 补发 done 事件，让前端正常收尾（markReasoningDone / setStreaming(false) 等）
+      conn.eventHandlers.forEach((h) =>
+        h({ type: "done", data: "{}" } as unknown as ChatEvent),
+      );
+      return true;
+    } catch {
+      // 网络错误，继续重试
+    }
+  }
+  return false;
+}
+
+/** Promise 延迟工具。 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** 清理指定 threadId 的连接资源。 */
