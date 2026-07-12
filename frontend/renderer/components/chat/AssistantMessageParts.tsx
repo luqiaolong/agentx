@@ -429,6 +429,16 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
       }
     }
 
+    // AgentTeam 路径：存在 team part 时，把最终回答的 text groups 强制移到
+    // 所有执行轨迹（delegation / team / tool-call / reasoning）之后，确保
+    // 用户先看到子代理执行过程，最后看到 aggregator 汇总的最终回答。
+    const hasTeam = items.some((item) => item.kind === "team");
+    if (hasTeam) {
+      const nonTextGroups = result.filter((g) => g.items[0]?.kind !== "text");
+      const textGroups = result.filter((g) => g.items[0]?.kind === "text");
+      return [...nonTextGroups, ...textGroups];
+    }
+
     return result;
   }, [items]);
 
