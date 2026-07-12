@@ -80,7 +80,12 @@ export type ChatEvent = (
       trace_id?: string;
     }
   // team_done 事件：AgentTeam 整体执行结束
-  | { type: "team_done"; status?: "error" | "done"; trace_id?: string }
+  | {
+      type: "team_done";
+      status?: "error" | "done";
+      agents?: { agent: string; message?: string; summary?: string }[];
+      trace_id?: string;
+    }
   // paused 事件：后端流被用户暂停
   | { type: "paused"; data?: unknown; trace_id?: string }
   // done 事件：流式结束
@@ -143,6 +148,24 @@ export type ApprovalDecision = "approve" | "once" | "session" | "deny" | "full_t
 export interface MilvusCredentialResult {
   user: string | null;
   password: string | null;
+}
+
+/**
+ * 观测配置总览（对应 Rust `ObservabilityConfig`）。
+ * - langsmith.endpoint / project 当前在 env.rs 硬编码 SaaS，仅作只读展示
+ * - langsmith.apiKeyConfigured 通过 setApiKey('langsmith', ...) 写入
+ * - observationTtlDays / checkpointTtlDays 通过 setObservabilityConfig 写入
+ */
+export interface LangsmithStatus {
+  apiKeyConfigured: boolean;
+  endpoint: string;
+  project: string;
+}
+
+export interface ObservabilityConfig {
+  langsmith: LangsmithStatus;
+  observationTtlDays: number;
+  checkpointTtlDays: number;
 }
 
 export interface SkillSummary {

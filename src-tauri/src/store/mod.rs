@@ -296,6 +296,46 @@ pub fn set_sandbox_mode(app: &AppHandle, mode: &str) {
 }
 
 // =============================================================================
+// 观测配置（观测中心 Tab 用）
+// =============================================================================
+
+/// Observation run/event TTL（天）。超过 TTL 的 run/event/tool_call 自动清理，
+/// feedback 永久保留。详见 backend/app/config/settings.py::observation_ttl_days。
+pub fn get_observation_ttl_days(app: &AppHandle) -> i32 {
+    get_number(app, "observability.observationTtlDays", 30.0) as i32
+}
+
+/// Checkpoint TTL（天）。超过 TTL 未活动的 thread checkpoint 自动清理。
+/// 详见 backend/app/config/settings.py::checkpoint_ttl_days。
+pub fn get_checkpoint_ttl_days(app: &AppHandle) -> i32 {
+    get_number(app, "observability.checkpointTtlDays", 30.0) as i32
+}
+
+/// 写入观测配置（Partial 语义：Some 才写入；数值自动 clamp 到 [1, 3650]）。
+pub fn set_observability_partial(
+    app: &AppHandle,
+    observation_ttl_days: Option<f64>,
+    checkpoint_ttl_days: Option<f64>,
+) {
+    if let Some(v) = observation_ttl_days {
+        let clamped = clamp_finite(v, 1.0, 3650.0);
+        set_value(
+            app,
+            "observability.observationTtlDays",
+            Value::from(clamped),
+        );
+    }
+    if let Some(v) = checkpoint_ttl_days {
+        let clamped = clamp_finite(v, 1.0, 3650.0);
+        set_value(
+            app,
+            "observability.checkpointTtlDays",
+            Value::from(clamped),
+        );
+    }
+}
+
+// =============================================================================
 // 配置 setter（对应 store.ts 的 setXxx 函数）
 // =============================================================================
 

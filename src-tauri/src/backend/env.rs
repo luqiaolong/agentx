@@ -70,6 +70,19 @@ fn inject_credentials(app: &AppHandle, env: &mut HashMap<String, String>) {
     env.insert("AGENTX_LANGSMITH_ENDPOINT".into(), langsmith_endpoint);
     env.insert("LANGSMITH_PROJECT".into(), "agentx".into());
 
+    // 观测中心 TTL（Python settings.py::observation_ttl_days / checkpoint_ttl_days）
+    // 从 store 读取，用户在「设置 → 观测」Tab 改后下次启动 / reload_backend_config 即生效。
+    let observation_ttl_days = store::get_observation_ttl_days(app);
+    env.insert(
+        "AGENTX_OBSERVATION_TTL_DAYS".into(),
+        observation_ttl_days.to_string(),
+    );
+    let checkpoint_ttl_days = store::get_checkpoint_ttl_days(app);
+    env.insert(
+        "AGENTX_CHECKPOINT_TTL_DAYS".into(),
+        checkpoint_ttl_days.to_string(),
+    );
+
     let (milvus_user, milvus_password) = credentials::get_milvus_credentials(app);
     if let Some(u) = milvus_user {
         env.insert("AGENTX_MILVUS_USER".into(), u);

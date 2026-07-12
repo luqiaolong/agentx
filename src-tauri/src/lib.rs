@@ -67,7 +67,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
-            // === Settings 命令（30 个）===
+            // === Settings 命令（32 个）===
             commands::settings::settings_get_milvus_credentials,
             commands::settings::settings_set_milvus_credentials,
             commands::settings::settings_get_api_key,
@@ -103,6 +103,8 @@ pub fn run() {
             commands::settings::settings_get_active_model_id,
             commands::settings::settings_activate_model,
             commands::settings::settings_reveal_api_key,
+            commands::settings::settings_get_observability_config,
+            commands::settings::settings_set_observability_config,
             // === Dialog 命令（4 个）===
             commands::dialog::dialog_open_file,
             commands::dialog::dialog_open_folder,

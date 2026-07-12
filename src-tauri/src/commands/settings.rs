@@ -344,3 +344,85 @@ pub fn settings_reveal_api_key(app: AppHandle, id: String) -> Option<String> {
     let entry = entries.iter().find(|e| e.id == id)?;
     store::credentials::decrypt_string(&entry.api_key)
 }
+
+// =============================================================================
+// 观测配置（2 个）— 「设置 → 观测」Tab 用
+// =============================================================================
+
+/// LangSmith 子状态（前端只读展示，不可编辑）。
+/// - endpoint / project 当前在 env.rs 硬编码 SaaS（用户已选保持硬编码）
+/// - apiKeyConfigured 仅返回 boolean，前端通过 setApiKey('langsmith', ...) 写入
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LangsmithStatus {
+    pub api_key_configured: bool,
+    pub endpoint: String,
+    pub project: String,
+}
+
+/// 观测配置总览（对应 settings.ts::ObservabilityConfig）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityConfig {
+    pub langsmith: LangsmithStatus,
+    pub observation_ttl_days: i32,
+    pub checkpoint_ttl_days: i32,
+}
+
+/// `settings:getObservabilityConfig` → 读取观测配置总览。
+///
+/// 返回：
+/// - langsmith.apiKeyConfigured：是否已配置 PAT Key（store 里有 `apikey.langsmith`）
+/// - langsmith.endpoint / project：env.rs 硬编码的 SaaS endpoint + 项目名（只读展示）
+/// - observationTtlDays / checkpointTtlDays：观测中心 / checkpointer 数据保留天数
+#[tauri::command]
+pub fn settings_get_observability_config(app: AppHandle) -> ObservabilityConfig {
+    ObservabilityConfig {
+        langsmith: LangsmithStatus {
+            api_key_configured: store::credentials::get_api_key(&app, "langsmith").is_some(),
+            endpoint: "https://api.smith.langchain.com".into(),
+            project: "agentx".into(),
+        },
+        observation_ttl_days: store::get_observation_ttl_days(&app),
+        checkpoint_ttl_days: store::get_checkpoint_ttl_days(&app),
+    }
+}
+
+/// `settings:setObservabilityConfig` → 更新观测配置（Partial 语义）。
+///
+/// 支持字段（全部可选）：
+/// - `langsmithApiKey`：填入新 PAT Key（empty string 表示删除凭证）
+/// - `observationTtlDays`：观测中心 TTL（天，1-3650）
+/// - `checkpointTtlDays`：checkpointer TTL（天，1-3650）
+///
+/// 注意：langsmith.endpoint / project 当前**不在 store 持久化**（env.rs 硬编码 SaaS，
+/// 如需切换自托管请改 env.rs::langsmith_endpoint）。前端调用本命令后应再调
+/// `reloadBackendConfig()` 让后端 reload settings 立即生效。
+#[tauri::command]
+pub fn settings_set_observability_config(
+    app: AppHandle,
+    cfg: Value,
+) -> Result<OkResult, String> {
+    let obj = cfg
+        .as_object()
+        .ok_or_else(|| "observability config must be an object".to_string())?;
+
+    // langsmithApiKey：通过现有 set_api_key('langsmith', ...) 写入；空字符串删除凭证
+    if let Some(api_key) = obj.get("langsmithApiKey").and_then(|v| v.as_str()) {
+        if api_key.is_empty() {
+            // 删除凭证：复用 delete_key（绕过 decrypt_string 的 plain/enc 前缀解析）
+            store::delete_key(&app, "apikey.langsmith");
+        } else {
+            store::credentials::set_api_key(&app, "langsmith", api_key);
+        }
+    }
+
+    // TTL：Partial 写入，store::set_observability_partial 内部 clamp
+    store::set_observability_partial(
+        &app,
+        obj.get("observationTtlDays").and_then(|v| v.as_f64()),
+        obj.get("checkpointTtlDays").and_then(|v| v.as_f64()),
+    );
+
+    Ok(OkResult::ok())
+}

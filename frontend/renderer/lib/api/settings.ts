@@ -7,6 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   MilvusCredentialResult,
+  ObservabilityConfig,
   SubagentsConfig,
   TeamSubagentsConfig,
   CustomSubagentsMap,
@@ -203,4 +204,32 @@ export function activateModel(id: string): Promise<void> {
  */
 export function revealApiKey(id: string): Promise<string | null> {
   return invoke<string | null>("settings_reveal_api_key", { id });
+}
+
+// ---- Observability ----
+
+/**
+ * 读取观测配置总览（LangSmith 状态 + 两个 TTL）。
+ * 见 `settings_get_observability_config` Tauri command。
+ */
+export function getObservabilityConfig(): Promise<ObservabilityConfig> {
+  return invoke<ObservabilityConfig>("settings_get_observability_config");
+}
+
+/**
+ * 更新观测配置（Partial 语义：未传字段保留原值）。
+ * - `langsmithApiKey`：填入新 PAT Key；空字符串表示删除凭证
+ * - `observationTtlDays` / `checkpointTtlDays`：TTL 天数（1-3650）
+ *
+ * 调用后建议再调 `reloadBackendConfig()` 让 Python 后端 reload settings 立即生效。
+ * 见 `settings_set_observability_config` Tauri command。
+ */
+export function setObservabilityConfig(
+  cfg: Partial<
+    Pick<ObservabilityConfig, "observationTtlDays" | "checkpointTtlDays"> & {
+      langsmithApiKey: string;
+    }
+  >,
+): Promise<void> {
+  return invoke("settings_set_observability_config", { cfg });
 }

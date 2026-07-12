@@ -11,6 +11,7 @@ import {
   Brain,
   FileText,
   Plug,
+  Activity,
 } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings";
 import { useModalDialog } from "@/components/ui/hooks/useModalDialog";
@@ -24,6 +25,7 @@ import { ToolsSettings } from "./ToolsSettings";
 import { MemorySettings } from "./MemorySettings";
 import { McpSettings } from "./mcp";
 import { SkillsManager } from "./memory/SkillsManager";
+import { ObservabilitySettings } from "./ObservabilitySettings";
 
 type TabId =
   | "prompt"
@@ -34,6 +36,7 @@ type TabId =
   | "subagents"
   | "tools"
   | "knowledge"
+  | "observability"
   | "approval"
   | "sandbox";
 
@@ -53,6 +56,7 @@ const TABS: TabDef[] = [
   { id: "subagents", label: "子代理", desc: "code/rag/web 子代理配置", Icon: Bot },
   { id: "tools", label: "工具", desc: "工具启用与禁用", Icon: Wrench },
   { id: "knowledge", label: "知识库", desc: "Milvus 凭证与连接配置", Icon: Database },
+  { id: "observability", label: "观测", desc: "LangSmith 追踪与数据保留 TTL", Icon: Activity },
   { id: "approval", label: "审批与安全", desc: "危险操作自动批准与上传上限", Icon: ShieldCheck },
   { id: "sandbox", label: "沙箱", desc: "沙箱模式与持久化授权目录", Icon: FolderLock },
 ];
@@ -176,6 +180,7 @@ export function SettingsModal() {
             {active === "subagents" && <SubagentsSettings />}
             {active === "tools" && <ToolsSettings />}
             {active === "knowledge" && <MilvusCredentialsForm />}
+            {active === "observability" && <ObservabilitySettings />}
             {active === "approval" && <ApprovalSettings />}
             {active === "sandbox" && <SandboxSettings />}
           </div>
