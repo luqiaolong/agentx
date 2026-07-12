@@ -297,17 +297,23 @@ async def _run_team_role_subtask(
                     content = extract_chunk_text(edata.get("chunk"), strip=False)
                     if content:
                         collected_text.append(content)
-                        # H12: 透传 token 事件供前端实时展示子任务输出
-                        writer(make_sse_event("token", content))
+                        # 中间 token 不透传到前端：与 deep/code 子代理行为一致。
+                        # 透传 token 会被前端 appendPartText 创建为 text part，
+                        # 破坏 delegation 分组（text 破组导致子代理卡片内 traceItems 为空，
+                        # 且最终报告 token 追加到已存在的 text part 导致位置错误）。
+                        # 子代理的输出通过 collected_text 收集到 summary 中展示。
                 elif kind in ("on_tool_start", "on_tool_end"):
                     trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
                     tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
                     # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
+                    # 用 run_id 作为 tool_call_id，确保 on_tool_start / on_tool_end 配对
+                    tc_id = str(event.get("run_id") or "")
                     if kind == "on_tool_start":
                         writer(
                             make_sse_event(
                                 "tool_call",
                                 {
+                                    "id": tc_id,
                                     "name": ename,
                                     "args": trace_data,
                                     "source": task.agent,
@@ -320,6 +326,7 @@ async def _run_team_role_subtask(
                             make_sse_event(
                                 "tool_result",
                                 {
+                                    "id": tc_id,
                                     "name": ename,
                                     "result": trace_data,
                                     "source": task.agent,
