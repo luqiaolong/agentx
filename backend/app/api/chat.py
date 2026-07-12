@@ -7,7 +7,7 @@ import json
 import uuid
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from app.api.schemas import (
@@ -187,6 +187,13 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                             # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
                             obs_ctx.add_metadata("error_type", "aborted")
                             obs_ctx.add_metadata("error_message", "user aborted")
+                            # L20: team 模式中止时先发 team_done{status: error}，
+                            # 让前端 TeamNodeCard 正确关闭，避免卡片一直显示"执行中"
+                            if effective_agent_mode == "coding_team":
+                                yield {
+                                    "event": "team_done",
+                                    "data": json.dumps({"status": "error"}),
+                                }
                             yield {
                                 "event": "error",
                                 "data": f"用户已中止 | trace={trace_id}",
@@ -277,6 +284,13 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 thread_id=req.thread_id,
             )
             stream_lock.release()
+            # M8: 释放锁后若无人等待（锁未被再次获取），从 dict 移除避免内存泄漏
+            async with _stream_locks_guard:
+                if not stream_lock.locked():
+                    _stream_locks.pop(req.thread_id, None)
+            # H4: 先 set_abort 通知子任务节点（deep/code/rag/web）检查 is_aborted()
+            # 后停止，避免 SSE 断连后后台继续消耗 LLM token；再 clear_abort 清理状态
+            await set_abort(req.thread_id)
             await clear_abort(req.thread_id)
             await clear_pause(req.thread_id)
             # B12 修复：清残留审批决策。若 pause 之前已有 pending approval（用户在
@@ -555,3 +569,24 @@ def register_chat_routes(app: FastAPI) -> None:
         """
         pending = await has_pending_approval(thread_id)
         return {"ok": True, "pending": pending}
+
+    @app.get("/api/chat/result/{trace_id}")
+    async def chat_result(trace_id: str) -> dict[str, Any]:
+        """查询指定 trace_id 的最终结果（SSE 断连后恢复用）。
+
+        - 已完成：``{status: "completed", result_text, token_count, trace_id}``
+        - 进行中：``{status: "pending", trace_id}``
+        - 未找到：404
+        """
+        sink = get_observation_sink()
+        row = await asyncio.to_thread(sink.get_run_sync, trace_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="trace not found")
+        if row.get("ended_at") is None:
+            return {"status": "pending", "trace_id": trace_id}
+        return {
+            "status": "completed",
+            "result_text": row.get("result_text") or "",
+            "token_count": row.get("result_token_count") or 0,
+            "trace_id": trace_id,
+        }

@@ -34,6 +34,7 @@ subtask_results）和 ``_merge_todos`` reducer（todos），并行子任务节�
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
@@ -83,6 +84,11 @@ from app.team.aggregator import (
     _run_aggregator,
     _should_downgrade_to_single,
 )
+
+# H2: 跟踪并行子任务的 in_progress 状态，避免 values-mode todo_update 把
+# 已标记 in_progress 的 todo 回退为 pending。key=parent_thread_id，value=已启动
+# 子任务索引集合。在 _emit_todo_in_progress 中添加，在 _aggregate_node 中清理。
+_in_progress_tasks: dict[str, set[int]] = {}
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -165,7 +171,7 @@ async def _plan_node(state: TeamState) -> dict:
             response_len=len(text),
         )
         writer(make_sse_event("error", {"message": "Orchestrator 未生成有效计划"}))
-        return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": _strip_agent_prefix_from_todos(todos)}
+        return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": []}
 
     # 剥离 [agent:xxx] 前缀后存入 state.todos，确保 SSE todo_update 透传到前端的是纯文本
     clean_todos = _strip_agent_prefix_from_todos(todos)
@@ -187,13 +193,18 @@ def _dispatch_node(state: TeamState) -> list[Send]:
 
     Returns:
         每个子任务一个 ``Send(node_name, SubtaskState)``，LangGraph 并行执行。
+        空计划时返回 ``[Send("aggregate", {})]``，确保 graph 路由到 aggregate 节点
+        发射 team_done（C1 修复：避免空计划导致 graph 终止无 team_done）。
     """
     plan = state.get("plan", [])
+    if not plan:
+        return [Send("aggregate", {})]
     thread_id = state.get("thread_id", "")
     todos = state.get("todos", [])
+    settings = get_settings()
     sends: list[Send] = []
     for idx, task in enumerate(plan):
-        node_name = _route_node_for_task(task.agent, state)
+        node_name = _route_node_for_task(task.agent, settings)
         sends.append(
             Send(
                 node_name,
@@ -219,7 +230,7 @@ def _dispatch_node(state: TeamState) -> list[Send]:
     return sends
 
 
-def _route_node_for_task(agent: str, state: TeamState) -> str:
+def _route_node_for_task(agent: str, settings: Any) -> str:
     """把 ``TeamPlanTask.agent`` 映射到对应的执行节点名。"""
     if agent == "deep":
         return "deep_node"
@@ -229,7 +240,6 @@ def _route_node_for_task(agent: str, state: TeamState) -> str:
         return "builtin_node"
     if agent.startswith("custom-"):
         return "custom_node"
-    settings = get_settings()
     if agent in (settings.team_subagents or {}):
         return "team_role_node"
     return "default_node"
@@ -324,6 +334,9 @@ def _emit_todo_in_progress(
     updated = list(todos)
     if 0 <= task_index < len(updated):
         updated[task_index] = {**updated[task_index], "status": "in_progress"}
+    # H2: 记录已启动子任务索引，供 values-mode todo_update 合并 in_progress 状态，
+    # 避免 reducer 归并后的 pending 状态覆盖前端已渲染的 in_progress。
+    _in_progress_tasks.setdefault(parent_thread_id, set()).add(task_index)
     writer(
         make_todo_update_event(
             updated,
@@ -356,22 +369,29 @@ async def _deep_node(state: SubtaskState) -> dict:
         "messages": [{"role": "user", "content": task.input}],
     }
     runner = _get_runner("deep", state.get("subtask_runners"))
-    result = await _run_subtask_stream(
-        runner,
-        runner_args=(deep_state, task.input),
-        runner_kwargs={
-            "profile_prompt": state.get("profile_prompt", ""),
-            "history": state.get("history"),
-            "permission_mode": state.get("permission_mode", "standard"),
-            "scene_prompt": state.get("scene_prompt"),
-            "workspace_path": state.get("workspace_path"),
-            "parent_thread_id": parent_thread_id,
-            "chat_model": state.get("chat_model"),
-        },
-        agent_name=task.agent,
-        abort_event=abort_event,
-        writer=writer,
-    )
+    try:
+        result = await _run_subtask_stream(
+            runner,
+            runner_args=(deep_state, task.input),
+            runner_kwargs={
+                "profile_prompt": state.get("profile_prompt", ""),
+                "history": state.get("history"),
+                "permission_mode": state.get("permission_mode", "standard"),
+                "scene_prompt": state.get("scene_prompt"),
+                "workspace_path": state.get("workspace_path"),
+                "parent_thread_id": parent_thread_id,
+                "chat_model": state.get("chat_model"),
+            },
+            agent_name=task.agent,
+            abort_event=abort_event,
+            writer=writer,
+        )
+    except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
+        logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
+        return _make_subtask_state_update(
+            TeamSubtaskResult(agent=task.agent, success=False, payload="子任务已取消"),
+            task_index,
+        )
     return _make_subtask_state_update(result, task_index)
 
 
@@ -393,20 +413,27 @@ async def _code_node(state: SubtaskState) -> dict:
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     runner = _get_runner("code", state.get("subtask_runners"))
-    result = await _run_subtask_stream(
-        runner,
-        runner_args=(task.input, child_id),
-        runner_kwargs={
-            "profile_prompt": state.get("profile_prompt", ""),
-            "permission_mode": state.get("permission_mode", "standard"),
-            "workspace_path": state.get("workspace_path"),
-            "parent_thread_id": parent_thread_id,
-            "chat_model": state.get("chat_model"),
-        },
-        agent_name=task.agent,
-        abort_event=abort_event,
-        writer=writer,
-    )
+    try:
+        result = await _run_subtask_stream(
+            runner,
+            runner_args=(task.input, child_id),
+            runner_kwargs={
+                "profile_prompt": state.get("profile_prompt", ""),
+                "permission_mode": state.get("permission_mode", "standard"),
+                "workspace_path": state.get("workspace_path"),
+                "parent_thread_id": parent_thread_id,
+                "chat_model": state.get("chat_model"),
+            },
+            agent_name=task.agent,
+            abort_event=abort_event,
+            writer=writer,
+        )
+    except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
+        logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
+        return _make_subtask_state_update(
+            TeamSubtaskResult(agent=task.agent, success=False, payload="子任务已取消"),
+            task_index,
+        )
     return _make_subtask_state_update(result, task_index)
 
 
@@ -426,17 +453,24 @@ async def _builtin_node(state: SubtaskState) -> dict:
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     runner = _get_runner(task.agent, state.get("subtask_runners"))
-    result = await _run_subtask_stream(
-        runner,
-        runner_args=(parent_thread_id, task.input),
-        runner_kwargs={
-            "history": state.get("history"),
-            "workspace_path": state.get("workspace_path"),
-        },
-        agent_name=task.agent,
-        abort_event=abort_event,
-        writer=writer,
-    )
+    try:
+        result = await _run_subtask_stream(
+            runner,
+            runner_args=(parent_thread_id, task.input),
+            runner_kwargs={
+                "history": state.get("history"),
+                "workspace_path": state.get("workspace_path"),
+            },
+            agent_name=task.agent,
+            abort_event=abort_event,
+            writer=writer,
+        )
+    except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
+        logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
+        return _make_subtask_state_update(
+            TeamSubtaskResult(agent=task.agent, success=False, payload="子任务已取消"),
+            task_index,
+        )
     return _make_subtask_state_update(result, task_index)
 
 
@@ -455,19 +489,26 @@ async def _team_role_node(state: SubtaskState) -> dict:
     _emit_delegation(writer, task.agent, task.purpose)
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
-    result = await _run_team_role_subtask(
-        task=task,
-        thread_id=parent_thread_id,
-        history=state.get("history"),
-        permission_mode=state.get("permission_mode", "standard"),
-        profile_prompt=state.get("profile_prompt", ""),
-        task_index=task_index,
-        workspace_path=state.get("workspace_path"),
-        chat_model=state.get("chat_model"),
-        subtask_runners=state.get("subtask_runners"),
-        abort_event=abort_event,
-        writer=writer,
-    )
+    try:
+        result = await _run_team_role_subtask(
+            task=task,
+            thread_id=parent_thread_id,
+            history=state.get("history"),
+            permission_mode=state.get("permission_mode", "standard"),
+            profile_prompt=state.get("profile_prompt", ""),
+            task_index=task_index,
+            workspace_path=state.get("workspace_path"),
+            chat_model=state.get("chat_model"),
+            subtask_runners=state.get("subtask_runners"),
+            abort_event=abort_event,
+            writer=writer,
+        )
+    except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
+        logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
+        return _make_subtask_state_update(
+            TeamSubtaskResult(agent=task.agent, success=False, payload="子任务已取消"),
+            task_index,
+        )
     return _make_subtask_state_update(result, task_index)
 
 
@@ -488,17 +529,24 @@ async def _custom_node(state: SubtaskState) -> dict:
 
     key = task.agent[len("custom-"):]
     runner = _get_runner("custom", state.get("subtask_runners"))
-    result = await _run_subtask_stream(
-        runner,
-        runner_args=(key, parent_thread_id, task.input),
-        runner_kwargs={
-            "history": state.get("history"),
-            "workspace_path": state.get("workspace_path"),
-        },
-        agent_name=task.agent,
-        abort_event=abort_event,
-        writer=writer,
-    )
+    try:
+        result = await _run_subtask_stream(
+            runner,
+            runner_args=(key, parent_thread_id, task.input),
+            runner_kwargs={
+                "history": state.get("history"),
+                "workspace_path": state.get("workspace_path"),
+            },
+            agent_name=task.agent,
+            abort_event=abort_event,
+            writer=writer,
+        )
+    except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
+        logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
+        return _make_subtask_state_update(
+            TeamSubtaskResult(agent=task.agent, success=False, payload="子任务已取消"),
+            task_index,
+        )
     return _make_subtask_state_update(result, task_index)
 
 
@@ -516,40 +564,54 @@ async def _default_node(state: SubtaskState) -> dict:
 async def _aggregate_node(state: TeamState) -> dict:
     """Aggregator 汇总节点：综合黑板内容生成最终回复。"""
     writer = get_stream_writer()
+    thread_id = state.get("thread_id", "")
+    # H2: 清理本 thread 的 in_progress 跟踪集合，避免泄漏到下次会话
+    _in_progress_tasks.pop(thread_id, None)
 
-    findings: dict[str, str] = state.get("findings", {})
-    errors: dict[str, str] = state.get("errors", {})
-    plan: list = state.get("plan", [])
+    try:
+        findings: dict[str, str] = state.get("findings", {})
+        errors: dict[str, str] = state.get("errors", {})
+        plan: list = state.get("plan", [])
 
-    if not findings:
-        if not plan:
+        if not findings:
+            if not plan:
+                writer(make_sse_event("team_done", {"status": "error"}))
+                return {}
+            writer(make_sse_event("error", {"message": "所有专家任务均失败"}))
             writer(make_sse_event("team_done", {"status": "error"}))
             return {}
-        writer(make_sse_event("error", {"message": "所有专家任务均失败"}))
-        writer(make_sse_event("team_done", {"status": "error"}))
-        return {}
 
-    blackboard = Blackboard(findings=dict(findings), errors=dict(errors))
-    message = state["message"]
-    chat_model = state.get("chat_model")
+        # H3: aggregator 调用前检查 abort_event，已中止则提前返回 team_done
+        abort_event = await get_abort_event(thread_id)
+        if abort_event.is_set():
+            writer(make_sse_event("team_done", {"status": "error", "error": "用户中止"}))
+            return {}
 
-    async for sse in _run_aggregator(message, blackboard, chat_model=chat_model):
-        writer(sse)
+        blackboard = Blackboard(findings=dict(findings), errors=dict(errors))
+        message = state["message"]
+        chat_model = state.get("chat_model")
 
-    has_error = bool(errors)
-    writer(
-        make_sse_event(
-            "team_done",
-            {"status": "error" if has_error and not findings else "done"},
+        async for sse in _run_aggregator(message, blackboard, chat_model=chat_model, abort_event=abort_event):
+            writer(sse)
+
+        has_error = bool(errors)
+        writer(
+            make_sse_event(
+                "team_done",
+                {"status": "error" if has_error else "done"},
+            )
         )
-    )
-    logger.info(
-        "team aggregate_node completed",
-        has_error=has_error,
-        findings_count=len(findings),
-        errors_count=len(errors),
-    )
-    return {}
+        logger.info(
+            "team aggregate_node completed",
+            has_error=has_error,
+            findings_count=len(findings),
+            errors_count=len(errors),
+        )
+        return {}
+    except Exception as exc:  # noqa: BLE001 — C2: 异常时仍发射 team_done，并 re-raise 让 chat.py 也能感知错误
+        logger.exception("team aggregate_node failed")
+        writer(make_sse_event("team_done", {"status": "error", "error": str(exc)}))
+        raise
 
 
 # ============================================================
@@ -648,6 +710,8 @@ async def run_team_path(
     _trace_id = current_trace_id() or ""
     _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
     with _trace_cm, trace_span("team.run", thread_id=thread_id, message_len=len(message)):
+        # H2: 进入新会话前清理本 thread 的 in_progress 跟踪集合，避免上次残留
+        _in_progress_tasks.pop(thread_id, None)
         graph = _get_team_graph()
         initial_state: TeamState = {
             "message": message,
@@ -680,7 +744,25 @@ async def run_team_path(
             elif mode == "values":
                 current_todos = payload.get("todos", []) if isinstance(payload, dict) else []
                 if current_todos != last_todos:
-                    yield make_todo_update_event(current_todos, task_id=thread_id)
+                    # H2: 合并 in_progress 状态——reducer 归并后的 state.todos 只有
+                    # pending/completed，但前端已通过 custom-stream 收到 in_progress；
+                    # 这里把 _in_progress_tasks 中索引对应的 pending 改为 in_progress，
+                    # 避免 values-mode 覆盖导致 in_progress → pending 回退。
+                    in_progress = _in_progress_tasks.get(thread_id)
+                    if in_progress:
+                        current_todos = [
+                            {**t, "status": "in_progress"}
+                            if isinstance(t, dict) and t.get("status") == "pending" and i in in_progress
+                            else t
+                            for i, t in enumerate(current_todos)
+                        ]
+                    # L19: 与 _emit_todo_in_progress 保持一致的字段（task_id/source/parent_task_id）
+                    yield make_todo_update_event(
+                        current_todos,
+                        task_id=thread_id,
+                        source="team",
+                        parent_task_id=thread_id,
+                    )
                     last_todos = list(current_todos)
 
 

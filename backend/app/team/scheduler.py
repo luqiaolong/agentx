@@ -53,6 +53,9 @@ _PASSTHROUGH_EVENTS: frozenset[str] = frozenset(
     {"approval_request", "todo_update", "delegation", "tool_call", "tool_result", "reasoning", "token"}
 )
 
+# L17: 默认 runner 字典缓存，避免每次 _get_runner miss 都重复 import + 构造
+_default_runners_cache: dict[str, Any] | None = None
+
 
 def _resolve_subtask_runners(
     subtask_runners: dict[str, Any] | None,
@@ -60,18 +63,22 @@ def _resolve_subtask_runners(
     """解析子任务 runner 字典。``None`` 时 lazy-import 真实 runner。"""
     if subtask_runners is not None:
         return subtask_runners
-    # Lazy import 避免模块顶部循环依赖
-    from app.scenarios.coding.agent import run_coding_expert
-    from app.deepagent.agent import run_deep_path
-    from app.subagents import run_custom_agent, run_rag_agent, run_web_agent
+    # L17: 缓存默认 runner 字典，避免每次 _get_runner miss 都重复 import + 构造
+    global _default_runners_cache
+    if _default_runners_cache is None:
+        # Lazy import 避免模块顶部循环依赖
+        from app.scenarios.coding.agent import run_coding_expert
+        from app.deepagent.agent import run_deep_path
+        from app.subagents import run_custom_agent, run_rag_agent, run_web_agent
 
-    return {
-        "code": run_coding_expert,
-        "deep": run_deep_path,
-        "rag": run_rag_agent,
-        "web": run_web_agent,
-        "custom": run_custom_agent,
-    }
+        _default_runners_cache = {
+            "code": run_coding_expert,
+            "deep": run_deep_path,
+            "rag": run_rag_agent,
+            "web": run_web_agent,
+            "custom": run_custom_agent,
+        }
+    return _default_runners_cache
 
 
 def _get_runner(name: str, subtask_runners: dict[str, Any] | None) -> Any:
@@ -96,7 +103,7 @@ async def _inherit_workspace(child_thread_id: str, workspace_path: str | None) -
     sandbox = get_sandbox()
     try:
         await sandbox.authorize(child_thread_id, workspace_path, writable=True, source="team_inherit")
-    except ValueError as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — M7: 兜底所有异常（不止 ValueError）
         logger.warning(
             "team subtask workspace inherit failed",
             child_thread_id=child_thread_id,
@@ -143,6 +150,18 @@ def _route_event_for_node(
             name = str(event.get("name", "?"))
             result = str(event.get("result", ""))[:200]
             tool_traces.append(f"{name}: {result}")
+            # M4: 转换为 event/data 格式后透传，避免前端 tool_call 配对断裂
+            writer(
+                make_sse_event(
+                    "tool_result",
+                    {
+                        "id": event.get("id", ""),
+                        "name": event.get("name", "?"),
+                        "result": event.get("result", ""),
+                        "source": event.get("source", ""),
+                    },
+                )
+            )
         return None
     if event_type == "error":
         # error 直接透传（仅 event/data 格式）

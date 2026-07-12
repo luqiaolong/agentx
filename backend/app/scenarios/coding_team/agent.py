@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from app.deepagent.context import current_thread_id
 from app.observability.logger import logger
-from app.sse.events import make_error_event
+from app.sse.events import make_error_event, make_sse_event
 from app.team.orchestrator import run_team_path
 
 if TYPE_CHECKING:
@@ -88,3 +88,5 @@ async def run_coding_team(
     except Exception as exc:  # noqa: BLE001 — Team 异常不应让 SSE 流中断
         logger.exception("coding_team failed", thread_id=thread_id)
         yield make_error_event(f"Team 执行失败: {exc}")
+        # M5: 异常路径也必须发射 team_done，否则前端 TeamNodeCard 永远停在 loading
+        yield make_sse_event("team_done", {"status": "error"})

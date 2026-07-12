@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import re as _re
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -75,11 +75,9 @@ def _quality_gate(blackboard: Blackboard) -> tuple[bool, str]:
     """
     if not blackboard.findings:
         return False, "无任何成功的子任务结果"
-    unique_findings = set(blackboard.findings.values())
-    if len(unique_findings) == 1 and len(blackboard.findings) > 1:
-        return False, "所有子任务返回相同内容，疑似未实际执行"
+    # M2: 仅当内容确实只剩截断标记时才拒绝（原 len<50 检查因 max_chars≥2000 永远为 False）
     truncated_only = all(
-        "[结果已截断]" in v and len(v.strip()) < 50
+        v.strip() == "[结果已截断]"
         for v in blackboard.findings.values()
     )
     if truncated_only:
@@ -91,12 +89,15 @@ async def _run_aggregator(
     user_message: str,
     blackboard: Blackboard,
     chat_model: BaseChatModel | None = None,
+    abort_event: Any = None,
 ) -> AsyncIterator[dict[str, str]]:
     """调用 Aggregator LLM，流式输出最终回复。
 
     Args:
         chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
             None 时调用 ``orchestrator.get_chat_model()`` 获取真实 LLM。
+        abort_event: 可选 ``asyncio.Event``，在流式输出过程中检查中止信号，
+            已中止则提前返回部分结果（H3 修复）。
     """
     # 通过 orchestrator 模块属性访问 get_chat_model，
     # 以便测试通过 monkeypatch app.team.orchestrator.get_chat_model 替换。
@@ -141,6 +142,10 @@ async def _run_aggregator(
         total_token_chars = 0
         try:
             async for chunk in llm.astream(prompt):
+                # H3: 流式输出过程中检查 abort_event，已中止则提前返回部分结果
+                if abort_event is not None and abort_event.is_set():
+                    logger.info("team aggregator aborted mid-stream", token_events=token_count)
+                    return
                 raw = extract_chunk_text(chunk, strip=False)
                 cleaned = think_filter.feed(raw)
                 if getattr(think_filter, "_retain_think", False):
