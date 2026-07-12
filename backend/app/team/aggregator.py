@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re as _re
 from typing import TYPE_CHECKING, AsyncIterator
 
@@ -17,6 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import get_settings
 from app.observability.logger import logger
+from app.observability.trace import bind_trace, current_trace_id
 from app.sse.events import make_sse_event
 from app.utils.text import ThinkFilter, extract_chunk_text
 from app.team.blackboard import Blackboard, _serialize_blackboard
@@ -103,61 +105,67 @@ async def _run_aggregator(
 
     settings = get_settings()
 
-    # 质量门检查
-    ok, reason = _quality_gate(blackboard)
-    if not ok:
-        logger.warning("team aggregator quality gate rejected", reason=reason)
-        yield make_sse_event(
-            "error",
-            {"message": f"专家结果质量不足: {reason}"},
-        )
-        return
+    # trace_id 透传：_run_aggregator 通常由 LangGraph 节点（_aggregate_node）调用，
+    # 节点用 asyncio.create_task 调度，ContextVar 不会自动跨协程传播。
+    # 显式绑定让 aggregator 的 logger / make_sse_event 也能拿到 trace_id。
+    _trace_id = current_trace_id() or ""
+    _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
+    with _trace_cm:
+        # 质量门检查
+        ok, reason = _quality_gate(blackboard)
+        if not ok:
+            logger.warning("team aggregator quality gate rejected", reason=reason)
+            yield make_sse_event(
+                "error",
+                {"message": f"专家结果质量不足: {reason}"},
+            )
+            return
 
-    try:
-        llm = chat_model if chat_model is not None else orchestrator.get_chat_model(
-            temperature=settings.llm_temperature_aggregator, streaming=True
-        )
-    except ValueError as exc:
-        yield make_sse_event("error", {"message": f"LLM 不可用: {exc}"})
-        return
+        try:
+            llm = chat_model if chat_model is not None else orchestrator.get_chat_model(
+                temperature=settings.llm_temperature_aggregator, streaming=True
+            )
+        except ValueError as exc:
+            yield make_sse_event("error", {"message": f"LLM 不可用: {exc}"})
+            return
 
-    prompt = _AGGREGATOR_PROMPT.invoke({
-        "user_message": user_message,
-        "blackboard_summary": _serialize_blackboard(blackboard),
-        "error_summary": "\n".join(f"{k}: {v}" for k, v in blackboard.errors.items()) or "无",
-    })
+        prompt = _AGGREGATOR_PROMPT.invoke({
+            "user_message": user_message,
+            "blackboard_summary": _serialize_blackboard(blackboard),
+            "error_summary": "\n".join(f"{k}: {v}" for k, v in blackboard.errors.items()) or "无",
+        })
 
-    think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
-    token_count = 0
-    reasoning_count = 0
-    total_token_chars = 0
-    try:
-        async for chunk in llm.astream(prompt):
-            raw = extract_chunk_text(chunk, strip=False)
-            cleaned = think_filter.feed(raw)
-            if getattr(think_filter, "_retain_think", False):
-                reasoning = think_filter.take_think()
-                if reasoning:
-                    reasoning_count += 1
-                    yield make_sse_event("reasoning", {"content": reasoning, "source": "team"})
-            if cleaned:
+        think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
+        token_count = 0
+        reasoning_count = 0
+        total_token_chars = 0
+        try:
+            async for chunk in llm.astream(prompt):
+                raw = extract_chunk_text(chunk, strip=False)
+                cleaned = think_filter.feed(raw)
+                if getattr(think_filter, "_retain_think", False):
+                    reasoning = think_filter.take_think()
+                    if reasoning:
+                        reasoning_count += 1
+                        yield make_sse_event("reasoning", {"content": reasoning, "source": "team"})
+                if cleaned:
+                    token_count += 1
+                    total_token_chars += len(cleaned)
+                    yield make_sse_event("token", cleaned)
+            tail = think_filter.flush()
+            if tail:
                 token_count += 1
-                total_token_chars += len(cleaned)
-                yield make_sse_event("token", cleaned)
-        tail = think_filter.flush()
-        if tail:
-            token_count += 1
-            total_token_chars += len(tail)
-            yield make_sse_event("token", tail)
-        logger.info(
-            "team aggregator stream completed",
-            token_events=token_count,
-            reasoning_events=reasoning_count,
-            total_token_chars=total_token_chars,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("team aggregator stream failed", error=str(exc))
-        yield make_sse_event("error", {"message": f"Aggregator 流式失败: {exc}"})
+                total_token_chars += len(tail)
+                yield make_sse_event("token", tail)
+            logger.info(
+                "team aggregator stream completed",
+                token_events=token_count,
+                reasoning_events=reasoning_count,
+                total_token_chars=total_token_chars,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("team aggregator stream failed", error=str(exc))
+            yield make_sse_event("error", {"message": f"Aggregator 流式失败: {exc}"})
 
 
 _SIMPLE_TASK_KEYWORDS = frozenset({

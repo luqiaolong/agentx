@@ -85,8 +85,13 @@ export type ChatEvent = (
   | { type: "paused"; data?: unknown; trace_id?: string }
   // done 事件：流式结束
   | { type: "done"; data?: unknown; trace_id?: string }
-  // error 事件：流式出错（data 和 error 字段均可能携带信息）
-  | { type: "error"; data?: unknown; error?: string; trace_id?: string }
+  // error 事件：流式出错（data / error / message 字段均可能携带信息）
+  // - data: chat.py 手工构造 error 事件时使用（如 `内部错误: ... | trace=...`）
+  // - message: make_sse_event("error", {"message": "..."}) 构造的 payload 展开后字段，
+  //   这是后端绝大多数 error 事件（如 team aggregator / orchestrator 失败）的格式。
+  // - error: 极少见的兼容字段
+  // 前端 useChatStream 处理时按 data → error → message 优先级取值，避免显示"请求出错"兜底文案。
+  | { type: "error"; data?: unknown; error?: string; message?: string; trace_id?: string }
 ) & { _tid?: string };
 
 /**

@@ -34,6 +34,7 @@ subtask_results）和 ``_merge_todos`` reducer（todos），并行子任务节�
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 from langgraph.config import get_stream_writer
@@ -44,6 +45,7 @@ from app.config import get_settings
 from app.llm import get_chat_model
 from app.observability.langsmith import trace_span
 from app.observability.logger import logger
+from app.observability.trace import bind_trace, current_trace_id
 from app.security.approval import get_abort_event
 from app.sse.events import make_sse_event, make_todo_update_event
 
@@ -142,10 +144,26 @@ async def _plan_node(state: TeamState) -> dict:
         return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": []}
 
     # 从回复正文解析 [agent:xxx] 前缀任务行
-    text = response.content if hasattr(response, "content") else str(response)
+    # response.content 可能是 str 或 list（多模态/工具调用模型返回 content blocks）
+    raw_content = response.content if hasattr(response, "content") else str(response)
+    if isinstance(raw_content, list):
+        text = "\n".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in raw_content
+        )
+    else:
+        text = str(raw_content)
     todos = _parse_todos_from_text(text)
     tasks, reasoning = _todos_to_team_tasks(todos, settings)
     if not tasks:
+        # 诊断日志：记录 LLM 响应预览，便于排查"未生成有效计划"根因
+        # （常见原因：LLM 输出格式不匹配 [agent:xxx] 正则、返回空回复等）
+        logger.warning(
+            "team orchestrator no valid tasks parsed",
+            todos_count=len(todos),
+            response_preview=text[:500],
+            response_len=len(text),
+        )
         writer(make_sse_event("error", {"message": "Orchestrator 未生成有效计划"}))
         return {"plan": [], "errors": {}, "findings": {}, "subtask_results": {}, "todos": _strip_agent_prefix_from_todos(todos)}
 
@@ -623,7 +641,13 @@ async def run_team_path(
 
     resolved_runners = _resolve_subtask_runners(subtask_runners)
 
-    with trace_span("team.run", thread_id=thread_id, message_len=len(message)):
+    # trace_id 透传：LangGraph 内部用 asyncio.create_task 调度子节点，
+    # ContextVar 不会自动跨协程传播。显式在入口处绑定，让 LangGraph 子节点
+    # （_plan_node / _deep_node / _aggregate_node 等）的 logger / make_sse_event
+    # 也能拿到 trace_id，便于用户报问题时通过 grep data/logs/backend.log 排查链路。
+    _trace_id = current_trace_id() or ""
+    _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
+    with _trace_cm, trace_span("team.run", thread_id=thread_id, message_len=len(message)):
         graph = _get_team_graph()
         initial_state: TeamState = {
             "message": message,

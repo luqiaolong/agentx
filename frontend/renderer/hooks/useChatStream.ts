@@ -325,11 +325,15 @@ export function useChatStream(args: UseChatStreamArgs) {
             deleteMessage(pendingIdRef.current);
             pendingIdRef.current = null;
           }
-          const errData = e.data ?? e.error;
-          const baseMsg = typeof errData === "string" ? errData : "请求出错";
+          const errData = e.data ?? e.error ?? e.message;
           // 错误消息附 trace_id：方便用户报告"任务卡死/中断"问题时直接复制
           // 提交给开发者，开发者即可 grep data/logs/backend.log 定位整条链路。
           // 优先用事件自身的 trace_id（后端注入），缺失时回退到 chat.ts 对应 threadId 的值。
+          // 兼容三种 error payload 格式：
+          // 1. chat.py 手工构造：{event:"error", data:"内部错误..."} → e.data 是字符串
+          // 2. make_sse_event("error", {message: "..."}) → e.message 是字符串（最常见）
+          // 3. 极少见：payload 里直接写 {error: "..."} → e.error 是字符串
+          const baseMsg = typeof errData === "string" && errData.length > 0 ? errData : "请求出错";
           const traceId = e.trace_id ?? getCurrentTraceId(threadId) ?? null;
           const msgWithTrace = traceId ? `${baseMsg}（trace=${traceId}）` : baseMsg;
           callbacksRef.current.setErrorMsg(msgWithTrace);

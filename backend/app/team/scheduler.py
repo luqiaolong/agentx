@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 from app.config import get_settings
 from app.observability.logger import logger
+from app.observability.trace import bind_trace, current_trace_id
 from app.sse.events import make_sse_event
 from app.team.aggregator import _build_summary
 from app.team.blackboard import TeamSubtaskResult
@@ -177,16 +179,22 @@ async def _run_subtask_stream(
     """
     collected_text: list[str] = []
     tool_traces: list[str] = []
-    try:
-        stream = runner(*runner_args, **runner_kwargs)
-        async for event in stream:
-            if abort_event.is_set():
-                return TeamSubtaskResult(agent=agent_name, success=False, payload="用户中止")
-            result = _route_event_for_node(event, collected_text, tool_traces, writer, abort_event)
-            if result is not None:
-                return result
-    except Exception as exc:  # noqa: BLE001
-        return TeamSubtaskResult(agent=agent_name, success=False, payload=f"{agent_name} 子任务异常: {exc}")
+    # trace_id 透传：子任务 runner（deep/code/rag/web/custom）由 LangGraph 用
+    # asyncio.create_task 调度，ContextVar 不会自动跨协程传播。显式绑定让子任务
+    # 内部的 logger / make_sse_event 也能拿到 trace_id，便于排查"卡在哪一步"。
+    _trace_id = current_trace_id() or ""
+    _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
+    with _trace_cm:
+        try:
+            stream = runner(*runner_args, **runner_kwargs)
+            async for event in stream:
+                if abort_event.is_set():
+                    return TeamSubtaskResult(agent=agent_name, success=False, payload="用户中止")
+                result = _route_event_for_node(event, collected_text, tool_traces, writer, abort_event)
+                if result is not None:
+                    return result
+        except Exception as exc:  # noqa: BLE001
+            return TeamSubtaskResult(agent=agent_name, success=False, payload=f"{agent_name} 子任务异常: {exc}")
 
     # runner 正常结束但未发 _subtask_done → 视为成功（rag/web/custom 无哨兵事件）
     if collected_text or tool_traces:
@@ -271,51 +279,56 @@ async def _run_team_role_subtask(
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": task.input}]}
     config = {"configurable": {"thread_id": child_thread_id}}
-    try:
-        # M25: abort 检查在每个事件回调中执行；LLM 长调用期间无法响应中止，
-        # 需要 asyncio.cancel 机制才能根本修复，当前为缓解方案。
-        async for event in agent_obj.astream_events(inputs, version="v2", config=config):
-            if abort_event.is_set():
-                return _done(False, "用户中止")
-            kind = event["event"]
-            ename = event.get("name", "")
-            edata = event.get("data", {}) or {}
-            if kind == "on_chat_model_stream":
-                content = extract_chunk_text(edata.get("chunk"), strip=False)
-                if content:
-                    collected_text.append(content)
-                    # H12: 透传 token 事件供前端实时展示子任务输出
-                    writer(make_sse_event("token", content))
-            elif kind in ("on_tool_start", "on_tool_end"):
-                trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
-                tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
-                # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
-                if kind == "on_tool_start":
-                    writer(
-                        make_sse_event(
-                            "tool_call",
-                            {
-                                "name": ename,
-                                "args": trace_data,
-                                "source": task.agent,
-                                "parent_task_id": thread_id,
-                            },
+    # trace_id 透传：build_custom_agent 内部走 astream_events v2，
+    # 回调中创建新协程，ContextVar 不会自动跨协程传播。
+    _trace_id = current_trace_id() or ""
+    _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
+    with _trace_cm:
+        try:
+            # M25: abort 检查在每个事件回调中执行；LLM 长调用期间无法响应中止，
+            # 需要 asyncio.cancel 机制才能根本修复，当前为缓解方案。
+            async for event in agent_obj.astream_events(inputs, version="v2", config=config):
+                if abort_event.is_set():
+                    return _done(False, "用户中止")
+                kind = event["event"]
+                ename = event.get("name", "")
+                edata = event.get("data", {}) or {}
+                if kind == "on_chat_model_stream":
+                    content = extract_chunk_text(edata.get("chunk"), strip=False)
+                    if content:
+                        collected_text.append(content)
+                        # H12: 透传 token 事件供前端实时展示子任务输出
+                        writer(make_sse_event("token", content))
+                elif kind in ("on_tool_start", "on_tool_end"):
+                    trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
+                    tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
+                    # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
+                    if kind == "on_tool_start":
+                        writer(
+                            make_sse_event(
+                                "tool_call",
+                                {
+                                    "name": ename,
+                                    "args": trace_data,
+                                    "source": task.agent,
+                                    "parent_task_id": thread_id,
+                                },
+                            )
                         )
-                    )
-                else:
-                    writer(
-                        make_sse_event(
-                            "tool_result",
-                            {
-                                "name": ename,
-                                "result": trace_data,
-                                "source": task.agent,
-                                "parent_task_id": thread_id,
-                            },
+                    else:
+                        writer(
+                            make_sse_event(
+                                "tool_result",
+                                {
+                                    "name": ename,
+                                    "result": trace_data,
+                                    "source": task.agent,
+                                    "parent_task_id": thread_id,
+                                },
+                            )
                         )
-                    )
-    except Exception as exc:  # noqa: BLE001
-        return _done(False, f"团队角色 {task.agent} 子任务异常: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            return _done(False, f"团队角色 {task.agent} 子任务异常: {exc}")
 
     return _done(
         bool(collected_text or tool_traces),
