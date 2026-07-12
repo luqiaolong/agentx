@@ -50,12 +50,22 @@ fn inject_credentials(app: &AppHandle, env: &mut HashMap<String, String>) {
     // endpoint = LangSmith SaaS（https://api.smith.langchain.com），lsv2_pt_ PAT key；
     // 自托管实例切换：把这行改为 "http://192.168.1.4:21984"（myserver 自托管 port）。
     let langsmith_endpoint = "https://api.smith.langchain.com".to_string();
-    if let Some(k) = credentials::get_api_key(app, "langsmith") {
+    // 关键修复（P1）：仅当 API key 存在时 LANGSMITH_TRACING / AGENTX_LANGSMITH_TRACING 才注入 true。
+    // 修复前：无论 key 是否存在都注入 "true"，导致 _langsmith_available() 一直返回 False 且每次
+    // dual_trace 都打 "API_KEY missing" warning（误导性日志 + 永久降级为本地 only）。
+    // 修复后：无 key 时 tracing=false，双写直接走本地分支，零噪音；填了 key 后下次启动自动启用。
+    let langsmith_tracing_enabled = if let Some(k) = credentials::get_api_key(app, "langsmith") {
         env.insert("LANGSMITH_API_KEY".into(), k.clone());
         env.insert("AGENTX_LANGSMITH_API_KEY".into(), k);
-    }
-    env.insert("LANGSMITH_TRACING".into(), "true".into());
-    env.insert("AGENTX_LANGSMITH_TRACING".into(), "true".into());
+        "true"
+    } else {
+        "false"
+    };
+    env.insert("LANGSMITH_TRACING".into(), langsmith_tracing_enabled.into());
+    env.insert(
+        "AGENTX_LANGSMITH_TRACING".into(),
+        langsmith_tracing_enabled.into(),
+    );
     env.insert("LANGSMITH_ENDPOINT".into(), langsmith_endpoint.clone());
     env.insert("AGENTX_LANGSMITH_ENDPOINT".into(), langsmith_endpoint);
     env.insert("LANGSMITH_PROJECT".into(), "agentx".into());
