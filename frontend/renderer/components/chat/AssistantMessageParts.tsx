@@ -60,6 +60,39 @@ type RenderItem =
   | { kind: "team"; part: Extract<MessagePart, { type: "team" }> };
 
 /**
+ * 规范化子代理角色名，统一 delegation.target 与 tool_call.source 的命名空间。
+ *
+ * 后端 delegation.target 使用原始角色名（如 "code"/"deep"），
+ * tool_call.source 可能使用规范化值（如 "coding"/"deep"）。
+ * 此函数把两边的值统一到同一命名空间，用于并行子代理场景下按 source 匹配 delegation 组。
+ *
+ * 映射规则与后端 _SOURCE_MAP 一致（orchestrator.py）：
+ * code → coding, deep → work, agent → work
+ */
+function normalizeAgentRole(role: string): string {
+  const map: Record<string, string> = { code: "coding", deep: "work", agent: "work" };
+  return map[role] ?? role;
+}
+
+/**
+ * 从 RenderItem 中提取 source 字段（子代理角色名），用于按 source 匹配 delegation 组。
+ * reasoning 无 source 字段，返回 null（回退到当前组逻辑）。
+ */
+function getRenderItemSource(item: RenderItem): string | null {
+  switch (item.kind) {
+    case "tool-call":
+      return item.part.source;
+    case "tool-call-group":
+      return item.items[0]?.source ?? null;
+    case "orphan-tool-result":
+      return item.part.source;
+    default:
+      // reasoning / classification / delegation / team / text 无 source
+      return null;
+  }
+}
+
+/**
  * 把 message.parts 配对 tool-call/tool-result，生成按顺序的渲染项列表。
  *
  * 配对规则：tool-call part 和同 id 的 tool-result part 合并为 PairedToolCall。
@@ -325,12 +358,26 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
   // 按 delegation 分组：同一个子代理的 parts 包裹在同一个容器中
   // 子代理容器包含：delegation + reasoning + tool-call/tool-call-group/orphan-tool-result
   // 最终 text 输出独立在卡片外
+  //
+  // 并行子代理事件交错问题（2026-07-12 修复）：
+  // Team 模式下多个子代理并行执行，delegation 事件先集中到达，tool_call/tool_result
+  // 交错到达。旧的线性扫描 + 单一 currentGroup 指针会把所有工具调用归入最后一个
+  // delegation 组。现在改为按 tool_call.source 匹配 delegation.target，确保工具调用
+  // 归入正确的子代理卡片。
+  //
+  // source 映射：delegation.target 是原始角色名（如 "code"/"deep"），
+  // tool_call.source 可能是规范化值（如 "coding"/"deep"），需统一后匹配。
   // NOTE: 此 useMemo 必须在下面的条件 return 之前调用，否则 React Hooks
   // 调用顺序会在 isStreamingLast / items 变化时不一致，触发
   // "Rendered more hooks than during the previous render" 运行时错误。
   const groups = useMemo(() => {
     const result: { delegationIdx: number; items: RenderItem[] }[] = [];
     let currentGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
+    // 规范化后的 target → group 映射（同角色多任务时取最后创建的组）
+    const targetToGroup = new Map<string, { delegationIdx: number; items: RenderItem[] }>();
+    // 已被 source 匹配认领的 delegation 组集合：
+    // 未匹配 source 的工具调用（如 source="team" 或未知角色）避免误并入已认领的卡片
+    const claimedGroups = new Set<{ delegationIdx: number; items: RenderItem[] }>();
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
@@ -338,22 +385,47 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
         // 新的子代理分组开始，delegation 放入容器内作为头部
         currentGroup = { delegationIdx: i, items: [item] };
         result.push(currentGroup);
+        targetToGroup.set(normalizeAgentRole(item.part.target), currentGroup);
       } else if (item.kind === "team") {
         // team 独立成组，不归属任何子代理
         result.push({ delegationIdx: i, items: [item] });
         currentGroup = null;
-      } else if (currentGroup) {
-        // 属于当前子代理分组
-        // 但 text 是最终输出，不放入子代理卡片内
-        if (item.kind === "text") {
-          result.push({ delegationIdx: i, items: [item] });
-          currentGroup = null;
-        } else {
-          currentGroup.items.push(item);
-        }
-      } else {
-        // 无子代理归属的独立项（如直接出现的 reasoning/tool-call/text）
+      } else if (item.kind === "text") {
+        // text 是最终输出，独立成组，不放入子代理卡片内
         result.push({ delegationIdx: i, items: [item] });
+        currentGroup = null;
+      } else {
+        // tool-call / tool-call-group / orphan-tool-result / reasoning
+        // 优先按 source 匹配对应的 delegation 组（并行子代理事件交错场景）
+        const source = getRenderItemSource(item);
+        const matchedGroup = source
+          ? targetToGroup.get(normalizeAgentRole(source)) ?? null
+          : null;
+        if (matchedGroup) {
+          matchedGroup.items.push(item);
+          claimedGroups.add(matchedGroup);
+        } else {
+          // source 不匹配任何 delegation target（如 source="team" 或未知角色）：
+          // 优先回退到最近一个尚未被其他 source 认领的 delegation 组，
+          // 避免把工具调用误并入已归属其他子代理的卡片
+          let fallbackGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
+          for (let j = result.length - 1; j >= 0; j--) {
+            const g = result[j]!;
+            if (g.items[0]?.kind === "delegation" && !claimedGroups.has(g)) {
+              fallbackGroup = g;
+              break;
+            }
+          }
+          if (fallbackGroup) {
+            fallbackGroup.items.push(item);
+          } else if (currentGroup) {
+            // 顺序到达场景兼容：无未认领组时回退到当前组
+            currentGroup.items.push(item);
+          } else {
+            // 无子代理归属的独立项
+            result.push({ delegationIdx: i, items: [item] });
+          }
+        }
       }
     }
 

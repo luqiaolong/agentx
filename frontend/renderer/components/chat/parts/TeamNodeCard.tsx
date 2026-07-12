@@ -31,16 +31,6 @@ function AgentRow({ agent }: { agent: TeamAgentState }) {
         <ChevronRight className="h-2.5 w-2.5 opacity-40" />
         <span className="text-muted-c truncate">{agent.purpose}</span>
       </div>
-      {agent.message && agent.status === "running" && (
-        <div className="mt-0.5 text-muted-c/80 pl-4" style={{ fontSize: 'var(--fs-msg-tool)' }}>
-          {agent.message}
-        </div>
-      )}
-      {agent.summary && (agent.status === "done" || agent.status === "error") && (
-        <div className="mt-0.5 text-secondary-c pl-4 line-clamp-4 whitespace-pre-wrap" style={{ fontSize: 'var(--fs-msg-tool)' }}>
-          {agent.summary}
-        </div>
-      )}
     </div>
   );
 }
@@ -64,14 +54,15 @@ function buildAgentKeys(
   }
   // 为重名 agent 按 plan 顺序取 input 前缀
   const usedIndex = new Map<string, number>();
-  return agents.map((a) => {
+  return agents.map((a, i) => {
     const total = nameCount.get(a.agent) ?? 1;
     if (total <= 1) return a.agent;
-    // 重名：从 plan 中按出现顺序取 input
+    // 重名：从 plan 中按出现顺序取 input，input 为空时用索引兜底避免 key 冲突
     const planEntries = plan.filter((p) => p.agent === a.agent);
     const idx = usedIndex.get(a.agent) ?? 0;
     usedIndex.set(a.agent, idx + 1);
     const input = planEntries[idx]?.input ?? "";
+    if (!input) return `${a.agent}-${i}`;
     return `${a.agent}-${input.slice(0, 8)}`;
   });
 }
