@@ -80,7 +80,7 @@ function TodoRow({
       ? "border-brand-600 bg-brand-700/30 text-brand-200"
       : "border-strong text-muted-c";
   return (
-    <li className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
+    <li className="flex items-start gap-1.5" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
       {/* 勾选框（badge） */}
       <span
         className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${badgeClass}`}
