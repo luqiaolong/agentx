@@ -227,6 +227,51 @@ def test_parse_todos_from_text_feeds_into_todos_to_team_tasks() -> None:
     assert tasks[1].input == "检索文档"
 
 
+def test_parse_todos_from_text_markdown_dash_prefix() -> None:
+    """兼容 markdown 无序列表前缀 ``-``（LLM 常见输出格式）。"""
+    text = "- [agent:code] 读取 main.py\n- [agent:rag] 检索文档"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 2
+    assert todos[0]["content"] == "[agent:code] 读取 main.py"
+    assert todos[1]["content"] == "[agent:rag] 检索文档"
+
+
+def test_parse_todos_from_text_markdown_asterisk_prefix() -> None:
+    """兼容 markdown 无序列表前缀 ``*``。"""
+    text = "* [agent:code] 读取 main.py\n* [agent:deep] 修改 config.py"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 2
+    assert todos[0]["content"] == "[agent:code] 读取 main.py"
+    assert todos[1]["content"] == "[agent:deep] 修改 config.py"
+
+
+def test_parse_todos_from_text_markdown_numbered_prefix() -> None:
+    """兼容 markdown 有序列表前缀 ``1.`` / ``2)``。"""
+    text = "1. [agent:code] 读取 main.py\n2) [agent:rag] 检索文档"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 2
+    assert todos[0]["content"] == "[agent:code] 读取 main.py"
+    assert todos[1]["content"] == "[agent:rag] 检索文档"
+
+
+def test_parse_todos_from_text_space_after_colon() -> None:
+    """兼容 ``[agent: code]`` 冒号后有空格的情况。"""
+    text = "[agent: code] 读取 main.py"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 1
+    assert todos[0]["content"] == "[agent:code] 读取 main.py"
+
+
+def test_parse_todos_from_text_mixed_markdown_and_plain() -> None:
+    """混合格式（markdown 前缀 + 纯文本）都能正确解析。"""
+    text = "- [agent:code] 读取 main.py\n[agent:rag] 检索文档\n2. [agent:deep] 修改配置"
+    todos = _parse_todos_from_text(text)
+    assert len(todos) == 3
+    assert todos[0]["content"] == "[agent:code] 读取 main.py"
+    assert todos[1]["content"] == "[agent:rag] 检索文档"
+    assert todos[2]["content"] == "[agent:deep] 修改配置"
+
+
 # ============================================================
 # 2. _validate_task
 # ============================================================

@@ -102,7 +102,11 @@ _ORCHESTRATOR_SYSTEM_PROMPT = """你是一个任务拆解专家（Orchestrator�
 """
 
 # [agent:xxx] 前缀正则：匹配 [agent:code] / [agent:deep] / [agent:custom-mycoder] 等
-_AGENT_PREFIX_RE = re.compile(r"^\s*\[agent:([a-zA-Z0-9_\-]+)\]\s*(.*)", re.DOTALL)
+# 兼容 markdown 列表前缀（- / * / + / 1. / 1)），LLM 常输出此类格式
+# 兼容 [agent: code] 冒号后有空格的情况
+_AGENT_PREFIX_RE = re.compile(
+    r"^\s*(?:[-*+]|\d+[.)])?\s*\[agent:\s*([a-zA-Z0-9_\-]+)\]\s*(.*)", re.DOTALL
+)
 
 
 def _strip_agent_prefix_from_todos(todos: list[dict]) -> list[dict]:
