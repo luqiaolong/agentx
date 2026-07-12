@@ -282,28 +282,41 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
  * 本函数在 SSE 流异常结束（未收到 done）时调用，重试拉取 result_text，
  * 补发 token + done 事件给已注册的 handler，让用户看到最终输出。
  *
- * 重试策略：1s / 2s / 3s 三次（后端 _finalize_run 可能在 GeneratorExit
-后异步执行，需等待写入完成）。
+ * 轮询策略：最多等待 120 秒，每 3 秒一次。通过 ``ended_at`` 字段判断后端
+ * 是否完成——后端 ``with dual_trace`` 块退出时才写 ``result_text`` 到 DB，
+ * 长运行任务（如 team aggregator）可能需要几十秒才完成。
  */
 async function tryRecoverResult(traceId: string, conn: ChatConnection): Promise<boolean> {
   if (!traceId) return false;
-  const delays = [1000, 2000, 3000];
-  for (const delay of delays) {
-    await sleep(delay);
+  // 后端 result_text 在 dual_trace with 块退出时才写入 DB（_finalize_run），
+  // 而长运行任务（如 team aggregator）可能需要几十秒甚至几分钟才完成。
+  // 旧实现重试 3 次共 6 秒，远不够覆盖后端完成时间，导致断连后无法恢复。
+  // 改为轮询模式：最多等待 120 秒，每 3 秒一次，通过 ended_at 判断后端是否完成。
+  const MAX_WAIT_MS = 120_000;
+  const POLL_INTERVAL_MS = 3_000;
+  const start = Date.now();
+  while (Date.now() - start < MAX_WAIT_MS) {
+    await sleep(POLL_INTERVAL_MS);
+    // 用户已发新消息（traceId 变化），停止恢复旧请求
+    if (conn.traceId !== traceId) return false;
     try {
       const r = await fetch(`${API_BASE}/api/observation/runs/${traceId}`);
       if (!r.ok) continue;
       const data = await r.json();
-      if (!data.ok || !data.run?.result_text) continue;
-      const resultText: string = data.run.result_text;
-      if (!resultText.trim()) continue;
-      // 补发 token 事件（完整 result_text），让前端正常追加到当前消息。
-      // 注意：前端可能已收到部分 token（子代理中间过程），result_text
-      // 是所有 token + reasoning 的拼接，可能有少量重复。这是断连恢复
-      // 的权衡——看到重复内容比看不到最终报告好。
-      conn.eventHandlers.forEach((h) =>
-        h({ type: "token", data: resultText } as unknown as ChatEvent),
-      );
+      if (!data.ok || !data.run) continue;
+      const run = data.run;
+      // 后端还未完成（ended_at 为 null），继续等待
+      if (!run.ended_at) continue;
+      // 后端已完成，补发 token（如果有）+ done 事件
+      const resultText: string = run.result_text ?? "";
+      if (resultText.trim()) {
+        // 注意：前端可能已收到部分 token（子代理中间过程），result_text
+        // 是所有 token + reasoning 的拼接，可能有少量重复。这是断连恢复
+        // 的权衡——看到重复内容比看不到最终报告好。
+        conn.eventHandlers.forEach((h) =>
+          h({ type: "token", data: resultText } as unknown as ChatEvent),
+        );
+      }
       // 补发 done 事件，让前端正常收尾（markReasoningDone / setStreaming(false) 等）
       conn.eventHandlers.forEach((h) =>
         h({ type: "done", data: "{}" } as unknown as ChatEvent),
