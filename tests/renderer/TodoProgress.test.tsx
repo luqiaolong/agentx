@@ -75,7 +75,7 @@ describe("TodoProgress 三态渲染", () => {
     expect(textSpan).not.toBeNull();
   });
 
-  it("in_progress 项渲染 ◐ 字符且 badge 带 animate-spin", () => {
+  it("in_progress 项渲染 Loader 图标且 badge 带 animate-spin", () => {
     const { container } = render(
       <TodoProgress
         todos={[{ content: "进行中", status: "in_progress" }]}
@@ -84,14 +84,15 @@ describe("TodoProgress 三态渲染", () => {
     );
     const li = container.querySelector("li");
     expect(li).not.toBeNull();
-    // ◐ 字符存在
-    expect(li?.textContent).toContain("◐");
-    // animate-spin class 存在
-    const spinBadge = li?.querySelector(".animate-spin");
+    // in_progress 状态使用 brand 色系，与 completed 保持一致的绿色风格
+    const badge = li?.querySelector("span.border-brand-600");
+    expect(badge).not.toBeNull();
+    // Loader svg 存在并带 animate-spin
+    const spinBadge = li?.querySelector("svg.animate-spin");
     expect(spinBadge).not.toBeNull();
   });
 
-  it("pending 项不渲染对勾也不渲染 ◐", () => {
+  it("pending 项不渲染对勾也不渲染 Loader", () => {
     const { container } = render(
       <TodoProgress
         todos={[{ content: "待办", status: "pending" }]}
@@ -102,8 +103,6 @@ describe("TodoProgress 三态渲染", () => {
     expect(li).not.toBeNull();
     // 没有对勾 svg
     expect(li?.querySelector("svg")).toBeNull();
-    // 没有 ◐ 字符
-    expect(li?.textContent).not.toContain("◐");
     // 没有 animate-spin
     expect(li?.querySelector(".animate-spin")).toBeNull();
   });
@@ -377,7 +376,7 @@ describe("TodoProgress 三态渲染", () => {
     expect(textSpan).not.toBeNull();
   });
 
-  it("in_progress 项渲染 ◐ 字符且 badge 带 animate-spin", () => {
+  it("in_progress 项渲染 Loader 图标且 badge 带 animate-spin", () => {
     const { container } = render(
       <TodoProgress
         todos={[{ content: "进行中", status: "in_progress" }]}
@@ -386,14 +385,15 @@ describe("TodoProgress 三态渲染", () => {
     );
     const li = container.querySelector("li");
     expect(li).not.toBeNull();
-    // ◐ 字符存在
-    expect(li?.textContent).toContain("◐");
-    // animate-spin class 存在
-    const spinBadge = li?.querySelector(".animate-spin");
+    // in_progress 状态使用 brand 色系，与 completed 保持一致的绿色风格
+    const badge = li?.querySelector("span.border-brand-600");
+    expect(badge).not.toBeNull();
+    // Loader svg 存在并带 animate-spin
+    const spinBadge = li?.querySelector("svg.animate-spin");
     expect(spinBadge).not.toBeNull();
   });
 
-  it("pending 项不渲染对勾也不渲染 ◐", () => {
+  it("pending 项不渲染对勾也不渲染 Loader", () => {
     const { container } = render(
       <TodoProgress
         todos={[{ content: "待办", status: "pending" }]}
@@ -404,8 +404,6 @@ describe("TodoProgress 三态渲染", () => {
     expect(li).not.toBeNull();
     // 没有对勾 svg
     expect(li?.querySelector("svg")).toBeNull();
-    // 没有 ◐ 字符
-    expect(li?.textContent).not.toContain("◐");
     // 没有 animate-spin
     expect(li?.querySelector(".animate-spin")).toBeNull();
   });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import type { TodoItem } from "@/hooks/useChatStream";
 
 /**
@@ -56,6 +56,10 @@ const MAX_VISIBLE_TODOS = 5;
  * 单条 todo 行：序号 + 状态徽标 + 文本
  *
  * 序号从父级传下来，全局递增（跨 task_id 分组）。
+ *
+ * 视觉规范：
+ * - 进行中 / 已完成都使用品牌绿色（与已完成的勾选框保持视觉一致）
+ * - 内容过长时单行 truncate，点击向下展开完整文本（再次点击折叠）
  */
 function TodoRow({
   index,
@@ -66,21 +70,20 @@ function TodoRow({
   content: string;
   status: TodoItem["status"];
 }) {
+  const [expanded, setExpanded] = useState(false);
   const isCompleted = status === "completed";
   const isInProgress = status === "in_progress";
-  // pending: 灰色空圆圈；in_progress: 黄色 ◐ + spin；completed: 绿色 ✓
+  // pending: 灰色空圆圈；in_progress: 品牌绿 + 旋转 loader；completed: 品牌绿 + 静态勾
   const badgeClass = isCompleted
     ? "border-brand-600 bg-brand-700 text-brand-200"
     : isInProgress
-      ? "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+      ? "border-brand-600 bg-brand-700/30 text-brand-200"
       : "border-strong text-muted-c";
   return (
     <li className="flex items-start gap-2" style={{ fontSize: 'var(--fs-ws-task-title)' }}>
       {/* 勾选框（badge） */}
       <span
-        className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${badgeClass} ${
-          isInProgress ? "animate-spin" : ""
-        }`}
+        className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors duration-200 ${badgeClass}`}
       >
         {isCompleted && (
           <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
@@ -93,7 +96,7 @@ function TodoRow({
             />
           </svg>
         )}
-        {isInProgress && <span className="text-[10px] leading-none">◐</span>}
+        {isInProgress && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
       </span>
       {/* 序号：等宽数字列，位于勾选框右侧，全局递增 */}
       <span
@@ -102,7 +105,15 @@ function TodoRow({
       >
         {index}.
       </span>
-      <span className={isCompleted ? "text-muted-c line-through" : "text-secondary-c"}>
+      <span
+        className={`cursor-pointer rounded ${
+          expanded ? "whitespace-pre-wrap break-words" : "truncate"
+        } ${isCompleted ? "text-muted-c line-through" : "text-secondary-c"}`}
+        title={expanded ? undefined : content}
+        onClick={() => setExpanded((v) => !v)}
+        role="button"
+        aria-expanded={expanded}
+      >
         {content}
       </span>
     </li>

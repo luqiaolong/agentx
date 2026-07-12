@@ -72,6 +72,8 @@ function formatAgentRole(role: string | undefined): string | null {
  * - 序号从父级传下来，子任务内独立从 1 开始编号（不跨任务累加）
  * - task 已结束（done / failed）时支持点击切换 pending ↔ completed
  *   （running 时禁用，避免与后端 SSE 推送打架）
+ * - 内容过长时单行 truncate；点击内容区域向下展开完整文本（再次点击折叠）。
+ *   点击内容不会触发外层 li 的勾选切换（stopPropagation 隔离）。
  */
 function TodoItemRow({
   todo,
@@ -86,11 +88,12 @@ function TodoItemRow({
   todoIndex: number;
   interactive: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const isCompleted = todo.status === "completed";
   const isInProgress = todo.status === "in_progress";
   const updateTaskTodo = useTasksStore((s) => s.updateTaskTodo);
 
-  const handleClick = () => {
+  const handleToggleClick = () => {
     if (!interactive) return;
     // pending <-> completed 二态切换；in_progress 不参与（保留后端语义）
     const next: TodoStatus = isCompleted ? "pending" : "completed";
@@ -103,14 +106,14 @@ function TodoItemRow({
         interactive ? "cursor-pointer hover:bg-hover-soft" : ""
       }`}
       style={{ fontSize: 'var(--fs-ws-task-meta)' }}
-      onClick={interactive ? handleClick : undefined}
+      onClick={interactive ? handleToggleClick : undefined}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={(e) => {
         if (!interactive) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          handleClick();
+          handleToggleClick();
         }
       }}
       aria-disabled={!interactive}
@@ -133,7 +136,20 @@ function TodoItemRow({
       >
         {index}.
       </span>
-      <span className={isCompleted ? "text-muted-c line-through" : "text-secondary-c"}>
+      {/* 内容：默认 truncate，点击切换向下展开完整文本（与外层勾选切换互不干扰） */}
+      <span
+        className={`min-w-0 flex-1 cursor-pointer rounded ${
+          expanded ? "whitespace-pre-wrap break-words" : "truncate"
+        } ${isCompleted ? "text-muted-c line-through" : "text-secondary-c"}`}
+        title={expanded ? undefined : todo.content}
+        onClick={(e) => {
+          // 阻止冒泡，避免触发外层 li 的勾选状态切换
+          e.stopPropagation();
+          setExpanded((v) => !v);
+        }}
+        role="button"
+        aria-expanded={expanded}
+      >
         {todo.content}
       </span>
     </li>
@@ -178,45 +194,61 @@ function TaskRow({
   const isInactive = isDone || isFailed;
   // 仅在 task 已结束时允许手动勾选 todo，避免与运行中 SSE 推送打架
   const todoInteractive = isInactive;
+  // 标题展开状态：点击标题行切换；展开后标题换行显示完整内容，不再 truncate
+  const [titleExpanded, setTitleExpanded] = useState(false);
+  const fullTitle = roleLabel ? `[${roleLabel}] ${task.title}` : task.title;
 
   return (
     <li className={`group ${isChild ? "ml-3 border-l border-default pl-2" : ""}`}>
-      {/* 主信息行：一行展示所有核心信息 */}
+      {/* 主信息行：标题展开时改为 items-start + 标题换行；其他状态保持 items-center */}
       <div
-        className={`flex items-center gap-1.5 py-1 px-1.5 rounded transition-colors ${
+        className={`flex ${
+          titleExpanded ? "items-start" : "items-center"
+        } gap-1.5 py-1 px-1.5 rounded transition-colors ${
           isInactive ? "opacity-60" : ""
         } hover:bg-hover-soft`}
       >
         {/* 状态图标 */}
         <cfg.Icon
-          className={`h-3 w-3 shrink-0 ${cfg.color} ${cfg.spin ? "animate-spin" : ""}`}
+          className={`mt-0.5 h-3 w-3 shrink-0 ${cfg.color} ${cfg.spin ? "animate-spin" : ""}`}
         />
 
         {/* 序号（仅子任务展示，位于状态图标右侧；主任务不渲染） */}
         {isChild && index !== null && (
           <span
-            className="shrink-0 text-muted-c tabular-nums"
+            className="mt-0.5 shrink-0 text-muted-c tabular-nums"
             style={{ fontSize: 'var(--fs-ws-task-meta)' }}
           >
             {index}.
           </span>
         )}
 
-        {/* 标题 / 角色 */}
+        {/* 标题 / 角色：点击切换展开/折叠；展开后换行显示完整内容 */}
         <span
-          className={`min-w-0 flex-1 truncate ${
+          className={`min-w-0 flex-1 cursor-pointer rounded ${
+            titleExpanded
+              ? "whitespace-pre-wrap break-words"
+              : "truncate"
+          } ${
             isInactive ? "text-muted-c" : "text-secondary-c font-medium"
           }`}
           style={{ fontSize: 'var(--fs-ws-task-title)' }}
-          title={task.title}
+          title={titleExpanded ? undefined : fullTitle}
+          onClick={(e) => {
+            // 阻止冒泡，避免触发外层（如 todo 行的勾选切换）
+            e.stopPropagation();
+            setTitleExpanded((v) => !v);
+          }}
+          role="button"
+          aria-expanded={titleExpanded}
         >
-          {roleLabel ? `[${roleLabel}] ${task.title}` : task.title}
+          {fullTitle}
         </span>
 
         {/* 进度数字 */}
         {hasTodos && (
           <span
-            className="shrink-0 text-muted-c tabular-nums"
+            className="mt-0.5 shrink-0 text-muted-c tabular-nums"
             style={{ fontSize: 'var(--fs-ws-task-meta)' }}
           >
             {completedTodos}/{totalTodos}
@@ -226,7 +258,7 @@ function TaskRow({
         {/* 时间（仅主任务展示，子任务隐藏以减少视觉噪音） */}
         {!isChild && task.createdAt > 0 && (
           <span
-            className="shrink-0 text-muted-c tabular-nums"
+            className="mt-0.5 shrink-0 text-muted-c tabular-nums"
             style={{ fontSize: 'var(--fs-ws-task-meta)' }}
           >
             {formatTime(task.createdAt, "hhmm")}
@@ -238,7 +270,7 @@ function TaskRow({
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="shrink-0 rounded p-0.5 text-muted-c transition-colors hover:text-secondary-c"
+            className="mt-0.5 shrink-0 rounded p-0.5 text-muted-c transition-colors hover:text-secondary-c"
             title={expanded ? "收起" : "展开"}
           >
             {expanded ? (
@@ -253,16 +285,18 @@ function TaskRow({
         <button
           type="button"
           onClick={() => removeTask(task.id)}
-          className="shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:text-rose-500 group-hover:opacity-100"
+          className="mt-0.5 shrink-0 rounded p-0.5 text-muted-c opacity-0 transition-all hover:text-rose-500 group-hover:opacity-100"
           title="删除任务"
         >
           <X className="h-2.5 w-2.5" />
         </button>
       </div>
 
-      {/* 展开的 Todo 列表（每个 todo 独立编号从 1 开始；task 结束时可点击切换状态） */}
+      {/* 展开的 Todo 列表：每个 todo 独立编号从 1 开始；task 结束时可点击切换状态。
+          子任务的 todo 列表整体向右缩进（pl-3），让勾选框和序号落在子任务内容列下方，
+          与主任务 todo 列表共享统一的列起点。 */}
       {hasTodos && expanded && (
-        <ul className="pb-1 pt-0.5">
+        <ul className={`pb-1 pt-0.5 ${isChild ? "pl-3" : ""}`}>
           {task.todos?.map((todo, i) => (
             <TodoItemRow
               key={i}
@@ -324,7 +358,7 @@ export function TaskTimeline() {
   }
 
   return (
-    <ul className="divide-y divide-default">
+    <ul>
       {mainTasks.map((t) => {
         const children = childTasksByParent.get(t.id) ?? [];
         // 主任务不显示序号；每个主任务的子任务独立从 1 开始编号（不跨主任务累加）
