@@ -310,6 +310,11 @@ export interface ChatState {
        */
       finalizeAgents?: boolean;
       /**
+       * team_done 时传入每个 agent 的最终输出（message / summary），
+       * 用于把 blackboard 汇总前的子任务结果回填到 TeamNodeCard。
+       */
+      agentMessages?: { agent: string; message?: string; summary?: string }[];
+      /**
        * 若 team part 不存在是否创建新 part。
        * - true（默认）：team_init 场景，需要创建 team part
        * - false：team_done 场景，若 team part 不存在则跳过（降级路径不创建空 team part）
@@ -907,6 +912,21 @@ export const useChatStore = create<ChatState>()(
                       ? { ...a, status: finalStatus, finishedAt: now }
                       : a,
                   );
+                }
+                // agentMessages：把后端 blackboard 中的子任务 summary 回填到对应 agent
+                if (updaters.agentMessages && updaters.agentMessages.length > 0) {
+                  const messageMap = new Map(
+                    updaters.agentMessages.map((am) => [am.agent, am]),
+                  );
+                  newAgents = newAgents.map((a) => {
+                    const am = messageMap.get(a.agent);
+                    if (!am) return a;
+                    return {
+                      ...a,
+                      ...(am.message !== undefined ? { message: am.message } : {}),
+                      ...(am.summary !== undefined ? { summary: am.summary } : {}),
+                    };
+                  });
                 }
                 const newStatus = updaters.status ?? existing.status;
                 const doneAt = updaters.status === "done" || updaters.status === "error" ? Date.now() : existing.doneAt;

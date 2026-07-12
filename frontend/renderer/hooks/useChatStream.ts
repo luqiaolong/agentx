@@ -461,10 +461,17 @@ export function useChatStream(args: UseChatStreamArgs) {
           // 仅更新已存在的 team part（由 team_init 创建）；若 team part 不存在
           //（降级路径 / plan 失败），则不创建空 team part。
           if (!pendingIdRef.current) break;
+          const agentMessages = Array.isArray(e.agents)
+            ? e.agents.filter(
+                (a): a is { agent: string; message?: string; summary?: string } =>
+                  typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).agent === "string",
+              )
+            : [];
           upsertTeamNode(pendingIdRef.current, {
             status: e.status === "error" ? "error" : "done",
             finalizeAgents: true,
             createIfMissing: false,
+            agentMessages,
           });
           // 安全兜底：team_done 后若 done 事件因故未到达，仍需收尾 reasoning / tool-call，
           // 避免消息卡在「运行中」状态。不调用 setStreaming/setSessionRunning，

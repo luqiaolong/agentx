@@ -23,6 +23,8 @@ function AgentRow({ agent }: { agent: TeamAgentState }) {
       <div className="h-3 w-3 rounded-full border border-muted-c/40" />
     );
 
+  const output = agent.message || agent.summary;
+
   return (
     <div className="border-l border-default pl-2.5 py-1">
       <div className="flex items-center gap-1.5" style={{ fontSize: 'var(--fs-msg-assist)' }}>
@@ -31,6 +33,14 @@ function AgentRow({ agent }: { agent: TeamAgentState }) {
         <ChevronRight className="h-2.5 w-2.5 opacity-40" />
         <span className="text-muted-c truncate">{agent.purpose}</span>
       </div>
+      {output && (
+        <div
+          className="mt-1 whitespace-pre-wrap text-primary-c/80"
+          style={{ fontSize: 'var(--fs-msg-tool)' }}
+        >
+          {output}
+        </div>
+      )}
     </div>
   );
 }
