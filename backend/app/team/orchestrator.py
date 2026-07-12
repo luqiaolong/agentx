@@ -90,6 +90,39 @@ from app.team.aggregator import (
 # 子任务索引集合。在 _emit_todo_in_progress 中添加，在 _aggregate_node 中清理。
 _in_progress_tasks: dict[str, set[int]] = {}
 
+
+def _acquire_semaphore(semaphore: Any) -> Any:
+    """获取信号量上下文管理器；``None`` 时返回 no-op（防御性降级）。
+
+    Phase 1 稳定性硬化：信号量在 ``run_team_path`` 入口按 ``max_parallel`` 创建，
+    通过 ``TeamState["team_semaphore"]`` 传递到各子任务节点。
+    """
+    if semaphore is None:
+        return contextlib.nullcontext()
+    return semaphore
+
+
+def _resolve_team_settings(settings: Any) -> tuple[int, int]:
+    """从 settings 读取 team 并发参数。
+
+    优先级：``settings.agent_team_*`` 顶层字段 → 默认值。
+    返回 ``(max_parallel, subtask_timeout)``。
+
+    Phase 1 稳定性硬化：``max_parallel`` 控制 LangGraph ``Send`` fan-out 并行度，
+    ``subtask_timeout`` 为单个子任务超时秒数。对值做防御性校验（None/0/负数降级到默认值）。
+    """
+    try:
+        val = settings.agent_team_max_parallel
+        max_parallel = val if isinstance(val, int) and val > 0 else 3
+    except Exception:  # noqa: BLE001
+        max_parallel = 3
+    try:
+        val = settings.agent_team_subtask_timeout
+        subtask_timeout = val if isinstance(val, int) and val >= 30 else 300
+    except Exception:  # noqa: BLE001
+        subtask_timeout = 300
+    return max_parallel, subtask_timeout
+
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
@@ -227,6 +260,9 @@ def _dispatch_node(state: TeamState) -> list[Send]:
                     "workspace_path": state.get("workspace_path"),
                     "chat_model": state.get("chat_model"),
                     "subtask_runners": state.get("subtask_runners"),
+                    # Phase 1 稳定性硬化：透传信号量与超时到子任务节点
+                    "team_semaphore": state.get("team_semaphore"),
+                    "subtask_timeout": state.get("subtask_timeout", 300),
                 },
             )
         )
@@ -357,6 +393,8 @@ async def _deep_node(state: SubtaskState) -> dict:
     parent_thread_id = state["parent_thread_id"]
     task_index = state["task_index"]
     todos = state.get("todos", [])
+    semaphore = state.get("team_semaphore")
+    subtask_timeout = state.get("subtask_timeout", 300)
 
     abort_event = await get_abort_event(parent_thread_id)
     if abort_event.is_set():
@@ -373,22 +411,24 @@ async def _deep_node(state: SubtaskState) -> dict:
     }
     runner = _get_runner("deep", state.get("subtask_runners"))
     try:
-        result = await _run_subtask_stream(
-            runner,
-            runner_args=(deep_state, task.input),
-            runner_kwargs={
-                "profile_prompt": state.get("profile_prompt", ""),
-                "history": state.get("history"),
-                "permission_mode": state.get("permission_mode", "standard"),
-                "scene_prompt": state.get("scene_prompt"),
-                "workspace_path": state.get("workspace_path"),
-                "parent_thread_id": parent_thread_id,
-                "chat_model": state.get("chat_model"),
-            },
-            agent_name=task.agent,
-            abort_event=abort_event,
-            writer=writer,
-        )
+        async with _acquire_semaphore(semaphore):
+            result = await _run_subtask_stream(
+                runner,
+                runner_args=(deep_state, task.input),
+                runner_kwargs={
+                    "profile_prompt": state.get("profile_prompt", ""),
+                    "history": state.get("history"),
+                    "permission_mode": state.get("permission_mode", "standard"),
+                    "scene_prompt": state.get("scene_prompt"),
+                    "workspace_path": state.get("workspace_path"),
+                    "parent_thread_id": parent_thread_id,
+                    "chat_model": state.get("chat_model"),
+                },
+                agent_name=task.agent,
+                abort_event=abort_event,
+                writer=writer,
+                subtask_timeout=subtask_timeout,
+            )
     except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
         logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
         return _make_subtask_state_update(
@@ -405,6 +445,8 @@ async def _code_node(state: SubtaskState) -> dict:
     parent_thread_id = state["parent_thread_id"]
     task_index = state["task_index"]
     todos = state.get("todos", [])
+    semaphore = state.get("team_semaphore")
+    subtask_timeout = state.get("subtask_timeout", 300)
 
     abort_event = await get_abort_event(parent_thread_id)
     if abort_event.is_set():
@@ -417,20 +459,22 @@ async def _code_node(state: SubtaskState) -> dict:
 
     runner = _get_runner("code", state.get("subtask_runners"))
     try:
-        result = await _run_subtask_stream(
-            runner,
-            runner_args=(task.input, child_id),
-            runner_kwargs={
-                "profile_prompt": state.get("profile_prompt", ""),
-                "permission_mode": state.get("permission_mode", "standard"),
-                "workspace_path": state.get("workspace_path"),
-                "parent_thread_id": parent_thread_id,
-                "chat_model": state.get("chat_model"),
-            },
-            agent_name=task.agent,
-            abort_event=abort_event,
-            writer=writer,
-        )
+        async with _acquire_semaphore(semaphore):
+            result = await _run_subtask_stream(
+                runner,
+                runner_args=(task.input, child_id),
+                runner_kwargs={
+                    "profile_prompt": state.get("profile_prompt", ""),
+                    "permission_mode": state.get("permission_mode", "standard"),
+                    "workspace_path": state.get("workspace_path"),
+                    "parent_thread_id": parent_thread_id,
+                    "chat_model": state.get("chat_model"),
+                },
+                agent_name=task.agent,
+                abort_event=abort_event,
+                writer=writer,
+                subtask_timeout=subtask_timeout,
+            )
     except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
         logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
         return _make_subtask_state_update(
@@ -447,6 +491,8 @@ async def _builtin_node(state: SubtaskState) -> dict:
     parent_thread_id = state["parent_thread_id"]
     task_index = state["task_index"]
     todos = state.get("todos", [])
+    semaphore = state.get("team_semaphore")
+    subtask_timeout = state.get("subtask_timeout", 300)
 
     abort_event = await get_abort_event(parent_thread_id)
     if abort_event.is_set():
@@ -457,17 +503,19 @@ async def _builtin_node(state: SubtaskState) -> dict:
 
     runner = _get_runner(task.agent, state.get("subtask_runners"))
     try:
-        result = await _run_subtask_stream(
-            runner,
-            runner_args=(parent_thread_id, task.input),
-            runner_kwargs={
-                "history": state.get("history"),
-                "workspace_path": state.get("workspace_path"),
-            },
-            agent_name=task.agent,
-            abort_event=abort_event,
-            writer=writer,
-        )
+        async with _acquire_semaphore(semaphore):
+            result = await _run_subtask_stream(
+                runner,
+                runner_args=(parent_thread_id, task.input),
+                runner_kwargs={
+                    "history": state.get("history"),
+                    "workspace_path": state.get("workspace_path"),
+                },
+                agent_name=task.agent,
+                abort_event=abort_event,
+                writer=writer,
+                subtask_timeout=subtask_timeout,
+            )
     except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
         logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
         return _make_subtask_state_update(
@@ -484,6 +532,8 @@ async def _team_role_node(state: SubtaskState) -> dict:
     parent_thread_id = state["parent_thread_id"]
     task_index = state["task_index"]
     todos = state.get("todos", [])
+    semaphore = state.get("team_semaphore")
+    subtask_timeout = state.get("subtask_timeout", 300)
 
     abort_event = await get_abort_event(parent_thread_id)
     if abort_event.is_set():
@@ -493,19 +543,21 @@ async def _team_role_node(state: SubtaskState) -> dict:
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     try:
-        result = await _run_team_role_subtask(
-            task=task,
-            thread_id=parent_thread_id,
-            history=state.get("history"),
-            permission_mode=state.get("permission_mode", "standard"),
-            profile_prompt=state.get("profile_prompt", ""),
-            task_index=task_index,
-            workspace_path=state.get("workspace_path"),
-            chat_model=state.get("chat_model"),
-            subtask_runners=state.get("subtask_runners"),
-            abort_event=abort_event,
-            writer=writer,
-        )
+        async with _acquire_semaphore(semaphore):
+            result = await _run_team_role_subtask(
+                task=task,
+                thread_id=parent_thread_id,
+                history=state.get("history"),
+                permission_mode=state.get("permission_mode", "standard"),
+                profile_prompt=state.get("profile_prompt", ""),
+                task_index=task_index,
+                workspace_path=state.get("workspace_path"),
+                chat_model=state.get("chat_model"),
+                subtask_runners=state.get("subtask_runners"),
+                abort_event=abort_event,
+                writer=writer,
+                subtask_timeout=subtask_timeout,
+            )
     except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
         logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
         return _make_subtask_state_update(
@@ -522,6 +574,8 @@ async def _custom_node(state: SubtaskState) -> dict:
     parent_thread_id = state["parent_thread_id"]
     task_index = state["task_index"]
     todos = state.get("todos", [])
+    semaphore = state.get("team_semaphore")
+    subtask_timeout = state.get("subtask_timeout", 300)
 
     abort_event = await get_abort_event(parent_thread_id)
     if abort_event.is_set():
@@ -533,17 +587,19 @@ async def _custom_node(state: SubtaskState) -> dict:
     key = task.agent[len("custom-"):]
     runner = _get_runner("custom", state.get("subtask_runners"))
     try:
-        result = await _run_subtask_stream(
-            runner,
-            runner_args=(key, parent_thread_id, task.input),
-            runner_kwargs={
-                "history": state.get("history"),
-                "workspace_path": state.get("workspace_path"),
-            },
-            agent_name=task.agent,
-            abort_event=abort_event,
-            writer=writer,
-        )
+        async with _acquire_semaphore(semaphore):
+            result = await _run_subtask_stream(
+                runner,
+                runner_args=(key, parent_thread_id, task.input),
+                runner_kwargs={
+                    "history": state.get("history"),
+                    "workspace_path": state.get("workspace_path"),
+                },
+                agent_name=task.agent,
+                abort_event=abort_event,
+                writer=writer,
+                subtask_timeout=subtask_timeout,
+            )
     except asyncio.CancelledError:  # noqa: B904 — H4: 断连取消，返回部分状态以便聚合
         logger.info("team subtask cancelled", agent=task.agent, task_index=task_index)
         return _make_subtask_state_update(
@@ -617,9 +673,8 @@ async def _aggregate_node(state: TeamState) -> dict:
             errors_count=len(errors),
         )
         return {}
-    except Exception as exc:  # noqa: BLE001 — C2: 异常时仍发射 team_done，并 re-raise 让 chat.py 也能感知错误
+    except Exception:  # noqa: BLE001 — team_done{status:error} 由 run_coding_team 统一发射
         logger.exception("team aggregate_node failed")
-        writer(make_sse_event("team_done", {"status": "error", "error": str(exc)}))
         raise
 
 
@@ -708,9 +763,22 @@ async def run_team_path(
             f"该任务似乎不需要团队协作（{reason}）。建议切换到 work 模式由 Supervisor 直接处理。",
         )
         yield make_sse_event("team_done", {"status": "done"})
+        # D4: team_done 后必须跟 done，保证前端流终结
+        yield make_sse_event("done", {})
         return
 
     resolved_runners = _resolve_subtask_runners(subtask_runners)
+
+    # Phase 1 D2：从 settings 解析并发参数，创建 Semaphore 控制 LangGraph Send fan-out 并行度
+    settings = get_settings()
+    max_parallel, subtask_timeout = _resolve_team_settings(settings)
+    team_semaphore = asyncio.Semaphore(max_parallel)
+    logger.info(
+        "team.run_team_path start",
+        thread_id=thread_id,
+        max_parallel=max_parallel,
+        subtask_timeout=subtask_timeout,
+    )
 
     # trace_id 透传：LangGraph 内部用 asyncio.create_task 调度子节点，
     # ContextVar 不会自动跨协程传播。显式在入口处绑定，让 LangGraph 子节点
@@ -738,6 +806,9 @@ async def run_team_path(
             "errors": {},
             "subtask_results": {},
             "todos": [],
+            # Phase 1 D2：运行时并发控制对象，不参与 checkpoint 序列化（TypedDict total=False）
+            "team_semaphore": team_semaphore,
+            "subtask_timeout": subtask_timeout,
         }
 
         # stream_mode=["custom", "values"]：
@@ -777,6 +848,12 @@ async def run_team_path(
                     )
                     last_todos = list(current_todos)
 
+        # D4: graph 正常完成后发射 done 事件。
+        # _aggregate_node 已通过 custom stream 发射 team_done，
+        # 这里补 done 保证前端 SSE 流终结（team_done + done 配对契约）。
+        # 异常路径由 run_coding_team catch 后统一发射 done。
+        yield make_sse_event("done", {})
+
 
 __all__ = [
     "run_team_path",
@@ -792,6 +869,8 @@ __all__ = [
     "_todos_to_team_tasks",
     "_build_project_context",
     "_resolve_subtask_runners",
+    "_resolve_team_settings",
+    "_acquire_semaphore",
     "_SUBTASK_DONE_EVENT",
     "_PASSTHROUGH_EVENTS",
     "_BASE_EXPERTS",

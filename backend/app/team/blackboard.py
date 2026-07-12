@@ -115,6 +115,8 @@ class TeamState(TypedDict, total=False):
     - ``todos`` 使用 ``_merge_todos`` reducer，允许子任务节点返回部分 todo 更新
       （带 ``_index`` 字段）自动归并到全局 todo 列表。schema 对齐 deepagents 原生
       ``{content: str, status: "pending"|"in_progress"|"completed"}``。
+    - ``team_semaphore`` / ``subtask_timeout``: Phase 1 稳定性硬化字段，
+      运行时对象不参与 checkpoint 序列化（与 ``subtask_runners`` 同策略）。
     - 其余字段无 reducer，后续节点返回的同名字段会覆盖（LangGraph 默认行为）。
     - ``total=False`` 允许初始化时只传部分字段。
     """
@@ -134,6 +136,9 @@ class TeamState(TypedDict, total=False):
     errors: Annotated[dict[str, str], _merge_dict]
     subtask_results: Annotated[dict[str, dict], _merge_dict]
     todos: Annotated[list[dict], _merge_todos]
+    # Phase 1 稳定性硬化：运行时对象，不参与 checkpoint 序列化
+    team_semaphore: Any  # asyncio.Semaphore，运行时在 run_team_path 入口创建
+    subtask_timeout: int  # 子任务超时秒数，默认 300
 
 
 class SubtaskState(TypedDict, total=False):
@@ -146,6 +151,8 @@ class SubtaskState(TypedDict, total=False):
     - ``parent_thread_id``: 父 thread_id，用于 abort 事件查找与 child 命名。
     - ``todos``: 父状态 todos 快照（dispatch 时传入），供子任务节点构造
       ``todo_update`` SSE 事件时引用完整列表。
+    - ``team_semaphore`` / ``subtask_timeout``: Phase 1 稳定性硬化字段，
+      由 ``_dispatch_node`` 从 ``TeamState`` 透传到各子任务节点。
     - 其余字段透传自 ``TeamState``。
     """
 
@@ -160,6 +167,9 @@ class SubtaskState(TypedDict, total=False):
     workspace_path: str | None
     chat_model: Any
     subtask_runners: Any
+    # Phase 1 稳定性硬化：由 _dispatch_node 从 TeamState 透传
+    team_semaphore: Any  # asyncio.Semaphore
+    subtask_timeout: int  # 子任务超时秒数
 
 
 def _serialize_blackboard(blackboard: Blackboard | Mapping) -> str:

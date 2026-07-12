@@ -36,6 +36,8 @@ interface ChatConnection {
   abortController: AbortController | null;
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
   isActive: boolean;
+  /** team 模式标记：team_init 事件收到后置 true，用于断连恢复时补发 team_done。 */
+  hasTeamPart: boolean;
 }
 
 const connections: Map<string, ChatConnection> = new Map();
@@ -56,6 +58,7 @@ function getConnection(threadId: string): ChatConnection {
       abortController: null,
       reader: null,
       isActive: false,
+      hasTeamPart: false,
     };
     connections.set(threadId, conn);
   }
@@ -123,6 +126,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   const traceId = generateTraceId();
   conn.traceId = traceId;
   conn.isActive = true;
+  conn.hasTeamPart = false;
 
   const abortController = new AbortController();
   conn.abortController = abortController;
@@ -189,7 +193,7 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   // 及时送达；而 token / tool_result 等事件仍在发，却被误判为超时。
   // 改为"任意数据到达即重置计时器"，只有真正无数据时才超时。
   let lastActivityTime = Date.now();
-  const INACTIVITY_TIMEOUT = 90000;
+  const INACTIVITY_TIMEOUT = 180000; // 180s = subtask_timeout 的一半，避免合法长工具调用误判断流
   // 跟踪已收到的 token 总长度，供 tryRecoverResult 切片避免重复发送
   let receivedTextLength = 0;
 
@@ -315,6 +319,18 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
 }
 
 /**
+ * team 模式断连恢复：当恢复拉取到终态响应时，若 team part 已存在
+ *（由 team_init 事件创建，conn.hasTeamPart=true），补发 team_done 事件
+ * 让 TeamNodeCard 收尾。createIfMissing:false 语义：若 team part 不存在则跳过。
+ */
+async function synthesizeTeamDone(conn: ChatConnection): Promise<void> {
+  if (!conn.hasTeamPart) return;
+  conn.eventHandlers.forEach((h) =>
+    h({ type: "team_done", status: "done", agents: [] } as unknown as ChatEvent),
+  );
+}
+
+/**
  * 断连恢复：通过 trace_id 从 observation DB 或 /api/chat/result 拉取最终输出。
  *
  * 后端 chat.py 在每个 token/reasoning 事件后增量更新 result_text 到
@@ -325,10 +341,13 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
  * 本函数在 SSE 流异常结束（未收到 done）时调用，重试拉取 result_text，
  * 补发 token + done 事件给已注册的 handler，让用户看到最终输出。
  *
- * 双路轮询策略：
- * 1. observation DB（/api/observation/runs/{traceId}）每 3 秒一次
- * 2. result 端点（/api/chat/result/{traceId}）每 5 秒一次（更快的恢复路径）
- * 最多等待 120 秒，通过 ``ended_at`` / ``status`` 字段判断后端是否完成。
+ * 双路轮询策略（指数退避）：
+ * 1. observation DB（/api/observation/runs/{traceId}）：60s 前每 3s，之后每 10s
+ * 2. result 端点（/api/chat/result/{traceId}）：60s 前每 5s，之后每 15s（更快的恢复路径）
+ * 最多等待 300 秒，通过 ``ended_at`` / ``status`` 字段判断后端是否完成。
+ *
+ * team 模式：当终态响应的 agent_mode==="coding_team" 时，在 token+done 之前补发
+ * team_done 事件（若 team part 已存在），让 TeamNodeCard 正确收尾。
  *
  * receivedTextLength 用于切片：断连前可能已收到部分 token，恢复时只补发
  * result_text 中尚未收到的部分（slice(receivedTextLength)），避免重复。
@@ -339,24 +358,30 @@ async function tryRecoverResult(
   receivedTextLength: number = 0,
 ): Promise<boolean> {
   if (!traceId) return false;
-  const MAX_WAIT_MS = 120_000;
-  const POLL_INTERVAL_MS = 3_000;
-  const ENDPOINT_POLL_INTERVAL_MS = 5_000;
+  const MAX_WAIT_MS = 300_000;
   const start = Date.now();
   let lastEndpointPoll = 0;
   while (Date.now() - start < MAX_WAIT_MS) {
-    await sleep(POLL_INTERVAL_MS);
+    // 指数退避：60s 前高频轮询快速恢复，60s 后降频避免压满后端
+    const elapsed = Date.now() - start;
+    const pollInterval = elapsed < 60_000 ? 3_000 : 10_000;
+    const endpointPollInterval = elapsed < 60_000 ? 5_000 : 15_000;
+    await sleep(pollInterval);
     // 用户已发新消息（traceId 变化），停止恢复旧请求
     if (conn.traceId !== traceId) return false;
 
-    // 路径 2：轮询 /api/chat/result/{traceId}（每 5 秒一次，更快恢复路径）
-    if (Date.now() - lastEndpointPoll >= ENDPOINT_POLL_INTERVAL_MS) {
+    // 路径 2：轮询 /api/chat/result/{traceId}（指数退避：5s → 15s）
+    if (Date.now() - lastEndpointPoll >= endpointPollInterval) {
       lastEndpointPoll = Date.now();
       try {
         const r = await fetch(`${API_BASE}/api/chat/result/${traceId}`);
         if (r.ok) {
           const data = await r.json();
-          if (data.status === "completed") {
+          if (data.status === "completed" || data.status === "failed") {
+            // team 模式：在 token+done 之前补发 team_done，让 TeamNodeCard 收尾
+            if (data.agent_mode === "coding_team") {
+              await synthesizeTeamDone(conn);
+            }
             const resultText: string = data.result_text ?? "";
             const tokenCount: number | undefined =
               typeof data.token_count === "number" ? data.token_count : undefined;
@@ -382,7 +407,7 @@ async function tryRecoverResult(
       }
     }
 
-    // 路径 1：轮询 observation DB（每 3 秒一次）
+    // 路径 1：轮询 observation DB（指数退避：3s → 10s）
     try {
       const r = await fetch(`${API_BASE}/api/observation/runs/${traceId}`);
       if (!r.ok) continue;
@@ -391,6 +416,10 @@ async function tryRecoverResult(
       const run = data.run;
       // 后端还未完成（ended_at 为 null），继续等待
       if (!run.ended_at) continue;
+      // team 模式：在 token+done 之前补发 team_done，让 TeamNodeCard 收尾
+      if (run.agent_mode === "coding_team") {
+        await synthesizeTeamDone(conn);
+      }
       // 后端已完成，补发 token（如果有）+ done 事件
       const resultText: string = run.result_text ?? "";
       const resultTokenCount: number | undefined =
@@ -520,6 +549,12 @@ async function submitFeedback(req: FeedbackRequest): Promise<FeedbackResponse> {
   return apiPost<FeedbackResponse>("/api/observation/feedback", req);
 }
 
+/** 标记当前连接是否处于 team 模式（team_init 事件收到后调用）。 */
+function setTeamMode(threadId: string, hasTeam: boolean): void {
+  const conn = getConnection(threadId);
+  conn.hasTeamPart = hasTeam;
+}
+
 export const chat = {
   send,
   abort,
@@ -529,4 +564,5 @@ export const chat = {
   onEvent,
   onApprovalRequest,
   submitFeedback,
+  setTeamMode,
 };

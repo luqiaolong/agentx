@@ -598,4 +598,5 @@ def register_chat_routes(app: FastAPI) -> None:
             "result_text": row.get("result_text") or "",
             "token_count": row.get("result_token_count") or 0,
             "trace_id": trace_id,
+            "agent_mode": row.get("agent_mode") or "",
         }

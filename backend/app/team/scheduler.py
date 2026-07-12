@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
@@ -190,11 +191,17 @@ async def _run_subtask_stream(
     agent_name: str,
     abort_event: Any,
     writer: Callable[[dict], None],
+    *,
+    subtask_timeout: int = 300,
 ) -> TeamSubtaskResult:
     """通用子任务流式执行：调用 runner，路由事件，返回结果。
 
     处理 abort / error / 异常 / 哨兵事件，passthrough 实时写 writer。
     abort 在每轮事件迭代前检查，确保用户触发中止后子任务立即退出。
+
+    Phase 1 稳定性硬化：``asyncio.wait_for`` 包裹事件迭代循环，超时后返回失败
+    ``TeamSubtaskResult`` 并发射 ``delegation`` 事件让前端 trace 可见。
+    timeout 包裹位于本函数内部（而非节点调用处），确保 Phase 2 节点统一重构不会丢失该保护。
     """
     collected_text: list[str] = []
     tool_traces: list[str] = []
@@ -206,12 +213,35 @@ async def _run_subtask_stream(
     with _trace_cm:
         try:
             stream = runner(*runner_args, **runner_kwargs)
-            async for event in stream:
-                if abort_event.is_set():
-                    return TeamSubtaskResult(agent=agent_name, success=False, payload="用户中止")
-                result = _route_event_for_node(event, collected_text, tool_traces, writer, abort_event)
-                if result is not None:
-                    return result
+
+            async def _iterate() -> TeamSubtaskResult | None:
+                """实际事件迭代循环，被 ``asyncio.wait_for`` 包裹。"""
+                async for event in stream:
+                    if abort_event.is_set():
+                        return TeamSubtaskResult(agent=agent_name, success=False, payload="用户中止")
+                    result = _route_event_for_node(event, collected_text, tool_traces, writer, abort_event)
+                    if result is not None:
+                        return result
+                return None  # sentinel: runner 正常结束但未发 _subtask_done
+
+            try:
+                result = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
+            except asyncio.TimeoutError:
+                # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
+                writer(make_sse_event("delegation", {
+                    "source": "team",
+                    "event": "timeout",
+                    "agent": agent_name,
+                    "timeout": subtask_timeout,
+                    "message": f"子任务超时（{subtask_timeout}s）",
+                }))
+                return TeamSubtaskResult(
+                    agent=agent_name,
+                    success=False,
+                    payload=f"子任务超时（{subtask_timeout}s）",
+                )
+            if result is not None:
+                return result
         except Exception as exc:  # noqa: BLE001
             return TeamSubtaskResult(agent=agent_name, success=False, payload=f"{agent_name} 子任务异常: {exc}")
 
@@ -241,6 +271,8 @@ async def _run_team_role_subtask(
     subtask_runners: dict[str, Any] | None,
     abort_event: Any,
     writer: Callable[[dict], None],
+    *,
+    subtask_timeout: int = 300,
 ) -> TeamSubtaskResult:
     """软件开发团队角色子任务（frontend_dev / backend_dev / tester / ...）。
 
@@ -278,6 +310,7 @@ async def _run_team_role_subtask(
             agent_name=task.agent,
             abort_event=abort_event,
             writer=writer,
+            subtask_timeout=subtask_timeout,
         )
 
     # 有专属配置：build_custom_agent + astream_events v2
@@ -308,53 +341,72 @@ async def _run_team_role_subtask(
         try:
             # M25: abort 检查在每个事件回调中执行；LLM 长调用期间无法响应中止，
             # 需要 asyncio.cancel 机制才能根本修复，当前为缓解方案。
-            async for event in agent_obj.astream_events(inputs, version="v2", config=config):
-                if abort_event.is_set():
-                    return _done(False, "用户中止")
-                kind = event["event"]
-                ename = event.get("name", "")
-                edata = event.get("data", {}) or {}
-                if kind == "on_chat_model_stream":
-                    content = extract_chunk_text(edata.get("chunk"), strip=False)
-                    if content:
-                        collected_text.append(content)
-                        # 中间 token 不透传到前端：与 deep/code 子代理行为一致。
-                        # 透传 token 会被前端 appendPartText 创建为 text part，
-                        # 破坏 delegation 分组（text 破组导致子代理卡片内 traceItems 为空，
-                        # 且最终报告 token 追加到已存在的 text part 导致位置错误）。
-                        # 子代理的输出通过 collected_text 收集到 summary 中展示。
-                elif kind in ("on_tool_start", "on_tool_end"):
-                    trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
-                    tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
-                    # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
-                    # 用 run_id 作为 tool_call_id，确保 on_tool_start / on_tool_end 配对
-                    tc_id = str(event.get("run_id") or "")
-                    if kind == "on_tool_start":
-                        writer(
-                            make_sse_event(
-                                "tool_call",
-                                {
-                                    "id": tc_id,
-                                    "name": ename,
-                                    "args": trace_data,
-                                    "source": task.agent,
-                                    "parent_task_id": thread_id,
-                                },
+            # Phase 1 稳定性硬化：asyncio.wait_for 包裹事件迭代循环，超时后返回失败。
+            async def _iterate() -> bool:
+                """返回 True 表示提前退出（abort），None/False 表示正常结束。"""
+                async for event in agent_obj.astream_events(inputs, version="v2", config=config):
+                    if abort_event.is_set():
+                        return True
+                    kind = event["event"]
+                    ename = event.get("name", "")
+                    edata = event.get("data", {}) or {}
+                    if kind == "on_chat_model_stream":
+                        content = extract_chunk_text(edata.get("chunk"), strip=False)
+                        if content:
+                            collected_text.append(content)
+                            # 中间 token 不透传到前端：与 deep/code 子代理行为一致。
+                            # 透传 token 会被前端 appendPartText 创建为 text part，
+                            # 破坏 delegation 分组（text 破组导致子代理卡片内 traceItems 为空，
+                            # 且最终报告 token 追加到已存在的 text part 导致位置错误）。
+                            # 子代理的输出通过 collected_text 收集到 summary 中展示。
+                    elif kind in ("on_tool_start", "on_tool_end"):
+                        trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
+                        tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
+                        # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
+                        # 用 run_id 作为 tool_call_id，确保 on_tool_start / on_tool_end 配对
+                        tc_id = str(event.get("run_id") or "")
+                        if kind == "on_tool_start":
+                            writer(
+                                make_sse_event(
+                                    "tool_call",
+                                    {
+                                        "id": tc_id,
+                                        "name": ename,
+                                        "args": trace_data,
+                                        "source": task.agent,
+                                        "parent_task_id": thread_id,
+                                    },
+                                )
                             )
-                        )
-                    else:
-                        writer(
-                            make_sse_event(
-                                "tool_result",
-                                {
-                                    "id": tc_id,
-                                    "name": ename,
-                                    "result": trace_data,
-                                    "source": task.agent,
-                                    "parent_task_id": thread_id,
-                                },
+                        else:
+                            writer(
+                                make_sse_event(
+                                    "tool_result",
+                                    {
+                                        "id": tc_id,
+                                        "name": ename,
+                                        "result": trace_data,
+                                        "source": task.agent,
+                                        "parent_task_id": thread_id,
+                                    },
+                                )
                             )
-                        )
+                return False
+
+            try:
+                aborted = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
+            except asyncio.TimeoutError:
+                # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
+                writer(make_sse_event("delegation", {
+                    "source": "team",
+                    "event": "timeout",
+                    "agent": task.agent,
+                    "timeout": subtask_timeout,
+                    "message": f"子任务超时（{subtask_timeout}s）",
+                }))
+                return _done(False, f"子任务超时（{subtask_timeout}s）")
+            if aborted:
+                return _done(False, "用户中止")
         except Exception as exc:  # noqa: BLE001
             return _done(False, f"团队角色 {task.agent} 子任务异常: {exc}")
 

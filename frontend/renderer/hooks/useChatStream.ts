@@ -107,6 +107,9 @@ export function useChatStream(args: UseChatStreamArgs) {
     callbacksRef.current = { setErrorMsg, setPaused };
   }, [setErrorMsg, setPaused]);
 
+  // done 看门狗：team_done 后若 done 事件 2s 内未到达，强制收尾流式状态
+  const doneWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   /** 获取 SSE 事件应归属的 thread id：优先使用发送时固定的 activeThreadIdRef。 */
   const targetThreadId = () => activeThreadIdRef?.current ?? threadIdRef.current;
 
@@ -257,6 +260,11 @@ export function useChatStream(args: UseChatStreamArgs) {
           break;
         }
         case "done": {
+          // 清除 done 看门狗：done 已正常到达，无需兜底
+          if (doneWatchdogRef.current) {
+            clearTimeout(doneWatchdogRef.current);
+            doneWatchdogRef.current = null;
+          }
           // 标记 reasoning parts 完成（触发自动收缩）
           if (pendingIdRef.current) {
             markReasoningDone(pendingIdRef.current);
@@ -454,6 +462,10 @@ export function useChatStream(args: UseChatStreamArgs) {
               status: "running",
             });
           }
+          // 标记当前连接为 team 模式，供断连恢复时补发 team_done
+          if (threadId) {
+            chat.setTeamMode(threadId, true);
+          }
           break;
         }
         case "team_done": {
@@ -474,10 +486,21 @@ export function useChatStream(args: UseChatStreamArgs) {
             agentMessages,
           });
           // 安全兜底：team_done 后若 done 事件因故未到达，仍需收尾 reasoning / tool-call，
-          // 避免消息卡在「运行中」状态。不调用 setStreaming/setSessionRunning，
-          // 让后续 done 事件或恢复机制处理流式状态。
+          // 避免消息卡在「运行中」状态。启动 2s done 看门狗：若 done 事件未在 2s 内
+          // 到达，看门狗将强制 finishRunning(false) 收尾流式状态。
+          // 防竞态：回调内检查当前会话是否仍在运行，已停止则跳过（避免误杀新消息 streaming）。
           markReasoningDone(pendingIdRef.current);
           markRunningToolCallsComplete(pendingIdRef.current);
+          const watchdogThreadId = targetThreadId();
+          if (doneWatchdogRef.current) clearTimeout(doneWatchdogRef.current);
+          doneWatchdogRef.current = setTimeout(() => {
+            const cid = targetThreadId();
+            // 会话已切换或已停止 → 跳过（done 已到达或用户已发新消息）
+            if (cid !== watchdogThreadId) return;
+            const state = useChatStore.getState();
+            if (!state.sessions[cid]?.isRunning) return;
+            finishRunning(false);
+          }, 2000);
           break;
         }
         default: {
@@ -504,6 +527,11 @@ export function useChatStream(args: UseChatStreamArgs) {
       if (pendingIdRef.current) {
         markReasoningDone(pendingIdRef.current);
         markRunningToolCallsComplete(pendingIdRef.current);
+      }
+      // 清除 done 看门狗，避免卸载后误触发
+      if (doneWatchdogRef.current) {
+        clearTimeout(doneWatchdogRef.current);
+        doneWatchdogRef.current = null;
       }
       unsubEvents();
       unsubApproval();
