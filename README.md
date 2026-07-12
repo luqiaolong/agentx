@@ -114,11 +114,11 @@ Supervisor 委派工具（[scenarios/work/agent.py](file:///d:/java/agentproject
 - `delegate_to_expert(expert_name, task, context="")` — 委派 Coding Expert
 - `delegate_to_subagent(agent_name, task)` — 委派 rag / web / 自定义子代理
 
-`@mention` 语法（`@coding` / `@rag` / `@web`）强制委派，覆盖 LLM 自主决策；解析在 [agents/supervisor/mention.py](file:///d:/java/agentprojects/agentx/backend/app/agents/supervisor/mention.py)。
+`@mention` 语法（`@coding` / `@rag` / `@web`）强制委派，覆盖 LLM 自主决策；解析在 [scenarios/work/mention.py](file:///d:/java/agentprojects/agentx/backend/app/scenarios/work/mention.py)。
 
 ### Coding Team 多代理协作
 
-七大角色（[team/planner.py::_TEAM_EXPERTS](file:///d:/java/agentprojects/agentx/backend/app/team/planner.py#L48-L56)）：
+七大角色（[team/planner.py::_build_team_experts_description](file:///d:/java/agentprojects/agentx/backend/app/team/planner.py#L49)）：
 
 | Key | 职责 |
 |---|---|

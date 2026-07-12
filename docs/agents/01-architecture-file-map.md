@@ -47,22 +47,35 @@ agentx/
 │   │   ├── classifier.py       ← 规则前置 + LLM 分类
 │   │   ├── graph.py            ← Router 图 + run_router（主入口）+ _parse_skill_tag
 │   │   └── state.py            ← RouterState TypedDict
-│   ├── chat/                   ← 路径 A：LLM 直答
+│   ├── scenarios/              ← 场景化智能体（work / coding / coding_team）
 │   │   ├── __init__.py
-│   │   └── run.py              ← run_chat_path（ThinkFilter 流式 token）
-│   ├── deep/                   ← 路径 C：DeepAgent + interrupt_before 审批
+│   │   ├── work/               ← work 场景：LLM 直答 + delegate_to_expert/subagent + @mention
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py        ← run_work_supervisor（主入口）
+│   │   │   └── mention.py      ← @mention 语法解析（仅 work 场景生效）
+│   │   ├── coding/             ← coding 场景：DeepAgent + interrupt_before 审批
+│   │   │   ├── __init__.py
+│   │   │   └── agent.py        ← run_coding_expert（主入口）
+│   │   └── coding_team/        ← coding_team 场景：AgentTeam 多代理协作
+│   │       ├── __init__.py
+│   │       └── agent.py        ← run_coding_team → run_team_path
+│   ├── deepagent/              ← DeepAgent 框架（供 scenarios/coding 复用）
 │   │   ├── __init__.py
-│   │   ├── agent.py            ← run_deep_path / build_deep_agent（主入口，~200 行）
-│   │   ├── tools.py            ← _make_deep_tools + _load_mcp_tools
-│   │   ├── streaming.py        ← _stream_agent_events
-│   │   └── recovery.py         ← _inject_tool_error_messages + _sanitize_message_history
-│   ├── team/                   ← 路径 D：AgentTeam 多代理协作
+│   │   ├── agent.py            ← create_deep_agent / build_deep_agent
+│   │   ├── factory.py          ← create_agent 工厂（统一构造 ReAct agent）
+│   │   ├── approval_runner.py  ← run_agent_with_approval 公共审批循环（所有 ReAct 路径复用）
+│   │   ├── streaming.py        ← _stream_agent_events（custom/values/messages 三模）
+│   │   ├── tool_assembly.py    ← 工具组装
+│   │   ├── authorized_backend.py ← AuthorizedLocalShellBackend（继承父线程授权）
+│   │   ├── safe_shell_backend.py ← 安全 shell 后端
+│   │   └── context.py          ← current_parent_thread_id ContextVar
+│   ├── team/                   ← AgentTeam 多代理协作（由 scenarios/coding_team 调用）
 │   │   ├── __init__.py
-│   │   ├── orchestrator.py     ← run_team_path（主入口，~200 行）
-│   │   ├── planner.py          ← _build_orchestrator_prompt + _parse_plan + _validate_task
-│   │   ├── scheduler.py        ← _run_subtask + 队列驱动
-│   │   ├── blackboard.py       ← Blackboard + TeamPlanTask + TeamSubtaskResult
-│   │   └── aggregator.py       ← _run_aggregator + _quality_gate + _should_downgrade_to_single
+│   │   ├── orchestrator.py     ← run_team_path（主入口）+ StateGraph DAG（plan → fan-out → aggregate → END）
+│   │   ├── planner.py          ← _build_orchestrator_prompt + _parse_todos_from_text + _build_project_context
+│   │   ├── scheduler.py        ← _run_team_role_subtask + astream_events 驱动
+│   │   ├── blackboard.py       ← TeamState + Blackboard + TeamPlanTask + TeamSubtaskResult
+│   │   └── aggregator.py       ← _run_aggregator + _quality_gate + _build_summary
 │   ├── cli/                    ← CLI 终端交互（REPL + One-shot + config 子命令）
 │   │   ├── __init__.py        ← 包导出 main
 │   │   ├── app.py             ← main() + argparse + 模式分发 + config 子命令
@@ -72,13 +85,11 @@ agentx/
 │   │   ├── commands.py        ← CommandResult + handle_command + _cmd_*（全部 await）
 │   │   ├── renderer.py        ← EventRenderer SSE 事件终端渲染
 │   │   └── store.py           ← Tauri store 配置读取 + 凭证解密（DPAPI/AES-GCM）
-│   ├── subagents/              ← code / rag / web 子代理 + 路径 B 分发
+│   ├── subagents/              ← rag / web / 自定义子代理（code 已由 coding Expert 取代）
 │   │   ├── base.py             ← make_fs_tools / make_rag_tools / make_web_tools + extract_text
-│   │   ├── code_agent.py       ← code 子代理（ReAct）
 │   │   ├── rag_agent.py        ← rag 子代理（ReAct）
 │   │   ├── web_agent.py        ← web 子代理（ReAct）
-│   │   ├── custom_agent.py     ← 自定义子代理工厂
-│   │   └── dispatch.py         ← run_tool_path（路径 B）+ select_subagent + 事件转换
+│   │   └── custom_agent.py     ← 自定义子代理工厂（build_custom_agent）
 │   ├── tools/                  ← filesystem + rag_retrieve
 │   ├── memory/                 ← skills / profile / checkpointer
 │   │   ├── profile_extractor.py ← LLM 画像抽取（extract_profile_via_llm）
@@ -153,4 +164,6 @@ agentx/
 
 > **关键重构**：`backend/app/paths/` 包已删除（见
 > [openspec/2026-07-06-paths-refactor](file:///d:/java/agentprojects/agentx/openspec/changes/archive/2026-07-06-paths-refactor/proposal.md)），
-> 各路径按能力域拆分为 `chat/` / `deep/` / `team/` / `subagents/`。**禁止**重新创建 `backend/app/paths/` 目录。
+> 各路径按能力域拆分为 `scenarios/` / `deepagent/` / `team/` / `subagents/`。**禁止**重新创建 `backend/app/paths/` 目录。
+> 场景化迁移（见 [openspec/2026-07-09-backend-package-naming-refactor](file:///d:/java/agentprojects/agentx/openspec/changes/archive/2026-07-09-backend-package-naming-refactor/proposal.md)）：
+> `agents/supervisor/` → `scenarios/work/`、`agents/expert/` → `scenarios/coding/`、`agents/team/` → `scenarios/coding_team/`、`deep/` → `deepagent/`。
