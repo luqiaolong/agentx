@@ -209,6 +209,9 @@ class Settings(BaseSettings):
     readonly_streak_threshold: int = Field(default=10, ge=1, le=100)
     # RubricMiddleware 判官自纠最大迭代次数
     rubric_max_iterations: int = Field(default=3, ge=1, le=10)
+    # LangGraph 图递归上限：deepagents ReAct 循环每轮 2 superstep，
+    # 默认 25 仅支持 ~12 轮工具调用，复杂任务会触发 "Recursion limit reached"。
+    agent_recursion_limit: int = Field(default=100, ge=25, le=500)
 
     @field_validator(
         "subagents_config",

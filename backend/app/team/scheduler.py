@@ -297,7 +297,10 @@ async def _run_team_role_subtask(
     )
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": task.input}]}
-    config = {"configurable": {"thread_id": child_thread_id}}
+    config = {
+        "configurable": {"thread_id": child_thread_id},
+        "recursion_limit": get_settings().agent_recursion_limit,
+    }
     # trace_id 透传：build_custom_agent 内部走 astream_events v2，
     # 回调中创建新协程，ContextVar 不会自动跨协程传播。
     _trace_id = current_trace_id() or ""

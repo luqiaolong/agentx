@@ -595,10 +595,16 @@ async def _aggregate_node(state: TeamState) -> dict:
             writer(sse)
 
         has_error = bool(errors)
+        # 把每个子任务的 summary 随 team_done 回传给前端，回填 TeamNodeCard 的 agent 输出
+        agent_summaries = [
+            {"agent": task.agent, "summary": findings.get(f"{task.agent}-{idx}", "")}
+            for idx, task in enumerate(plan)
+            if f"{task.agent}-{idx}" in findings
+        ]
         writer(
             make_sse_event(
                 "team_done",
-                {"status": "error" if has_error else "done"},
+                {"status": "error" if has_error else "done", "agents": agent_summaries},
             )
         )
         logger.info(
@@ -735,7 +741,11 @@ async def run_team_path(
         # - custom: 子任务节点 writer 写入的 passthrough 事件
         # - values: 每次节点返回后的完整 state（用于 todos diff → todo_update）
         last_todos: list[dict] = []
-        async for chunk in graph.astream(initial_state, stream_mode=["custom", "values"]):
+        async for chunk in graph.astream(
+            initial_state,
+            stream_mode=["custom", "values"],
+            config={"recursion_limit": get_settings().agent_recursion_limit},
+        ):
             if not isinstance(chunk, tuple) or len(chunk) != 2:
                 continue
             mode, payload = chunk

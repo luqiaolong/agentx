@@ -1,7 +1,7 @@
-"""DeepAgent / Supervisor / Expert 公共审批执行层。
+"""DeepAgent / 场景化智能体公共审批执行层。
 
-把原本分散在 ``deepagent/agent.py``、``agents/supervisor/work_supervisor.py``、
-``agents/expert/coding.py`` 中的审批循环提取为统一函数
+把原本分散在 ``deepagent/agent.py``、``scenarios/work/agent.py``、
+``scenarios/coding/agent.py`` 中的审批循环提取为统一函数
 ``run_agent_with_approval``，供所有 ReAct 路径复用。
 """
 
@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from loguru import logger
 from langgraph.types import Command
 
+from app.config import get_settings
 from app.security.approval import (
     is_aborted,
     is_paused,
@@ -187,6 +188,10 @@ async def run_agent_with_approval(
     # 读取（Team 子代理通过 AuthorizedLocalShellBackend 执行 fs 操作时继承父线程授权）。
     # 与 bind_trace 同样在入口处设置；每次调用都会覆盖上一次的值。
     current_parent_thread_id.set(parent_thread_id)
+
+    # 统一注入 recursion_limit，避免使用 LangGraph 默认值 25 导致复杂任务提前终止
+    if "recursion_limit" not in config:
+        config = {**config, "recursion_limit": get_settings().agent_recursion_limit}
 
     # 跨 stream 调用共享的"已 yield 消息签名"集合（避免 astream resume
     # 时重发历史消息被重复 yield，root cause: trace=64851677fced422c）。
