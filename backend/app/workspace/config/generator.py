@@ -64,13 +64,14 @@ def generate_agentx_dir(workspace_path: Path) -> GenerationResult:
             created.append(rel_path)
 
     # 创建空目录（rules / skills / memory）
+    # 先检查 exists 再 mkdir，确保已存在目录归入 skipped 而非 created（幂等性）
     for dir_name in EMPTY_DIRS:
         dir_path = agentx_dir / dir_name
-        dir_path.mkdir(parents=True, exist_ok=True)
         if dir_path.exists():
-            created.append(f"{dir_name}/")
-        else:
             skipped.append(f"{dir_name}/")
+        else:
+            dir_path.mkdir(parents=True, exist_ok=True)
+            created.append(f"{dir_name}/")
 
     logger.info(
         "workspace.config.generated",

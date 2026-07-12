@@ -205,13 +205,12 @@ class TestProjectConfigGet:
         data = response.json()
         assert data["exists"] is True
         assert len(data["files"]) > 0
-        # 应包含 AGENTS.md
-        agents_md = [f for f in data["files"] if f["name"] == "AGENTS.md"]
-        assert len(agents_md) == 1
-        assert agents_md[0]["exists"] is True
-        # 应有预览
-        assert data["agents_md_preview"] is not None
-        assert "# Project AGENTS.md" in data["agents_md_preview"]
+        # 应包含 mcp.json（TEMPLATES 中的文件）
+        mcp_files = [f for f in data["files"] if f["name"] == "mcp.json"]
+        assert len(mcp_files) == 1
+        assert mcp_files[0]["exists"] is True
+        # AGENTS.md 未自动生成，预览为 None
+        assert data["agents_md_preview"] is None
 
     def test_get_nonexistent_path(
         self, authorized_client: TestClient, tmp_path: Path

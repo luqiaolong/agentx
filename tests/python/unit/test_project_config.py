@@ -13,7 +13,7 @@ import pytest
 from app.workspace.config.generator import generate_agentx_dir
 from app.workspace.config.loader import load_project_config
 from app.workspace.config.merger import merge_configs
-from app.workspace.config.templates import TEMPLATES
+from app.workspace.config.templates import EMPTY_DIRS, TEMPLATES
 
 
 # ============================================================
@@ -25,50 +25,52 @@ class TestGenerator:
     """``generate_agentx_dir`` 测试。"""
 
     def test_generate_creates_all_files(self, tmp_path: Path) -> None:
-        """首次生成应创建所有模板文件。"""
+        """首次生成应创建所有模板文件和空目录。"""
         result = generate_agentx_dir(tmp_path)
 
         assert result.path == str(tmp_path / ".agentx")
-        # 应创建所有模板文件
-        assert len(result.created) == len(TEMPLATES)
+        # 应创建所有模板文件 + 空目录
+        assert len(result.created) == len(TEMPLATES) + len(EMPTY_DIRS)
         assert len(result.skipped) == 0
         # 验证文件实际存在
         for rel_path in TEMPLATES:
             assert (tmp_path / ".agentx" / rel_path).exists()
+        # 验证空目录实际存在
+        for dir_name in EMPTY_DIRS:
+            assert (tmp_path / ".agentx" / dir_name).is_dir()
 
     def test_generate_idempotent(self, tmp_path: Path) -> None:
-        """第二次调用应跳过所有文件（created=[]）。"""
+        """第二次调用应跳过所有文件和目录（created=[]）。"""
         generate_agentx_dir(tmp_path)
         result = generate_agentx_dir(tmp_path)
 
         assert len(result.created) == 0
-        assert len(result.skipped) == len(TEMPLATES)
+        assert len(result.skipped) == len(TEMPLATES) + len(EMPTY_DIRS)
 
     def test_generate_skips_existing_user_edited(self, tmp_path: Path) -> None:
         """已编辑的文件不被覆盖。"""
-        # 预创建一个用户编辑过的 AGENTS.md
+        # 预创建一个用户编辑过的 subagents.json
         agentx_dir = tmp_path / ".agentx"
         agentx_dir.mkdir()
-        user_content = "# My Custom Rules\n\n- Use snake_case"
-        (agentx_dir / "AGENTS.md").write_text(user_content, encoding="utf-8")
+        user_content = '{"rag": {"enabled": false}}'
+        (agentx_dir / "subagents.json").write_text(user_content, encoding="utf-8")
 
         result = generate_agentx_dir(tmp_path)
 
-        # AGENTS.md 应被跳过
-        assert "AGENTS.md" in result.skipped
-        assert "AGENTS.md" not in result.created
+        # subagents.json 应被跳过
+        assert "subagents.json" in result.skipped
+        assert "subagents.json" not in result.created
         # 内容未被覆盖
-        assert (agentx_dir / "AGENTS.md").read_text(encoding="utf-8") == user_content
+        assert (agentx_dir / "subagents.json").read_text(encoding="utf-8") == user_content
         # 其他文件仍被创建
         assert "mcp.json" in result.created
 
     def test_generate_creates_rules_dir(self, tmp_path: Path) -> None:
-        """应创建 rules/ 目录及 README.md。"""
+        """应创建 rules/ 空目录（README.md 不再自动生成）。"""
         generate_agentx_dir(tmp_path)
 
         rules_dir = tmp_path / ".agentx" / "rules"
         assert rules_dir.is_dir()
-        assert (rules_dir / "README.md").exists()
 
     def test_generate_nonexistent_workspace(self, tmp_path: Path) -> None:
         """workspace 不存在应抛 FileNotFoundError。"""
@@ -104,18 +106,21 @@ class TestLoader:
         assert config.system_prompt is None
 
     def test_load_after_generate(self, tmp_path: Path) -> None:
-        """生成后加载应返回有效配置。"""
+        """生成后加载应返回有效配置。
+
+        AGENTS.md / system_prompt.md / tools.json 不再自动生成，
+        由用户按需手动创建（templates.py 设计决策）。
+        """
         generate_agentx_dir(tmp_path)
         config = load_project_config(tmp_path)
 
         assert config.exists is True
-        assert config.agents_md is not None
-        assert "# Project AGENTS.md" in config.agents_md
+        # AGENTS.md / system_prompt.md 未自动生成，应为 None
+        assert config.agents_md is None
+        assert config.system_prompt is None
         assert config.mcp_servers == []  # 模板是空数组
         assert config.subagents_config == {}  # 模板是空对象
         assert config.tools_config == {}
-        assert config.system_prompt is not None
-        # rules/README.md 不被加载为 rule（它是说明文档而非规则）
         assert len(config.rules) == 0
 
     def test_load_invalid_json(self, tmp_path: Path) -> None:
