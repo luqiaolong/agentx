@@ -70,6 +70,15 @@ export type ChatEvent = (
     }
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
   | { type: "approval_request"; [k: string]: unknown; trace_id?: string }
+  // team_init 事件：AgentTeam 计划生成完成，前端据此在消息顶部创建 TeamNodeCard
+  // 携带 plan + agents + reasoning，在 _plan_node 成功后立即发射（早于 delegation / tool_call）
+  | {
+      type: "team_init";
+      plan: { agent: string; input: string; purpose: string }[];
+      agents: { agent: string; purpose: string; status: "pending" | "running" | "done" | "error" }[];
+      reasoning: string;
+      trace_id?: string;
+    }
   // team_done 事件：AgentTeam 整体执行结束
   | { type: "team_done"; status?: "error" | "done"; trace_id?: string }
   // paused 事件：后端流被用户暂停

@@ -304,6 +304,17 @@ export interface ChatState {
        * 仅在 team part 不存在时生效；已存在时按 agentUpdate 增量更新。
        */
       initialAgents?: TeamAgentState[];
+      /**
+       * team_done 时标记：把所有 pending/running 的 agent 统一标记为 done/error。
+       * 用于 team 整体结束时收敛 agent 状态。
+       */
+      finalizeAgents?: boolean;
+      /**
+       * 若 team part 不存在是否创建新 part。
+       * - true（默认）：team_init 场景，需要创建 team part
+       * - false：team_done 场景，若 team part 不存在则跳过（降级路径不创建空 team part）
+       */
+      createIfMissing?: boolean;
     },
   ) => void;
   /**
@@ -840,7 +851,10 @@ export const useChatStore = create<ChatState>()(
               if (m.id !== messageId) return m;
               const parts = [...m.parts];
               const teamIdx = parts.findIndex((p) => p.type === "team");
+              // createIfMissing 默认 true；team_done 场景传 false 避免降级路径创建空 team part
+              const createIfMissing = updaters.createIfMissing !== false;
               if (teamIdx === -1) {
+                if (!createIfMissing) return m;
                 // team part 不存在：首次创建
                 // 若提供 initialAgents，一次性写入 plan + agents（单次 upsert）
                 // 否则按原逻辑用 agentUpdate 创建单条 agent
@@ -862,7 +876,9 @@ export const useChatStore = create<ChatState>()(
                   agents,
                   status: updaters.status ?? ("running" as const),
                 };
-                parts.push(newPart);
+                // 插入到 parts 数组开头，让 TeamNodeCard 出现在消息顶部
+                // （早于 delegation / tool_call / text 等后续 parts）
+                parts.unshift(newPart);
               } else {
                 const existing = parts[teamIdx] as Extract<MessagePart, { type: "team" }>;
                 let newPlan = existing.plan;
@@ -880,6 +896,17 @@ export const useChatStore = create<ChatState>()(
                   } else {
                     newAgents = newAgents.map((a, i) => (i === idx ? { ...a, ...patch } : a));
                   }
+                }
+                // finalizeAgents：team 整体结束时，把所有 pending/running 的 agent
+                // 统一标记为 done（或 error），避免 agent 状态卡在 running
+                if (updaters.finalizeAgents) {
+                  const finalStatus: "done" | "error" = updaters.status === "error" ? "error" : "done";
+                  const now = Date.now();
+                  newAgents = newAgents.map((a) =>
+                    a.status === "pending" || a.status === "running"
+                      ? { ...a, status: finalStatus, finishedAt: now }
+                      : a,
+                  );
                 }
                 const newStatus = updaters.status ?? existing.status;
                 const doneAt = updaters.status === "done" || updaters.status === "error" ? Date.now() : existing.doneAt;

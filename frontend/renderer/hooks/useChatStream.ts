@@ -219,6 +219,16 @@ export function useChatStream(args: UseChatStreamArgs) {
               source: e.source,
               message: e.message,
             });
+            // Team 路径的 delegation 事件（source="team"）：同步更新 TeamNodeCard 中
+            // 对应 agent 的状态为 running，让用户看到子代理正在执行。
+            if (e.source === "team") {
+              upsertTeamNode(pendingIdRef.current, {
+                agentUpdate: {
+                  agent: e.target,
+                  patch: { status: "running", startedAt: Date.now() },
+                },
+              });
+            }
           }
           break;
         }
@@ -430,10 +440,28 @@ export function useChatStream(args: UseChatStreamArgs) {
           }
           break;
         }
+        case "team_init": {
+          // team_init 事件：_plan_node 成功后发射，携带 plan + agents + reasoning。
+          // 前端据此在消息顶部创建 TeamNodeCard（status="running"）。
+          if (pendingIdRef.current) {
+            upsertTeamNode(pendingIdRef.current, {
+              plan: e.plan,
+              reasoning: e.reasoning,
+              initialAgents: e.agents,
+              status: "running",
+            });
+          }
+          break;
+        }
         case "team_done": {
+          // team_done 事件：AgentTeam 整体执行结束。
+          // 仅更新已存在的 team part（由 team_init 创建）；若 team part 不存在
+          //（降级路径 / plan 失败），则不创建空 team part。
           if (!pendingIdRef.current) break;
           upsertTeamNode(pendingIdRef.current, {
             status: e.status === "error" ? "error" : "done",
+            finalizeAgents: true,
+            createIfMissing: false,
           });
           break;
         }

@@ -90,6 +90,8 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
     - ``todo_update``   — DeepAgent/Team 任务列表更新（原生 deepagents ``{content, status}`` schema，
                           status: ``"pending"|"in_progress"|"completed"``；可选 ``task_id`` 区分 Team 子任务）。
     - ``approval_request`` — 危险工具/目录扩展审批请求（含 tool_name / args / preview）。
+    - ``team_init``     — AgentTeam 计划生成完成（data 为 JSON ``{"plan","agents","reasoning"}``），
+                          前端据此在消息顶部创建 TeamNodeCard。在 ``team_done`` 之前发出。
     - ``team_done``     — AgentTeam 整体结束（data 为 JSON ``{"status": "done"|"error"}``）。
     - ``done``          — 流结束。
     - ``error``         — 错误（含消息）。

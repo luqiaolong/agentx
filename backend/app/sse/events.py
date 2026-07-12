@@ -73,6 +73,7 @@ def make_sse_event(
         "tool_result",
         "delegation",
         "classification",
+        "team_init",
         "team_done",
         "error",
         "_subtask_done",

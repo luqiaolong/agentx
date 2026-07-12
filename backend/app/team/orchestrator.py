@@ -151,6 +151,14 @@ async def _plan_node(state: TeamState) -> dict:
 
     # 剥离 [agent:xxx] 前缀后存入 state.todos，确保 SSE todo_update 透传到前端的是纯文本
     clean_todos = _strip_agent_prefix_from_todos(todos)
+
+    # 发射 team_init 事件：前端据此在消息顶部创建 TeamNodeCard（含 plan + agents）
+    writer(make_sse_event("team_init", {
+        "plan": [{"agent": t.agent, "input": t.input, "purpose": t.purpose} for t in tasks],
+        "agents": [{"agent": t.agent, "purpose": t.purpose, "status": "pending"} for t in tasks],
+        "reasoning": reasoning,
+    }))
+
     return {"plan": tasks, "todos": clean_todos, "reasoning": reasoning}
 
 
@@ -247,6 +255,29 @@ def _make_subtask_state_update(result: TeamSubtaskResult, task_index: int) -> di
 _SOURCE_MAP: dict[str, str] = {"code": "coding", "deep": "work", "agent": "work"}
 
 
+def _emit_delegation(
+    writer: Callable,
+    agent: str,
+    purpose: str,
+) -> None:
+    """子任务开始前发射 ``delegation`` 事件，前端据此创建 SubAgentGroup 容器。
+
+    前端 ``AssistantMessageParts`` 的分组逻辑依赖 ``delegation`` part 来开启新的
+    子代理卡片（DelegationCard + 可折叠执行轨迹容器）。若不发射此事件，
+    子代理的 tool_call / tool_result 会散落为独立卡片，无法聚合。
+
+    Args:
+        writer: LangGraph stream writer。
+        agent: 子代理角色名（原始值，如 ``"code"`` / ``"rag"`` / ``"frontend_dev"``）。
+        purpose: 任务简述（展示在 DelegationCard 副标题）。
+    """
+    writer(make_sse_event("delegation", {
+        "target": agent,
+        "source": "team",
+        "message": purpose,
+    }))
+
+
 def _emit_todo_in_progress(
     writer: Callable,
     todos: list[dict],
@@ -299,6 +330,7 @@ async def _deep_node(state: SubtaskState) -> dict:
 
     child_id = f"{parent_thread_id}-team-deep-{task_index}"
     await _inherit_workspace(child_id, state.get("workspace_path"))
+    _emit_delegation(writer, task.agent, task.purpose)
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     deep_state: dict = {
@@ -339,6 +371,7 @@ async def _code_node(state: SubtaskState) -> dict:
 
     child_id = f"{parent_thread_id}-team-code-{task_index}"
     await _inherit_workspace(child_id, state.get("workspace_path"))
+    _emit_delegation(writer, task.agent, task.purpose)
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     runner = _get_runner("code", state.get("subtask_runners"))
@@ -371,6 +404,7 @@ async def _builtin_node(state: SubtaskState) -> dict:
     if abort_event.is_set():
         return _make_subtask_state_update(TeamSubtaskResult(agent=task.agent, success=False, payload="用户中止"), task_index)
 
+    _emit_delegation(writer, task.agent, task.purpose)
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     runner = _get_runner(task.agent, state.get("subtask_runners"))
@@ -400,6 +434,7 @@ async def _team_role_node(state: SubtaskState) -> dict:
     if abort_event.is_set():
         return _make_subtask_state_update(TeamSubtaskResult(agent=task.agent, success=False, payload="用户中止"), task_index)
 
+    _emit_delegation(writer, task.agent, task.purpose)
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     result = await _run_team_role_subtask(
@@ -430,6 +465,7 @@ async def _custom_node(state: SubtaskState) -> dict:
     if abort_event.is_set():
         return _make_subtask_state_update(TeamSubtaskResult(agent=task.agent, success=False, payload="用户中止"), task_index)
 
+    _emit_delegation(writer, task.agent, task.purpose)
     _emit_todo_in_progress(writer, todos, task_index, parent_thread_id, task.agent)
 
     key = task.agent[len("custom-"):]

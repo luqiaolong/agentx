@@ -1,13 +1,22 @@
 import { memo, useState, useCallback } from "react";
-import { Bot, Code, BookOpen, Globe, Wrench } from "lucide-react";
+import { Bot, Code, BookOpen, Globe, Wrench, Palette, Server, TestTube, Layers, Cloud, PenTool, Briefcase } from "lucide-react";
 import { TraceCardHeader } from "./TraceCardHeader";
 
 /** 子代理类型 → 图标 + 中文名 映射。 */
 const SUBAGENT_META: Record<string, { icon: typeof Bot; label: string }> = {
+  // 内置子代理
   code: { icon: Code, label: "代码子代理" },
   rag: { icon: BookOpen, label: "知识子代理" },
   web: { icon: Globe, label: "搜索子代理" },
   deep: { icon: Bot, label: "DeepAgent" },
+  // 团队角色（软件开发专家团）
+  frontend_dev: { icon: Palette, label: "前端开发" },
+  backend_dev: { icon: Server, label: "后端开发" },
+  tester: { icon: TestTube, label: "测试" },
+  architect: { icon: Layers, label: "架构" },
+  devops: { icon: Cloud, label: "DevOps" },
+  ui_designer: { icon: PenTool, label: "UI 设计" },
+  product_manager: { icon: Briefcase, label: "产品" },
 };
 
 /** 自定义子代理 source 格式：custom-<key> */
