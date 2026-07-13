@@ -93,7 +93,7 @@ export type MessagePart =
       /** tool-result part 写入时间（工具结果到达），用于配对计算耗时。 */
       arrivedAt: number;
     }
-  | { type: "delegation"; id: string; target: string; source: string; message: string }
+  | { type: "delegation"; id: string; target: string; source: string; message: string; taskId?: string }
   | {
       type: "classification";
       id: string;
@@ -307,7 +307,7 @@ export interface ChatState {
     messageId: string,
     updaters: {
       reasoning?: string;
-      agentUpdate?: { agent: string; patch: Partial<TeamAgentState> };
+      agentUpdate?: { agent: string; taskId?: string; patch: Partial<TeamAgentState> };
       status?: "running" | "done" | "error";
       /**
        * 首次创建 team part 时一次性写入的 agent 列表（调用方单次 upsert）。
@@ -323,7 +323,7 @@ export interface ChatState {
        * team_done 时传入每个 agent 的最终输出（message / summary），
        * 用于把 blackboard 汇总前的子任务结果回填到 TeamNodeCard。
        */
-      agentMessages?: { agent: string; message?: string; summary?: string }[];
+      agentMessages?: Array<{ agent: string; taskId?: string; message?: string; summary?: string }>;
       /**
        * replan 事件追加的重规划历史记录。
        */
@@ -907,10 +907,20 @@ export const useChatStore = create<ChatState>()(
                 if (updaters.initialAgents) {
                   newAgents = updaters.initialAgents;
                 } else if (updaters.agentUpdate) {
-                  const { agent, patch } = updaters.agentUpdate;
-                  const idx = newAgents.findIndex((a) => a.agent === agent);
+                  const { agent, taskId, patch } = updaters.agentUpdate;
+                  // FE-002 修复：优先按 (agent, taskId) 双键匹配
+                  let idx = -1;
+                  if (taskId) {
+                    idx = newAgents.findIndex(
+                      (a) => a.agent === agent && a.taskId === taskId,
+                    );
+                  }
+                  // taskId 缺失或未匹配到时，回退到按 agent 匹配（兼容旧数据）
                   if (idx === -1) {
-                    newAgents = [...newAgents, { agent, description: "", taskId: "", dependsOn: [], status: "pending" as const, ...patch }];
+                    idx = newAgents.findIndex((a) => a.agent === agent);
+                  }
+                  if (idx === -1) {
+                    newAgents = [...newAgents, { agent, description: "", taskId: taskId ?? "", dependsOn: [], status: "pending" as const, ...patch }];
                   } else {
                     newAgents = newAgents.map((a, i) => (i === idx ? { ...a, ...patch } : a));
                   }
@@ -927,17 +937,32 @@ export const useChatStore = create<ChatState>()(
                 }
                 // agentMessages：把后端 blackboard 中的子任务 summary 回填到对应 agent
                 if (updaters.agentMessages && updaters.agentMessages.length > 0) {
-                  const messageMap = new Map(
-                    updaters.agentMessages.map((am) => [am.agent, am]),
-                  );
+                  // FE-003 修复：按 (agent, taskId) 复合 key 索引
+                  const messageByKey = new Map<string, typeof updaters.agentMessages[number]>();
+                  for (const am of updaters.agentMessages) {
+                    const key = am.taskId ? `${am.agent}:${am.taskId}` : am.agent;
+                    messageByKey.set(key, am);
+                  }
                   newAgents = newAgents.map((a) => {
-                    const am = messageMap.get(a.agent);
-                    if (!am) return a;
-                    return {
-                      ...a,
-                      ...(am.message !== undefined ? { message: am.message } : {}),
-                      ...(am.summary !== undefined ? { summary: am.summary } : {}),
-                    };
+                    const key = a.taskId ? `${a.agent}:${a.taskId}` : a.agent;
+                    const am = messageByKey.get(key);
+                    if (am) {
+                      return {
+                        ...a,
+                        ...(am.message !== undefined ? { message: am.message } : {}),
+                        ...(am.summary !== undefined ? { summary: am.summary } : {}),
+                      };
+                    }
+                    // 回退：按 agent 名匹配（兼容后端未传 taskId 的旧事件）
+                    const fallbackAm = messageByKey.get(a.agent);
+                    if (fallbackAm && !fallbackAm.taskId) {
+                      return {
+                        ...a,
+                        ...(fallbackAm.message !== undefined ? { message: fallbackAm.message } : {}),
+                        ...(fallbackAm.summary !== undefined ? { summary: fallbackAm.summary } : {}),
+                      };
+                    }
+                    return a;
                   });
                 }
                 const newStatus = updaters.status ?? existing.status;

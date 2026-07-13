@@ -95,7 +95,7 @@ export type ChatEvent = (
   | {
       type: "team_done";
       status?: "error" | "done" | "replanning";
-      agents?: { agent: string; message?: string; summary?: string }[];
+      agents?: { agent: string; task_id?: string; message?: string; summary?: string }[];
       trace_id?: string;
     }
   // replan 事件：质量门失败后触发重规划，携带新增任务列表和重规划次数

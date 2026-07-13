@@ -222,12 +222,14 @@ export function useChatStream(args: UseChatStreamArgs) {
                 upsertTeamNode(pendingIdRef.current, {
                   agentUpdate: {
                     agent: e.target,
+                    taskId: e.task_id,
                     patch: {
                       status: "error",
                       finishedAt: Date.now(),
                       summary: e.event === "aborted" ? "用户中止" : `执行超时${e.timeout ? `（${e.timeout}s）` : ""}`,
                     },
                   },
+                  createIfMissing: false,
                 });
               }
               break;
@@ -238,6 +240,7 @@ export function useChatStream(args: UseChatStreamArgs) {
               target: e.target,
               source: e.source,
               message: e.message,
+              ...(e.task_id ? { taskId: e.task_id } : {}),
             });
             // Team 路径的 delegation 事件（source="team"）：同步更新 TeamNodeCard 中
             // 对应 agent 的状态为 running，让用户看到子代理正在执行。
@@ -245,8 +248,10 @@ export function useChatStream(args: UseChatStreamArgs) {
               upsertTeamNode(pendingIdRef.current, {
                 agentUpdate: {
                   agent: e.target,
+                  taskId: e.task_id,
                   patch: { status: "running", startedAt: Date.now() },
                 },
+                createIfMissing: false,
               });
             }
           }
@@ -505,10 +510,17 @@ export function useChatStream(args: UseChatStreamArgs) {
           //                     agent 状态在 done ↔ running 间来回翻转（UI 闪烁）。
           if (!pendingIdRef.current) break;
           const agentMessages = Array.isArray(e.agents)
-            ? e.agents.filter(
-                (a): a is { agent: string; message?: string; summary?: string } =>
-                  typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).agent === "string",
-              )
+            ? e.agents
+                .filter(
+                  (a): a is { agent: string; task_id?: string; message?: string; summary?: string } =>
+                    typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).agent === "string",
+                )
+                .map((a) => ({
+                  agent: a.agent,
+                  ...(a.task_id !== undefined ? { taskId: a.task_id } : {}),
+                  ...(a.message !== undefined ? { message: a.message } : {}),
+                  ...(a.summary !== undefined ? { summary: a.summary } : {}),
+                }))
             : [];
           const isReplanning = e.status === "replanning";
           const teamStatus = e.status === "error"
@@ -522,21 +534,29 @@ export function useChatStream(args: UseChatStreamArgs) {
             createIfMissing: false,
             agentMessages,
           });
+
+          // FE-001 修复：replanning 不启动看门狗，只清理当前 wave 残留
+          markReasoningDone(pendingIdRef.current);
+          markRunningToolCallsComplete(pendingIdRef.current);
+
+          if (isReplanning) {
+            // replanning 是过渡态：不启动 done 看门狗，等待 replan 事件 + 新 delegation
+            // 后续 wave 的 reasoning/tool_call 会作为新 part 创建，不受 markReasoningDone 影响
+            break;
+          }
+
+          // 终态（done/error）：启动 done 看门狗
           // 安全兜底：team_done 后若 done 事件因故未到达，仍需收尾 reasoning / tool-call，
           // 避免消息卡在「运行中」状态。启动 2s done 看门狗：若 done 事件未在 2s 内
           // 到达，看门狗将强制 finishRunning(false) 收尾流式状态。
           // 防竞态：回调内检查当前会话是否仍在运行，已停止则跳过（避免误杀新消息 streaming）。
-          markReasoningDone(pendingIdRef.current);
-          markRunningToolCallsComplete(pendingIdRef.current);
           const watchdogThreadId = targetThreadId();
           if (doneWatchdogRef.current) clearTimeout(doneWatchdogRef.current);
           doneWatchdogRef.current = setTimeout(() => {
             const cid = targetThreadId();
             // 会话已切换或已停止 → 跳过（done 已到达或用户已发新消息）
-            if (cid !== watchdogThreadId) return;
+            if (!cid || cid !== watchdogThreadId) return;
             const state = useChatStore.getState();
-            // 复用 isRunning 守卫的索引结果，避免在下方再次 state.sessions[cid]
-            // 触发与 line 515 重复的 TS2538 错误（pre-existing，已知忽略）。
             const session = state.sessions[cid];
             if (!session?.isRunning) return;
             finishRunning(false);
@@ -577,6 +597,7 @@ export function useChatStream(args: UseChatStreamArgs) {
                 replanCount: e.replan_count,
                 reason: e.reason,
               },
+              createIfMissing: false,
             });
           }
           break;

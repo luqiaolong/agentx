@@ -12,7 +12,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: [],
-    include: ["tests/**/*.test.{ts,tsx}"],
+    include: ["tests/**/*.test.{ts,tsx}", "frontend/renderer/__tests__/**/*.test.{ts,tsx}"],
   },
   resolve: {
     alias: {
