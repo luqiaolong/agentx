@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -160,9 +160,9 @@ def test_parse_todos_from_text_basic() -> None:
     text = "[agent:code] 读取 main.py\n[agent:rag] 检索文档\n[agent:deep] 修改 config.py"
     todos = _parse_todos_from_text(text)
     assert len(todos) == 3
-    assert todos[0] == {"content": "[agent:code] 读取 main.py", "status": "pending"}
-    assert todos[1] == {"content": "[agent:rag] 检索文档", "status": "pending"}
-    assert todos[2] == {"content": "[agent:deep] 修改 config.py", "status": "pending"}
+    assert todos[0] == {"content": "[agent:code] 读取 main.py", "status": "pending", "deps": []}
+    assert todos[1] == {"content": "[agent:rag] 检索文档", "status": "pending", "deps": []}
+    assert todos[2] == {"content": "[agent:deep] 修改 config.py", "status": "pending", "deps": []}
 
 
 def test_parse_todos_from_text_empty() -> None:
@@ -205,12 +205,17 @@ def test_parse_todos_from_text_skips_empty_task() -> None:
 
 
 def test_parse_todos_from_text_normalizes_agent_case() -> None:
-    """agent 类型被转为小写（CODE → code）。"""
+    """content 保留原始行（含原始大小写），agent 小写化由 _todos_to_team_tasks 完成。"""
     text = "[agent:CODE] 读文件"
     todos = _parse_todos_from_text(text)
     assert len(todos) == 1
-    # content 中的 agent 已规范化为小写
-    assert todos[0]["content"] == "[agent:code] 读文件"
+    # content 保留原始行（DAG 依赖编排：便于 _todos_to_team_tasks 再次解析 [after:] 标注）
+    assert todos[0]["content"] == "[agent:CODE] 读文件"
+    # agent 小写化在 _todos_to_team_tasks 中完成
+    settings = _make_validate_settings()
+    tasks, _ = _todos_to_team_tasks(todos, settings)
+    assert len(tasks) == 1
+    assert tasks[0].agent == "code"
 
 
 def test_parse_todos_from_text_feeds_into_todos_to_team_tasks() -> None:
@@ -413,19 +418,27 @@ def _patch_orchestrator_to_return_todos(
 ) -> MagicMock:
     """patch get_chat_model 返回 mock LLM（ainvoke 返回 [agent:xxx] 任务行文本）。
 
-    旧方案 patch ``deepagents.create_deep_agent`` 返回 mock orchestrator（ainvoke
-    返回 ``{"todos": todos}`` dict）。新方案 ``_plan_node`` 直接用 ``llm.ainvoke``
-    调用 LLM，从回复正文解析 ``[agent:xxx]`` 任务行，故 mock LLM 的 ``ainvoke``
-    需返回 ``SimpleNamespace(content=任务行文本)``，模拟 LLM 直接输出任务清单。
-
+    新方案 ``_plan_node`` 直接用 ``llm.ainvoke`` 调用 LLM，从回复正文解析
+    ``[agent:xxx]`` 任务行。mock LLM 的 ``ainvoke`` 第一次调用返回任务行文本
+    （供 _plan_node），后续调用返回 ``NO_NEW_TASKS``（供 _replan_check_node 跳过 replan）。
     同时 mock LLM 的 ``astream`` 供 Aggregator 使用（返回汇总 chunk）。
     """
     fake_llm = _make_fake_llm_for_aggregator()
 
-    # 构造 ainvoke 响应：把 todos 的 content 拼成文本（模拟 LLM 输出 [agent:xxx] 任务行）
+    # 构造 ainvoke 响应：第一次返回任务行（_plan_node），后续返回 NO_NEW_TASKS（_replan_check_node）
     todo_lines = "\n".join(t["content"] for t in todos)
-    fake_response = SimpleNamespace(content=todo_lines)
-    fake_llm.ainvoke = AsyncMock(return_value=fake_response)
+    plan_response = SimpleNamespace(content=todo_lines)
+    no_new_tasks_response = SimpleNamespace(content="NO_NEW_TASKS")
+
+    call_count = {"ainvoke": 0}
+
+    async def _fake_ainvoke(messages: Any, **kwargs: Any) -> SimpleNamespace:
+        call_count["ainvoke"] += 1
+        if call_count["ainvoke"] == 1:
+            return plan_response
+        return no_new_tasks_response
+
+    fake_llm.ainvoke = _fake_ainvoke
 
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", lambda **_: fake_llm)
     return fake_llm

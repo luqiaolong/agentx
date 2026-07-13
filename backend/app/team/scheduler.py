@@ -339,7 +339,7 @@ async def _run_team_role_subtask(
     """软件开发团队角色子任务（frontend_dev / backend_dev / tester / ...）。
 
     优先用 ``build_custom_agent`` 构建专属 agent（astream_events v2）；
-    无配置时降级到 coding Expert（走 ``_run_subtask_stream`` 统一路由）。
+    缺少 ``system_prompt`` 配置时显式失败（D7：不再静默降级到 coding Expert）。
     """
     from app.team.blackboard import TeamPlanTask
 
@@ -354,27 +354,18 @@ async def _run_team_role_subtask(
         return TeamSubtaskResult(agent=task.agent, success=success, payload=payload)
 
     if not cfg or not cfg.system_prompt:
-        # 降级到 coding Expert
-        fallback_thread_id = f"{thread_id}-team-{uuid.uuid4()}"
-        inherit_result = await _inherit_workspace(fallback_thread_id, workspace_path, agent_name=task.agent)
-        if inherit_result is not None:
-            return inherit_result
-        runner = _get_runner("code", subtask_runners)
-        return await _run_subtask_stream(
-            runner,
-            runner_args=(task.input, fallback_thread_id),
-            runner_kwargs={
-                "profile_prompt": profile_prompt,
-                "history": history,
-                "permission_mode": permission_mode,
-                "workspace_path": workspace_path,
-                "parent_thread_id": thread_id,
-                "chat_model": chat_model,
-            },
-            agent_name=task.agent,
-            abort_event=abort_event,
-            writer=writer,
-            subtask_timeout=subtask_timeout,
+        # D7：显式失败，不静默降级到 coding Expert。
+        # 缺少 system_prompt 的团队角色无法构建专属 agent，启动时
+        # validate_team_subagents 应已拦截，此处为运行时兜底保护。
+        logger.error(
+            "team_role missing system_prompt, failing explicitly",
+            agent=task.agent,
+            has_cfg=cfg is not None,
+        )
+        return TeamSubtaskResult(
+            agent=task.agent,
+            success=False,
+            payload=f"团队角色 {task.agent} 配置缺失 system_prompt",
         )
 
     # 有专属配置：build_custom_agent + astream_events v2

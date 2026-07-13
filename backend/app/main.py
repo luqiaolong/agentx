@@ -108,6 +108,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     settings.ensure_runtime_dirs()
 
+    # 0.4. 团队角色子代理配置校验：启用的角色必须含非空 system_prompt，
+    # 否则 raise ValueError 阻止启动（fail-fast，避免运行时静默降级）
+    from app.config.subagents import validate_team_subagents
+
+    validate_team_subagents(settings)
+
     # 0. Checkpointer 预热：同步 + 异步单例初始化
     try:
         get_checkpointer()

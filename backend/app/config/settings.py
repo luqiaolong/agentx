@@ -189,6 +189,8 @@ class Settings(BaseSettings):
     agent_team_subtask_timeout: int = Field(
         default=300, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
     )
+    # DAG 依赖编排：迭代式 replan 最大次数（防无限循环）；0=禁用 replan
+    agent_team_max_replans: int = Field(default=2, ge=0, le=5)
 
     # ---- 场景化智能体配置（Supervisor + Expert + ScenarioTeam）----
     # AGENTX_AGENTS_CONFIG: JSON 字符串，结构见 app.config.agents.AgentsConfig
