@@ -9,6 +9,8 @@ import type { RenderItem } from "../AssistantMessageParts";
 /** 子代理执行轨迹组：target 角色名 + 该角色的所有渲染项（含 delegation） */
 export interface SubAgentTraceGroup {
   target: string;
+  /** FE-004: delegation part 携带的 taskId，用于同角色多 agent 精确匹配 */
+  taskId?: string;
   items: RenderItem[];
 }
 
@@ -216,9 +218,17 @@ function TeamNodeCardImpl({
       total <= 1
         ? agent.agent
         : `${agent.agent}-${agent.taskId || idx}`;
-    const matchedGroups = subAgentGroups.filter(
-      (g) => normalizeAgentRole(g.target) === normalizeAgentRole(agent.agent),
-    );
+    const matchedGroups = subAgentGroups.filter((g) => {
+      if (normalizeAgentRole(g.target) !== normalizeAgentRole(agent.agent)) {
+        return false;
+      }
+      // FE-004 修复：taskId 都存在时必须精确匹配，避免同角色多 agent 轨迹串显
+      if (g.taskId && agent.taskId) {
+        return g.taskId === agent.taskId;
+      }
+      // 任一缺失时回退到按角色名匹配（兼容旧数据）
+      return true;
+    });
     return { agent, key, groups: matchedGroups };
   });
 

@@ -131,6 +131,19 @@ function getTeamPart(pendingId: string): Extract<MessagePart, { type: "team" }> 
   return undefined;
 }
 
+/** 获取 pending 消息的所有 delegation parts（按 parts 顺序） */
+function getDelegationParts(pendingId: string): Extract<MessagePart, { type: "delegation" }>[] {
+  for (const sess of Object.values(useChatStore.getState().sessions)) {
+    const msg = sess.messages.find((m) => m.id === pendingId);
+    if (msg) {
+      return msg.parts.filter(
+        (p): p is Extract<MessagePart, { type: "delegation" }> => p.type === "delegation",
+      );
+    }
+  }
+  return [];
+}
+
 describe("upsertTeamNode — replanning 不触发 finalize", () => {
   it("team_done{replanning} 后不应启动看门狗强制 finalizeAgents", async () => {
     vi.useFakeTimers();
@@ -247,5 +260,125 @@ describe("upsertTeamNode — replanning 不触发 finalize", () => {
     expect(t1Agent?.status).toBe("pending");
     // t2 应被更新为 running
     expect(t2Agent?.status).toBe("running");
+  });
+});
+
+describe("FE-004: 同角色多 agent delegation part 携带 taskId", () => {
+  it("两个同角色 delegation 携带不同 taskId，供 TeamNodeCard 按 (agent, taskId) 精确匹配", async () => {
+    const sid = await setupPendingMessage("pending-fe004");
+
+    renderHook(() =>
+      useChatStream({
+        threadId: sid,
+        pendingIdRef: { current: "pending-fe004" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setErrorMsg: () => {},
+      }),
+    );
+
+    // team_init: 两个 "code" 角色 agent，taskId 分别为 t1 / t2
+    act(() => {
+      emitEvent(sid, {
+        type: "team_init",
+        plan: [
+          { agent: "code", description: "task1", id: "t1", depends_on: [] },
+          { agent: "code", description: "task2", id: "t2", depends_on: [] },
+        ],
+        agents: [
+          { agent: "code", status: "pending" },
+          { agent: "code", status: "pending" },
+        ],
+        summary: "规划完成",
+      });
+    });
+
+    // 两个 delegation，同 target="code" 但 task_id 不同
+    // FE-004 修复：delegation part 携带 taskId → AssistantMessageParts 构造 subAgentGroups 时
+    //   透传 taskId → TeamNodeCard 按 (agent, taskId) 精确匹配，避免同角色轨迹串显
+    act(() => {
+      emitEvent(sid, {
+        type: "delegation",
+        target: "code",
+        source: "team",
+        message: "委派给 code agent (task1)",
+        task_id: "t1",
+      });
+      emitEvent(sid, {
+        type: "delegation",
+        target: "code",
+        source: "team",
+        message: "委派给 code agent (task2)",
+        task_id: "t2",
+      });
+    });
+
+    // 验证：两个 delegation part 都携带正确的 taskId（FE-004 数据基础）
+    const delegations = getDelegationParts("pending-fe004");
+    expect(delegations).toHaveLength(2);
+    expect(delegations[0]?.taskId).toBe("t1");
+    expect(delegations[1]?.taskId).toBe("t2");
+
+    // 验证：team part 的 agents 也携带正确的 taskId（供 TeamNodeCard 匹配）
+    const teamPart = getTeamPart("pending-fe004");
+    expect(teamPart?.agents).toHaveLength(2);
+    const t1Agent = teamPart?.agents.find((a) => a.taskId === "t1");
+    const t2Agent = teamPart?.agents.find((a) => a.taskId === "t2");
+    // 两个 delegation 都触发了 agentUpdate → 两个 agent 都应进入 running
+    expect(t1Agent?.status).toBe("running");
+    expect(t2Agent?.status).toBe("running");
+  });
+});
+
+describe("FE-005: childTaskId 优先用 e.task_id 避免同角色多 wave 覆盖", () => {
+  it("同角色多 wave todo_update 携带不同 task_id 时，子任务不互相覆盖", async () => {
+    const sid = await setupPendingMessage("pending-fe005");
+
+    renderHook(() =>
+      useChatStream({
+        threadId: sid,
+        pendingIdRef: { current: "pending-fe005" },
+        currentTaskIdRef: { current: null },
+        lastUserQueryRef: { current: "" },
+        setErrorMsg: () => {},
+      }),
+    );
+
+    // wave 1: todo_update with task_id="child-1", source="code", parent_task_id="parent"
+    act(() => {
+      emitEvent(sid, {
+        type: "todo_update",
+        todos: [{ content: "wave1-task", status: "in_progress" }],
+        task_id: "child-1",
+        source: "code",
+        parent_task_id: "parent",
+      });
+    });
+
+    // wave 2: todo_update with task_id="child-2", source="code", parent_task_id="parent"
+    //   修复前：childTaskId = `${parent}-child-${source}` = "parent-child-code"
+    //           → wave 2 覆盖 wave 1 的 todos，只保留一个子任务
+    //   修复后：childTaskId = e.task_id = "child-2" → 独立子任务，互不覆盖
+    act(() => {
+      emitEvent(sid, {
+        type: "todo_update",
+        todos: [{ content: "wave2-task", status: "in_progress" }],
+        task_id: "child-2",
+        source: "code",
+        parent_task_id: "parent",
+      });
+    });
+
+    // 验证：两个独立子任务都存在，互不覆盖
+    const tasks = useTasksStore.getState().tasks;
+    expect(tasks).toHaveLength(2);
+    const child1 = tasks.find((t) => t.id === "child-1");
+    const child2 = tasks.find((t) => t.id === "child-2");
+    expect(child1).toBeDefined();
+    expect(child2).toBeDefined();
+    expect(child1?.todos?.[0]?.content).toBe("wave1-task");
+    expect(child2?.todos?.[0]?.content).toBe("wave2-task");
+    // 不应存在 source 拼接的旧式 id（修复前的产物）
+    expect(tasks.find((t) => t.id === "parent-child-code")).toBeUndefined();
   });
 });

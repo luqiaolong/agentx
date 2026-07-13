@@ -404,7 +404,10 @@ export function useChatStream(args: UseChatStreamArgs) {
             //（ref 为 null），回退到事件 parent_task_id（后端 thread_id），
             // 避免丢失子任务数据。
             const effectiveParentId = currentTaskIdRef.current ?? parentTaskId;
-            const childTaskId = `${effectiveParentId}-child-${source}`;
+            // FE-005 修复：优先用后端 task_id（子任务 thread_id），避免同角色多 wave
+            // 子任务 todos 互相覆盖（旧逻辑 `${effectiveParentId}-child-${source}`
+            // 同角色多 wave 会生成相同 id → 后到的 todos 覆盖前者）
+            const childTaskId = taskId ?? `${effectiveParentId}-child-${source}`;
             const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
             const existing = useTasksStore.getState().tasks.find((t) => t.id === childTaskId);
             if (existing) {

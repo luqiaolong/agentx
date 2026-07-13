@@ -344,8 +344,15 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
     // 避免后创建的 wave 覆盖先前 wave 的 mapping，导致延迟到达的 tool_call
     // 错配到错误的子代理卡片。
     const targetToGroups = new Map<string, { delegationIdx: number; items: RenderItem[] }[]>();
-    // 已被 source 匹配认领的 delegation 组集合：
-    // 未匹配 source 的工具调用（如 source="team" 或未知角色）避免误并入已认领的卡片
+    // FE-006 修复：claimedGroups 改为 per-source 认领。
+    // 同 source 的后续 tool_call 复用已认领的 group，避免 wave 2 delegation 创建后，
+    // wave 1 的延迟 tool_call 因"找未认领 group"而误归入 wave 2 group。
+    // 旧逻辑（Set<group>）：第一次 tool_call 认领 group A 后，wave 2 delegation B 创建，
+    //   wave 1 后续 tool_call find(!claimed) → 命中 B → 误归入 wave 2 group。
+    // 新逻辑（Map<source, group>）：同 source 始终复用首次认领的 group，不跨 wave 跳转。
+    const claimedGroupsBySource = new Map<string, { delegationIdx: number; items: RenderItem[] }>();
+    // 所有已被认领的 group 集合（claimedGroupsBySource 的 values 快照），
+    // 用于 fallback 时跳过已被其他 source 占用的 delegation 组。
     const claimedGroups = new Set<{ delegationIdx: number; items: RenderItem[] }>();
 
     for (let i = 0; i < items.length; i++) {
@@ -370,35 +377,49 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
         // tool-call / tool-call-group / orphan-tool-result / reasoning
         // 优先按 source 匹配对应的 delegation 组（并行子代理事件交错场景）
         const source = getRenderItemSource(item);
-        const matchedGroups = source ? targetToGroups.get(normalizeAgentRole(source)) ?? null : null;
-        // 优先找尚未认领的 group（避免 wave 2 的 tool_call 抢走 wave 1 的 group），
-        // 找不到未认领的取最后一个作为兜底（保留向后兼容）
-        const matchedGroup = matchedGroups
-          ? matchedGroups.find((g) => !claimedGroups.has(g)) ?? matchedGroups[matchedGroups.length - 1]
-          : null;
-        if (matchedGroup) {
-          matchedGroup.items.push(item);
-          claimedGroups.add(matchedGroup);
+        const sourceKey = source ? normalizeAgentRole(source) : null;
+        // FE-006 修复：同 source 优先复用已认领的 group（不跨 wave 跳转）
+        const claimed = sourceKey ? claimedGroupsBySource.get(sourceKey) : null;
+        if (claimed) {
+          claimed.items.push(item);
         } else {
-          // source 不匹配任何 delegation target（如 source="team" 或未知角色）：
-          // 优先回退到最近一个尚未被其他 source 认领的 delegation 组，
-          // 避免把工具调用误并入已归属其他子代理的卡片
-          let fallbackGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
-          for (let j = result.length - 1; j >= 0; j--) {
-            const g = result[j]!;
-            if (g.items[0]?.kind === "delegation" && !claimedGroups.has(g)) {
-              fallbackGroup = g;
-              break;
+          const matchedGroups = source ? targetToGroups.get(normalizeAgentRole(source)) ?? null : null;
+          // 优先找尚未认领的 group（避免 wave 2 的 tool_call 抢走 wave 1 的 group），
+          // 找不到未认领的取最后一个作为兜底（保留向后兼容）
+          const matchedGroup = matchedGroups
+            ? matchedGroups.find((g) => !claimedGroups.has(g)) ?? matchedGroups[matchedGroups.length - 1]
+            : null;
+          if (matchedGroup) {
+            matchedGroup.items.push(item);
+            if (sourceKey) {
+              claimedGroupsBySource.set(sourceKey, matchedGroup);
+              claimedGroups.add(matchedGroup);
             }
-          }
-          if (fallbackGroup) {
-            fallbackGroup.items.push(item);
-          } else if (currentGroup) {
-            // 顺序到达场景兼容：无未认领组时回退到当前组
-            currentGroup.items.push(item);
           } else {
-            // 无子代理归属的独立项
-            result.push({ delegationIdx: i, items: [item] });
+            // source 不匹配任何 delegation target（如 source="team" 或未知角色）：
+            // 优先回退到最近一个尚未被其他 source 认领的 delegation 组，
+            // 避免把工具调用误并入已归属其他子代理的卡片
+            let fallbackGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
+            for (let j = result.length - 1; j >= 0; j--) {
+              const g = result[j]!;
+              if (g.items[0]?.kind === "delegation" && !claimedGroups.has(g)) {
+                fallbackGroup = g;
+                break;
+              }
+            }
+            if (fallbackGroup) {
+              fallbackGroup.items.push(item);
+              if (sourceKey) {
+                claimedGroupsBySource.set(sourceKey, fallbackGroup);
+                claimedGroups.add(fallbackGroup);
+              }
+            } else if (currentGroup) {
+              // 顺序到达场景兼容：无未认领组时回退到当前组
+              currentGroup.items.push(item);
+            } else {
+              // 无子代理归属的独立项
+              result.push({ delegationIdx: i, items: [item] });
+            }
           }
         }
       }
@@ -446,7 +467,8 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
       if (!first) continue;
       if (first.kind === "team") continue; // team part 本身跳过
       if (first.kind === "delegation") {
-        subAgentGroups.push({ target: first.part.target, items: g.items });
+        // FE-004 修复：subAgentGroups 携带 taskId，供 TeamNodeCard 按 (agent, taskId) 精确匹配
+        subAgentGroups.push({ target: first.part.target, taskId: first.part.taskId, items: g.items });
       } else if (first.kind === "text") {
         textGroups.push(g);
       } else {
