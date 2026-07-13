@@ -35,8 +35,6 @@ from app.team.state import TeamState
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-    from app.router.state import RouterState
-
 __all__ = ["run_team_path"]
 
 
@@ -51,7 +49,6 @@ def _resolve_subtask_timeout(settings: Any) -> int:
 async def run_team_path(
     message: str,
     thread_id: str,
-    state: RouterState,
     profile_prompt: str = "",
     history: list | None = None,
     permission_mode: str = "standard",

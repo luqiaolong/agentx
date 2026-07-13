@@ -548,8 +548,17 @@ async def aggregate_node(state: TeamState) -> dict:
         ):
             writer(sse)
 
-    # 发射 team_done
+    # 发射 team_done：status 反映实际状态
+    # - ok=True → "done"
+    # - ok=False + has_error → "error"
+    # - ok=False + 无 error（质量门失败触发 replan）→ "replanning"
     has_error = bool(errors)
+    if ok:
+        status = "done"
+    elif has_error:
+        status = "error"
+    else:
+        status = "replanning"
     agent_summaries = [
         {"agent": f.agent, "summary": f.content} for f in findings.values()
     ]
@@ -557,7 +566,7 @@ async def aggregate_node(state: TeamState) -> dict:
         make_sse_event(
             "team_done",
             {
-                "status": "error" if has_error else "done",
+                "status": status,
                 "agents": agent_summaries,
             },
         )

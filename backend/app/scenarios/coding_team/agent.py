@@ -58,11 +58,6 @@ async def run_coding_team(
     Yields:
         SSE 事件 dict: {event: str, data: str}
     """
-    # 构造最小 RouterState（run_team_path 需要 thread_id 字段）
-    state: dict = {
-        "thread_id": thread_id,
-        "agent_mode": "coding_team",
-    }
     # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
     current_thread_id.set(thread_id)
 
@@ -78,7 +73,6 @@ async def run_coding_team(
         async for sse in run_team_path(
             message,
             thread_id,
-            state,
             profile_prompt=profile_prompt,
             history=history,
             permission_mode=permission_mode,

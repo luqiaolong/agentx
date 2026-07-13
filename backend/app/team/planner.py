@@ -25,8 +25,9 @@ from app.config.subagents import BUILTIN_TEAM_KEYS
 from app.llm import get_chat_model
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
+from app.team.classifier import _DANGEROUS_PATTERNS
 from app.team.state import Finding, TeamPlan, TeamTask
-from app.utils.text import compile_keyword_patterns, matches_any
+from app.utils.text import matches_any
 
 __all__ = [
     "_BASE_EXPERTS",
@@ -421,22 +422,11 @@ def _validate_dag(
     return levels, dropped_edges
 
 
-_DANGEROUS_KEYWORDS = [
-    "写入",
-    "写文件",
-    "write",
-    "编辑",
-    "修改",
-    "edit",
-    "执行命令",
-    "shell",
-    "运行脚本",
-]
-_DANGEROUS_PATTERNS = compile_keyword_patterns(_DANGEROUS_KEYWORDS)
-
-
 def _looks_like_dangerous_task(input_text: str) -> bool:
-    """启发式判断子任务是否涉及危险操作。"""
+    """启发式判断子任务是否涉及危险操作（关键词匹配，快速预筛）。
+
+    精确分类由 ``DangerousTaskClassifier``（LLM 路径）在 execute_node 中执行。
+    """
     return matches_any(input_text, _DANGEROUS_PATTERNS)
 
 
