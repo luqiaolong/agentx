@@ -123,6 +123,7 @@ class TeamState(TypedDict, total=False):
     warnings: Annotated[list[str], _merge_warnings]
     completed_task_ids: Annotated[list[str], _merge_completed_task_ids]
     replan_count: int
+    quality_gate_passed: bool  # D16: aggregate_node 写入，_route_after_aggregate 读取
 
     # 运行时对象（不参与 checkpoint 序列化，与旧 TeamState 同策略）
     team_semaphore: Any  # asyncio.Semaphore

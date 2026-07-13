@@ -73,9 +73,8 @@
 `2026-07-06-paths-refactor` 重构后 `graph.py` 与路径模块**无循环导入**：
 
 - `graph.py` 顶层单向 import `app.chat.run` / `app.deepagent.agent` /
-  `app.subagents.dispatch` / `app.team.orchestrator`。
+  `app.subagents.dispatch` / `app.team.runner`。
 - `deepagent/agent.py` 用 `TYPE_CHECKING` 延迟导入 `RouterState`，**禁止**改为运行时导入。
-- `team/orchestrator.py` 回退路径 A 时在函数内延迟 import `run_chat_path`（保持 lazy）。
 - `app.paths` 包已删除，**禁止**重新创建 `backend/app/paths/` 目录。
 
 ## §14.6 路由别名（前端）

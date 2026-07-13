@@ -1,10 +1,11 @@
 """coding_team 场景级 AgentTeam 实现。
 
-本文件是场景入口薄封装，框架实现见 ``app.team.orchestrator``。
+本文件是场景入口薄封装，框架实现见 ``app.team.runner``。
 
 AgentTeam 是统称（类型），当前唯一实例是 coding team。
-复用现有 ``app.team`` 框架（orchestrator/scheduler/planner/aggregator/blackboard），
-但作为场景的子模式（``coding_team``），不是顶层模式。
+复用现有 ``app.team`` v2 框架（runner/graph_builder/nodes/dispatcher/planner/
+scheduler/aggregator/blackboard/state），但作为场景的子模式（``coding_team``），
+不是顶层模式。
 
 与旧 ``run_team_path`` 的区别：
 1. 入参签名与 ``run_work_supervisor`` / ``run_coding_expert`` 对齐（无 state 参数）
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 from app.deepagent.context import current_thread_id
 from app.observability.logger import logger
 from app.sse.events import make_error_event, make_sse_event
-from app.team.orchestrator import run_team_path
+from app.team.runner import run_team_path
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel

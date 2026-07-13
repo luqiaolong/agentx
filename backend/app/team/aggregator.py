@@ -105,14 +105,12 @@ async def _run_aggregator(
     Args:
         blackboard: 含 ``findings`` / ``errors`` key 的 Mapping（通常为 TeamState dict）。
         chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
-            None 时调用 ``orchestrator.get_chat_model()`` 获取真实 LLM。
+            None 时调用 ``app.llm.get_chat_model()`` 获取真实 LLM。
         abort_event: 可选 ``asyncio.Event``，在流式输出过程中检查中止信号，
             已中止则提前返回部分结果（H3 修复）。
     """
-    # 通过 orchestrator 模块属性访问 get_chat_model，
-    # 以便测试通过 monkeypatch app.team.orchestrator.get_chat_model 替换。
-    # 延迟 import 避免与 orchestrator.py 顶部的 import 形成循环。
-    from app.team import orchestrator
+    # 直接从 app.llm 获取 get_chat_model（v2：不再通过 orchestrator 模块属性访问）
+    from app.llm import get_chat_model
 
     settings = get_settings()
 
@@ -133,7 +131,7 @@ async def _run_aggregator(
             return
 
         try:
-            llm = chat_model if chat_model is not None else orchestrator.get_chat_model(
+            llm = chat_model if chat_model is not None else get_chat_model(
                 temperature=settings.llm_temperature_aggregator, streaming=True
             )
         except ValueError as exc:
