@@ -3,7 +3,7 @@ import { Bot, Code, BookOpen, Globe, Wrench, Palette, Server, TestTube, Layers, 
 import { TraceCardHeader } from "./TraceCardHeader";
 
 /** 子代理类型 → 图标 + 中文名 映射。 */
-const SUBAGENT_META: Record<string, { icon: typeof Bot; label: string }> = {
+export const SUBAGENT_META: Record<string, { icon: typeof Bot; label: string }> = {
   // 内置子代理
   code: { icon: Code, label: "代码子代理" },
   rag: { icon: BookOpen, label: "知识子代理" },
@@ -81,7 +81,7 @@ function DelegationCardImpl({
   );
 
   return (
-    <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
+    <div className="w-full rounded-lg rounded-tl-md px-3 py-2">
       <TraceCardHeader
         icon={iconEl}
         title={`由 ${meta.label} 执行`}

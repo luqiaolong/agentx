@@ -7,6 +7,8 @@ import { ToolCallCard } from "./parts/ToolCallCard";
 import { DelegationCard } from "./parts/DelegationCard";
 import { ClassificationCard } from "./parts/ClassificationCard";
 import { TeamNodeCard } from "./parts/TeamNodeCard";
+import type { SubAgentTraceGroup } from "./parts/TeamNodeCard";
+import { TraceItems } from "./parts/TraceItems";
 import { ToolCallGroup } from "./parts/ToolCallGroup";
 import { MessageFeedback } from "./MessageFeedback";
 import { MessageStats } from "./MessageStats";
@@ -49,7 +51,7 @@ type OrphanToolResult = {
 };
 
 /** 配对后的渲染项（按 parts 顺序 + tool-call/tool-result 合并 + tool-call-group 折叠）。 */
-type RenderItem =
+export type RenderItem =
   | { kind: "classification"; part: Extract<MessagePart, { type: "classification" }> }
   | { kind: "delegation"; part: Extract<MessagePart, { type: "delegation" }> }
   | { kind: "reasoning"; part: Extract<MessagePart, { type: "reasoning" }> }
@@ -294,82 +296,15 @@ function SubAgentGroup({
       {/* 执行轨迹容器：展开时显示，限高滚动避免内容过长 */}
       {expanded && traceItems.length > 0 && (
         <div
-          className="flex w-full flex-col gap-3 overflow-y-auto rounded-lg rounded-tl-md border border-default px-3 py-2 shadow-soft"
+          className="flex w-full flex-col gap-3 overflow-y-auto rounded-lg rounded-tl-md px-3 py-2"
           style={{ maxHeight: "320px" }}
         >
-          {traceItems.map((item, itemIdx) => {
-            const isSameKindAsPrev = itemIdx > 0 && traceItems[itemIdx - 1]?.kind === item.kind;
-            const blockClass = isSameKindAsPrev ? "gap-1" : "";
-            switch (item.kind) {
-              case "reasoning":
-                return (
-                  <div
-                    key={`r-${item.part.id}-${expanded ? "open" : "closed"}`}
-                    className={blockClass}
-                  >
-                    <ReasoningBlock
-                      partId={item.part.id}
-                      messageId={messageId}
-                      text={item.part.text}
-                      done={item.part.done}
-                      startedAt={item.part.startedAt}
-                      doneAt={item.part.doneAt}
-                      defaultExpanded={true}
-                    />
-                  </div>
-                );
-              case "tool-call":
-                return (
-                  <div key={`t-${item.part.id}`} className={blockClass}>
-                    <ToolCallCard
-                      toolName={item.part.toolName}
-                      args={item.part.args}
-                      status={item.part.status}
-                      result={item.part.result}
-                      error={item.part.error}
-                      source={item.part.source}
-                      startedAt={item.part.startedAt}
-                      arrivedAt={item.part.arrivedAt}
-                      approvalRequest={item.part.approvalRequest}
-                    />
-                  </div>
-                );
-              case "tool-call-group":
-                return (
-                  <div key={`g-${item.items[0]?.id ?? itemIdx}-${item.toolName}`} className={blockClass}>
-                    <ToolCallGroup
-                      toolName={item.toolName}
-                      items={item.items}
-                    />
-                  </div>
-                );
-              case "orphan-tool-result":
-                return (
-                  <div key={`o-${item.part.id}`} className={blockClass}>
-                    <ToolCallCard
-                      toolName={item.part.toolName}
-                      args={undefined}
-                      status={item.part.error ? "error" : "complete"}
-                      result={item.part.result}
-                      error={item.part.error}
-                    />
-                  </div>
-                );
-              case "text":
-                return (
-                  <div key={`x-${item.part.id}`} className={blockClass}>
-                    <TextPartView
-                      text={item.part.text}
-                      role="assistant"
-                      messageId={messageId}
-                      partId={item.part.id}
-                    />
-                  </div>
-                );
-              default:
-                return null;
-            }
-          })}
+          <TraceItems
+            items={traceItems}
+            messageId={messageId}
+            reasoningDefaultExpanded={true}
+            parentExpandedKey={expanded ? "open" : "closed"}
+          />
         </div>
       )}
     </div>
@@ -403,8 +338,11 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
   const groups = useMemo(() => {
     const result: { delegationIdx: number; items: RenderItem[] }[] = [];
     let currentGroup: { delegationIdx: number; items: RenderItem[] } | null = null;
-    // 规范化后的 target → group 映射（同角色多任务时取最后创建的组）
-    const targetToGroup = new Map<string, { delegationIdx: number; items: RenderItem[] }>();
+    // 规范化后的 target → groups 数组映射（2026-07-13 修复）：
+    // 同角色多 wave 时每个 delegation 创建一个独立 group 入栈，
+    // 避免后创建的 wave 覆盖先前 wave 的 mapping，导致延迟到达的 tool_call
+    // 错配到错误的子代理卡片。
+    const targetToGroups = new Map<string, { delegationIdx: number; items: RenderItem[] }[]>();
     // 已被 source 匹配认领的 delegation 组集合：
     // 未匹配 source 的工具调用（如 source="team" 或未知角色）避免误并入已认领的卡片
     const claimedGroups = new Set<{ delegationIdx: number; items: RenderItem[] }>();
@@ -415,7 +353,10 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
         // 新的子代理分组开始，delegation 放入容器内作为头部
         currentGroup = { delegationIdx: i, items: [item] };
         result.push(currentGroup);
-        targetToGroup.set(normalizeAgentRole(item.part.target), currentGroup);
+        const key = normalizeAgentRole(item.part.target);
+        const list = targetToGroups.get(key) ?? [];
+        list.push(currentGroup);
+        targetToGroups.set(key, list);
       } else if (item.kind === "team") {
         // team 独立成组，不归属任何子代理
         result.push({ delegationIdx: i, items: [item] });
@@ -428,8 +369,11 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
         // tool-call / tool-call-group / orphan-tool-result / reasoning
         // 优先按 source 匹配对应的 delegation 组（并行子代理事件交错场景）
         const source = getRenderItemSource(item);
-        const matchedGroup = source
-          ? targetToGroup.get(normalizeAgentRole(source)) ?? null
+        const matchedGroups = source ? targetToGroups.get(normalizeAgentRole(source)) ?? null : null;
+        // 优先找尚未认领的 group（避免 wave 2 的 tool_call 抢走 wave 1 的 group），
+        // 找不到未认领的取最后一个作为兜底（保留向后兼容）
+        const matchedGroup = matchedGroups
+          ? matchedGroups.find((g) => !claimedGroups.has(g)) ?? matchedGroups[matchedGroups.length - 1]
           : null;
         if (matchedGroup) {
           matchedGroup.items.push(item);
@@ -472,6 +416,52 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
     return result;
   }, [items]);
 
+  /**
+   * Team 模式数据抽取：当消息包含 team part 时，把 delegation 组和独立轨迹项
+   * 从 groups 中分离，传给 TeamNodeCard 在卡片内部渲染。
+   *
+   * 结构：
+   * - teamPart：team part 本身（plan / reasoning / agents / status / doneAt）
+   * - subAgentGroups：delegation 组列表（target + items），传入 TeamNodeCard
+   * - standaloneItems：不属于任何 delegation 的非 text 轨迹项（classification 等）
+   * - textGroups：最终输出 text 组，渲染在 TeamNodeCard 外部下方
+   */
+  const teamData = useMemo(() => {
+    const hasTeam = items.some((item) => item.kind === "team");
+    if (!hasTeam) return null;
+
+    const teamGroup = groups.find(
+      (g) => g.items[0]?.kind === "team",
+    );
+    const teamFirst = teamGroup?.items[0];
+    if (!teamFirst || teamFirst.kind !== "team") return null;
+
+    const subAgentGroups: SubAgentTraceGroup[] = [];
+    const standaloneItems: RenderItem[] = [];
+    const textGroups: { delegationIdx: number; items: RenderItem[] }[] = [];
+
+    for (const g of groups) {
+      const first = g.items[0];
+      if (!first) continue;
+      if (first.kind === "team") continue; // team part 本身跳过
+      if (first.kind === "delegation") {
+        subAgentGroups.push({ target: first.part.target, items: g.items });
+      } else if (first.kind === "text") {
+        textGroups.push(g);
+      } else {
+        // classification / 独立 reasoning / 独立 tool-call 等
+        standaloneItems.push(...g.items);
+      }
+    }
+
+    return {
+      teamPart: teamFirst.part,
+      subAgentGroups,
+      standaloneItems,
+      textGroups,
+    };
+  }, [groups, items]);
+
   // 空状态：独立加载卡片（items 为空且仍在流式中）
   if (items.length === 0 && isStreamingLast) {
     return (
@@ -494,103 +484,136 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
     <div className="group flex justify-start items-start gap-1">
       <div className="flex w-[95%]">
         <div className="flex w-full flex-col gap-3">
-          {groups.map((group, groupIdx) => {
-            const hasDelegation = group.items[0]?.kind === "delegation";
-            // 包含 delegation 的子代理分组：delegation 在容器上方，容器内只有执行轨迹
-            if (hasDelegation) {
-              return (
-                <SubAgentGroup
-                  key={`group-${groupIdx}-${group.delegationIdx}`}
-                  group={group}
-                  groupIdx={groupIdx}
-                  messageId={message.id}
-                />
-              );
-            }
-            // 无 delegation 的独立项：各自独立卡片
-            return group.items.map((item, itemIdx) => {
-              switch (item.kind) {
-                case "classification":
-                  return (
-                    <ClassificationCard
-                      key={`c-${item.part.id}`}
-                      label={item.part.label}
-                      reason={item.part.reason}
-                    />
-                  );
-                case "reasoning":
-                  return (
-                    <ReasoningBlock
-                      key={`r-${item.part.id}`}
-                      partId={item.part.id}
-                      messageId={message.id}
+          {teamData ? (
+            <>
+              {/*
+               * Team 模式：所有执行轨迹包裹在 TeamNodeCard 内部。
+               * - 卡片展开 → 显示子代理列表（点击子代理展开轨迹）
+               * - 最终 text 输出渲染在卡片外部下方
+               */}
+              <TeamNodeCard
+                plan={teamData.teamPart.plan}
+                reasoning={teamData.teamPart.reasoning}
+                agents={teamData.teamPart.agents}
+                status={teamData.teamPart.status}
+                doneAt={teamData.teamPart.doneAt}
+                subAgentGroups={teamData.subAgentGroups}
+                standaloneItems={teamData.standaloneItems}
+                messageId={message.id}
+              />
+              {teamData.textGroups.map((group) =>
+                group.items.map((item) =>
+                  item.kind === "text" ? (
+                    <TextPartView
+                      key={`x-${item.part.id}`}
                       text={item.part.text}
-                      done={item.part.done}
-                      startedAt={item.part.startedAt}
-                      doneAt={item.part.doneAt}
+                      role="assistant"
+                      messageId={message.id}
+                      partId={item.part.id}
                     />
-                  );
-                case "tool-call":
-                  return (
-                    <ToolCallCard
-                      key={`t-${item.part.id}`}
-                      toolName={item.part.toolName}
-                      args={item.part.args}
-                      status={item.part.status}
-                      result={item.part.result}
-                      error={item.part.error}
-                      source={item.part.source}
-                      startedAt={item.part.startedAt}
-                      arrivedAt={item.part.arrivedAt}
-                      approvalRequest={item.part.approvalRequest}
-                    />
-                  );
-                case "tool-call-group":
-                  return (
-                    <ToolCallGroup
-                      key={`g-${item.items[0]?.id ?? itemIdx}-${item.toolName}`}
-                      toolName={item.toolName}
-                      items={item.items}
-                    />
-                  );
-                case "orphan-tool-result":
-                  return (
-                    <ToolCallCard
-                      key={`o-${item.part.id}`}
-                      toolName={item.part.toolName}
-                      args={undefined}
-                      status={item.part.error ? "error" : "complete"}
-                      result={item.part.result}
-                      error={item.part.error}
-                    />
-                  );
-                case "text":
-                  return (
-                    <Fragment key={`x-${item.part.id}`}>
-                      <TextPartView
-                        text={item.part.text}
-                        role="assistant"
-                        messageId={message.id}
-                        partId={item.part.id}
-                      />
-                    </Fragment>
-                  );
-                case "team":
-                  return (
-                    <TeamNodeCard
-                      key={`team-${item.part.id}`}
-                      plan={item.part.plan}
-                      reasoning={item.part.reasoning}
-                      agents={item.part.agents}
-                      status={item.part.status}
-                      doneAt={item.part.doneAt}
-                    />
-                  );
-                default:
-                  return null;
+                  ) : null,
+                ),
+              )}
+            </>
+          ) : (
+            groups.map((group, groupIdx) => {
+              const hasDelegation = group.items[0]?.kind === "delegation";
+              // 包含 delegation 的子代理分组：delegation 在容器上方，容器内只有执行轨迹
+              if (hasDelegation) {
+                return (
+                  <SubAgentGroup
+                    key={`group-${groupIdx}-${group.delegationIdx}`}
+                    group={group}
+                    groupIdx={groupIdx}
+                    messageId={message.id}
+                  />
+                );
               }
-            });
-          })}
+              // 无 delegation 的独立项：各自独立卡片
+              return group.items.map((item, itemIdx) => {
+                switch (item.kind) {
+                  case "classification":
+                    return (
+                      <ClassificationCard
+                        key={`c-${item.part.id}`}
+                        label={item.part.label}
+                        reason={item.part.reason}
+                      />
+                    );
+                  case "reasoning":
+                    return (
+                      <ReasoningBlock
+                        key={`r-${item.part.id}`}
+                        partId={item.part.id}
+                        messageId={message.id}
+                        text={item.part.text}
+                        done={item.part.done}
+                        startedAt={item.part.startedAt}
+                        doneAt={item.part.doneAt}
+                      />
+                    );
+                  case "tool-call":
+                    return (
+                      <ToolCallCard
+                        key={`t-${item.part.id}`}
+                        toolName={item.part.toolName}
+                        args={item.part.args}
+                        status={item.part.status}
+                        result={item.part.result}
+                        error={item.part.error}
+                        source={item.part.source}
+                        startedAt={item.part.startedAt}
+                        arrivedAt={item.part.arrivedAt}
+                        approvalRequest={item.part.approvalRequest}
+                      />
+                    );
+                  case "tool-call-group":
+                    return (
+                      <ToolCallGroup
+                        key={`g-${item.items[0]?.id ?? itemIdx}-${item.toolName}`}
+                        toolName={item.toolName}
+                        items={item.items}
+                      />
+                    );
+                  case "orphan-tool-result":
+                    return (
+                      <ToolCallCard
+                        key={`o-${item.part.id}`}
+                        toolName={item.part.toolName}
+                        args={undefined}
+                        status={item.part.error ? "error" : "complete"}
+                        result={item.part.result}
+                        error={item.part.error}
+                      />
+                    );
+                  case "text":
+                    return (
+                      <Fragment key={`x-${item.part.id}`}>
+                        <TextPartView
+                          text={item.part.text}
+                          role="assistant"
+                          messageId={message.id}
+                          partId={item.part.id}
+                        />
+                      </Fragment>
+                    );
+                  case "team":
+                    return (
+                      <TeamNodeCard
+                        key={`team-${item.part.id}`}
+                        plan={item.part.plan}
+                        reasoning={item.part.reasoning}
+                        agents={item.part.agents}
+                        status={item.part.status}
+                        doneAt={item.part.doneAt}
+                      />
+                    );
+                  default:
+                    return null;
+                }
+              });
+            })
+          )}
           {/*
            * 底部操作区：
            * - 左侧（常驻展示）：观测中心反馈按钮（MessageFeedback 👍/👎）

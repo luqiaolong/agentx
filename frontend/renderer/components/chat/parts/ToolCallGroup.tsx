@@ -41,7 +41,7 @@ function ToolCallGroupImpl({ toolName, items }: ToolCallGroupProps) {
   const statusText = statusParts.length > 0 ? `（${statusParts.join(" / ")}）` : "";
 
   return (
-    <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft" style={{ fontSize: 'var(--fs-msg-tool)' }} data-testid="tool-call-group">
+    <div className="w-full rounded-lg rounded-tl-md px-3 py-2" style={{ fontSize: 'var(--fs-msg-tool)' }} data-testid="tool-call-group">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -58,7 +58,7 @@ function ToolCallGroupImpl({ toolName, items }: ToolCallGroupProps) {
         />
       </button>
       {expanded && (
-        <div className="mt-1 space-y-1 border-l border-default pl-2">
+        <div className="mt-1 space-y-1 pl-2">
           {items.map((it) => (
             <ToolCallCard
               key={`g-${it.id}`}

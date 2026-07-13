@@ -190,7 +190,7 @@ function ToolCallCardImpl({
   );
 
   return (
-    <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+    <div className="w-full rounded-lg rounded-tl-md px-3 py-2" style={{ fontSize: 'var(--fs-msg-tool)' }}>
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}

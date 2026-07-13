@@ -49,7 +49,7 @@ function ClassificationCardImpl({ label, reason }: ClassificationCardProps) {
   const handleToggle = useCallback(() => setExpanded((v) => !v), []);
 
   return (
-    <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
+    <div className="w-full rounded-lg rounded-tl-md px-3 py-2">
       <TraceCardHeader
         icon={<Route className="h-3 w-3" />}
         title="路由决策"
@@ -58,7 +58,7 @@ function ClassificationCardImpl({ label, reason }: ClassificationCardProps) {
         onToggle={handleToggle}
       />
       {expanded && (
-        <div className="mt-1 border-t border-default pt-1.5 text-muted-c/50" style={{ fontSize: 'var(--fs-msg-tool)' }}>
+        <div className="mt-1 pt-1.5 text-muted-c/50" style={{ fontSize: 'var(--fs-msg-tool)' }}>
           <div className="flex items-center gap-1.5">
             <Icon className="h-3 w-3 shrink-0" />
             <span className="font-medium">{meta.label}</span>

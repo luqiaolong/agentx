@@ -192,7 +192,7 @@ function ReasoningBlockImpl({
       />
       {showContent && text.length > 0 && (
         <div
-          className="mt-1 overflow-auto border-l border-default pl-2 font-mono text-muted-c/70"
+          className="mt-1 overflow-auto pl-2 font-mono text-muted-c/70"
           style={{
             maxHeight: done ? "240px" : "160px",
             fontSize: 'var(--fs-msg-code)',
