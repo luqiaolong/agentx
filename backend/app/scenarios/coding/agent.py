@@ -33,6 +33,7 @@ from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.subagents.base import THINK_PROMPT_SUFFIX, make_rag_tools, make_web_tools
 from app.sse.events import make_error_event
+from app.utils.prompts import build_workspace_prompt_suffix
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -81,7 +82,9 @@ def _build_subagents(
             SubAgent(
                 name=name,
                 description=cfg.trigger_description or name,
-                system_prompt=(cfg.system_prompt or "") + THINK_PROMPT_SUFFIX,
+                system_prompt=(cfg.system_prompt or "")
+                + THINK_PROMPT_SUFFIX
+                + build_workspace_prompt_suffix(workspace_path),
                 tools=tools,
             )
         )
@@ -104,7 +107,9 @@ def _build_subagents(
             SubAgent(
                 name=key,
                 description=cfg.trigger_description or cfg.name or key,
-                system_prompt=(cfg.system_prompt or "") + THINK_PROMPT_SUFFIX,
+                system_prompt=(cfg.system_prompt or "")
+                + THINK_PROMPT_SUFFIX
+                + build_workspace_prompt_suffix(workspace_path),
                 tools=tools,
             )
         )

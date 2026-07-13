@@ -20,6 +20,7 @@ from app.subagents.base import (
     THINK_PROMPT_SUFFIX,
     run_react_agent_stream,
 )
+from app.utils.prompts import build_workspace_prompt_suffix
 
 
 def _make_custom_tools(
@@ -97,7 +98,11 @@ def build_custom_agent(
         _temp = temperature if temperature is not None else 0.2
         model = get_chat_model(temperature=_temp, streaming=True)
         _tools = _make_custom_tools(thread_id or "", tools or [], workspace_path)
-        prompt = (system_prompt or "") + THINK_PROMPT_SUFFIX
+        prompt = (
+            (system_prompt or "")
+            + THINK_PROMPT_SUFFIX
+            + build_workspace_prompt_suffix(workspace_path)
+        )
         return create_agent(
             model,
             _tools,
@@ -125,7 +130,11 @@ def build_custom_agent(
         )
     model = chat_model if chat_model is not None else get_chat_model(temperature=cfg.temperature, streaming=True)
     _tools = _make_custom_tools(thread_id or "", cfg.tools, workspace_path)
-    prompt = (cfg.system_prompt or "") + THINK_PROMPT_SUFFIX
+    prompt = (
+        (cfg.system_prompt or "")
+        + THINK_PROMPT_SUFFIX
+        + build_workspace_prompt_suffix(workspace_path)
+    )
     return create_agent(
         model,
         _tools,
