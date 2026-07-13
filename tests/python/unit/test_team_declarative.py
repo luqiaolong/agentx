@@ -36,12 +36,18 @@ def _make_settings(
     """构造 settings mock：仅暴露 _validate_task 关注的字段。"""
     s = MagicMock()
     s.team_subagents = team_subagents or {}
-    s.subagents = {"rag": MagicMock(enabled=True, tools=["rag_retrieve"]),
-                   "web": MagicMock(enabled=True, tools=["web_search"])}
+    s.subagents = {
+        "rag": MagicMock(enabled=True, tools=["rag_retrieve"]),
+        "web": MagicMock(enabled=True, tools=["web_search"]),
+    }
     s.custom_subagents = custom_subagents or {}
     s.tools_enabled = tools_enabled or {
-        "read_file": True, "list_dir": True, "glob": True, "grep": True,
-        "rag_retrieve": True, "web_search": True,
+        "read_file": True,
+        "list_dir": True,
+        "glob": True,
+        "grep": True,
+        "rag_retrieve": True,
+        "web_search": True,
     }
     return s
 
@@ -102,9 +108,7 @@ def test_build_team_experts_description_supports_custom_team_role() -> None:
 def test_orchestrator_system_prompt_includes_team_experts_when_formatted() -> None:
     """_ORCHESTRATOR_SYSTEM_PROMPT 格式化后应包含 _build_team_experts_description 输出。"""
     team = {
-        "frontend_dev": SubagentSettings(
-            enabled=True, trigger_description="前端专家"
-        ),
+        "frontend_dev": SubagentSettings(enabled=True, trigger_description="前端专家"),
     }
     settings = _make_settings(team_subagents=team)
     experts = _BASE_EXPERTS + "\n" + _build_team_experts_description(settings)
@@ -137,9 +141,7 @@ def test_validate_task_accepts_builtin_team_keys() -> None:
 def test_validate_task_accepts_custom_team_role_via_settings() -> None:
     """_validate_task 应接受 settings.team_subagents 中定义的任何角色（不再 hardcode 集合）。"""
     team = {
-        "data_scientist": SubagentSettings(
-            enabled=True, tools=["read_file", "list_dir"]
-        ),
+        "data_scientist": SubagentSettings(enabled=True, tools=["read_file", "list_dir"]),
     }
     settings = _make_settings(team_subagents=team)
     task = TeamPlanTask(agent="data_scientist", input="分析数据", purpose="")
@@ -175,10 +177,10 @@ def test_validate_task_rejects_team_role_with_no_enabled_tools() -> None:
     assert "禁用" in err or "不可用" in err
 
 
-def test_validate_task_rejects_unknown_agent() -> None:
-    """完全未知的 agent 类型应被拒绝。"""
+def test_validate_task_unknown_agent_allowed() -> None:
+    """完全未知的 agent 类型保留，由运行时 fallback 到 code runner。"""
     settings = _make_settings()
     task = TeamPlanTask(agent="ghost_role", input="...", purpose="")
     ok, err = _validate_task(task, settings)
-    assert not ok
-    assert "未知" in err or "不存在" in err
+    assert ok is True
+    assert err == ""

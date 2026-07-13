@@ -133,10 +133,7 @@ def tasks_to_display_todos(tasks: list[TeamPlanTask]) -> list[dict]:
         deepagents 原生 Todo schema ``[{content, status}, ...]``，
         ``content`` 为 ``task.input``（纯文本），``status`` 为 ``"pending"``。
     """
-    return [
-        {"content": task.input, "status": "pending"}
-        for task in tasks
-    ]
+    return [{"content": task.input, "status": "pending"} for task in tasks]
 
 
 def _parse_after_deps(after_content: str) -> list[int]:
@@ -219,11 +216,13 @@ def _parse_todos_from_text(text: str) -> list[dict]:
         if after_content is not None:
             content += f"[after:{after_content.strip()}]"
         content += f" {task_text}"
-        todos.append({
-            "content": content,
-            "status": "pending",
-            "deps": deps,
-        })
+        todos.append(
+            {
+                "content": content,
+                "status": "pending",
+                "deps": deps,
+            }
+        )
     return todos
 
 
@@ -417,7 +416,17 @@ def _validate_dag(
     return levels, dropped_edges
 
 
-_DANGEROUS_KEYWORDS = ["写入", "写文件", "write", "编辑", "修改", "edit", "执行命令", "shell", "运行脚本"]
+_DANGEROUS_KEYWORDS = [
+    "写入",
+    "写文件",
+    "write",
+    "编辑",
+    "修改",
+    "edit",
+    "执行命令",
+    "shell",
+    "运行脚本",
+]
 _DANGEROUS_PATTERNS = compile_keyword_patterns(_DANGEROUS_KEYWORDS)
 
 
@@ -454,7 +463,7 @@ def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:
             return False, f"团队角色 {task.agent} 绑定的工具全部被禁用"
         return True, ""
     if task.agent.startswith("custom-"):
-        key = task.agent[len("custom-"):]
+        key = task.agent[len("custom-") :]
         custom = settings.custom_subagents
         if key not in custom:
             return False, f"自定义子代理 {key} 不存在"
@@ -466,4 +475,6 @@ def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:
         if not any(settings.tools_enabled.get(t, True) for t in cfg.tools):
             return False, f"自定义子代理 {key} 绑定的工具全部被禁用"
         return True, ""
-    return False, f"未知 agent 类型: {task.agent}"
+    # DAG 依赖编排 D6：未知 agent 不在白名单时也不直接过滤，留给运行时
+    # _resolve_subtask_config 统一 fallback 到 code runner，保持任务可执行。
+    return True, ""

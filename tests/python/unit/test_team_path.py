@@ -79,7 +79,9 @@ def _make_validate_settings() -> Any:
         "rag": {"enabled": True},
         "web": {"enabled": True, "tools": ["web_search"]},
     }
-    settings.tools_config = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
+    settings.tools_config = {
+        t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]
+    }
     return settings
 
 
@@ -138,16 +140,17 @@ def test_todos_to_team_tasks_rewrites_dangerous_task_to_deep() -> None:
     assert tasks[3].agent == "code"
 
 
-def test_todos_to_team_tasks_invalid_agent_filtered() -> None:
-    """未知 agent 类型的 todo 被过滤（_validate_task 返回 False）。"""
+def test_todos_to_team_tasks_unknown_agent_allowed() -> None:
+    """未知 agent 类型保留，由运行时 _resolve_subtask_config fallback 到 code runner。"""
     settings = _make_validate_settings()
     todos = [
         _todo("[agent:code] 有效"),
-        _todo("[agent:unknown_agent] 无效"),
+        _todo("[agent:unknown_agent] 未知但保留"),
     ]
     tasks, _ = _todos_to_team_tasks(todos, settings)
-    assert len(tasks) == 1
+    assert len(tasks) == 2
     assert tasks[0].agent == "code"
+    assert tasks[1].agent == "unknown_agent"
 
 
 # ============================================================
@@ -298,7 +301,9 @@ def _make_settings(
         "rag": {"enabled": rag_enabled},
         "web": {"enabled": web_enabled, "tools": web_tools or ["web_search"]},
     }
-    settings.tools_config = {t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]}
+    settings.tools_config = {
+        t: True for t in ["read_file", "list_dir", "glob", "grep", "rag_retrieve", "web_search"]
+    }
     return settings
 
 
@@ -340,11 +345,11 @@ def test_validate_task_deep_always_ok() -> None:
 
 
 def test_validate_task_unknown_agent() -> None:
-    """未知 agent 类型校验失败。"""
+    """未知 agent 类型校验通过，由运行时 fallback 到 code runner。"""
     settings = _make_settings()
     ok, err = _validate_task(TeamPlanTask("unknown", "xxx", ""), settings)
-    assert ok is False
-    assert "未知 agent 类型" in err
+    assert ok is True
+    assert err == ""
 
 
 def test_validate_task_custom_agent() -> None:
@@ -454,10 +459,21 @@ async def test_run_team_path_emits_todo_update_and_aggregates(
     ]
     _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(
+        message: str,
+        thread_id: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "standard",
+        workspace_path: str | None = None,
+        parent_thread_id: str | None = None,
+        chat_model=None,
+    ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
 
-    async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_rag_agent(
+        thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None
+    ) -> AsyncIterator[dict]:
         yield {"type": "token", "content": "检索结果"}
 
     events = await _collect_events(
@@ -503,7 +519,16 @@ async def test_run_team_path_all_subtasks_fail_yields_error(
     ]
     _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(
+        message: str,
+        thread_id: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "standard",
+        workspace_path: str | None = None,
+        parent_thread_id: str | None = None,
+        chat_model=None,
+    ) -> AsyncIterator[dict]:
         # 只返回空，导致 summary 为未返回有效内容 → 标记失败
         if False:
             yield {}
@@ -532,10 +557,21 @@ async def test_run_team_path_partial_failure_continues(
     ]
     _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(
+        message: str,
+        thread_id: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "standard",
+        workspace_path: str | None = None,
+        parent_thread_id: str | None = None,
+        chat_model=None,
+    ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码成功"}
 
-    async def _fake_run_rag_agent(thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None) -> AsyncIterator[dict]:
+    async def _fake_run_rag_agent(
+        thread_id: str, message: str, history: list | None = None, workspace_path: str | None = None
+    ) -> AsyncIterator[dict]:
         # 空输出 → 失败
         if False:
             yield {}
@@ -563,7 +599,9 @@ async def test_run_team_path_invalid_plan_yields_error(
     _patch_orchestrator_to_return_todos(monkeypatch, [])
 
     events = await _collect_events(
-        run_team_path("分析项目的整体架构设计", "t-invalid", {"thread_id": "t-invalid", "messages": []})
+        run_team_path(
+            "分析项目的整体架构设计", "t-invalid", {"thread_id": "t-invalid", "messages": []}
+        )
     )
 
     error_events = [e for e in events if e["event"] == "error"]
@@ -581,7 +619,10 @@ async def test_run_team_path_deep_subtask_propagates_approval_request(
     _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
     async def _fake_run_deep_path(state, message, **kwargs):
-        yield {"event": "approval_request", "data": json.dumps({"tool_name": "write_file", "preview": "test"})}
+        yield {
+            "event": "approval_request",
+            "data": json.dumps({"tool_name": "write_file", "preview": "test"}),
+        }
         yield {"event": "token", "data": "deep 结果"}
         yield {"event": "tool_result", "data": json.dumps({"name": "write_file", "result": "ok"})}
 
@@ -615,7 +656,16 @@ async def test_run_team_path_token_data_is_plain_string(
     ]
     _patch_orchestrator_to_return_todos(monkeypatch, todos)
 
-    async def _fake_run_coding_expert(message: str, thread_id: str, profile_prompt: str = "", history: list | None = None, permission_mode: str = "standard", workspace_path: str | None = None, parent_thread_id: str | None = None, chat_model=None) -> AsyncIterator[dict]:
+    async def _fake_run_coding_expert(
+        message: str,
+        thread_id: str,
+        profile_prompt: str = "",
+        history: list | None = None,
+        permission_mode: str = "standard",
+        workspace_path: str | None = None,
+        parent_thread_id: str | None = None,
+        chat_model=None,
+    ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "代码结果"}
 
     events = await _collect_events(
@@ -648,9 +698,11 @@ async def test_run_team_path_downgrades_simple_message(
     T10: 降级路径不产出 team 生命周期事件（team_init / team_done），
     只发射 token 提示 + done 终结符。
     """
+
     # mock team Orchestrator LLM — 若被调用则测试失败
     def _orchestrator_should_not_be_called(**_: Any) -> Any:
         raise AssertionError("Orchestrator should not be called for simple message")
+
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", _orchestrator_should_not_be_called)
 
     events = await _collect_events(
