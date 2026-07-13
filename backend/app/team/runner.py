@@ -42,7 +42,7 @@ def _resolve_subtask_timeout(settings: Any) -> int:
     """从 settings 解析 subtask_timeout。"""
     val = settings.team_subtask_timeout
     if not isinstance(val, int) or val < 30:
-        return 300
+        return 600
     return val
 
 

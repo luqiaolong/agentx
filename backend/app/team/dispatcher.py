@@ -256,7 +256,7 @@ def build_dispatch_sends(state: TeamState) -> list[Send]:
                     "chat_model": state.get("chat_model"),
                     "subtask_runners": state.get("subtask_runners"),
                     "team_semaphore": state.get("team_semaphore"),
-                    "subtask_timeout": state.get("subtask_timeout", 300),
+                    "subtask_timeout": state.get("subtask_timeout", 600),
                     "abort_event": state.get("abort_event"),
                     "replan_count": replan_count,
                 },

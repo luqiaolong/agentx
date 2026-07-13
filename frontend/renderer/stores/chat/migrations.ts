@@ -223,3 +223,66 @@ export function migrateV5toV6(persisted: unknown): Partial<ChatState> {
     currentId: typeof p.currentId === "string" ? p.currentId : null,
   };
 }
+
+/**
+ * v6 -> v7：为 team part 的 agents 补 dependsOn / taskId 字段。
+ *
+ * TeamAgentState.dependsOn / taskId 是 v6 之后新增的必填字段（DAG 依赖编排）。
+ * 旧版本（v6 及以前）的 team part agents 没有这两个字段，TeamNodeCard
+ * 渲染 `agent.dependsOn.map(...)` 时会抛 `Cannot read properties of
+ * undefined (reading 'map')`，导致整个 TeamNodeCard 崩溃。
+ *
+ * 同步为 replanHistory.newTasks[].dependsOn 兜底（同为新增字段）。
+ *
+ * 语义同 migrateV5toV6 的 startedAt 回填：无法恢复真实依赖关系，
+ * 但保证类型合法 + 渲染不崩（依赖标签为空，符合"无依赖"语义）。
+ */
+export function migrateV6toV7(persisted: unknown): Partial<ChatState> {
+  const p = (persisted ?? {}) as Record<string, unknown>;
+  const rawSessions = (p.sessions ?? {}) as Record<string, Record<string, unknown>>;
+  const sessions: Record<string, Session> = {};
+  for (const [id, raw] of Object.entries(rawSessions)) {
+    if (!raw || typeof raw !== "object") continue;
+    const oldMessages = Array.isArray(raw.messages)
+      ? (raw.messages as Array<Record<string, unknown>>)
+      : [];
+    const newMessages = oldMessages.map((m) => {
+      if (!m || typeof m !== "object") return m as unknown as ChatMessage;
+      if (!Array.isArray(m.parts)) return m as unknown as ChatMessage;
+      const parts = (m.parts as Array<Record<string, unknown>>).map((part) => {
+        if (!part || typeof part !== "object") return part;
+        if (part.type !== "team") return part;
+        const next: Record<string, unknown> = { ...part };
+        if (Array.isArray(next.agents)) {
+          next.agents = (next.agents as Array<Record<string, unknown>>).map((a) => ({
+            ...a,
+            taskId: typeof a?.taskId === "string" ? a.taskId : "",
+            dependsOn: Array.isArray(a?.dependsOn) ? a.dependsOn : [],
+          }));
+        }
+        if (Array.isArray(next.replanHistory)) {
+          next.replanHistory = (next.replanHistory as Array<Record<string, unknown>>).map(
+            (r) => {
+              if (!r || typeof r !== "object") return r;
+              if (!Array.isArray(r.newTasks)) return r;
+              return {
+                ...r,
+                newTasks: (r.newTasks as Array<Record<string, unknown>>).map((t) => ({
+                  ...t,
+                  dependsOn: Array.isArray(t?.dependsOn) ? t.dependsOn : [],
+                })),
+              };
+            },
+          );
+        }
+        return next;
+      });
+      return { ...m, parts } as unknown as ChatMessage;
+    });
+    sessions[id] = buildSessionShell(id, raw, newMessages);
+  }
+  return {
+    sessions,
+    currentId: typeof p.currentId === "string" ? p.currentId : null,
+  };
+}

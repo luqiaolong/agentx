@@ -12,6 +12,7 @@ import {
   migrateV3toV4,
   migrateV4toV5,
   migrateV5toV6,
+  migrateV6toV7,
 } from "./migrations";
 import {
   lookupSessionId,
@@ -1276,7 +1277,7 @@ export const useChatStore = create<ChatState>()(
       {
         name: "agentx-chat",
         storage: createJSONStorage(() => createQuotaGuardedStorage()),
-        version: 6,
+        version: 7,
         migrate: (persisted, version) => {
           let state: Partial<ChatState> = persisted as Partial<ChatState>;
           if (version < 1) {
@@ -1296,6 +1297,9 @@ export const useChatStore = create<ChatState>()(
           }
           if (version < 6) {
             state = migrateV5toV6(state);
+          }
+          if (version < 7) {
+            state = migrateV6toV7(state);
           }
           return state;
         },

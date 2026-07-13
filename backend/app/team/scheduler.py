@@ -563,7 +563,7 @@ async def _run_subtask_stream(
     abort_event: Any,
     writer: Callable[[dict], None],
     *,
-    subtask_timeout: int = 300,
+    subtask_timeout: int = 600,
 ) -> TeamSubtaskResult:
     """通用子任务流式执行：调用 runner，路由事件，返回结果。
 
@@ -636,6 +636,13 @@ async def _run_subtask_stream(
                 result = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
             except asyncio.TimeoutError:
                 # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
+                logger.warning(
+                    "team subtask timeout",
+                    agent=agent_name,
+                    subtask_timeout=subtask_timeout,
+                    collected_text_len=sum(len(t) for t in collected_text),
+                    tool_traces_count=len(tool_traces),
+                )
                 writer(make_sse_event("delegation", {
                     "target": agent_name,
                     "source": "team",
@@ -686,7 +693,7 @@ async def _run_team_role_subtask(
     abort_event: Any,
     writer: Callable[[dict], None],
     *,
-    subtask_timeout: int = 300,
+    subtask_timeout: int = 600,
 ) -> TeamSubtaskResult:
     """软件开发团队角色子任务（frontend_dev / backend_dev / tester / ...）。
 
@@ -846,6 +853,14 @@ async def _run_team_role_subtask(
                 aborted = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
             except asyncio.TimeoutError:
                 # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
+                logger.warning(
+                    "team_role subtask timeout",
+                    agent=task.agent,
+                    task_id=getattr(task, "id", ""),
+                    subtask_timeout=subtask_timeout,
+                    collected_text_len=sum(len(t) for t in collected_text),
+                    tool_traces_count=len(tool_traces),
+                )
                 writer(make_sse_event("delegation", {
                     "target": task.agent,
                     "source": "team",

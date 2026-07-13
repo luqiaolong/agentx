@@ -188,7 +188,7 @@ class Settings(BaseSettings):
     team_max_concurrency: int = Field(default=5, ge=1, le=20)
     team_result_max_chars: int = Field(default=2000, ge=500, le=8000)
     team_subtask_timeout: int = Field(
-        default=300, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
+        default=600, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
     )
     # DAG 依赖编排：迭代式 replan 最大次数（防无限循环）；0=禁用 replan
     team_max_replan_attempts: int = Field(default=1, ge=0, le=5)
