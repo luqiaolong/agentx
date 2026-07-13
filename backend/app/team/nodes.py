@@ -170,21 +170,27 @@ def _build_runner_args(
     task: TeamTask,
     child_id: str | None,
     parent_thread_id: str,
+    composed_input: str | None = None,
 ) -> tuple:
-    """构造 runner_args（与旧 orchestrator._build_runner_args 对齐）。"""
+    """构造 runner_args（与旧 orchestrator._build_runner_args 对齐）。
+
+    BE-P 修复：``composed_input`` 优先于 ``task.description`` 作为子任务输入，
+    让上游 findings 真正注入到下游 runner。
+    """
+    actual_input = composed_input if composed_input is not None else task.description
     if config.runner_type == "deep":
         deep_state: dict = {
             "thread_id": child_id,
-            "messages": [{"role": "user", "content": task.description}],
+            "messages": [{"role": "user", "content": actual_input}],
         }
-        return (deep_state, task.description)
+        return (deep_state, actual_input)
     if config.runner_type == "code":
-        return (task.description, child_id)
+        return (actual_input, child_id)
     if config.runner_type == "builtin":
-        return (parent_thread_id, task.description)
+        return (parent_thread_id, actual_input)
     if config.runner_type == "custom":
         key = task.agent[len("custom-") :]
-        return (key, parent_thread_id, task.description)
+        return (key, parent_thread_id, actual_input)
     raise ValueError(f"Unsupported runner_type for args: {config.runner_type}")
 
 
@@ -393,20 +399,27 @@ async def execute_node(state: SubtaskState) -> dict:
                 inherit_result, task, wave_index, remaining_waves, warnings
             )
 
-    # 注入上游 findings
-    _compose_input_with_upstream(task, upstream_findings)  # 副作用：无，但保持调用以验证
+    # 注入上游 findings（BE-P 修复：实际使用 composed_input 作为子任务输入）
+    composed_input = _compose_input_with_upstream(task, upstream_findings)
 
     # 发射 delegation SSE
     _emit_delegation(writer, task.agent, task.expected_output)
 
-    subtask_timeout = state.get("subtask_timeout", 300)
+    subtask_timeout = state.get("subtask_timeout", 600)
 
     # 构造 runner factory（每次调用返回新 coroutine）
     if config.runner_type == "team_role":
         # team_role 走专用 runner（v1 桥接）
+        # BE-P 修复：team_role 也注入上游 findings（替代 _to_team_plan_task）
+        team_plan_task = TeamPlanTask(
+            agent=task.agent,
+            input=composed_input,
+            purpose=task.expected_output,
+        )
+
         def runner_factory() -> Coroutine[Any, Any, TeamSubtaskResult]:
             return _run_team_role_subtask(
-                task=_to_team_plan_task(task),
+                task=team_plan_task,
                 thread_id=parent_thread_id,
                 history=state.get("history"),
                 permission_mode=state.get("permission_mode", "standard"),
@@ -424,7 +437,7 @@ async def execute_node(state: SubtaskState) -> dict:
         def runner_factory() -> Coroutine[Any, Any, TeamSubtaskResult]:
             runner = _get_runner(config.runner_key, state.get("subtask_runners"))
             runner_args = _build_runner_args(
-                config, task, child_id, parent_thread_id
+                config, task, child_id, parent_thread_id, composed_input
             )
             runner_kwargs = _build_runner_kwargs(config, state, parent_thread_id)
             return _run_subtask_stream(
