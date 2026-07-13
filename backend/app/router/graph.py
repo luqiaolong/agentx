@@ -51,6 +51,26 @@ __all__ = ["run_router", "_parse_skill_tag"]
 # 合法 agent_mode 集合
 _VALID_AGENT_MODES: frozenset[str] = frozenset({"work", "coding", "coding_team"})
 
+# 观测中心 sink 调用超时（秒）：sink 实现若同步阻塞（写 SQLite/HTTP）不能拖垮主流程
+_OBSERVATION_TIMEOUT: float = 5.0
+
+# 旧值 → 新值映射（前端 store migrate 已处理，后端兜底防漏）
+_LEGACY_AGENT_MODE_MAP: dict[str, str] = {
+    "agent": "work",
+    "agent_team": "coding_team",
+}
+
+
+def _normalize_agent_mode(agent_mode: str | None) -> str:
+    """Normalize agent_mode：strip + lower + 兼容旧值。
+
+    - 大小写不敏感：``"Work"`` / ``"CODING_TEAM"`` 均接受
+    - 旧值兼容：``"agent"`` → ``"work"``，``"agent_team"`` → ``"coding_team"``
+    - 其他值原样返回（由 ``_VALID_AGENT_MODES`` 校验拦截）
+    """
+    mode = (agent_mode or "").strip().lower()
+    return _LEGACY_AGENT_MODE_MAP.get(mode, mode)
+
 
 # ============================================================
 # /skill:<name> 标记解析
@@ -158,6 +178,13 @@ async def _run_router_inner(
 
         # ---- 2. 解析 /skill 标记 ----
         cleaned_message, skill_content = _parse_skill_tag(message)
+        # /skill 标记仅在 work 模式生效；其他模式用户写了 /skill: 会被静默清理，
+        # 这里 yield 一个 token 通知前端，避免用户以为 skill 已注入。
+        if skill_content is not None and agent_mode != "work":
+            yield make_sse_event(
+                "token",
+                f"[skill 跳过] /skill 标记仅在 work 模式生效，当前 {agent_mode} 模式已忽略",
+            )
 
         # ---- 3. workspace 授权同步 ----
         effective_workspace = (workspace_path or "").strip() or None
@@ -197,6 +224,11 @@ async def _run_router_inner(
                     "router.workspace_skipped_revoked",
                     thread_id=thread_id,
                     workspace=effective_workspace,
+                )
+                # 通知前端：路径已被撤销，避免用户以为 workspace 生效
+                yield make_sse_event(
+                    "token",
+                    f"[工作区跳过] 路径已被撤销：{effective_workspace}",
                 )
             else:
                 from app.sandbox import get_sandbox
@@ -256,27 +288,25 @@ async def _run_router_inner(
 
         # ---- 5. 加载历史 messages ----
         history: list = []
+        last_checkpoint: dict | None = None  # 复用给观测块，避免重复 aget
         if checkpointer is not None:
             logger.info("router.inner.before_load_history", thread_id=thread_id)
             try:
-                history = await _load_history_from_checkpointer(checkpointer, thread_id)
+                history, last_checkpoint = await _load_history_from_checkpointer(
+                    checkpointer, thread_id
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("load history failed", error=str(exc))
                 history = []
             logger.info("router.inner.after_load_history", thread_id=thread_id, history_count=len(history))
 
         settings = get_settings()
+        max_msgs = settings.context_max_messages
         try:
-            # 第一轮：按消息条数截断
-            max_msgs = settings.context_max_messages
+            # 第一轮：按消息条数截断（直接切片，等价于 trim_messages(strategy="last")
+            # 但避免 trim_messages(token_counter=len) 的开销与语义混淆）
             if len(history) > max_msgs:
-                history = trim_messages(
-                    history,
-                    max_tokens=max_msgs,
-                    token_counter=len,
-                    strategy="last",
-                    include_system=True,
-                )
+                history = history[-max_msgs:]
             # 第二轮：按 token 数截断（如果 chat_model 提供了 token 计数方法）
             if chat_model and hasattr(chat_model, "get_num_tokens_from_messages"):
                 max_tokens = settings.context_max_tokens
@@ -290,11 +320,18 @@ async def _run_router_inner(
                             strategy="last",
                             include_system=True,
                         )
-                except Exception:  # noqa: BLE001
-                    pass  # token 计数失败时回退到条数截断
+                except Exception as exc:  # noqa: BLE001
+                    # 旧实现此处 `except: pass` 静默吞异常，token 计数持续失败时
+                    # 可能导致 context overflow。改为 warning 日志，便于排查。
+                    logger.warning(
+                        "router.token_counter_failed",
+                        thread_id=thread_id,
+                        error=str(exc),
+                        error_type=type(exc).__name__,
+                        history_count=len(history),
+                    )
         except Exception:  # noqa: BLE001
             logger.exception("trim_messages failed, fallback to simple slice")
-            max_msgs = settings.context_max_messages
             history = history[-max_msgs:] if len(history) > max_msgs else history
 
         logger.info(
@@ -315,18 +352,25 @@ async def _run_router_inner(
             )
             try:
                 sink = get_observation_sink()
-                await sink.record_prompt(
-                    run_id=run_id,
-                    system_prompt=profile_prompt,
-                    user_message=cleaned_message,
-                    history_preview=history_preview,
+                # 超时保护：sink 实现若同步阻塞（写 SQLite/HTTP）不能拖垮主流程
+                await asyncio.wait_for(
+                    sink.record_prompt(
+                        run_id=run_id,
+                        system_prompt=profile_prompt,
+                        user_message=cleaned_message,
+                        history_preview=history_preview,
+                    ),
+                    timeout=_OBSERVATION_TIMEOUT,
                 )
-                if checkpointer is not None and hasattr(checkpointer, "aget"):
-                    cp_config = {"configurable": {"thread_id": thread_id}}
-                    checkpoint = await checkpointer.aget(cp_config)
-                    if checkpoint and isinstance(checkpoint, dict):
-                        channel_values = checkpoint.get("channel_values", {}) or {}
-                        await sink.record_state_snapshot(run_id, "start", channel_values)
+                # 复用 last_checkpoint 的 channel_values，避免重复 aget
+                if last_checkpoint is not None:
+                    channel_values = last_checkpoint.get("channel_values", {}) or {}
+                    await asyncio.wait_for(
+                        sink.record_state_snapshot(run_id, "start", channel_values),
+                        timeout=_OBSERVATION_TIMEOUT,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning("observation record_prompt/start timeout", run_id=run_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("observation record_prompt/start failed", error=str(exc))
 
@@ -360,16 +404,23 @@ async def _run_router_inner(
                 # 因此直接收集即可，无需按子代理分组。
                 assistant_content_parts: list[str] = []
                 has_error = False
+                # 竞态修复：仅在 team_done 事件已到达且无 error 时写回 checkpointer。
+                # 旧实现仅检查 has_error，SSE 中途断开（如长连接超时）时
+                # _collect_team_sse 循环正常退出但 assistant_content_parts 可能不完整，
+                # 仍会写入 checkpointer，污染下轮对话历史。
+                team_done_received = False
 
                 async def _collect_team_sse(
                     path_generator: AsyncIterator[dict[str, str]],
                 ) -> AsyncIterator[dict[str, str]]:
-                    nonlocal has_error
+                    nonlocal has_error, team_done_received
                     async for sse in path_generator:
                         if sse.get("event") == "token":
                             assistant_content_parts.append(str(sse.get("data", "")))
                         elif sse.get("event") == "error":
                             has_error = True
+                        elif sse.get("event") == "team_done":
+                            team_done_received = True
                         yield sse
 
                 async for sse in _collect_team_sse(
@@ -385,9 +436,15 @@ async def _run_router_inner(
                 ):
                     yield sse
 
-                # M10: 仅在无 error 事件时写回 checkpointer，避免部分内容被持久化
+                # M10 + 竞态修复：仅在 team_done 已收到且无 error 时写回 checkpointer，
+                # 避免 SSE 中途断开导致不完整内容被持久化
                 assistant_content = "".join(assistant_content_parts).strip()
-                if assistant_content and checkpointer is not None and not has_error:
+                if (
+                    assistant_content
+                    and checkpointer is not None
+                    and not has_error
+                    and team_done_received
+                ):
                     from langchain_core.messages import AIMessage, HumanMessage
                     new_messages = [
                         HumanMessage(content=cleaned_message),
@@ -400,10 +457,19 @@ async def _run_router_inner(
                 try:
                     if checkpointer is not None and hasattr(checkpointer, "aget"):
                         cp_config = {"configurable": {"thread_id": thread_id}}
-                        checkpoint = await checkpointer.aget(cp_config)
+                        # end snapshot 需重新 aget（场景 runner 执行后 state 已变）
+                        checkpoint = await asyncio.wait_for(
+                            checkpointer.aget(cp_config),
+                            timeout=_OBSERVATION_TIMEOUT,
+                        )
                         if checkpoint and isinstance(checkpoint, dict):
                             channel_values = checkpoint.get("channel_values", {}) or {}
-                            await sink.record_state_snapshot(run_id, "end", channel_values)
+                            await asyncio.wait_for(
+                                sink.record_state_snapshot(run_id, "end", channel_values),
+                                timeout=_OBSERVATION_TIMEOUT,
+                            )
+                except asyncio.TimeoutError:
+                    logger.warning("observation end snapshot timeout", run_id=run_id)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("observation end snapshot failed", error=str(exc))
 
@@ -433,6 +499,8 @@ async def run_router(
     """
     from app.observability.trace import bind_trace, current_trace_id
 
+    # normalize agent_mode：strip + lower + 兼容旧值（大小写不敏感 + agent/agent_team 兜底）
+    agent_mode = _normalize_agent_mode(agent_mode)
     _trace_id = trace_id or current_trace_id() or ""
     _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
     with _trace_cm:
@@ -451,7 +519,7 @@ async def run_router(
 
 async def _load_history_from_checkpointer(
     checkpointer: Any, thread_id: str
-) -> list:
+) -> tuple[list, dict | None]:
     """从 checkpointer 加载 ``thread_id`` 的历史 messages。
 
     Args:
@@ -459,8 +527,10 @@ async def _load_history_from_checkpointer(
         thread_id: 会话 ID。
 
     Returns:
-        历史 ``BaseMessage`` 列表（不含当前消息）。若 checkpoint 不存在或无 messages，
-        返回空列表。
+        ``(messages, checkpoint)`` 元组。``messages`` 为历史 ``BaseMessage``
+        列表（不含当前消息），``checkpoint`` 为原始 checkpoint dict（供观测块
+        复用 channel_values，避免重复 aget）。若 checkpoint 不存在或无 messages，
+        返回 ``([], None)``。
     """
     config = {"configurable": {"thread_id": thread_id}}
     # 优先用 aget（异步 checkpointer）
@@ -470,16 +540,16 @@ async def _load_history_from_checkpointer(
         # 同步 SqliteSaver.get() 用 asyncio.to_thread 避免阻塞事件循环
         checkpoint = await asyncio.to_thread(checkpointer.get, config)
     else:
-        return []
+        return ([], None)
 
     if not checkpoint:
-        return []
+        return ([], None)
 
     # LangGraph checkpoint 结构：{"channel_values": {"messages": [...]}, ...}
     # 不同版本字段名可能不同，防御性读取
     channel_values = checkpoint.get("channel_values", {}) if isinstance(checkpoint, dict) else {}
     messages = channel_values.get("messages", [])
-    return list(messages) if messages else []
+    return (list(messages) if messages else [], checkpoint if isinstance(checkpoint, dict) else None)
 
 
 # ============================================================

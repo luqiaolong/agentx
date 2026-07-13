@@ -45,6 +45,8 @@ async def test_coding_team_mode_persists_messages() -> None:
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "team summary"}
+        # team_done 事件标志 team 流程正常结束，Router 据此判断可写回 checkpointer
+        yield {"event": "team_done", "data": '{"status": "done"}'}
 
     import app.router.graph as graph_module
 

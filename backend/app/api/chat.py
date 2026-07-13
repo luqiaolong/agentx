@@ -172,7 +172,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 run_id=trace_id,
             ) as obs_ctx:
                 try:
-                    async for event in run_router(
+                    _router_gen = run_router(
                         req.message,
                         req.thread_id,
                         checkpointer=checkpointer,
@@ -181,7 +181,20 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                         workspace_path=req.workspace_path,
                         revoked_paths=req.revoked_paths,
                         trace_id=trace_id,
-                    ):
+                    ).__aiter__()
+                    # 内部心跳：run_router 长时间不 yield 事件时（如 agent 跑长任务），
+                    # 主动 yield heartbeat 防止前端断连。作为 sse-starlette ping 的双重保险。
+                    _HEARTBEAT_TIMEOUT = 10.0
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(
+                                _router_gen.__anext__(), timeout=_HEARTBEAT_TIMEOUT
+                            )
+                        except asyncio.TimeoutError:
+                            yield {"event": "heartbeat", "data": "{}"}
+                            continue
+                        except StopAsyncIteration:
+                            break
                         # 检查中止标志
                         if await is_aborted(req.thread_id):
                             # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
@@ -448,10 +461,11 @@ def register_chat_routes(app: FastAPI) -> None:
         - ``token`` / ``reasoning`` / ``tool_call`` / ``tool_result`` / ``delegation``
         - ``todo_update`` / ``approval_request`` / ``done`` / ``error``
         """
-        # SSE 心跳：每 30 秒发送一次 ping 事件，防止代理/浏览器在审批等待期间断开连接
+        # SSE 心跳：每 15 秒发送一次 ping 事件，防止代理/浏览器在长运行期间断开连接
+        # （30 秒在 Tauri webview / 部分代理下仍可能断开，缩短到 15 秒）
         return EventSourceResponse(
             _event_generator(req),
-            ping=30,
+            ping=15,
             ping_message_factory=lambda: {"event": "ping", "data": "{}"},
         )
 

@@ -532,3 +532,275 @@ async def test_router_reset_preserves_authorized_dirs(
     token_events = [e for e in events if e["event"] == "token"]
     assert len(token_events) == 1
     assert "持久化" in token_events[0]["data"]
+
+
+# ============================================================
+# 10. agent_mode normalize（大小写不敏感 + 旧值兼容）
+# ============================================================
+
+
+async def test_router_agent_mode_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agent_mode 大小写不敏感：'Work' / 'CODING' / 'Coding_Team' 均接受。"""
+
+    captured_modes: list[str] = []
+
+    async def _fake_run_work_supervisor(message, thread_id, **kwargs):
+        captured_modes.append("work")
+        yield {"event": "token", "data": "ok"}
+
+    async def _fake_run_coding_expert(message, thread_id, **kwargs):
+        captured_modes.append("coding")
+        yield {"event": "token", "data": "ok"}
+
+    async def _fake_run_coding_team(message, thread_id, **kwargs):
+        captured_modes.append("coding_team")
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_work_supervisor", _fake_run_work_supervisor)
+    monkeypatch.setattr("app.router.graph.run_coding_expert", _fake_run_coding_expert)
+    monkeypatch.setattr("app.router.graph.run_coding_team", _fake_run_coding_team)
+
+    await _collect_events(run_router("hi", "t1", agent_mode="Work"))
+    await _collect_events(run_router("hi", "t2", agent_mode="CODING"))
+    await _collect_events(run_router("hi", "t3", agent_mode="Coding_Team"))
+
+    assert captured_modes == ["work", "coding", "coding_team"]
+
+
+async def test_router_agent_mode_legacy_values_compat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """旧值 'agent' / 'agent_team' 兼容映射到 'work' / 'coding_team'。"""
+
+    captured_modes: list[str] = []
+
+    async def _fake_run_work_supervisor(message, thread_id, **kwargs):
+        captured_modes.append("work")
+        yield {"event": "token", "data": "ok"}
+
+    async def _fake_run_coding_team(message, thread_id, **kwargs):
+        captured_modes.append("coding_team")
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_work_supervisor", _fake_run_work_supervisor)
+    monkeypatch.setattr("app.router.graph.run_coding_team", _fake_run_coding_team)
+
+    await _collect_events(run_router("hi", "t1", agent_mode="agent"))
+    await _collect_events(run_router("hi", "t2", agent_mode="agent_team"))
+
+    assert captured_modes == ["work", "coding_team"]
+
+
+# ============================================================
+# 11. /skill 非 work 模式警告 token
+# ============================================================
+
+
+async def test_router_skill_tag_warns_in_non_work_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """非 work 模式下 /skill 标记被清理时 yield 警告 token。"""
+
+    async def _fake_run_coding_expert(message, thread_id, **kwargs):
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr(ss_module, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(ss_module, "_SKILLS_DIR", tmp_path / "skills")
+    _write_skill(tmp_path, "coder", "CODER SKILL CONTENT")
+    monkeypatch.setattr("app.router.graph.run_coding_expert", _fake_run_coding_expert)
+
+    events = await _collect_events(
+        run_router("/skill:coder 帮我写代码", "t-skill-warn", agent_mode="coding")
+    )
+
+    # 应该有一条 [skill 跳过] 警告 token
+    token_events = [e for e in events if e["event"] == "token"]
+    skill_warn = [e for e in token_events if "[skill 跳过]" in e.get("data", "")]
+    assert len(skill_warn) == 1
+    assert "coding" in skill_warn[0]["data"]
+
+
+# ============================================================
+# 12. workspace revoked 前端反馈 token
+# ============================================================
+
+
+async def test_router_workspace_revoked_yields_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """workspace 在 revoked_paths 中时 yield [工作区跳过] token。"""
+
+    async def _fake_run_work_supervisor(message, thread_id, **kwargs):
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_work_supervisor", _fake_run_work_supervisor)
+
+    events = await _collect_events(
+        run_router(
+            "hi",
+            "t-revoked",
+            agent_mode="work",
+            workspace_path="D:\\revoked_proj",
+            revoked_paths=["D:\\revoked_proj"],
+        )
+    )
+
+    token_events = [e for e in events if e["event"] == "token"]
+    skipped_warn = [e for e in token_events if "[工作区跳过]" in e.get("data", "")]
+    assert len(skipped_warn) == 1
+    assert "D:\\revoked_proj" in skipped_warn[0]["data"]
+
+
+# ============================================================
+# 13. coding_team 写回 checkpointer 仅在 team_done 收到时
+# ============================================================
+
+
+async def test_router_team_no_done_no_checkpoint_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """coding_team 未收到 team_done 事件（SSE 中途断开）时不写回 checkpointer。"""
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    async def _fake_run_coding_team_no_done(message, thread_id, **kwargs):
+        # 模拟 SSE 中途断开：只 yield token，不 yield team_done
+        yield {"event": "token", "data": "partial content"}
+        # 生成器在此结束（模拟断连）
+
+    monkeypatch.setattr("app.router.graph.run_coding_team", _fake_run_coding_team_no_done)
+
+    # mock _append_messages_to_checkpointer 验证不调用
+    append_called: list[list] = []
+
+    async def _fake_append(checkpointer, thread_id, new_messages):
+        append_called.append(new_messages)
+
+    monkeypatch.setattr("app.router.graph._append_messages_to_checkpointer", _fake_append)
+
+    mock_checkpointer = MagicMock()
+    mock_checkpointer.aget = AsyncMock(return_value=None)
+
+    await _collect_events(
+        run_router(
+            "hi",
+            "t-no-done",
+            agent_mode="coding_team",
+            checkpointer=mock_checkpointer,
+        )
+    )
+
+    # 不应该写回 checkpointer
+    assert append_called == []
+
+
+async def test_router_team_with_done_writes_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """coding_team 收到 team_done 且无 error 时正常写回 checkpointer。"""
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    async def _fake_run_coding_team_with_done(message, thread_id, **kwargs):
+        yield {"event": "token", "data": "final content"}
+        yield {"event": "team_done", "data": json.dumps({"status": "done"})}
+
+    monkeypatch.setattr("app.router.graph.run_coding_team", _fake_run_coding_team_with_done)
+
+    # mock _append_messages_to_checkpointer 验证调用（避免 langgraph compile 校验）
+    append_called: list[list] = []
+
+    async def _fake_append(checkpointer, thread_id, new_messages):
+        append_called.append(new_messages)
+
+    monkeypatch.setattr("app.router.graph._append_messages_to_checkpointer", _fake_append)
+
+    # mock checkpointer：aget 返回空 checkpoint（用于 _load_history_from_checkpointer）
+    mock_checkpointer = MagicMock()
+    mock_checkpointer.aget = AsyncMock(return_value=None)
+
+    await _collect_events(
+        run_router(
+            "hi",
+            "t-with-done",
+            agent_mode="coding_team",
+            checkpointer=mock_checkpointer,
+        )
+    )
+
+    # 应该写回 checkpointer
+    assert len(append_called) == 1
+    new_msgs = append_called[0]
+    assert len(new_msgs) == 2  # HumanMessage + AIMessage
+
+
+# ============================================================
+# 14. tokenizer 异常不再静默吞（warning 日志）
+# ============================================================
+
+
+async def test_router_tokenizer_exception_logged_not_silenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """chat_model.get_num_tokens_from_messages 抛异常时记录 warning，不静默。"""
+
+    from app.router.graph import logger as router_logger
+
+    async def _fake_run_work_supervisor(message, thread_id, **kwargs):
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr("app.router.graph.run_work_supervisor", _fake_run_work_supervisor)
+
+    # mock checkpointer 返回若干历史消息
+    from unittest.mock import AsyncMock, MagicMock
+    from langchain_core.messages import HumanMessage
+
+    mock_cp = MagicMock()
+    mock_cp.aget = AsyncMock(
+        return_value={
+            "channel_values": {
+                "messages": [HumanMessage(content="history msg")] * 5,
+            }
+        }
+    )
+
+    # mock chat_model：get_num_tokens_from_messages 抛异常
+    mock_model = MagicMock()
+    mock_model.get_num_tokens_from_messages = MagicMock(
+        side_effect=RuntimeError("tokenizer exploded")
+    )
+
+    # 拦截 logger.warning 调用（loguru 不走标准 logging，caplog 抓不到）
+    warning_calls: list[tuple[str, dict]] = []
+
+    def _capture_warning(msg, *args, **kwargs):
+        warning_calls.append((str(msg), kwargs))
+
+    monkeypatch.setattr(router_logger, "warning", _capture_warning)
+
+    events = await _collect_events(
+        run_router(
+            "hi",
+            "t-tokenizer-err",
+            agent_mode="work",
+            checkpointer=mock_cp,
+            chat_model=mock_model,
+        )
+    )
+
+    # 应该有 router.token_counter_failed warning 日志
+    tokenizer_warnings = [
+        (msg, kw) for msg, kw in warning_calls if "token_counter_failed" in msg
+    ]
+    assert len(tokenizer_warnings) == 1, (
+        f"expected 1 token_counter_failed warning, got {tokenizer_warnings}"
+    )
+    # error 信息在结构化字段 error= 里
+    _, kwargs = tokenizer_warnings[0]
+    assert "tokenizer exploded" in str(kwargs.get("error", ""))
+
+    # 仍然正常 done
+    assert any(e["event"] == "done" for e in events)
