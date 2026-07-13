@@ -32,6 +32,11 @@ __all__ = [
     "_merge_todos",
     "_merge_pending_levels",
     "_merge_list",
+    # v2 reducers（T2/T37）
+    "_merge_findings",
+    "_merge_warnings",
+    "_merge_pending_waves",
+    "_merge_completed_task_ids",
     "_serialize_blackboard",
 ]
 
@@ -53,11 +58,17 @@ class TeamPlanTask:
 
 @dataclass
 class TeamSubtaskResult:
-    """单个子任务的执行结果。"""
+    """单个子任务的执行结果。
+
+    ``retries`` 字段（O4）记录实际重试次数，由 ``run_with_retry`` 填充，
+    写入 ``Finding.retries`` 供前端展示「该子任务重试了 N 次才成功」。
+    默认 0 表示未发生重试。
+    """
 
     agent: str
     success: bool
     payload: str
+    retries: int = 0
 
 
 def _merge_dict(left: dict, right: dict) -> dict:
@@ -97,6 +108,62 @@ def _merge_list(left: list, right: list) -> list:
     for item in (right or []):
         if item not in result:
             result.append(item)
+    return result
+
+
+# ============================================================
+# v2 reducers（T2/T37）——供 state.py TeamState(v2) 使用
+# ============================================================
+
+
+def _merge_findings(left: dict, right: dict) -> dict:
+    """v2 reducer：合并 ``dict[str, Finding]``（right 覆盖 left）。
+
+    与 ``_merge_dict`` 功能相同（dict.update），但语义上专用于
+    v2 结构化 ``Finding`` 对象的 findings 字段（D4）。并行 execute 节点
+    返回部分 ``{key: Finding}`` 时合并到全局 state。
+    """
+    result = dict(left or {})
+    result.update(right or {})
+    return result
+
+
+def _merge_warnings(left: list[str], right: list[str]) -> list[str]:
+    """v2 reducer：合并 ``list[str]``（拼接去重，保序）。
+
+    用于 ``state.warnings`` channel（D14）和 ``state.errors``。
+    危险任务改写 / fallback 触发 / team_role 缺配置等场景写入 warning，
+    ``aggregate_node`` 统一发射 SSE。
+    """
+    seen: set[str] = set(left or [])
+    merged: list[str] = list(left or [])
+    for w in (right or []):
+        if w not in seen:
+            merged.append(w)
+            seen.add(w)
+    return merged
+
+
+def _merge_pending_waves(left: list, right: list) -> list:
+    """v2 reducer：合并 ``pending_waves: list[list[TeamTask]]``（right 覆盖 left）。
+
+    DAG 多波次场景：``dispatch_node`` 弹出当前 wave 后设置剩余 waves。
+    使用 ``is not None`` 检查（与 ``_merge_pending_levels`` 同理），
+    确保空列表 ``[]``（最后一层）也能正确覆盖。
+    """
+    return right if right is not None else (left or [])
+
+
+def _merge_completed_task_ids(left: list[str], right: list[str]) -> list[str]:
+    """v2 reducer：合并 ``completed_task_ids``（去重合并，保序）。
+
+    用 ``list[str]`` 而非 ``set[str]`` 以兼容 LangGraph checkpoint
+    JSON 序列化（set 不可 JSON 序列化）。replan 时引用已完成 task。
+    """
+    result: list[str] = list(left or [])
+    for tid in (right or []):
+        if tid not in result:
+            result.append(tid)
     return result
 
 

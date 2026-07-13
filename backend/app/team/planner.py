@@ -20,9 +20,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.config import get_settings
 from app.config.subagents import BUILTIN_TEAM_KEYS
+from app.llm import get_chat_model
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
+from app.team.state import Finding, TeamPlan, TeamTask
 from app.utils.text import compile_keyword_patterns, matches_any
 
 __all__ = [
@@ -32,10 +35,12 @@ __all__ = [
     "_build_team_experts_description",
     "_looks_like_dangerous_task",
     "_parse_after_deps",
+    "_parse_plan_from_text_fallback",
     "_parse_todos_from_text",
     "_todos_to_team_tasks",
     "_validate_dag",
     "_validate_task",
+    "Planner",
     "tasks_to_display_todos",
 ]
 
@@ -478,3 +483,351 @@ def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:
     # DAG 依赖编排 D6：未知 agent 不在白名单时也不直接过滤，留给运行时
     # _resolve_subtask_config 统一 fallback 到 code runner，保持任务可执行。
     return True, ""
+
+
+# ============================================================
+# v2 Planner：with_structured_output(TeamPlan) + fallback（T3）
+# ============================================================
+
+# v2 Orchestrator system prompt（结构化输出路径）。
+# 当 LLM 支持 ``with_structured_output(TeamPlan)`` 时使用本 prompt；框架自动注入
+# JSON schema，LLM 填充结构化字段。不支持时回退到 ``_ORCHESTRATOR_SYSTEM_PROMPT``
+# （文本格式 ``[agent:xxx][after:N]``）+ ``_parse_plan_from_text_fallback`` 正则解析。
+_PLANNER_V2_SYSTEM_PROMPT = """你是任务拆解专家（Orchestrator）。请把用户请求拆分为若干子任务。
+
+可用 agent 类型：
+{experts}
+
+约束：
+1. 每个子任务必须有唯一的 id（如 t1/t2/t3），用于 depends_on 引用
+2. 涉及写文件、编辑文件、执行系统命令的任务，agent 必须设为 deep
+3. 不要编造文件路径；若用户没给路径，在 description 中说明需要搜索或推断
+4. 子任务数量不要超过 {max_tasks} 个
+5. 若用户请求涉及多个软件开发环节（如前端+后端+测试），优先使用团队角色而非通用 code
+6. 若任务简单，可只返回一个子任务
+7. depends_on 引用其他任务的 id（如 ["t1"]），空列表表示无依赖（根任务）
+8. is_dangerous_hint 标注涉及危险操作的任务
+
+项目上下文：
+{context}
+"""
+
+
+_REPLAN_V2_SYSTEM_PROMPT = """你是任务拆解专家。以下是已完成的子任务结果与错误：
+
+已完成的子任务：
+{completed_findings}
+
+失败的错误：
+{errors}
+
+用户原始请求：
+{user_message}
+
+请判断是否需要追加新任务来完善最终回答。
+- 若需要追加，输出新的 TeamPlan（仅包含需要追加的新任务，新任务必须依赖至少一个已完成任务）
+- 若无需追加，返回空 tasks 列表
+"""
+
+
+def _parse_plan_from_text_fallback(text: str) -> TeamPlan:
+    """LLM 不支持结构化输出时的 fallback 解析（D2）。
+
+    复用现有 ``_AGENT_PREFIX_RE`` 正则解析 ``[agent:xxx][after:N1,N2]`` 文本行，
+    转换为 v2 ``TeamPlan``（``TeamTask`` 含 ``id`` / ``depends_on`` str 列表）。
+
+    旧 ``[after:N]`` 标注为 0-indexed 整数（引用任务在文本中的行序），本函数
+    映射为 1-indexed task id（``t{N+1}``），使 ``depends_on`` 引用有效的 task id。
+
+    Args:
+        text: LLM 回复正文（含 ``[agent:xxx][after:N]`` 任务行）。
+
+    Returns:
+        ``TeamPlan``（含 ``tasks`` 列表）。无有效任务行时返回空 plan。
+    """
+    raw_tasks: list[tuple[str, str, list[int]]] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("```"):
+            continue
+        match = _AGENT_PREFIX_RE.match(line)
+        if not match:
+            continue
+        agent = match.group(1)
+        after_content = match.group(2)
+        desc = match.group(3).strip()
+        if not desc:
+            continue
+        after_indices = _parse_after_deps(after_content)
+        raw_tasks.append((agent, desc, after_indices))
+
+    n = len(raw_tasks)
+    tasks: list[TeamTask] = []
+    for idx, (agent, desc, after_indices) in enumerate(raw_tasks):
+        task_id = f"t{idx + 1}"
+        # 映射 0-indexed after:N → task id "t{N+1}"，过滤越界索引
+        depends_on = [f"t{i + 1}" for i in after_indices if 0 <= i < n]
+        tasks.append(
+            TeamTask(
+                id=task_id,
+                agent=agent.lower(),
+                description=desc,
+                depends_on=depends_on,
+            )
+        )
+    return TeamPlan(tasks=tasks)
+
+
+class Planner:
+    """v2 Orchestrator LLM 封装（D2）。
+
+    优先使用 ``chat_model.with_structured_output(TeamPlan)`` 获取结构化计划，
+    LLM 不支持时回退到 ``_ORCHESTRATOR_SYSTEM_PROMPT`` + ``_parse_plan_from_text_fallback``
+    正则解析（保留旧路径，确保降级可用）。
+
+    旧 ``orchestrator._plan_node`` 仍直接调用 ``llm.ainvoke`` + ``_parse_todos_from_text``，
+    本类仅供 v2 ``nodes.plan_node`` / ``nodes.replan_node`` 使用，互不干扰。
+    """
+
+    def __init__(self, chat_model: Any | None = None) -> None:
+        self._chat_model = chat_model
+        self._structured: Any = None
+        if chat_model is not None:
+            try:
+                self._structured = chat_model.with_structured_output(TeamPlan)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "team planner LLM does not support structured output, will use fallback",
+                    error=str(exc),
+                )
+                self._structured = None
+
+    async def plan_with_llm(self, message: str, context: str = "") -> TeamPlan:
+        """调用 LLM 生成 ``TeamPlan``（结构化输出优先，fallback 正则解析）。
+
+        Args:
+            message: 用户原始请求。
+            context: 项目上下文摘要（可选，默认走 ``_build_project_context``）。
+
+        Returns:
+            ``TeamPlan``（含 ``tasks`` 列表）。LLM 调用失败或未生成有效任务时
+            返回 ``TeamPlan(tasks=[])``。
+        """
+        settings = get_settings()
+        experts = _BASE_EXPERTS
+        team_desc = _build_team_experts_description(settings)
+        if team_desc:
+            experts = experts + "\n" + team_desc
+        project_context = context or _build_project_context()
+
+        llm = self._resolve_llm(settings)
+        if llm is None:
+            logger.warning("team planner no LLM available")
+            return TeamPlan(tasks=[])
+
+        # 结构化输出路径
+        if self._structured is not None:
+            system_prompt = _PLANNER_V2_SYSTEM_PROMPT.format(
+                experts=experts,
+                max_tasks=settings.agent_team_max_tasks,
+                context=project_context,
+            )
+            try:
+                plan = await self._structured.ainvoke(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message},
+                    ]
+                )
+                return self._post_filter(plan, settings)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "team planner structured output failed, falling back to text parse",
+                    error=str(exc),
+                )
+
+        # Fallback：文本输出 + 正则解析
+        system_prompt = _ORCHESTRATOR_SYSTEM_PROMPT.format(
+            experts=experts,
+            max_tasks=settings.agent_team_max_tasks,
+            context=project_context,
+        )
+        try:
+            response = await llm.ainvoke(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message},
+                ]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("team planner llm.ainvoke failed", error=str(exc))
+            return TeamPlan(tasks=[])
+
+        raw_content = (
+            response.content if hasattr(response, "content") else str(response)
+        )
+        if isinstance(raw_content, list):
+            text = "\n".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in raw_content
+            )
+        else:
+            text = str(raw_content)
+
+        plan = _parse_plan_from_text_fallback(text)
+        return self._post_filter(plan, settings)
+
+    async def replan(
+        self,
+        original_message: str,
+        previous_plan: list[TeamTask],
+        findings: dict[str, Finding],
+        errors: list[str],
+        hint: bool = False,
+    ) -> TeamPlan:
+        """质量门失败后的迭代式重规划（D10）。
+
+        把已完成子任务的 findings 与失败的 errors 喂回 LLM，让其追加新任务
+        补全回答。新任务必须依赖至少一个已完成任务（不能是无依赖的根任务）。
+
+        Args:
+            original_message: 用户原始请求。
+            previous_plan: 上一轮的计划（``list[TeamTask]``）。
+            findings: 已完成子任务的结果（``dict[str, Finding]``）。
+            errors: 失败错误列表。
+            hint: 上一轮是否含危险任务提示。
+
+        Returns:
+            新的 ``TeamPlan``（仅含追加任务）。无需追加时返回空 tasks。
+        """
+        settings = get_settings()
+        llm = self._resolve_llm(settings)
+        if llm is None:
+            logger.warning("team replanner no LLM available")
+            return TeamPlan(tasks=[])
+
+        # 构建已完成 findings 摘要
+        completed_lines: list[str] = []
+        for finding in findings.values():
+            status = "成功" if finding.success else f"失败({finding.error or '未知'})"
+            content_preview = finding.content[:500] if finding.content else ""
+            completed_lines.append(
+                f"- [{finding.task_id}] agent={finding.agent} {status}: {content_preview}"
+            )
+        completed_findings = "\n".join(completed_lines) or "（无已完成任务）"
+        errors_text = "\n".join(f"- {e}" for e in errors) or "（无错误）"
+
+        system_prompt = _REPLAN_V2_SYSTEM_PROMPT.format(
+            completed_findings=completed_findings,
+            errors=errors_text,
+            user_message=original_message,
+        )
+
+        # 结构化输出路径
+        if self._structured is not None:
+            try:
+                plan = await self._structured.ainvoke(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": original_message},
+                    ]
+                )
+                return self._post_filter_replan(plan, settings, previous_plan)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "team replanner structured output failed, falling back to text parse",
+                    error=str(exc),
+                )
+
+        # Fallback：文本输出 + 正则解析
+        replan_text_prompt = system_prompt + (
+            "\n若需要追加，输出新的任务行，格式：[agent:类型][after:0,1] 任务描述\n"
+            "after 引用已完成任务的 0-indexed 位置。若无需追加，输出：NO_NEW_TASKS"
+        )
+        try:
+            response = await llm.ainvoke(
+                [
+                    {"role": "system", "content": replan_text_prompt},
+                    {"role": "user", "content": original_message},
+                ]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("team replanner llm.ainvoke failed", error=str(exc))
+            return TeamPlan(tasks=[])
+
+        raw_content = (
+            response.content if hasattr(response, "content") else str(response)
+        )
+        if isinstance(raw_content, list):
+            text = "\n".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in raw_content
+            )
+        else:
+            text = str(raw_content)
+
+        if "NO_NEW_TASKS" in text:
+            return TeamPlan(tasks=[])
+
+        plan = _parse_plan_from_text_fallback(text)
+        return self._post_filter_replan(plan, settings, previous_plan)
+
+    def _resolve_llm(self, settings: Any) -> Any:
+        """解析可用的 LLM 实例。
+
+        优先使用构造时传入的 ``chat_model``；为 None 时回退到 ``get_chat_model``。
+        ``get_chat_model`` 不可用（未配置 API key）时返回 None。
+        """
+        if self._chat_model is not None:
+            return self._chat_model
+        try:
+            return get_chat_model(
+                temperature=settings.llm_temperature_orchestrator, streaming=False
+            )
+        except ValueError:
+            return None
+
+    def _post_filter(self, plan: TeamPlan, settings: Any) -> TeamPlan:
+        """对 LLM 产出的 plan 做安全改写与截断。
+
+        - 危险任务但非 deep 的强制改写为 deep
+        - 超过 ``agent_team_max_tasks`` 的截断 + 清理悬空 depends_on
+        """
+        if not plan.tasks:
+            return plan
+
+        tasks = list(plan.tasks)
+        # 安全改写：涉及危险工具关键词但非 deep 的任务强制改为 deep
+        for i, task in enumerate(tasks):
+            if task.agent != "deep" and _looks_like_dangerous_task(task.description):
+                tasks[i] = task.model_copy(update={"agent": "deep"})
+
+        # 截断到 max_tasks + 清理悬空 depends_on
+        max_tasks = settings.agent_team_max_tasks
+        if len(tasks) > max_tasks:
+            tasks = tasks[:max_tasks]
+            valid_ids = {t.id for t in tasks}
+            for i, task in enumerate(tasks):
+                cleaned = [d for d in task.depends_on if d in valid_ids]
+                if len(cleaned) != len(task.depends_on):
+                    tasks[i] = task.model_copy(update={"depends_on": cleaned})
+
+        return TeamPlan(
+            tasks=tasks,
+            summary=plan.summary,
+            needs_iterative=plan.needs_iterative,
+        )
+
+    def _post_filter_replan(
+        self, plan: TeamPlan, settings: Any, previous_plan: list[TeamTask]
+    ) -> TeamPlan:
+        """replan 产出的 plan 后处理：过滤掉已在 previous_plan 中的任务 id。
+
+        replan 只返回追加的新任务，避免重复执行已完成任务。
+        """
+        if not plan.tasks:
+            return plan
+
+        prev_ids = {t.id for t in previous_plan}
+        new_tasks = [t for t in plan.tasks if t.id not in prev_ids]
+        return self._post_filter(TeamPlan(tasks=new_tasks), settings)
