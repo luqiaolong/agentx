@@ -88,6 +88,14 @@ export interface ReasoningBlockProps {
    * 子代理卡片场景下传 true，配合 SubAgentGroup 的 key 包含父组件 expanded 状态，
    * 确保展开子代理卡片时 reasoning 也默认展开（即使用户此前主动折叠过）。 */
   defaultExpanded?: boolean;
+  /** 紧凑模式：跳过「已思考 N 秒 / 思考中… Ns」标题行，直接展示流式推理结果。
+   * - 默认 false：主消息场景，展示完整 TraceCardHeader（含折叠 toggle）
+   * - true：子代理卡片场景，无标题、无折叠按钮，文本直接跟随脑图 icon 流式展示
+   *   （脑图 icon + caret 仍保留以传达"在思考中"信号）。
+   *
+   * 2026-07-13 子代理卡片视觉规范改造：去掉标题数字减少信息冗余，
+   * 子代理上下文本身已表明是推理过程，额外"已思考 5 秒"对用户无意义。 */
+  compact?: boolean;
 }
 
 function ReasoningBlockImpl({
@@ -98,6 +106,7 @@ function ReasoningBlockImpl({
   startedAt,
   doneAt,
   defaultExpanded,
+  compact = false,
 }: ReasoningBlockProps) {
   // 用户手动展开/折叠状态（null = 未手动操作，默认沿用"永远展开"）
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
@@ -156,6 +165,7 @@ function ReasoningBlockImpl({
   }, [userCollapsed, messageId, partId]);
 
   // 流式时（!done && text.length === 0）：单行内联「思考中…」+ 跳动圆点（无卡片背景）
+  // compact 模式：保持低调一行提示，无背景无圆角，让位于子代理卡片内容流
   if (!done && text.length === 0) {
     return (
       <div
@@ -170,6 +180,38 @@ function ReasoningBlockImpl({
           <span className="h-1 w-1 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
           <span className="h-1 w-1 animate-bounce rounded-full bg-current" />
         </span>
+      </div>
+    );
+  }
+
+  // compact 模式：跳过 TraceCardHeader，脑图 icon 与 caret 与内容同行紧凑展示。
+  // - 跳过「已思考 N 秒 / 思考中… Ns」标题（无意义，用户已在子代理上下文）
+  // - 无折叠 toggle（手动展开/折叠逻辑无外部 toggle 触发，但保留 sessionStorage 兼容）
+  if (compact) {
+    return (
+      <div
+        className="flex w-full items-start gap-1.5 py-1"
+        data-testid={done ? "reasoning-compact-done" : "reasoning-compact-stream"}
+      >
+        <Brain className="mt-1 h-2.5 w-2.5 shrink-0 text-muted-c/60" />
+        <div
+          className="flex-1 overflow-auto font-mono text-muted-c/70"
+          style={{
+            maxHeight: done ? "240px" : "160px",
+            fontSize: 'var(--fs-msg-code)',
+          }}
+        >
+          <pre className="whitespace-pre-wrap">
+            {text}
+            {!done && (
+              <span
+                className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-current align-middle"
+                aria-hidden="true"
+                data-testid="reasoning-caret"
+              />
+            )}
+          </pre>
+        </div>
       </div>
     );
   }
@@ -229,7 +271,8 @@ function areEqual(prev: ReasoningBlockProps, next: ReasoningBlockProps): boolean
     prev.done === next.done &&
     prev.startedAt === next.startedAt &&
     prev.doneAt === next.doneAt &&
-    prev.defaultExpanded === next.defaultExpanded
+    prev.defaultExpanded === next.defaultExpanded &&
+    prev.compact === next.compact
   );
 }
 

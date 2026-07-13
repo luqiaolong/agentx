@@ -12,6 +12,8 @@ export interface TraceItemsProps {
   reasoningDefaultExpanded?: boolean;
   /** 父级 expanded 状态字符串，用于 key 生成触发 ReasoningBlock remount */
   parentExpandedKey?: string;
+  /** reasoning blocks 是否走紧凑模式（子代理卡片场景：跳过"已思考 N 秒"标题） */
+  reasoningCompact?: boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export function TraceItems({
   messageId,
   reasoningDefaultExpanded,
   parentExpandedKey,
+  reasoningCompact,
 }: TraceItemsProps) {
   return (
     <>
@@ -71,6 +74,7 @@ export function TraceItems({
                   startedAt={item.part.startedAt}
                   doneAt={item.part.doneAt}
                   defaultExpanded={reasoningDefaultExpanded}
+                  compact={reasoningCompact}
                 />
               </div>
             );
