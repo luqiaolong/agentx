@@ -76,6 +76,7 @@ def make_sse_event(
         "team_init",
         "team_done",
         "error",
+        "warning",
         "_subtask_done",
     ):
         if isinstance(data, str):
