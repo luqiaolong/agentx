@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import FastAPI, Query
 from pydantic import BaseModel, Field
 
-from app.config.settings import PROJECT_ROOT, DATA_DIR
+from app.config.settings import DATA_DIR
 from app.observability.logger import logger
 from app.observability.observation import get_observation_sink
 
