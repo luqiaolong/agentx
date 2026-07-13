@@ -23,6 +23,7 @@ from typing import Any
 from app.config.subagents import BUILTIN_TEAM_KEYS
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
+from app.utils.text import compile_keyword_patterns, matches_any
 
 __all__ = [
     "_BASE_EXPERTS",
@@ -31,9 +32,9 @@ __all__ = [
     "_build_team_experts_description",
     "_looks_like_dangerous_task",
     "_parse_todos_from_text",
-    "_strip_agent_prefix_from_todos",
     "_todos_to_team_tasks",
     "_validate_task",
+    "tasks_to_display_todos",
 ]
 
 
@@ -110,29 +111,24 @@ _AGENT_PREFIX_RE = re.compile(
 )
 
 
-def _strip_agent_prefix_from_todos(todos: list[dict]) -> list[dict]:
-    """剥离 todos 列表中每个 todo content 的 ``[agent:xxx]`` 前缀。
+def tasks_to_display_todos(tasks: list[TeamPlanTask]) -> list[dict]:
+    """从 ``TeamPlanTask`` 列表派生展示用 todos（单一数据源，消除双列表）。
 
-    Orchestrator 的 ``write_todos`` 要求 content 以 ``[agent:类型]`` 开头，
-    但前端 ``todo_update`` 事件应展示纯净的任务描述。本函数在 ``_plan_node``
-    返回前清洗 ``state.todos``，确保 SSE 透传到前端的 content 不含前缀。
+    Phase 2 清理（T4.8）：``tasks`` 为单一数据源，展示用 todos 由本纯函数派生，
+    不再同时维护 ``clean_todos``（剥离 ``[agent:xxx]`` 前缀的 todos）与 ``tasks`` 双列表。
+    旧方案 ``_strip_agent_prefix_from_todos`` 已删除。
 
     Args:
-        todos: deepagents 原生 Todo 列表 ``[{content, status}, ...]``
+        tasks: ``TeamPlanTask`` 列表（``input`` 已剥离前缀、已截断到 ``max_tasks``）。
 
     Returns:
-        清洗后的 todos 副本（原列表不变），content 为剥离前缀后的纯文本。
+        deepagents 原生 Todo schema ``[{content, status}, ...]``，
+        ``content`` 为 ``task.input``（纯文本），``status`` 为 ``"pending"``。
     """
-    cleaned: list[dict] = []
-    for todo in todos or []:
-        if not isinstance(todo, dict):
-            cleaned.append(todo)
-            continue
-        content = todo.get("content", "")
-        match = _AGENT_PREFIX_RE.match(content)
-        stripped = match.group(2).strip() if match else content
-        cleaned.append({**todo, "content": stripped})
-    return cleaned
+    return [
+        {"content": task.input, "status": "pending"}
+        for task in tasks
+    ]
 
 
 def _parse_todos_from_text(text: str) -> list[dict]:
@@ -269,11 +265,13 @@ def _todos_to_team_tasks(
     return tasks, ""
 
 
+_DANGEROUS_KEYWORDS = ["写入", "写文件", "write", "编辑", "修改", "edit", "执行命令", "shell", "运行脚本"]
+_DANGEROUS_PATTERNS = compile_keyword_patterns(_DANGEROUS_KEYWORDS)
+
+
 def _looks_like_dangerous_task(input_text: str) -> bool:
     """启发式判断子任务是否涉及危险操作。"""
-    dangerous_keywords = ["写入", "写文件", "write", "编辑", "修改", "edit", "执行命令", "shell", "运行脚本"]
-    lower = input_text.lower()
-    return any(kw in lower for kw in dangerous_keywords)
+    return matches_any(input_text, _DANGEROUS_PATTERNS)
 
 
 def _validate_task(task: TeamPlanTask, settings: Any) -> tuple[bool, str]:

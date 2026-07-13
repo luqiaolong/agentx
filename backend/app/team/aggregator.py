@@ -11,8 +11,7 @@
 from __future__ import annotations
 
 import contextlib
-import re as _re
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Mapping
 
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -20,8 +19,8 @@ from app.config import get_settings
 from app.observability.logger import logger
 from app.observability.trace import bind_trace, current_trace_id
 from app.sse.events import make_sse_event
-from app.utils.text import ThinkFilter, extract_chunk_text
-from app.team.blackboard import Blackboard, _serialize_blackboard
+from app.utils.text import ThinkFilter, compile_keyword_patterns, extract_chunk_text, matches_any
+from app.team.blackboard import _serialize_blackboard
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -67,33 +66,44 @@ def _build_summary(text_parts: list[str], tool_traces: list[str], agent_name: st
     return summary.strip()
 
 
-def _quality_gate(blackboard: Blackboard) -> tuple[bool, str]:
+def _quality_gate(blackboard: Mapping) -> tuple[bool, str]:
     """Aggregator 质量门：检查黑板结果质量。
+
+    Args:
+        blackboard: 含 ``findings`` / ``errors`` key 的 Mapping（通常为 TeamState dict）。
 
     Returns:
         (ok, reason) — ok=False 时 reason 说明拒绝原因
     """
-    if not blackboard.findings:
+    findings = blackboard.get("findings", {})
+    if not findings:
         return False, "无任何成功的子任务结果"
     # M2: 仅当内容确实只剩截断标记时才拒绝（原 len<50 检查因 max_chars≥2000 永远为 False）
     truncated_only = all(
         v.strip() == "[结果已截断]"
-        for v in blackboard.findings.values()
+        for v in findings.values()
     )
     if truncated_only:
         return False, "所有结果均为截断片段，无有效内容"
+    # R5: 所有 findings 完全相同（且非空、非截断标记）→ 拒绝
+    # 截断标记场景已由上方 truncated_only 分支处理，此处 identical 值不会是 "[结果已截断]"。
+    values = [v.strip() for v in findings.values()]
+    if len(values) >= 2 and values[0] and all(v == values[0] for v in values):
+        logger.info("quality gate rejected: all findings identical")
+        return False, "all_findings_identical"
     return True, ""
 
 
 async def _run_aggregator(
     user_message: str,
-    blackboard: Blackboard,
+    blackboard: Mapping,
     chat_model: BaseChatModel | None = None,
     abort_event: Any = None,
 ) -> AsyncIterator[dict[str, str]]:
     """调用 Aggregator LLM，流式输出最终回复。
 
     Args:
+        blackboard: 含 ``findings`` / ``errors`` key 的 Mapping（通常为 TeamState dict）。
         chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
             None 时调用 ``orchestrator.get_chat_model()`` 获取真实 LLM。
         abort_event: 可选 ``asyncio.Event``，在流式输出过程中检查中止信号，
@@ -130,10 +140,11 @@ async def _run_aggregator(
             yield make_sse_event("error", {"message": f"LLM 不可用: {exc}"})
             return
 
+        errors = blackboard.get("errors", {})
         prompt = _AGGREGATOR_PROMPT.invoke({
             "user_message": user_message,
             "blackboard_summary": _serialize_blackboard(blackboard),
-            "error_summary": "\n".join(f"{k}: {v}" for k, v in blackboard.errors.items()) or "无",
+            "error_summary": "\n".join(f"{k}: {v}" for k, v in errors.items()) or "无",
         })
 
         think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
@@ -182,11 +193,8 @@ _SIMPLE_TASK_KEYWORDS = frozenset({
 
 # 匹配模式：中文 keywords 用子串匹配；英文 keywords 用单词边界匹配
 # 避免 "hi" 子串命中 "this"/"think" 等英文词。
-_KEYWORD_PATTERNS = tuple(
-    _re.compile(rf"\b{_re.escape(kw)}\b") if all(ord(c) < 128 for c in kw)
-    else _re.compile(_re.escape(kw))
-    for kw in _SIMPLE_TASK_KEYWORDS
-)
+# D3: 统一使用 app.utils.text.compile_keyword_patterns，与 planner 共享逻辑。
+_KEYWORD_PATTERNS = compile_keyword_patterns(list(_SIMPLE_TASK_KEYWORDS))
 
 
 def _should_downgrade_to_single(message: str) -> tuple[bool, str]:
@@ -204,6 +212,6 @@ def _should_downgrade_to_single(message: str) -> tuple[bool, str]:
     threshold = 12 if has_ascii else 6
     if len(lower) < threshold:
         return True, "消息过短，无需 team 协作"
-    if any(pat.search(lower) for pat in _KEYWORD_PATTERNS):
+    if matches_any(lower, _KEYWORD_PATTERNS):
         return True, "命中简单任务关键词"
     return False, ""

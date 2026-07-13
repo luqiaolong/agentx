@@ -156,10 +156,10 @@ def test_acquire_semaphore_valid_returns_semaphore() -> None:
 # ============================================================
 
 
-async def test_downgrade_path_emits_done_after_team_done(
+async def test_downgrade_path_emits_done_without_team_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """降级路径：team_done{status:done} 后必须跟 done 事件。"""
+    """降级路径：T10 不产出 team 生命周期事件，只发射 token + done。"""
     def _orchestrator_should_not_be_called(**_: Any) -> Any:
         raise AssertionError("Orchestrator should not be called for simple message")
     monkeypatch.setattr("app.team.orchestrator.get_chat_model", _orchestrator_should_not_be_called)
@@ -169,13 +169,11 @@ async def test_downgrade_path_emits_done_after_team_done(
     )
 
     event_types = [e["event"] for e in events]
-    assert "team_done" in event_types
+    # T10: 降级路径不产出 team 生命周期事件
+    assert "team_done" not in event_types
+    assert "team_init" not in event_types
+    # 但必须以 done 终结
     assert "done" in event_types
-
-    # done 必须在 team_done 之后
-    team_done_idx = event_types.index("team_done")
-    done_idx = event_types.index("done")
-    assert done_idx > team_done_idx
 
     # done 是终端信号，data 固定为 "{}"（make_sse_event 对 done 事件的设计）
     done_evt = next(e for e in events if e["event"] == "done")
@@ -293,19 +291,19 @@ async def test_semaphore_created_and_stored_in_state(
     ) -> AsyncIterator[dict]:
         yield {"event": "token", "data": "结果"}
 
-    # 拦截 _code_node，验证 semaphore 传入
+    # 拦截 _run_subtask_node，验证 semaphore 传入
     from app.team import orchestrator as orch_mod
 
-    original_code_node = orch_mod._code_node
+    original_subtask_node = orch_mod._run_subtask_node
 
-    async def _spy_code_node(state):
+    async def _spy_subtask_node(state):
         captured_semaphore["semaphore"] = state.get("team_semaphore")
         captured_semaphore["subtask_timeout"] = state.get("subtask_timeout", 0)
-        return await original_code_node(state)
+        return await original_subtask_node(state)
 
-    monkeypatch.setattr(orch_mod, "_code_node", _spy_code_node)
+    monkeypatch.setattr(orch_mod, "_run_subtask_node", _spy_subtask_node)
 
-    # 重置 LangGraph 单例，让 _build_team_graph 重新编译时使用 patched 的 _code_node
+    # 重置 LangGraph 单例，让 _build_team_graph 重新编译时使用 patched 的 _run_subtask_node
     monkeypatch.setattr(orch_mod, "_team_graph", None)
 
     todos = [_todo("[agent:code] 读 main.py")]

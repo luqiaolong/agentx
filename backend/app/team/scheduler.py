@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 from app.config import get_settings
@@ -89,28 +90,47 @@ def _get_runner(name: str, subtask_runners: dict[str, Any] | None) -> Any:
     return _resolve_subtask_runners(None).get(name)
 
 
-async def _inherit_workspace(child_thread_id: str, workspace_path: str | None) -> None:
+async def _inherit_workspace(
+    child_thread_id: str,
+    workspace_path: str | None,
+    agent_name: str = "",
+) -> TeamSubtaskResult | None:
     """将父 thread 的 workspace 授权继承到子任务 thread。
 
-    子任务使用独立 thread_id（如 ``{parent}-team-{agent}-{idx}``），
+    子任务使用独立 thread_id（如 ``{parent}-team-{uuid4()}``），
     若不继承授权，fs 工具的沙箱检查会失败，触发 directory_extension
     审批死锁（_handle_directory_extension 在返回前等待审批，但审批事件
     在返回后才 yield 到前端）。
+
+    Phase 2 T7：异常收窄为 ``(PathNotAuthorized, ValueError)``（授权类异常），
+    返回 ``TeamSubtaskResult`` 失败结果让调用方跳过 runner。非授权类异常
+    （如 ``RuntimeError``）不再被宽 ``except Exception`` 吞掉，向上抛出。
+
+    Returns:
+        ``None`` 表示授权成功；``TeamSubtaskResult`` 表示授权失败，调用方
+        应跳过 runner 直接返回失败状态更新。
     """
     if not workspace_path:
-        return
+        return None
     from app.sandbox import get_sandbox
+    from app.sandbox.path_guard import PathNotAuthorized
 
     sandbox = get_sandbox()
     try:
         await sandbox.authorize(child_thread_id, workspace_path, writable=True, source="team_inherit")
-    except Exception as exc:  # noqa: BLE001 — M7: 兜底所有异常（不止 ValueError）
+    except (PathNotAuthorized, ValueError) as exc:
         logger.warning(
             "team subtask workspace inherit failed",
             child_thread_id=child_thread_id,
             workspace=workspace_path,
             error=str(exc),
         )
+        return TeamSubtaskResult(
+            agent=agent_name,
+            success=False,
+            payload=f"workspace authorization failed: {exc}",
+        )
+    return None
 
 
 def _route_event_for_node(
@@ -143,8 +163,12 @@ def _route_event_for_node(
                     tool_traces.append(
                         f"{obj.get('name', '?')}: {str(obj.get('result', ''))[:200]}"
                     )
-            except Exception:  # noqa: BLE001
-                pass
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                logger.warning(
+                    "dropped malformed tool_result event",
+                    event_type="tool_result",
+                    error=str(exc),
+                )
             writer(event)
         else:
             # type/content 格式（rag / web / custom）
@@ -177,7 +201,12 @@ def _route_event_for_node(
                 success=bool(obj.get("success")),
                 payload=str(obj.get("payload", "")),
             )
-        except Exception:  # noqa: BLE001
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "dropped malformed subtask_done event",
+                event_type=_SUBTASK_DONE_EVENT,
+                error=str(exc),
+            )
             return TeamSubtaskResult(agent="", success=False, payload="哨兵事件解析失败")
     if "event" in event and event_type in _PASSTHROUGH_EVENTS:
         writer(event)
@@ -215,14 +244,47 @@ async def _run_subtask_stream(
             stream = runner(*runner_args, **runner_kwargs)
 
             async def _iterate() -> TeamSubtaskResult | None:
-                """实际事件迭代循环，被 ``asyncio.wait_for`` 包裹。"""
-                async for event in stream:
-                    if abort_event.is_set():
-                        return TeamSubtaskResult(agent=agent_name, success=False, payload="用户中止")
-                    result = _route_event_for_node(event, collected_text, tool_traces, writer, abort_event)
-                    if result is not None:
-                        return result
-                return None  # sentinel: runner 正常结束但未发 _subtask_done
+                """实际事件迭代循环，被 ``asyncio.wait_for`` 包裹。
+
+                Phase 2 T8：用 ``asyncio.wait(FIRST_COMPLETED, timeout=5)`` 竞速
+                ``runner.__anext__()`` 与 ``abort_event.wait()``，确保 LLM 长调用
+                期间 abort 信号在 5s 内被响应（M25 缺陷修复）。
+                """
+                stream_iter = stream.__aiter__()
+                abort_task = asyncio.ensure_future(abort_event.wait())
+                next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                try:
+                    while True:
+                        done, _pending = await asyncio.wait(
+                            {next_event_task, abort_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=5,
+                        )
+                        if abort_task in done:
+                            next_event_task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await next_event_task
+                            return TeamSubtaskResult(
+                                agent=agent_name, success=False, payload="用户中止"
+                            )
+                        if next_event_task in done:
+                            try:
+                                event = next_event_task.result()
+                            except StopAsyncIteration:
+                                return None  # sentinel: runner 正常结束但未发 _subtask_done
+                            result = _route_event_for_node(
+                                event, collected_text, tool_traces, writer, abort_event
+                            )
+                            if result is not None:
+                                return result
+                            next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                        # timeout: both still pending, loop back and wait again
+                finally:
+                    for _t in (next_event_task, abort_task):
+                        if not _t.done():
+                            _t.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await _t
 
             try:
                 result = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
@@ -293,8 +355,10 @@ async def _run_team_role_subtask(
 
     if not cfg or not cfg.system_prompt:
         # 降级到 coding Expert
-        fallback_thread_id = f"{thread_id}-team-fallback-{task_index}"
-        await _inherit_workspace(fallback_thread_id, workspace_path)
+        fallback_thread_id = f"{thread_id}-team-{uuid.uuid4()}"
+        inherit_result = await _inherit_workspace(fallback_thread_id, workspace_path, agent_name=task.agent)
+        if inherit_result is not None:
+            return inherit_result
         runner = _get_runner("code", subtask_runners)
         return await _run_subtask_stream(
             runner,
@@ -316,9 +380,11 @@ async def _run_team_role_subtask(
     # 有专属配置：build_custom_agent + astream_events v2
     from app.subagents.custom_agent import build_custom_agent
 
-    # H11: 使用隔离的 child_thread_id，避免与父 thread 或同类型并行子任务冲突
-    child_thread_id = f"{thread_id}-team-role-{task.agent}-{task_index}"
-    await _inherit_workspace(child_thread_id, workspace_path)
+    # T5: child_id UUID 化（{parent}-team-{uuid4()}），不再含 agent 名与 idx
+    child_thread_id = f"{thread_id}-team-{uuid.uuid4()}"
+    inherit_result = await _inherit_workspace(child_thread_id, workspace_path, agent_name=task.agent)
+    if inherit_result is not None:
+        return inherit_result
 
     agent_obj = build_custom_agent(
         key=task.agent,
@@ -339,59 +405,86 @@ async def _run_team_role_subtask(
     _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
     with _trace_cm:
         try:
-            # M25: abort 检查在每个事件回调中执行；LLM 长调用期间无法响应中止，
-            # 需要 asyncio.cancel 机制才能根本修复，当前为缓解方案。
             # Phase 1 稳定性硬化：asyncio.wait_for 包裹事件迭代循环，超时后返回失败。
             async def _iterate() -> bool:
-                """返回 True 表示提前退出（abort），None/False 表示正常结束。"""
-                async for event in agent_obj.astream_events(inputs, version="v2", config=config):
-                    if abort_event.is_set():
-                        return True
-                    kind = event["event"]
-                    ename = event.get("name", "")
-                    edata = event.get("data", {}) or {}
-                    if kind == "on_chat_model_stream":
-                        content = extract_chunk_text(edata.get("chunk"), strip=False)
-                        if content:
-                            collected_text.append(content)
-                            # 中间 token 不透传到前端：与 deep/code 子代理行为一致。
-                            # 透传 token 会被前端 appendPartText 创建为 text part，
-                            # 破坏 delegation 分组（text 破组导致子代理卡片内 traceItems 为空，
-                            # 且最终报告 token 追加到已存在的 text part 导致位置错误）。
-                            # 子代理的输出通过 collected_text 收集到 summary 中展示。
-                    elif kind in ("on_tool_start", "on_tool_end"):
-                        trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
-                        tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
-                        # H12: 透传 tool_call / tool_result 事件，避免前端 tool_call 配对断裂
-                        # 用 run_id 作为 tool_call_id，确保 on_tool_start / on_tool_end 配对
-                        tc_id = str(event.get("run_id") or "")
-                        if kind == "on_tool_start":
-                            writer(
-                                make_sse_event(
-                                    "tool_call",
-                                    {
-                                        "id": tc_id,
-                                        "name": ename,
-                                        "args": trace_data,
-                                        "source": task.agent,
-                                        "parent_task_id": thread_id,
-                                    },
-                                )
-                            )
-                        else:
-                            writer(
-                                make_sse_event(
-                                    "tool_result",
-                                    {
-                                        "id": tc_id,
-                                        "name": ename,
-                                        "result": trace_data,
-                                        "source": task.agent,
-                                        "parent_task_id": thread_id,
-                                    },
-                                )
-                            )
-                return False
+                """返回 True 表示提前退出（abort），None/False 表示正常结束。
+
+                Phase 2 T8：用 ``asyncio.wait(FIRST_COMPLETED, timeout=5)`` 竞速
+                ``astream_events.__anext__()`` 与 ``abort_event.wait()``，确保 LLM
+                长调用期间 abort 信号在 5s 内被响应（M25 缺陷修复）。
+                """
+                # T12 评估：langchain_core 1.4.8 支持 version="v3"，但仅限
+                # BaseChatModel / CompiledGraph（build_custom_agent 返回 CompiledGraph，
+                # 理论支持 v3）。v3 事件 schema 可能与 v2 不同，当前 _iterate 的事件
+                # 处理（on_chat_model_stream / on_tool_start / on_tool_end）按 v2 schema
+                # 编写。保持 v2 直至 v3 schema 稳定且事件处理代码完成适配验证。
+                stream_iter = agent_obj.astream_events(
+                    inputs, version="v2", config=config
+                ).__aiter__()
+                abort_task = asyncio.ensure_future(abort_event.wait())
+                next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                try:
+                    while True:
+                        done, _pending = await asyncio.wait(
+                            {next_event_task, abort_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=5,
+                        )
+                        if abort_task in done:
+                            next_event_task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await next_event_task
+                            return True
+                        if next_event_task in done:
+                            try:
+                                event = next_event_task.result()
+                            except StopAsyncIteration:
+                                return False
+                            kind = event["event"]
+                            ename = event.get("name", "")
+                            edata = event.get("data", {}) or {}
+                            if kind == "on_chat_model_stream":
+                                content = extract_chunk_text(edata.get("chunk"), strip=False)
+                                if content:
+                                    collected_text.append(content)
+                            elif kind in ("on_tool_start", "on_tool_end"):
+                                trace_data = edata.get("input") if kind == "on_tool_start" else edata.get("output")
+                                tool_traces.append(f"{ename}: {str(trace_data)[:200]}")
+                                tc_id = str(event.get("run_id") or "")
+                                if kind == "on_tool_start":
+                                    writer(
+                                        make_sse_event(
+                                            "tool_call",
+                                            {
+                                                "id": tc_id,
+                                                "name": ename,
+                                                "args": trace_data,
+                                                "source": task.agent,
+                                                "parent_task_id": thread_id,
+                                            },
+                                        )
+                                    )
+                                else:
+                                    writer(
+                                        make_sse_event(
+                                            "tool_result",
+                                            {
+                                                "id": tc_id,
+                                                "name": ename,
+                                                "result": trace_data,
+                                                "source": task.agent,
+                                                "parent_task_id": thread_id,
+                                            },
+                                        )
+                                    )
+                            next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                        # timeout: both still pending, loop back and wait again
+                finally:
+                    for _t in (next_event_task, abort_task):
+                        if not _t.done():
+                            _t.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await _t
 
             try:
                 aborted = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)

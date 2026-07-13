@@ -3,7 +3,7 @@
 覆盖：
 1. _todos_to_team_tasks：从 deepagents 原生 todos 解析子任务 / 危险任务强制改写 deep
 2. _validate_task：内置子代理可用性校验
-3. Blackboard：汇总序列化
+3. dict blackboard：汇总序列化
 4. run_team_path：mock Orchestrator + mock 子代理，验证 SSE 事件序列
    （todo_update / token / team_done / error，不再有 team_plan/team_progress/team_result）
 """
@@ -19,7 +19,6 @@ import pytest
 
 from app.config import get_settings
 from app.team.orchestrator import (
-    Blackboard,
     TeamPlanTask,
     _build_summary,
     _serialize_blackboard,
@@ -360,15 +359,15 @@ def test_validate_task_custom_agent() -> None:
 
 
 # ============================================================
-# 3. Blackboard / summary
+# 3. dict blackboard / summary
 # ============================================================
 
 
 def test_serialize_blackboard() -> None:
     """黑板序列化包含 findings 和 errors。"""
-    bb = Blackboard()
-    bb.findings["code"] = "main.py 启动 8123"
-    bb.errors["rag"] = "检索失败"
+    bb = {"findings": {}, "errors": {}}
+    bb["findings"]["code"] = "main.py 启动 8123"
+    bb["errors"]["rag"] = "检索失败"
     text = _serialize_blackboard(bb)
     assert "main.py 启动 8123" in text
     assert "检索失败" in text
@@ -631,7 +630,10 @@ async def test_run_team_path_downgrades_simple_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """简单短消息降级：场景化架构下不再回退到 chat path，
-    改为直接 yield token（建议切换 work 模式）+ team_done 事件，不触发 Orchestrator。
+    改为直接 yield token（建议切换 work 模式）+ done 事件，不触发 Orchestrator。
+
+    T10: 降级路径不产出 team 生命周期事件（team_init / team_done），
+    只发射 token 提示 + done 终结符。
     """
     # mock team Orchestrator LLM — 若被调用则测试失败
     def _orchestrator_should_not_be_called(**_: Any) -> Any:
@@ -645,10 +647,13 @@ async def test_run_team_path_downgrades_simple_message(
     # 不应有 todo_update 事件（Orchestrator 未执行）
     event_types = [e["event"] for e in events]
     assert "todo_update" not in event_types
-    # 应有 token 事件（降级提示）+ team_done 事件
+    # T10: 降级路径不产出 team 生命周期事件
+    assert "team_done" not in event_types
+    assert "team_init" not in event_types
+    # 应有 token 事件（降级提示）+ done 事件（流终结）
     assert "token" in event_types
-    assert "team_done" in event_types
-    # token 内容应包含切换模式提示
+    assert "done" in event_types
+    # token 内容应包括切换模式提示
     token_evt = next(e for e in events if e["event"] == "token")
     assert "work" in token_evt["data"] or "切换" in token_evt["data"]
 

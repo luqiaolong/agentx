@@ -23,5 +23,3 @@ class RouterState(TypedDict, total=False):
     agent_mode: str
     todos: list[dict[str, Any]]
     errors: list[str]
-    # AgentTeam 中间状态（仅 coding_team 场景使用）
-    team_blackboard: dict[str, Any]

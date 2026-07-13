@@ -63,7 +63,7 @@ async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) -> None:
-    """路径 D 的 _deep_node 在中止后应让子任务失败，最终 Aggregator 发 error + team_done(error)。"""
+    """路径 D 的 _run_subtask_node 在中止后应让子任务失败，最终 Aggregator 发 error + team_done(error)。"""
     from app.team.orchestrator import run_team_path
     import app.team.orchestrator as orch_module
 
@@ -94,7 +94,7 @@ async def test_team_runner_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
         lambda task, settings: (True, ""),
     )
 
-    # 模拟 deep runner：正常情况下不会返回，但 _deep_node 会在入口检查 abort
+    # 模拟 deep runner：正常情况下不会返回，但 _run_subtask_node 会在入口检查 abort
     async def _fake_run_deep_path(state, message: str, **kwargs: Any) -> AsyncIterator[dict[str, str]]:
         yield {"event": "token", "data": "should not see"}
         await asyncio.sleep(10)

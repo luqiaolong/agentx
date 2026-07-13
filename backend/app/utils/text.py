@@ -271,4 +271,42 @@ def extract_chunk_text(chunk: Any, *, strip: bool = True) -> str:
     return ""
 
 
-__all__ = ["split_think", "strip_think", "strip_tool_call_xml", "extract_chunk_text", "ThinkFilter", "THINK_OPEN", "THINK_CLOSE"]
+def compile_keyword_patterns(keywords: list[str]) -> tuple[re.Pattern, ...]:
+    """Compile keywords into regex patterns.
+
+    ASCII keywords (含字母 a-z/A-Z) use ``\\b`` word boundary matching with
+    ``re.IGNORECASE``；CJK 关键词用子串匹配（中文无词边界概念）。
+
+    Args:
+        keywords: 关键词列表（中英文混合）。
+
+    Returns:
+        编译后的 ``re.Pattern`` 元组，顺序与输入一致。
+    """
+    patterns: list[re.Pattern] = []
+    for kw in keywords:
+        if re.search(r"[a-zA-Z]", kw):
+            # ASCII 关键词：用单词边界匹配，避免 "hi" 命中 "this"/"think"
+            patterns.append(re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE))
+        else:
+            # CJK 关键词：子串匹配（无词边界概念）
+            patterns.append(re.compile(re.escape(kw)))
+    return tuple(patterns)
+
+
+def matches_any(text: str, patterns: tuple[re.Pattern, ...]) -> bool:
+    """Return True if any pattern matches the text."""
+    return any(p.search(text) for p in patterns)
+
+
+__all__ = [
+    "split_think",
+    "strip_think",
+    "strip_tool_call_xml",
+    "extract_chunk_text",
+    "ThinkFilter",
+    "THINK_OPEN",
+    "THINK_CLOSE",
+    "compile_keyword_patterns",
+    "matches_any",
+]

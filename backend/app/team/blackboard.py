@@ -3,15 +3,16 @@
 包含：
 - ``TeamPlanTask``：Orchestrator 产出的单个子任务。
 - ``TeamSubtaskResult``：单个子任务的执行结果。
-- ``Blackboard``：AgentTeam 共享黑板（dataclass，向后兼容）。
 - ``TeamState``：LangGraph ``StateGraph`` 状态（TypedDict），
-  ``findings`` / ``errors`` / ``subtask_results`` 用 ``Annotated[dict, _merge_dict]``
+  ``findings`` / ``errors`` 用 ``Annotated[dict, _merge_dict]``
   reducer 合并，``todos`` 用 ``Annotated[list, _merge_todos]`` reducer 合并，
   支持并行 execute 节点返回部分 dict/list 自动归并。
 - ``_merge_dict``：dict reducer（right 覆盖 left）。
 - ``_merge_todos``：list reducer（按 ``_index`` 字段合并子任务 todo 状态更新）。
-- ``_serialize_blackboard``：把黑板内容序列化为 Aggregator prompt 用的文本，
-  同时接受 ``Blackboard`` 实例与 ``TeamState`` dict（duck-typed）。
+- ``_serialize_blackboard``：把 findings/errors 序列化为 Aggregator prompt 用的文本。
+
+Phase 2 清理：删除 ``Blackboard`` dataclass（内联进 aggregator 入参）、
+删除 ``subtask_results`` 死字段、``_merge_todos`` 粘性 in_progress。
 
 本模块无运行时依赖（仅依赖 dataclasses + typing），可被 planner / scheduler /
 aggregator / orchestrator 安全导入，不会产生循环依赖。
@@ -19,11 +20,10 @@ aggregator / orchestrator 安全导入，不会产生循环依赖。
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Annotated, Any, Mapping, TypedDict
 
 __all__ = [
-    "Blackboard",
     "TeamPlanTask",
     "TeamState",
     "SubtaskState",
@@ -52,20 +52,6 @@ class TeamSubtaskResult:
     payload: str
 
 
-@dataclass
-class Blackboard:
-    """AgentTeam 共享黑板：保存每个专家的结果摘要与错误信息。
-
-    LangGraph 迁移后仍保留，用于 Aggregator 的入参（向后兼容）。
-    新的 StateGraph 路径使用 ``TeamState`` dict；``aggregate_node`` 会把
-    ``TeamState`` 转成 ``Blackboard`` 再喂给 ``_run_aggregator``。
-    """
-
-    findings: dict[str, str] = field(default_factory=dict)
-    errors: dict[str, str] = field(default_factory=dict)
-    meta: dict[str, Any] = field(default_factory=dict)
-
-
 def _merge_dict(left: dict, right: dict) -> dict:
     """reducer：合并两个 dict（right 覆盖 left）。
 
@@ -78,12 +64,16 @@ def _merge_dict(left: dict, right: dict) -> dict:
 
 
 def _merge_todos(left: list[dict], right: list[dict]) -> list[dict]:
-    """reducer：按 ``_index`` 字段合并子任务 todo 状态更新。
+    """reducer：按 ``_index`` 字段合并子任务 todo 状态更新（粘性 in_progress）。
 
     LangGraph ``Annotated[list, _merge_todos]`` 在并行子任务节点返回时调用。
     ``right`` 每项可含 ``_index`` 字段定位 ``left`` 中对应 todo，合并 ``status``
     后移除 ``_index``。无 ``_index`` 或 index 越界时，``right`` 整体追加到 ``left``
     （Orchestrator 初始化场景）。
+
+    粘性 in_progress（T3.1）：合并后若任一侧 status 为 ``in_progress`` 且新状态
+    非 ``completed``/``error``，则保持 ``in_progress``。这避免并行子任务节点
+    返回 ``pending`` 把已经标记 ``in_progress`` 的 todo 误降级回 ``pending``。
 
     典型用法：
     - ``_plan_node`` 返回 ``{"todos": [完整列表]}`` → 初始化所有 pending
@@ -103,6 +93,17 @@ def _merge_todos(left: list[dict], right: list[dict]) -> list[dict]:
             for k, v in item.items():
                 if k != "_index":
                     target[k] = v
+            # 粘性 in_progress：left 或 right 任一为 in_progress 且新状态非终态
+            # 则保持 in_progress，避免 pending 降级；
+            # 但 left 已为终态时保持 left 终态，避免并行子任务 race condition
+            # 把 completed/error 回退为 in_progress（review issue 3 修复）
+            left_status = result[idx].get("status")
+            right_status = target.get("status")
+            terminal = {"completed", "error"}
+            if left_status in terminal:
+                target["status"] = left_status
+            elif (left_status == "in_progress" or right_status == "in_progress") and right_status not in terminal:
+                target["status"] = "in_progress"
             result[idx] = target
     return result
 
@@ -110,11 +111,11 @@ def _merge_todos(left: list[dict], right: list[dict]) -> list[dict]:
 class TeamState(TypedDict, total=False):
     """LangGraph StateGraph 状态：Team 路径 plan / execute / aggregate 节点共享。
 
-    - ``findings`` / ``errors`` / ``subtask_results`` 使用 ``_merge_dict`` reducer，
+    - ``findings`` / ``errors`` 使用 ``_merge_dict`` reducer，
       允许 execute 节点返回部分 dict 自动归并（支持并行子任务结果聚合）。
-    - ``todos`` 使用 ``_merge_todos`` reducer，允许子任务节点返回部分 todo 更新
-      （带 ``_index`` 字段）自动归并到全局 todo 列表。schema 对齐 deepagents 原生
-      ``{content: str, status: "pending"|"in_progress"|"completed"}``。
+    - ``todos`` 使用 ``_merge_todos`` reducer（粘性 in_progress），允许子任务节点
+      返回部分 todo 更新（带 ``_index`` 字段）自动归并到全局 todo 列表。schema
+      对齐 deepagents 原生 ``{content: str, status: "pending"|"in_progress"|"completed"}``。
     - ``team_semaphore`` / ``subtask_timeout``: Phase 1 稳定性硬化字段，
       运行时对象不参与 checkpoint 序列化（与 ``subtask_runners`` 同策略）。
     - 其余字段无 reducer，后续节点返回的同名字段会覆盖（LangGraph 默认行为）。
@@ -134,7 +135,6 @@ class TeamState(TypedDict, total=False):
     reasoning: str
     findings: Annotated[dict[str, str], _merge_dict]
     errors: Annotated[dict[str, str], _merge_dict]
-    subtask_results: Annotated[dict[str, dict], _merge_dict]
     todos: Annotated[list[dict], _merge_todos]
     # Phase 1 稳定性硬化：运行时对象，不参与 checkpoint 序列化
     team_semaphore: Any  # asyncio.Semaphore，运行时在 run_team_path 入口创建
@@ -172,25 +172,17 @@ class SubtaskState(TypedDict, total=False):
     subtask_timeout: int  # 子任务超时秒数
 
 
-def _serialize_blackboard(blackboard: Blackboard | Mapping) -> str:
+def _serialize_blackboard(blackboard: Mapping) -> str:
     """把黑板内容序列化为 Aggregator prompt 用的文本。
 
-    Duck-typed：同时接受 ``Blackboard`` dataclass（``.findings`` / ``.errors``
-    属性）与 ``TeamState`` dict（``["findings"]`` / ``["errors"]`` key）。
+    Phase 2 清理：删除 ``Blackboard`` dataclass 后，本函数只接受 Mapping
+    （通常为 ``TeamState`` dict 或含 ``findings`` / ``errors`` key 的 dict）。
 
     Args:
-        blackboard: ``Blackboard`` 实例或含 ``findings`` / ``errors`` key 的 Mapping。
+        blackboard: 含 ``findings`` / ``errors`` key 的 Mapping。
     """
-    findings = (
-        blackboard.findings
-        if isinstance(blackboard, Blackboard)
-        else blackboard.get("findings", {})
-    )
-    errors = (
-        blackboard.errors
-        if isinstance(blackboard, Blackboard)
-        else blackboard.get("errors", {})
-    )
+    findings = blackboard.get("findings", {})
+    errors = blackboard.get("errors", {})
     lines: list[str] = []
     for agent_name, finding in findings.items():
         lines.append(f"--- {agent_name} ---")
