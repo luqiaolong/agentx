@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { useChatStore } from "@/stores/chat";
-import type { ChatMessage, MessagePart } from "@/stores/chat";
+import type { ChatMessage, MessagePart, TeamAgentState } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent, TodoStatus } from "@/lib/utils";
 import { chat, getCurrentTraceId } from "@/lib/api/chat";
@@ -215,6 +215,23 @@ export function useChatStream(args: UseChatStreamArgs) {
         }
         case "delegation": {
           if (pendingIdRef.current) {
+            // aborted/timeout 事件变体：子任务中止或超时，不再创建 delegation part，
+            // 而是把对应 agent 标记为 error + 记录失败原因到 summary。
+            if (e.event === "aborted" || e.event === "timeout") {
+              if (e.source === "team") {
+                upsertTeamNode(pendingIdRef.current, {
+                  agentUpdate: {
+                    agent: e.target,
+                    patch: {
+                      status: "error",
+                      finishedAt: Date.now(),
+                      summary: e.event === "aborted" ? "用户中止" : `执行超时${e.timeout ? `（${e.timeout}s）` : ""}`,
+                    },
+                  },
+                });
+              }
+              break;
+            }
             addPart(pendingIdRef.current, {
               type: "delegation",
               id: crypto.randomUUID(),
@@ -453,17 +470,23 @@ export function useChatStream(args: UseChatStreamArgs) {
           break;
         }
         case "team_init": {
-          // team_init 事件：_plan_node 成功后发射，携带 plan + agents + reasoning。
-          // 前端据此在消息顶部创建 TeamNodeCard（status="running"）。
+          // team_init 事件：_plan_node 成功后发射，携带 plan + agents + summary。
+          // plan 项含 {agent, description, id, depends_on}，映射为 TeamAgentState。
           if (pendingIdRef.current) {
+            // 把 plan 项映射为 TeamAgentState（含 description/taskId/dependsOn）
+            const initialAgents: TeamAgentState[] = e.plan.map((p) => ({
+              agent: p.agent,
+              description: p.description,
+              taskId: p.id,
+              dependsOn: p.depends_on,
+              status: "pending",
+            }));
             upsertTeamNode(pendingIdRef.current, {
-              plan: e.plan,
-              reasoning: e.reasoning,
-              initialAgents: e.agents,
+              reasoning: e.summary,
+              initialAgents,
               status: "running",
             });
           }
-          // 标记当前连接为 team 模式，供断连恢复时补发 team_done
           if (threadId) {
             chat.setTeamMode(threadId, true);
           }
@@ -539,12 +562,36 @@ export function useChatStream(args: UseChatStreamArgs) {
           }, 2000);
           break;
         }
+        case "replan": {
+          // replan 事件：质量门失败后触发重规划，携带新增任务列表。
+          // 追加到 TeamNodeCard 的 replanHistory + 新增 agent 行。
+          if (pendingIdRef.current) {
+            upsertTeamNode(pendingIdRef.current, {
+              replan: {
+                newTasks: e.new_tasks.map((t) => ({
+                  id: t.id,
+                  agent: t.agent,
+                  description: t.description,
+                  dependsOn: t.depends_on,
+                })),
+                replanCount: e.replan_count,
+                reason: e.reason,
+              },
+            });
+          }
+          break;
+        }
         case "warning": {
           // 后端 warning 事件：未知 agent fallback / team_role 缺 system_prompt 等
-          // 仅写入 console.warn 便于开发排查，不影响流式状态；
-          // 未来可接入 toast/banner UI 给用户更友好的提示。
+          // 追加到 TeamNodeCard 的 warnings 列表，同时 console.warn 便于开发排查。
           if (e.message) {
             console.warn("[AgentTeam warning]", e.message);
+            if (pendingIdRef.current) {
+              upsertTeamNode(pendingIdRef.current, {
+                addWarning: e.message,
+                createIfMissing: false,
+              });
+            }
           }
           break;
         }

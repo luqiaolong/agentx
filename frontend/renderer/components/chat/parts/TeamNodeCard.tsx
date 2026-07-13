@@ -1,5 +1,5 @@
 import { memo, useState, useMemo } from "react";
-import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronDown, AlertTriangle, GitBranch, RotateCw } from "lucide-react";
 import type { TeamAgentState } from "@/stores/chat";
 import { TraceCardHeader } from "./TraceCardHeader";
 import { TraceItems } from "./TraceItems";
@@ -13,11 +13,14 @@ export interface SubAgentTraceGroup {
 }
 
 interface TeamNodeCardProps {
-  plan: { agent: string; input: string; purpose: string }[];
   reasoning: string;
   agents: TeamAgentState[];
   status: "running" | "done" | "error";
   doneAt?: number;
+  /** 重规划历史记录 */
+  replanHistory?: { newTasks: { id: string; agent: string; description: string; dependsOn: string[] }[]; replanCount: number; reason: string }[];
+  /** 累积告警消息列表 */
+  warnings?: string[];
   /** 子代理执行轨迹组（delegation + tool-call + reasoning 等） */
   subAgentGroups?: SubAgentTraceGroup[];
   /** 不属于任何子代理的独立轨迹项（classification / team 级 reasoning 等） */
@@ -37,26 +40,25 @@ function normalizeAgentRole(role: string): string {
 }
 
 /**
- * 为 agent 生成稳定的 React key（重名时拼接 input 前缀）。
+ * 构建任务 id → agent label 映射，用于 depends_on 展示。
  */
-function buildAgentKey(
-  agent: string,
-  index: number,
-  plan: { agent: string; input: string; purpose: string }[],
-): string {
-  const sameName = plan.filter((p) => p.agent === agent);
-  if (sameName.length <= 1) return agent;
-  const input = sameName[index]?.input ?? "";
-  if (!input) return `${agent}-${index}`;
-  return `${agent}-${input.slice(0, 8)}`;
+function buildTaskLabelMap(agents: TeamAgentState[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const a of agents) {
+    if (!a.taskId) continue;
+    const meta = SUBAGENT_META[a.agent];
+    const label = meta?.label ?? a.agent;
+    map.set(a.taskId, label);
+  }
+  return map;
 }
 
 /**
- * 子代理可展开行：点击展开显示执行轨迹。
+ * 子代理可展开行：点击展开显示执行轨迹 + 最终输出。
  *
  * 二级折叠结构：
- * - 折叠态：显示 agent 名称 + purpose + 状态图标
- * - 展开态：限高滚动区显示该 agent 的 delegation 消息 + reasoning + tool-call 等
+ * - 折叠态：显示 agent 名称 + description + 状态图标
+ * - 展开态：限高滚动区显示该 agent 的 delegation + reasoning + tool-call + 最终输出
  */
 function ExpandableAgentRow({
   agent,
@@ -64,12 +66,14 @@ function ExpandableAgentRow({
   groups,
   messageId,
   parentExpandedKey,
+  taskLabelMap,
 }: {
   agent: TeamAgentState;
   agentKey: string;
   groups: SubAgentTraceGroup[];
   messageId: string;
   parentExpandedKey: string;
+  taskLabelMap: Map<string, string>;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -95,14 +99,22 @@ function ExpandableAgentRow({
   );
 
   const hasTrace = allItems.length > 0;
+  // 有最终输出内容时也允许展开（即使没有工具调用轨迹）
+  const hasOutput = !!agent.summary || !!agent.message;
+  const canExpand = hasTrace || hasOutput;
+
+  // 依赖任务标签列表
+  const depLabels = agent.dependsOn
+    .map((tid) => taskLabelMap.get(tid))
+    .filter((l): l is string => !!l);
 
   return (
     <div className="pl-2.5">
       <button
         type="button"
-        onClick={() => hasTrace && setExpanded((v) => !v)}
+        onClick={() => canExpand && setExpanded((v) => !v)}
         className={`flex w-full items-center gap-1.5 text-left transition-colors ${
-          hasTrace ? "cursor-pointer hover:bg-muted-c/5" : "cursor-default"
+          canExpand ? "cursor-pointer hover:bg-muted-c/5" : "cursor-default"
         }`}
         style={{ fontSize: "var(--fs-msg-assist)" }}
         aria-expanded={expanded}
@@ -111,24 +123,50 @@ function ExpandableAgentRow({
         {Icon && <Icon className="h-3 w-3 text-muted-c/60" />}
         <span className="font-medium text-primary-c">{agentLabel}</span>
         <ChevronRight className="h-2.5 w-2.5 opacity-40" />
-        <span className="text-muted-c truncate">{agent.purpose}</span>
-        {hasTrace && (
+        <span className="text-muted-c truncate">{agent.description}</span>
+        {canExpand && (
           <ChevronDown
             className={`ml-auto h-3 w-3 shrink-0 text-muted-c/50 transition-transform ${expanded ? "rotate-180" : ""}`}
           />
         )}
       </button>
-      {expanded && hasTrace && (
+      {expanded && canExpand && (
         <div
           className="mt-1 flex flex-col gap-2 overflow-y-auto rounded-md px-2 py-1.5"
           style={{ maxHeight: "320px" }}
         >
-          <TraceItems
-            items={allItems}
-            messageId={messageId}
-            reasoningDefaultExpanded={true}
-            parentExpandedKey={`${parentExpandedKey}-${agentKey}`}
-          />
+          {/* DAG 依赖信息 */}
+          {depLabels.length > 0 && (
+            <div
+              className="flex items-center gap-1 text-muted-c/60"
+              style={{ fontSize: "var(--fs-msg-tool)" }}
+            >
+              <GitBranch className="h-3 w-3 shrink-0" />
+              <span>依赖: {depLabels.join(" → ")}</span>
+            </div>
+          )}
+          {/* 执行轨迹 */}
+          {hasTrace && (
+            <TraceItems
+              items={allItems}
+              messageId={messageId}
+              reasoningDefaultExpanded={true}
+              parentExpandedKey={`${parentExpandedKey}-${agentKey}`}
+              reasoningCompact={true}
+            />
+          )}
+          {/* 子代理最终输出（blackboard findings） */}
+          {hasOutput && (
+            <div
+              className="rounded-md px-2 py-1.5 text-muted-c/80"
+              style={{ fontSize: "var(--fs-msg-tool)" }}
+            >
+              <div className="mb-0.5 text-muted-c/50">最终输出</div>
+              <div className="whitespace-pre-wrap break-words">
+                {agent.summary || agent.message}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -136,11 +174,12 @@ function ExpandableAgentRow({
 }
 
 function TeamNodeCardImpl({
-  plan,
   reasoning,
   agents,
   status,
   doneAt,
+  replanHistory = [],
+  warnings = [],
   subAgentGroups = [],
   standaloneItems = [],
   messageId = "",
@@ -159,22 +198,24 @@ function TeamNodeCardImpl({
 
   const statusText = status === "running" ? "执行中" : status === "done" ? "已完成" : "失败";
 
+  // 构建 taskId → agent label 映射，用于 depends_on 展示
+  const taskLabelMap = useMemo(() => buildTaskLabelMap(agents), [agents]);
+
   // 为每个 agent 匹配对应的 delegation 组（按规范化角色名）
-  // 统计同名 agent 出现次数以生成稳定 key
   const nameCount = new Map<string, number>();
   for (const a of agents) {
     nameCount.set(a.agent, (nameCount.get(a.agent) ?? 0) + 1);
   }
   const usedIndex = new Map<string, number>();
 
-  const agentRows = agents.map((agent, i) => {
+  const agentRows = agents.map((agent) => {
     const total = nameCount.get(agent.agent) ?? 1;
     const idx = usedIndex.get(agent.agent) ?? 0;
     usedIndex.set(agent.agent, idx + 1);
     const key =
       total <= 1
         ? agent.agent
-        : buildAgentKey(agent.agent, idx, plan);
+        : `${agent.agent}-${agent.taskId || idx}`;
     const matchedGroups = subAgentGroups.filter(
       (g) => normalizeAgentRole(g.target) === normalizeAgentRole(agent.agent),
     );
@@ -204,12 +245,49 @@ function TeamNodeCardImpl({
       />
       {expanded && (
         <div className="mt-1.5 pt-1.5">
+          {/* 团队规划摘要 */}
           {reasoning && (
             <div
               className="mb-1.5 text-muted-c/80"
               style={{ fontSize: "var(--fs-msg-tool)" }}
             >
               {reasoning}
+            </div>
+          )}
+          {/* 告警消息 */}
+          {warnings.length > 0 && (
+            <div
+              className="mb-1.5 flex flex-col gap-0.5"
+              style={{ fontSize: "var(--fs-msg-tool)" }}
+            >
+              {warnings.map((w, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-1 text-amber-600 dark:text-amber-400"
+                >
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>{w}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* 重规划历史 */}
+          {replanHistory.length > 0 && (
+            <div
+              className="mb-1.5 flex flex-col gap-1"
+              style={{ fontSize: "var(--fs-msg-tool)" }}
+            >
+              {replanHistory.map((r, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-1 text-amber-600 dark:text-amber-400"
+                >
+                  <RotateCw className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>
+                    第 {r.replanCount} 次重规划（{r.reason}），新增 {r.newTasks.length} 个任务
+                  </span>
+                </div>
+              ))}
             </div>
           )}
           {/* 独立轨迹项（classification / team 级 reasoning 等） */}
@@ -232,6 +310,7 @@ function TeamNodeCardImpl({
                 groups={groups}
                 messageId={messageId}
                 parentExpandedKey={parentExpandedKey}
+                taskLabelMap={taskLabelMap}
               />
             ))}
             {/* 未匹配 agent 的 delegation 组兜底渲染 */}
@@ -240,13 +319,16 @@ function TeamNodeCardImpl({
                 key={`unmatched-${group.target}-${i}`}
                 agent={{
                   agent: group.target,
-                  purpose: "",
+                  description: "",
+                  taskId: "",
+                  dependsOn: [],
                   status: "running",
                 }}
                 agentKey={`unmatched-${group.target}-${i}`}
                 groups={[group]}
                 messageId={messageId}
                 parentExpandedKey={parentExpandedKey}
+                taskLabelMap={taskLabelMap}
               />
             ))}
           </div>
@@ -265,17 +347,18 @@ function TeamNodeCardImpl({
 }
 
 /**
- * 自定义 areEqual：plan/reasoning/agents/status/doneAt/subAgentGroups/standaloneItems 变化时重渲。
+ * 自定义 areEqual：reasoning/agents/status/doneAt/subAgentGroups/standaloneItems/replanHistory/warnings 变化时重渲。
  */
 function areEqual(prev: TeamNodeCardProps, next: TeamNodeCardProps): boolean {
   return (
-    prev.plan === next.plan &&
     prev.reasoning === next.reasoning &&
     prev.agents === next.agents &&
     prev.status === next.status &&
     prev.doneAt === next.doneAt &&
     prev.subAgentGroups === next.subAgentGroups &&
     prev.standaloneItems === next.standaloneItems &&
+    prev.replanHistory === next.replanHistory &&
+    prev.warnings === next.warnings &&
     prev.messageId === next.messageId
   );
 }

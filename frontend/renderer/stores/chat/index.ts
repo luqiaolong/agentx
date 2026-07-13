@@ -33,8 +33,14 @@ import { createQuotaGuardedStorage, setStreamingActive } from "./quotaStorage";
  */
 export interface TeamAgentState {
   agent: string;
-  purpose: string;
+  /** 任务描述（来自 team_init.plan[].description） */
+  description: string;
+  /** 任务 id（用于 depends_on 依赖关系展示） */
+  taskId: string;
+  /** 依赖任务 id 列表 */
+  dependsOn: string[];
   status: "pending" | "running" | "done" | "error";
+  /** 子代理最终输出内容（由 team_done.agents[].summary 回填） */
   message?: string;
   summary?: string;
   startedAt?: number;
@@ -98,11 +104,15 @@ export type MessagePart =
   | {
       type: "team";
       id: string;
-      plan: { agent: string; input: string; purpose: string }[];
+      /** 团队规划摘要（来自 team_init.summary） */
       reasoning: string;
       agents: TeamAgentState[];
       status: "running" | "done" | "error";
       doneAt?: number;
+      /** 重规划历史记录 */
+      replanHistory?: { newTasks: { id: string; agent: string; description: string; dependsOn: string[] }[]; replanCount: number; reason: string }[];
+      /** 累积告警消息列表 */
+      warnings?: string[];
     };
 
 export interface ChatMessage {
@@ -295,7 +305,6 @@ export interface ChatState {
   upsertTeamNode: (
     messageId: string,
     updaters: {
-      plan?: { agent: string; input: string; purpose: string }[];
       reasoning?: string;
       agentUpdate?: { agent: string; patch: Partial<TeamAgentState> };
       status?: "running" | "done" | "error";
@@ -314,6 +323,14 @@ export interface ChatState {
        * 用于把 blackboard 汇总前的子任务结果回填到 TeamNodeCard。
        */
       agentMessages?: { agent: string; message?: string; summary?: string }[];
+      /**
+       * replan 事件追加的重规划历史记录。
+       */
+      replan?: { newTasks: { id: string; agent: string; description: string; dependsOn: string[] }[]; replanCount: number; reason: string };
+      /**
+       * 追加的告警消息（warning 事件）。
+       */
+      addWarning?: string;
       /**
        * 若 team part 不存在是否创建新 part。
        * - true（默认）：team_init 场景，需要创建 team part
@@ -861,14 +878,14 @@ export const useChatStore = create<ChatState>()(
               if (teamIdx === -1) {
                 if (!createIfMissing) return m;
                 // team part 不存在：首次创建
-                // 若提供 initialAgents，一次性写入 plan + agents（单次 upsert）
-                // 否则按原逻辑用 agentUpdate 创建单条 agent
                 const agents: TeamAgentState[] = updaters.initialAgents
                   ? updaters.initialAgents
                   : updaters.agentUpdate
                     ? [{
                         agent: updaters.agentUpdate.agent,
-                        purpose: "",
+                        description: "",
+                        taskId: "",
+                        dependsOn: [],
                         status: "pending" as const,
                         ...updaters.agentUpdate.patch,
                       }]
@@ -876,34 +893,28 @@ export const useChatStore = create<ChatState>()(
                 const newPart = {
                   type: "team" as const,
                   id: crypto.randomUUID(),
-                  plan: updaters.plan ?? [],
                   reasoning: updaters.reasoning ?? "",
                   agents,
                   status: updaters.status ?? ("running" as const),
                 };
                 // 插入到 parts 数组开头，让 TeamNodeCard 出现在消息顶部
-                // （早于 delegation / tool_call / text 等后续 parts）
                 parts.unshift(newPart);
               } else {
                 const existing = parts[teamIdx] as Extract<MessagePart, { type: "team" }>;
-                let newPlan = existing.plan;
-                if (updaters.plan) newPlan = updaters.plan;
                 let newAgents = existing.agents;
                 // MEDIUM-5 修复：re-planning 时 initialAgents 替换整个 agents 数组
-                // （调用方重新规划时传入 initialAgents 表示用新 plan 重置 agents）
                 if (updaters.initialAgents) {
                   newAgents = updaters.initialAgents;
                 } else if (updaters.agentUpdate) {
                   const { agent, patch } = updaters.agentUpdate;
                   const idx = newAgents.findIndex((a) => a.agent === agent);
                   if (idx === -1) {
-                    newAgents = [...newAgents, { agent, purpose: "", status: "pending" as const, ...patch }];
+                    newAgents = [...newAgents, { agent, description: "", taskId: "", dependsOn: [], status: "pending" as const, ...patch }];
                   } else {
                     newAgents = newAgents.map((a, i) => (i === idx ? { ...a, ...patch } : a));
                   }
                 }
-                // finalizeAgents：team 整体结束时，把所有 pending/running 的 agent
-                // 统一标记为 done（或 error），避免 agent 状态卡在 running
+                // finalizeAgents：team 整体结束时，把所有 pending/running 的 agent 统一标记为 done/error
                 if (updaters.finalizeAgents) {
                   const finalStatus: "done" | "error" = updaters.status === "error" ? "error" : "done";
                   const now = Date.now();
@@ -930,13 +941,33 @@ export const useChatStore = create<ChatState>()(
                 }
                 const newStatus = updaters.status ?? existing.status;
                 const doneAt = updaters.status === "done" || updaters.status === "error" ? Date.now() : existing.doneAt;
+                // replan：追加重规划历史记录，同时把新任务作为新 agent 追加到 agents 数组
+                let newReplanHistory = existing.replanHistory;
+                if (updaters.replan) {
+                  newReplanHistory = [...(existing.replanHistory ?? []), updaters.replan];
+                  // 把新任务追加为 pending 状态的 agent 行
+                  const newAgentsFromReplan: TeamAgentState[] = updaters.replan.newTasks.map((t) => ({
+                    agent: t.agent,
+                    description: t.description,
+                    taskId: t.id,
+                    dependsOn: t.dependsOn,
+                    status: "pending" as const,
+                  }));
+                  newAgents = [...newAgents, ...newAgentsFromReplan];
+                }
+                // addWarning：追加告警消息
+                let newWarnings = existing.warnings;
+                if (updaters.addWarning) {
+                  newWarnings = [...(existing.warnings ?? []), updaters.addWarning];
+                }
                 parts[teamIdx] = {
                   ...existing,
-                  plan: newPlan,
                   agents: newAgents,
                   status: newStatus,
                   doneAt,
                   ...(updaters.reasoning !== undefined ? { reasoning: updaters.reasoning } : {}),
+                  ...(newReplanHistory !== undefined ? { replanHistory: newReplanHistory } : {}),
+                  ...(newWarnings !== undefined ? { warnings: newWarnings } : {}),
                 };
               }
               return { ...m, parts };

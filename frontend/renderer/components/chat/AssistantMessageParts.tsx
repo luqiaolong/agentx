@@ -304,6 +304,7 @@ function SubAgentGroup({
             messageId={messageId}
             reasoningDefaultExpanded={true}
             parentExpandedKey={expanded ? "open" : "closed"}
+            reasoningCompact={true}
           />
         </div>
       )}
@@ -492,11 +493,12 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
                * - 最终 text 输出渲染在卡片外部下方
                */}
               <TeamNodeCard
-                plan={teamData.teamPart.plan}
                 reasoning={teamData.teamPart.reasoning}
                 agents={teamData.teamPart.agents}
                 status={teamData.teamPart.status}
                 doneAt={teamData.teamPart.doneAt}
+                replanHistory={teamData.teamPart.replanHistory}
+                warnings={teamData.teamPart.warnings}
                 subAgentGroups={teamData.subAgentGroups}
                 standaloneItems={teamData.standaloneItems}
                 messageId={message.id}
@@ -601,11 +603,12 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
                     return (
                       <TeamNodeCard
                         key={`team-${item.part.id}`}
-                        plan={item.part.plan}
                         reasoning={item.part.reasoning}
                         agents={item.part.agents}
                         status={item.part.status}
                         doneAt={item.part.doneAt}
+                        replanHistory={item.part.replanHistory}
+                        warnings={item.part.warnings}
                       />
                     );
                   default:

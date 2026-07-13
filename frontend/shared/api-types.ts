@@ -51,7 +51,11 @@ export type ChatEvent = (
       trace_id?: string;
     }
   // delegation 事件：Router 静态分类或 DeepAgent 动态委派
-  | { type: "delegation"; target: string; source: string; message: string; trace_id?: string }
+  // event 字段（可选）：
+  //   - undefined: 正常委派
+  //   - "aborted": 子任务被用户中止（message="用户中止"）
+  //   - "timeout": 子任务执行超时（message 含超时信息）
+  | { type: "delegation"; target: string; source: string; message: string; event?: "aborted" | "timeout"; agent?: string; task_id?: string; timeout?: number; trace_id?: string }
   // classification 事件：Router 分类决策展示
   | { type: "classification"; label: string; reason: string; trace_id?: string }
   // todo_update 事件：DeepAgent 任务级 todo 列表（deepagents 原生 {content, status} schema）
@@ -71,12 +75,16 @@ export type ChatEvent = (
   // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
   | { type: "approval_request"; [k: string]: unknown; trace_id?: string }
   // team_init 事件：AgentTeam 计划生成完成，前端据此在消息顶部创建 TeamNodeCard
-  // 携带 plan + agents + reasoning，在 _plan_node 成功后立即发射（早于 delegation / tool_call）
+  // 携带 plan + agents + summary，在 _plan_node 成功后立即发射（早于 delegation / tool_call）
+  // plan 项字段：
+  //   - id: 稳定任务标识，用于 depends_on 引用
+  //   - description: 任务描述（前端展示为任务说明）
+  //   - depends_on: 依赖任务 id 列表（DAG 依赖关系，前端展示依赖链）
   | {
       type: "team_init";
-      plan: { agent: string; input: string; purpose: string }[];
-      agents: { agent: string; purpose: string; status: "pending" | "running" | "done" | "error" }[];
-      reasoning: string;
+      plan: { agent: string; description: string; id: string; depends_on: string[] }[];
+      agents: { agent: string; status: "pending" | "running" | "done" | "error" }[];
+      summary: string;
       trace_id?: string;
     }
   // team_done 事件：AgentTeam 整体执行结束
@@ -88,6 +96,15 @@ export type ChatEvent = (
       type: "team_done";
       status?: "error" | "done" | "replanning";
       agents?: { agent: string; message?: string; summary?: string }[];
+      trace_id?: string;
+    }
+  // replan 事件：质量门失败后触发重规划，携带新增任务列表和重规划次数
+  // 前端据此在 TeamNodeCard 中展示重规划历史和新增任务
+  | {
+      type: "replan";
+      new_tasks: { id: string; agent: string; description: string; depends_on: string[]; expected_output?: string; is_dangerous_hint?: boolean }[];
+      replan_count: number;
+      reason: string;
       trace_id?: string;
     }
   // paused 事件：后端流被用户暂停
