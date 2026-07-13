@@ -13,6 +13,7 @@ import json
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from loguru import logger
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from app.security.approval import (
@@ -280,8 +281,10 @@ async def run_agent_with_approval(
                         stream_mode="values",
                     ):
                         pass
-        except Exception:  # noqa: BLE001
+        except GraphInterrupt:
             pass
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"unexpected resume exception: {exc!r}")
         return
     # 初始化已 yield 基线：取初始 stream 后的 state.messages 数量。
     # 后续 stream 完成时刷新；重复检测用此判断"是否有新消息生成"。
@@ -318,14 +321,16 @@ async def run_agent_with_approval(
                             stream_mode="values",
                         ):
                             pass
-            except Exception:  # noqa: BLE001
+            except GraphInterrupt:
                 pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"unexpected resume exception: {exc!r}")
             # 清残留审批决策，避免下次会话首个决策污染（B12 修复同步在 chat.py finally）
             try:
                 from app.security.approval import pop_approval
                 await pop_approval(thread_id)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"unexpected pop_approval exception: {exc!r}")
             # 结束 SSE 流，不 wait_for_resume；恢复走重新发送消息路径
             return
 
@@ -434,8 +439,10 @@ async def run_agent_with_approval(
                         stream_mode="values",
                     ):
                         pass
-                except Exception:  # noqa: BLE001
+                except GraphInterrupt:
                     pass
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning(f"unexpected resume exception: {exc2!r}")
                 yield await _forward(make_error_event( f"恢复失败: {exc}"))
                 return
             # 刷新已 yield 基线（root cause: trace=64851677fced422c）
@@ -471,8 +478,10 @@ async def run_agent_with_approval(
                         stream_mode="values",
                     ):
                         pass
-                except Exception:  # noqa: BLE001
+                except GraphInterrupt:
                     pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"unexpected resume exception: {exc!r}")
                 yield await _forward(
                     make_error_event(
                         "工具执行后状态未正常推进，已强制终止。请重试或联系支持。"
@@ -547,8 +556,10 @@ async def run_agent_with_approval(
                         stream_mode="values",
                     ):
                         pass
-                except Exception:  # noqa: BLE001
+                except GraphInterrupt:
                     pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"unexpected resume exception: {exc!r}")
                 return
 
             logger.info(
@@ -584,8 +595,10 @@ async def run_agent_with_approval(
                     stream_mode="values",
                 ):
                     pass
-            except Exception:  # noqa: BLE001
+            except GraphInterrupt:
                 pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"unexpected resume exception: {exc!r}")
             return
         if extension_handled.timed_out:
             yield await _forward(make_error_event( "目录授权等待被中断，操作未执行"))
@@ -600,8 +613,10 @@ async def run_agent_with_approval(
                     stream_mode="values",
                 ):
                     pass
-            except Exception:  # noqa: BLE001
+            except GraphInterrupt:
                 pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"unexpected resume exception: {exc!r}")
             return
 
         # 恢复执行
@@ -637,8 +652,10 @@ async def run_agent_with_approval(
                         stream_mode="values",
                     ):
                         pass
-            except Exception:  # noqa: BLE001
+            except GraphInterrupt:
                 pass
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning(f"unexpected resume exception: {exc2!r}")
             return
 
         logger.info(

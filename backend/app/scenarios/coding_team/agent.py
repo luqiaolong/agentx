@@ -90,3 +90,5 @@ async def run_coding_team(
         yield make_error_event(f"Team 执行失败: {exc}")
         # M5: 异常路径也必须发射 team_done，否则前端 TeamNodeCard 永远停在 loading
         yield make_sse_event("team_done", {"status": "error"})
+        # D4: team_done 后必须跟 done，保证前端 SSE 流终结
+        yield make_sse_event("done", {})

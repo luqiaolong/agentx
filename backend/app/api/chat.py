@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import uuid
 from typing import Any, AsyncIterator
 
@@ -60,6 +61,69 @@ async def _clear_thread_state(thread_id: str) -> None:
             logger.info("checkpoint cleared via SQL for thread", thread_id=thread_id)
     except Exception as exc:  # noqa: BLE001 — best-effort
         logger.warning("clear checkpoint failed", thread_id=thread_id, error=str(exc))
+
+
+async def _enumerate_child_thread_ids(thread_id: str, checkpointer: Any) -> list[str]:
+    """枚举指定 parent thread 的所有子任务 checkpoint thread_id（T5）。
+
+    匹配 ``{thread_id}-team-*`` 前缀（Phase 2 T5 UUID 化后格式为
+    ``{parent}-team-{uuid4()}``）。用于 /reset 清理孤儿 child checkpoint，
+    避免 ``data/agentx.db`` 无限膨胀。
+
+    优先用 ``checkpointer.alist()`` 枚举后前缀过滤，fallback 为 SQL ``LIKE``
+    查询（兼容无 ``alist`` 的同步 SqliteSaver 包装）。
+
+    Args:
+        thread_id: 父 thread_id。
+        checkpointer: checkpointer 实例（支持 ``alist`` 或 ``conn``）。
+
+    Returns:
+        子 thread_id 列表（可能为空）。
+    """
+    # 转义 SQL LIKE 通配符（\、%、_），避免 thread_id 含特殊字符时匹配错误
+    # （review issue 4 修复：thread_id 理论上来自前端，可能含 % 或 _）
+    escaped_thread_id = (
+        thread_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    prefix = f"{escaped_thread_id}-team-"
+
+    # 路径 1：checkpointer.alist()（如果可用）
+    if hasattr(checkpointer, "alist"):
+        try:
+            child_ids: list[str] = []
+            async for config, _meta, _parent in checkpointer.alist():
+                cfg = config.get("configurable", {}) if isinstance(config, dict) else {}
+                tid = cfg.get("thread_id", "")
+                # 用真实前缀（未转义）做 startswith，因为 alist 返回的是原始 thread_id
+                if tid.startswith(f"{thread_id}-team-"):
+                    child_ids.append(tid)
+            return child_ids
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "enumerate via alist failed, falling back to SQL",
+                thread_id=thread_id,
+                error=str(exc),
+            )
+
+    # 路径 2：SQL fallback（无 alist 或 alist 失败）
+    if hasattr(checkpointer, "conn"):
+        try:
+            pattern = f"{prefix}%"
+            cursor = await asyncio.to_thread(
+                checkpointer.conn.execute,
+                "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ? ESCAPE '\\'",
+                (pattern,),
+            )
+            rows = await asyncio.to_thread(cursor.fetchall)
+            return [row[0] for row in rows if row and row[0]]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "enumerate via SQL failed",
+                thread_id=thread_id,
+                error=str(exc),
+            )
+
+    return []
 
 
 # ---- per-thread_id SSE 流隔离锁（M4）----
@@ -135,6 +199,17 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
             await touch_thread(req.thread_id)
             # /reset：清空 checkpointer + 沙箱（当不持久化时）
             if req.message.startswith("/reset"):
+                # T5: 清理孤儿 child checkpoint（team 子任务的 {thread_id}-team-* 前缀）
+                reset_checkpointer = await get_async_checkpointer()
+                child_ids = await _enumerate_child_thread_ids(req.thread_id, reset_checkpointer)
+                for child_id in child_ids:
+                    await _clear_thread_state(child_id)
+                if child_ids:
+                    logger.info(
+                        "reset cleared orphan child checkpoints",
+                        thread_id=req.thread_id,
+                        count=len(child_ids),
+                    )
                 await _clear_thread_state(req.thread_id)
                 if not settings.persist_authorized_dirs:
                     await get_sandbox().clear(req.thread_id)
@@ -256,11 +331,16 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                     # 若 observation 尚未写入（极端时序），回退到字符估算。
                     _real_tc = None
                     try:
-                        from app.observability.observation import get_observation_sink
-
                         _real_tc = await get_observation_sink().get_last_llm_token_count(trace_id)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except (sqlite3.Error, RuntimeError, AttributeError) as exc:
+                        # review issue 8：窄化异常（原 except Exception: pass 过宽）。
+                        # sqlite3.Error=DB 查询失败；RuntimeError=无事件循环；
+                        # AttributeError=sink 方法签名变更。降级到字符估算（best-effort）。
+                        logger.debug(
+                            "get_last_llm_token_count failed, fallback to char estimate",
+                            trace_id=trace_id,
+                            error=str(exc),
+                        )
                     if _real_tc is None:
                         _real_tc = max(1, len("".join(assistant_content_parts)) // 4)
                     obs_ctx.add_metadata("result_token_count", _real_tc)
@@ -612,4 +692,5 @@ def register_chat_routes(app: FastAPI) -> None:
             "result_text": row.get("result_text") or "",
             "token_count": row.get("result_token_count") or 0,
             "trace_id": trace_id,
+            "agent_mode": row.get("agent_mode") or "",
         }

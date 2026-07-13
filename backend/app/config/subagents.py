@@ -50,6 +50,7 @@ __all__ = [
     "_default_team_subagents",
     "_sanitize_custom_tools",
     "_parse_custom_subagents",
+    "validate_team_subagents",
 ]
 
 
@@ -288,3 +289,39 @@ def _parse_custom_subagents(raw: Any) -> dict[str, CustomSubagentEntry]:
         entry.temperature = max(0.0, min(2.0, entry.temperature))
         result[key] = entry
     return result
+
+
+def validate_team_subagents(settings: Any) -> None:
+    """启动时校验团队角色子代理配置（T11）。
+
+    遍历 ``settings.team_subagents``，所有 ``enabled=True`` 的角色必须含非空
+    ``system_prompt``，否则 ``raise ValueError``。防止配置错误导致运行时
+    ``_run_team_role_subtask`` 静默降级或失败。
+
+    Args:
+        settings: ``Settings`` 实例（含 ``team_subagents`` property）。
+
+    Raises:
+        ValueError: 任一启用的团队角色缺少 ``system_prompt``。
+    """
+    from app.observability.logger import logger
+
+    team_subagents = settings.team_subagents
+    missing: list[str] = []
+    for name, cfg in team_subagents.items():
+        if cfg.enabled and not cfg.system_prompt.strip():
+            missing.append(name)
+    if missing:
+        detail = ", ".join(missing)
+        logger.error(
+            "team subagents validation failed: missing system_prompt",
+            missing=missing,
+        )
+        raise ValueError(
+            f"团队角色配置校验失败，以下启用的角色缺少 system_prompt: {detail}"
+        )
+    logger.info(
+        "team subagents validation passed",
+        total=len(team_subagents),
+        enabled=sum(1 for c in team_subagents.values() if c.enabled),
+    )
