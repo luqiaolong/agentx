@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 import uuid
@@ -259,72 +260,100 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                     ).__aiter__()
                     # 内部心跳：run_router 长时间不 yield 事件时（如 agent 跑长任务），
                     # 主动 yield heartbeat 防止前端断连。作为 sse-starlette ping 的双重保险。
+                    #
+                    # 关键：不能用 ``asyncio.wait_for`` 包裹 ``__anext__()`` —— timeout 触发时
+                    # wait_for 会 cancel 底层 coroutine，CancelledError 会沿生成器链传播
+                    # （run_router → run_coding_team → run_team_path → graph.astream →
+                    # execute_node → acquire_and_run），把正在执行的长任务子任务误判为
+                    # "用户中止"（实测 LLM 调用 >10s 即触发，trace 1873fee520bf4fcc /
+                    # 293cc13505e14567 均为 10.002s / 10.016s 后 abort）。
+                    # 改用 ``asyncio.wait(..., FIRST_COMPLETED)``：timeout 不 cancel 任务，
+                    # 下一轮继续等待同一个 task，长任务得以保留。
                     _HEARTBEAT_TIMEOUT = 10.0
-                    while True:
-                        try:
-                            event = await asyncio.wait_for(
-                                _router_gen.__anext__(), timeout=_HEARTBEAT_TIMEOUT
+                    _next_event_task: asyncio.Task | None = None
+                    try:
+                        while True:
+                            if _next_event_task is None:
+                                _next_event_task = asyncio.ensure_future(
+                                    _router_gen.__anext__()
+                                )
+                            done, _pending = await asyncio.wait(
+                                {_next_event_task},
+                                timeout=_HEARTBEAT_TIMEOUT,
+                                return_when=asyncio.FIRST_COMPLETED,
                             )
-                        except asyncio.TimeoutError:
-                            yield {"event": "heartbeat", "data": "{}"}
-                            continue
-                        except StopAsyncIteration:
-                            break
-                        # 检查中止标志
-                        if await is_aborted(req.thread_id):
-                            # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
-                            obs_ctx.add_metadata("error_type", "aborted")
-                            obs_ctx.add_metadata("error_message", "user aborted")
-                            # L20: team 模式中止时先发 team_done{status: error}，
-                            # 让前端 TeamNodeCard 正确关闭，避免卡片一直显示"执行中"
-                            if effective_agent_mode == "coding_team":
+                            if not done:
+                                # timeout：底层 task 仍在跑，只发心跳不打断
+                                yield {"event": "heartbeat", "data": "{}"}
+                                continue
+                            # task 完成：取出结果（可能抛 StopAsyncIteration）
+                            try:
+                                event = _next_event_task.result()
+                            except StopAsyncIteration:
+                                break
+                            _next_event_task = None
+                            # 检查中止标志
+                            if await is_aborted(req.thread_id):
+                                # 中止事件也带 trace_id，方便用户报"任务卡死"问题时定位
+                                obs_ctx.add_metadata("error_type", "aborted")
+                                obs_ctx.add_metadata("error_message", "user aborted")
+                                # L20: team 模式中止时先发 team_done{status: error}，
+                                # 让前端 TeamNodeCard 正确关闭，避免卡片一直显示"执行中"
+                                if effective_agent_mode == "coding_team":
+                                    yield {
+                                        "event": "team_done",
+                                        "data": json.dumps({"status": "error"}),
+                                    }
                                 yield {
-                                    "event": "team_done",
-                                    "data": json.dumps({"status": "error"}),
+                                    "event": "error",
+                                    "data": f"用户已中止 | trace={trace_id}",
                                 }
-                            yield {
-                                "event": "error",
-                                "data": f"用户已中止 | trace={trace_id}",
-                            }
-                            await clear_abort(req.thread_id)
-                            return
-                        if event.get("event") == "token":
-                            # B6 修复：router 在 workspace_fallback 时 yield 的
-                            # "[工作区恢复] ..." 通知 token 仅用于前端展示（提示用户
-                            # 当前 workspace 是自动恢复的历史授权），不应被计入
-                            # assistant_content_parts（否则会污染 observation_run.result_text）。
-                            # 前端 useChatStream.ts 见到此前缀会跳过渲染为 message part，
-                            # 仅展示在工作区徽章 / toast。
-                            token_data = str(event.get("data", ""))
-                            if not token_data.startswith("[工作区恢复]"):
-                                assistant_content_parts.append(token_data)
-                        elif event.get("event") == "reasoning":
-                            try:
-                                payload = json.loads(event.get("data", "{}"))
-                                content = payload.get("content", "") if isinstance(payload, dict) else ""
-                            except json.JSONDecodeError:
-                                content = ""
-                            if content:
-                                assistant_content_parts.append(content)
-                        elif event.get("event") == "reasoning_delta":
-                            try:
-                                payload = json.loads(event.get("data", "{}"))
-                                delta = payload.get("delta", "") if isinstance(payload, dict) else ""
-                            except json.JSONDecodeError:
-                                delta = ""
-                            if delta:
-                                assistant_content_parts.append(delta)
-                        # 过滤 run_router 自行发送的 done，统一由 chat.py 收口
-                        if event.get("event") == "done":
-                            continue
-                        # 增量更新 result_text 到 obs_ctx 内存（不写 DB）：
-                        # 若客户端断连导致 GeneratorExit 中断 yield，with dual_trace
-                        # 退出时 _finalize_run 仍能从内存读取已收集的部分写入 DB，
-                        # 前端可通过 GET /api/observation/runs/{trace_id} 拉取恢复。
-                        obs_ctx.add_metadata(
-                            "result_text", "".join(assistant_content_parts).strip()
-                        )
-                        yield event
+                                await clear_abort(req.thread_id)
+                                return
+                            if event.get("event") == "token":
+                                # B6 修复：router 在 workspace_fallback 时 yield 的
+                                # "[工作区恢复] ..." 通知 token 仅用于前端展示（提示用户
+                                # 当前 workspace 是自动恢复的历史授权），不应被计入
+                                # assistant_content_parts（否则会污染 observation_run.result_text）。
+                                # 前端 useChatStream.ts 见到此前缀会跳过渲染为 message part，
+                                # 仅展示在工作区徽章 / toast。
+                                token_data = str(event.get("data", ""))
+                                if not token_data.startswith("[工作区恢复]"):
+                                    assistant_content_parts.append(token_data)
+                            elif event.get("event") == "reasoning":
+                                try:
+                                    payload = json.loads(event.get("data", "{}"))
+                                    content = payload.get("content", "") if isinstance(payload, dict) else ""
+                                except json.JSONDecodeError:
+                                    content = ""
+                                if content:
+                                    assistant_content_parts.append(content)
+                            elif event.get("event") == "reasoning_delta":
+                                try:
+                                    payload = json.loads(event.get("data", "{}"))
+                                    delta = payload.get("delta", "") if isinstance(payload, dict) else ""
+                                except json.JSONDecodeError:
+                                    delta = ""
+                                if delta:
+                                    assistant_content_parts.append(delta)
+                            # 过滤 run_router 自行发送的 done，统一由 chat.py 收口
+                            if event.get("event") == "done":
+                                continue
+                            # 增量更新 result_text 到 obs_ctx 内存（不写 DB）：
+                            # 若客户端断连导致 GeneratorExit 中断 yield，with dual_trace
+                            # 退出时 _finalize_run 仍能从内存读取已收集的部分写入 DB，
+                            # 前端可通过 GET /api/observation/runs/{trace_id} 拉取恢复。
+                            obs_ctx.add_metadata(
+                                "result_text", "".join(assistant_content_parts).strip()
+                            )
+                            yield event
+                    finally:
+                        # 清理未完成的 __anext__ task，避免孤儿协程泄漏
+                        # （GeneratorExit / return / break 时 task 可能仍在 pending）
+                        if _next_event_task is not None and not _next_event_task.done():
+                            _next_event_task.cancel()
+                            with contextlib.suppress(BaseException):
+                                await _next_event_task
                     # FR-4.4: 正常出口写 result_token_count（result_text 已增量更新）
                     # 修正：result_token_count 不再用 SSE 事件数（len(parts)），
                     # 而是从 observation_event 表读取真实 LLM token_usage.total_tokens。
