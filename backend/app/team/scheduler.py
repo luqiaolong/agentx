@@ -214,10 +214,12 @@ async def acquire_and_run(
         ``TeamSubtaskResult``：runner 正常返回的结果，或 abort/异常失败结果。
     """
     semaphore = _get_team_semaphore()
+    # BE-I 修复：ensure_future 移入 try 块，失败时 finally 释放 semaphore
     await semaphore.acquire()
-    task_obj = asyncio.ensure_future(runner_coro)
-    register_running_task(thread_id, task_obj)
+    task_obj = None
     try:
+        task_obj = asyncio.ensure_future(runner_coro)
+        register_running_task(thread_id, task_obj)
         # 若 abort 已触发，立即 cancel
         if abort_event is not None and abort_event.is_set():
             task_obj.cancel()
@@ -269,14 +271,16 @@ async def acquire_and_run(
         )
     except Exception as exc:  # noqa: BLE001
         # 业务异常包装为失败 result（让 run_with_retry 判定是否瞬态重试）
+        # BE-E 修复：payload 包含异常类名，便于 run_with_retry 启发式判定瞬态
         return TeamSubtaskResult(
             agent=task.agent,
             success=False,
-            payload=f"{task.agent} 子任务异常: {exc}",
+            payload=f"{task.agent} 子任务异常: {type(exc).__name__}: {exc}",
         )
     finally:
         semaphore.release()
-        _unregister_running_task(thread_id, task_obj)
+        if task_obj is not None:
+            _unregister_running_task(thread_id, task_obj)
 
 
 # ============================================================
@@ -334,17 +338,38 @@ async def run_with_retry(
                     abort_event=abort_event,
                     writer=writer,
                 )
-                # acquire_and_run 已包装异常为失败 result；
-                # 失败 result 也算"执行了一次"，但无法区分瞬态/非瞬态
-                # → 通过 payload 中的异常信息启发式判定（保守策略：失败不重试，
-                #   避免 4xx/ValueError 被 acquire_and_run 吞掉后仍触发重试）
                 if result.success:
                     result.retries = retries_done
                     return result
-                # 失败：判定是否瞬态
-                # acquire_and_run 把异常包装成 payload 字符串，无法精确判定
-                # → 默认不重试（保守），让 runner_factory 不走 acquire_and_run 时
-                #   才能精确判定异常类型
+                # BE-E 修复：失败 result 启发式判定是否瞬态
+                # acquire_and_run 已吞异常返回失败 result，通过 payload 中的
+                # 异常类名关键词判定是否瞬态（ConnectError/TimeoutError 等）
+                payload_str = str(result.payload)
+                is_transient_payload = any(
+                    kw in payload_str
+                    for kw in (
+                        "ConnectError",
+                        "TimeoutError",
+                        "ReadTimeout",
+                        "WriteTimeout",
+                        "PoolTimeout",
+                    )
+                )
+                if is_transient_payload and attempt < max_retries:
+                    backoff = 2 ** attempt
+                    logger.warning(
+                        "team subtask transient error (from payload), retrying",
+                        agent=task.agent,
+                        task_id=getattr(task, "id", ""),
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        backoff_sec=backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    retries_done = attempt + 1
+                    continue
+                # 非瞬态失败：不重试
+                result.retries = retries_done
                 return result
             # 直接 await coroutine（不经过 acquire_and_run，便于精确异常判定）
             result = await runner_factory()
