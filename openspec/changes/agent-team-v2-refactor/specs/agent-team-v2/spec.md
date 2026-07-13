@@ -4,27 +4,22 @@
 
 ### Requirement: 概述
 
-AgentTeam v2 是 AgentX Team 路径的全量重构能力契约。它将 `backend/app/team/orchestrator.py`
-（约 780 行单文件）拆为 11 个单一职责模块，并一次性落地 P0+P1+P2 共 13 项改动。
-
-核心能力：
-
-- DAG 多波次派发（Kahn 拓扑排序 + wave 间串行 + wave 内并行）
-- 结构化任务通信（`with_structured_output(TeamPlan)`，正则 fallback）
-- 子任务结果传递（`upstream_findings` 注入到依赖任务 input）
-- 并发限流（`asyncio.Semaphore`）
-- 危险任务 LLM 分类（替代子串匹配）
-- 未知 agent fallback 到 code
-- abort 响应 LLM 长调用（`asyncio.Task.cancel()`）
-- 失败重试（指数退避，仅瞬态错误）
-- 迭代式 replan（质量门失败时重新拆解）
-- 静默降级消除（显式失败 + 启动校验）
-- token 透传一致性（统一 schema）
-- findings key 区分（`{agent}:{task_id}:{wave_index}` 复合格式）
+AgentTeam v2 是 AgentX Team 路径的全量重构能力契约。系统 SHALL 将
+`backend/app/team/orchestrator.py` 单文件拆为多个单一职责模块，并落地
+DAG 多波次派发、结构化任务通信、并发限流、危险任务 LLM 分类、迭代式 replan
+等核心能力。
 
 本 capability supersede `agent-team-dag`（来自 `agent-team-dag-orchestration` change）与
 `agent-team-architecture`（来自 `2026-07-12-agent-team-architecture-cleanup` change），
 二者均未落地，被本 capability 合并取代。
+
+#### Scenario: v2 模块拆分验证
+
+- **Given** `backend/app/team/` 目录
+- **When** 检查模块文件
+- **Then** `orchestrator.py` 不存在，`state.py` / `planner.py` / `dispatcher.py` /
+  `nodes.py` / `graph_builder.py` / `runner.py` / `scheduler.py` / `aggregator.py` /
+  `classifier.py` / `blackboard.py` 均存在且可导入
 
 ### Requirement: DAG 解析与 wave 派发
 

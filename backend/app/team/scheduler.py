@@ -1,17 +1,20 @@
-"""AgentTeam Scheduler：LangGraph 节点使用的子任务执行 helper。
+"""AgentTeam v2 Scheduler：Semaphore 限流 + retry + abort cancel。
 
-本模块为 ``app.team.orchestrator`` 提供基于 LangGraph ``Send`` 并行编排的
-子任务执行工具：
+本模块为 Team 路径提供子任务执行 helper：
 
-- ``_run_subtask_stream``: 执行单个子任务 runner，实时透传事件，返回
-  ``TeamSubtaskResult``。
-- ``_route_event_for_node``: 路由单条子任务事件，收集 token / tool_result，
-  返回哨兵结果或 None。
-- ``_resolve_subtask_runners``: 解析/懒加载真实子任务 runner 字典。
-- ``_get_runner``: 从 ``subtask_runners`` 字典或懒加载真实 runner 中解析。
-- ``_inherit_workspace``: 继承父 thread 的 workspace 授权到子任务 thread。
-- ``_SUBTASK_DONE_EVENT``: 旧实现及少数兼容场景使用的哨兵事件名。
-- ``_PASSTHROUGH_EVENTS``: 需要实时透传到前端的事件类型集合。
+- ``_get_team_semaphore``: 全局单例 ``asyncio.Semaphore``，限制并发数（T8）。
+- ``register_running_task`` / ``cancel_running_tasks``: 全局 running tasks
+  registry，支持按 ``thread_id`` 主动 cancel（替代旧轮询式 abort）。
+- ``acquire_and_run``: 限流 + abort cancel 的执行入口（T8）。
+  semaphore 在 ``finally`` 块释放（I3 不泄漏），``CancelledError`` 捕获后
+  返回 ``TeamSubtaskResult(success=False, payload="用户中止")``。
+- ``run_with_retry``: 失败重试 + 指数退避，仅瞬态错误重试（T8）。
+  ``asyncio.CancelledError`` 直接 raise 不重试（I4），4xx/ValueError 不重试。
+- ``_run_subtask_stream`` / ``_run_team_role_subtask``: 现有 helper，
+  保留显式失败逻辑，abort 从轮询式改为事件驱动（去掉 ``timeout=5`` 轮询）。
+- ``_route_event_for_node``: 单事件路由，保留 ``logger.warning`` 错误记录。
+- ``_inherit_workspace``: workspace 授权继承，保留窄异常 ``(PathNotAuthorized,
+  ValueError)``，失败即返回失败结果。
 """
 
 from __future__ import annotations
@@ -20,7 +23,10 @@ import asyncio
 import contextlib
 import json
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine, Optional
+
+import httpx
 
 from app.config import get_settings
 from app.observability.logger import logger
@@ -33,16 +39,30 @@ from app.utils.text import extract_chunk_text
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+    from app.team.state import TeamTask
+
 __all__ = [
+    "acquire_and_run",
+    "run_with_retry",
+    "register_running_task",
+    "cancel_running_tasks",
+    "_get_team_semaphore",
     "_run_subtask_stream",
+    "_run_team_role_subtask",
     "_route_event_for_node",
     "_resolve_subtask_runners",
     "_get_runner",
     "_inherit_workspace",
     "_SUBTASK_DONE_EVENT",
     "_PASSTHROUGH_EVENTS",
+    "TRANSIENT_ERRORS",
+    "_running_tasks",
 ]
 
+
+# ============================================================
+# Constants
+# ============================================================
 
 # 子任务完成哨兵事件类型（旧实现兼容，新实现通过返回值传递结果）
 _SUBTASK_DONE_EVENT = "_subtask_done"
@@ -55,8 +75,321 @@ _PASSTHROUGH_EVENTS: frozenset[str] = frozenset(
     {"approval_request", "todo_update", "delegation", "tool_call", "tool_result", "reasoning", "token"}
 )
 
+# 瞬态错误：网络波动 / 超时，可重试
+# 注意：``httpx.HTTPStatusError`` 不在此元组中，5xx 由 ``_is_transient`` 额外判定
+TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    asyncio.TimeoutError,
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+)
+
 # L17: 默认 runner 字典缓存，避免每次 _get_runner miss 都重复 import + 构造
 _default_runners_cache: dict[str, Any] | None = None
+
+
+# ============================================================
+# 全局 running tasks registry + Semaphore 单例
+# ============================================================
+
+# thread_id -> running asyncio.Task 列表
+# 注意：模块级 dict 在多 event loop 场景下需要 event loop 已绑定；
+# asyncio.Task 在 create_task 时绑定当前 loop，registry 只持有引用。
+_running_tasks: dict[str, list[asyncio.Task[Any]]] = {}
+
+
+@lru_cache(maxsize=1)
+def _get_team_semaphore() -> asyncio.Semaphore:
+    """全局单例 semaphore，从 ``settings.team_max_concurrency`` 获取。
+
+    ``lru_cache(maxsize=1)`` 保证全局唯一 semaphore 实例，避免每次 acquire 都
+    重新创建导致限流失效。Semaphore 跨多个 event loop 不安全，本应用单 loop
+    模型（FastAPI + asyncio 主 loop）。
+    """
+    settings = get_settings()
+    max_concurrency = settings.team_max_concurrency
+    # 防御性校验：None / 0 / 负数降级到默认 5
+    if not isinstance(max_concurrency, int) or max_concurrency <= 0:
+        max_concurrency = 5
+    return asyncio.Semaphore(max_concurrency)
+
+
+def register_running_task(thread_id: str, task: asyncio.Task[Any]) -> None:
+    """注册 running task 到 registry。
+
+    同一 ``thread_id`` 可注册多个 task（并行 wave 内多个子任务），追加到列表。
+    ``cancel_running_tasks(thread_id)`` 后续可批量取消。
+
+    Args:
+        thread_id: 父 thread id（Team 路径入口 thread）。
+        task: ``asyncio.Task`` 实例（调用方负责创建）。
+    """
+    tasks = _running_tasks.get(thread_id)
+    if tasks is None:
+        tasks = []
+        _running_tasks[thread_id] = tasks
+    tasks.append(task)
+
+
+def cancel_running_tasks(thread_id: str) -> None:
+    """取消指定 thread_id 的所有 running tasks。
+
+    对每个未完成的 task 调用 ``task.cancel()``，触发 ``CancelledError`` 传播到
+    coroutine 内部，让 ``acquire_and_run`` 的 ``except CancelledError`` 捕获并
+    返回 ``TeamSubtaskResult(success=False, payload="用户中止")``。
+
+    清空 registry 中该 thread_id 的 task 列表（``_running_tasks[thread_id] = []``），
+    避免重复 cancel 已 cancelled 的 task 抛 RuntimeError。
+    """
+    tasks = _running_tasks.get(thread_id)
+    if not tasks:
+        return
+    for t in tasks:
+        if not t.done():
+            t.cancel()
+    # 清空列表（保留 key，便于 _unregister_running_task 安全 remove）
+    tasks.clear()
+
+
+def _unregister_running_task(thread_id: str, task: asyncio.Task[Any]) -> None:
+    """从 registry 移除单个 task（acquire_and_run finally 块调用）。"""
+    tasks = _running_tasks.get(thread_id)
+    if not tasks:
+        return
+    with contextlib.suppress(ValueError):
+        tasks.remove(task)
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """判定异常是否瞬态（可重试）。
+
+    - ``TRANSIENT_ERRORS`` 元组中的异常类型 → True
+    - ``httpx.HTTPStatusError`` 5xx → True（5xx 视为瞬态服务端错误）
+    - ``httpx.HTTPStatusError`` 4xx → False（客户端错误，不重试）
+    - 其他异常 → False
+    """
+    if isinstance(exc, TRANSIENT_ERRORS):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", 0) if response is not None else 0
+        return 500 <= status < 600
+    return False
+
+
+# ============================================================
+# acquire_and_run：限流 + abort cancel 执行入口
+# ============================================================
+
+
+async def acquire_and_run(
+    task: TeamTask,
+    runner_coro: Coroutine[Any, Any, TeamSubtaskResult],
+    thread_id: str,
+    abort_event: Optional[asyncio.Event] = None,
+    writer: Optional[Callable[[dict], None]] = None,
+) -> TeamSubtaskResult:
+    """限流 + abort cancel 的执行入口（T8）。
+
+    执行流程：
+
+    1. ``semaphore.acquire()`` 限流（``finally`` 块释放，I3 不泄漏）
+    2. ``asyncio.ensure_future(runner_coro)`` 创建 ``asyncio.Task``
+    3. ``register_running_task(thread_id, task_obj)`` 注册到全局 registry
+    4. ``abort_event`` 监听：若 ``is_set()`` 立即 cancel task
+    5. ``await task_obj`` 等待结果
+    6. 捕获 ``CancelledError`` → 返回 ``TeamSubtaskResult(success=False,
+       payload="用户中止")``
+    7. ``finally`` 块：``semaphore.release()`` + 从 registry 移除 task
+
+    Args:
+        task: ``TeamTask`` 实例（用于构造失败 result 的 ``agent`` 字段）。
+        runner_coro: 已构造的 coroutine，返回 ``TeamSubtaskResult``。
+        thread_id: 父 thread id，用于 registry 索引。
+        abort_event: 可选的 ``asyncio.Event``，``is_set()`` 时触发 cancel。
+        writer: 可选的 SSE writer，abort 时发射 ``delegation`` 事件让前端 trace 可见。
+
+    Returns:
+        ``TeamSubtaskResult``：runner 正常返回的结果，或 abort/异常失败结果。
+    """
+    semaphore = _get_team_semaphore()
+    await semaphore.acquire()
+    task_obj = asyncio.ensure_future(runner_coro)
+    register_running_task(thread_id, task_obj)
+    try:
+        # 若 abort 已触发，立即 cancel
+        if abort_event is not None and abort_event.is_set():
+            task_obj.cancel()
+        else:
+            # 监听 abort_event 与 task_obj 竞速（事件驱动，无 timeout 轮询）
+            if abort_event is not None:
+                abort_wait = asyncio.ensure_future(abort_event.wait())
+                try:
+                    done, _pending = await asyncio.wait(
+                        {task_obj, abort_wait},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    # abort 触发且 task 未完成 → cancel
+                    if abort_wait in done and not task_obj.done():
+                        task_obj.cancel()
+                finally:
+                    if not abort_wait.done():
+                        abort_wait.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await abort_wait
+        # await task：CancelledError / 业务异常均在此抛出
+        return await task_obj
+    except asyncio.CancelledError:
+        # abort 或外部 cancel，返回失败结果（不重试，I4）
+        logger.info(
+            "team subtask aborted",
+            agent=task.agent,
+            task_id=getattr(task, "id", ""),
+            thread_id=thread_id,
+        )
+        if writer is not None:
+            writer(
+                make_sse_event(
+                    "delegation",
+                    {
+                        "source": "team",
+                        "event": "aborted",
+                        "agent": task.agent,
+                        "task_id": getattr(task, "id", ""),
+                        "message": "用户中止",
+                    },
+                )
+            )
+        return TeamSubtaskResult(
+            agent=task.agent,
+            success=False,
+            payload="用户中止",
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 业务异常包装为失败 result（让 run_with_retry 判定是否瞬态重试）
+        return TeamSubtaskResult(
+            agent=task.agent,
+            success=False,
+            payload=f"{task.agent} 子任务异常: {exc}",
+        )
+    finally:
+        semaphore.release()
+        _unregister_running_task(thread_id, task_obj)
+
+
+# ============================================================
+# run_with_retry：失败重试 + 指数退避
+# ============================================================
+
+
+async def run_with_retry(
+    task: TeamTask,
+    runner_factory: Callable[[], Coroutine[Any, Any, TeamSubtaskResult]],
+    max_retries: int = 2,
+    *,
+    thread_id: str = "",
+    abort_event: Optional[asyncio.Event] = None,
+    writer: Optional[Callable[[dict], None]] = None,
+) -> TeamSubtaskResult:
+    """失败重试 + 指数退避，仅瞬态错误重试（T8）。
+
+    重试策略：
+
+    - 瞬态错误（``TRANSIENT_ERRORS`` + 5xx）：重试，退避 1s/2s/4s
+    - ``asyncio.CancelledError``：直接 raise（I4，abort 不重试）
+    - 4xx / ``ValueError`` / 其他非瞬态：不重试，直接返回失败结果
+    - 重试 ``max_retries`` 次后仍失败：返回 ``success=False, retries=max_retries``
+      + payload 含最终异常信息
+
+    ``runner_factory`` 是工厂函数（每次调用返回新 coroutine），避免重试时
+    复用已耗尽的 coroutine（Python coroutine 一次性）。
+
+    Args:
+        task: ``TeamTask`` 实例。
+        runner_factory: 工厂函数，每次调用返回新 coroutine，coroutine 返回
+            ``TeamSubtaskResult``。异常会传播到本函数判定是否重试。
+        max_retries: 最大重试次数（默认 2，共 3 次执行）。
+        thread_id: 父 thread id，透传给 ``acquire_and_run``（如 runner_factory
+            内部已调用 acquire_and_run，则本函数只负责 retry 包裹）。
+        abort_event: 透传给 ``acquire_and_run``。
+        writer: 透传给 ``acquire_and_run``。
+
+    Returns:
+        ``TeamSubtaskResult``：成功 / 失败 / 重试耗尽结果，``retries`` 字段
+        记录实际重试次数。
+    """
+    last_exc: BaseException | None = None
+    retries_done = 0
+    for attempt in range(max_retries + 1):  # initial + max_retries
+        try:
+            # runner_factory 可能内部调用 acquire_and_run（限流 + abort cancel）
+            # 也可能直接是业务 coroutine；本函数只负责 retry + backoff
+            if thread_id:
+                result = await acquire_and_run(
+                    task=task,
+                    runner_coro=runner_factory(),
+                    thread_id=thread_id,
+                    abort_event=abort_event,
+                    writer=writer,
+                )
+                # acquire_and_run 已包装异常为失败 result；
+                # 失败 result 也算"执行了一次"，但无法区分瞬态/非瞬态
+                # → 通过 payload 中的异常信息启发式判定（保守策略：失败不重试，
+                #   避免 4xx/ValueError 被 acquire_and_run 吞掉后仍触发重试）
+                if result.success:
+                    result.retries = retries_done
+                    return result
+                # 失败：判定是否瞬态
+                # acquire_and_run 把异常包装成 payload 字符串，无法精确判定
+                # → 默认不重试（保守），让 runner_factory 不走 acquire_and_run 时
+                #   才能精确判定异常类型
+                return result
+            # 直接 await coroutine（不经过 acquire_and_run，便于精确异常判定）
+            result = await runner_factory()
+            if result.success:
+                result.retries = retries_done
+                return result
+            # 失败 result：业务逻辑失败（如 team_role 缺 system_prompt），不重试
+            return result
+        except asyncio.CancelledError:
+            # I4: abort 不重试，直接 raise
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if _is_transient(exc) and attempt < max_retries:
+                backoff = 2 ** attempt  # 1, 2, 4
+                logger.warning(
+                    "team subtask transient error, retrying",
+                    agent=task.agent,
+                    task_id=getattr(task, "id", ""),
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    backoff_sec=backoff,
+                    error=str(exc),
+                )
+                await asyncio.sleep(backoff)
+                retries_done = attempt + 1
+                continue
+            # 非瞬态错误 / 重试耗尽：返回失败 result
+            return TeamSubtaskResult(
+                agent=task.agent,
+                success=False,
+                payload=f"子任务异常: {exc}",
+                retries=retries_done,
+            )
+    # 理论不可达（for 循环已覆盖所有路径），防御性兜底
+    return TeamSubtaskResult(
+        agent=task.agent,
+        success=False,
+        payload=f"重试 {retries_done} 次后仍失败: {last_exc}",
+        retries=retries_done,
+    )
+
+
+# ============================================================
+# 现有 helper 迁移：runner 解析 / workspace 授权 / 事件路由
+# ============================================================
 
 
 def _resolve_subtask_runners(
@@ -146,6 +479,9 @@ def _route_event_for_node(
     - ``event`` / ``data``（deep / code 子代理）
     - ``type`` / ``content``（rag / web / custom 子代理）
 
+    Phase 2 R2：原静默吞异常已改为 ``logger.warning`` 记录，便于排查
+    「为何某条 tool_result 丢失」。
+
     Returns:
         ``TeamSubtaskResult`` 表示哨兵事件到达（subtask 完成），None 表示中间事件。
     """
@@ -213,6 +549,11 @@ def _route_event_for_node(
     return None
 
 
+# ============================================================
+# _run_subtask_stream：通用子任务流式执行（事件驱动 abort）
+# ============================================================
+
+
 async def _run_subtask_stream(
     runner: Callable[..., AsyncIterator[dict]],
     runner_args: tuple,
@@ -226,11 +567,18 @@ async def _run_subtask_stream(
     """通用子任务流式执行：调用 runner，路由事件，返回结果。
 
     处理 abort / error / 异常 / 哨兵事件，passthrough 实时写 writer。
-    abort 在每轮事件迭代前检查，确保用户触发中止后子任务立即退出。
+
+    Phase 2 T8 改造：abort 从 ``asyncio.wait(timeout=5)`` 轮询式改为事件驱动
+    （``asyncio.wait(FIRST_COMPLETED)`` 无 timeout，abort_event 一旦 set 立即
+    返回中止结果）。原 5s 轮询会导致 LLM 长调用期间 abort 信号响应延迟最多 5s，
+    新方案响应延迟接近 0。
 
     Phase 1 稳定性硬化：``asyncio.wait_for`` 包裹事件迭代循环，超时后返回失败
     ``TeamSubtaskResult`` 并发射 ``delegation`` 事件让前端 trace 可见。
     timeout 包裹位于本函数内部（而非节点调用处），确保 Phase 2 节点统一重构不会丢失该保护。
+
+    注：本函数保留 ``abort_event`` 参数以兼容现有 orchestrator 调用；新的 v2
+    节点应优先使用 ``acquire_and_run``（registry + cancel 模式）。
     """
     collected_text: list[str] = []
     tool_traces: list[str] = []
@@ -246,9 +594,8 @@ async def _run_subtask_stream(
             async def _iterate() -> TeamSubtaskResult | None:
                 """实际事件迭代循环，被 ``asyncio.wait_for`` 包裹。
 
-                Phase 2 T8：用 ``asyncio.wait(FIRST_COMPLETED, timeout=5)`` 竞速
-                ``runner.__anext__()`` 与 ``abort_event.wait()``，确保 LLM 长调用
-                期间 abort 信号在 5s 内被响应（M25 缺陷修复）。
+                Phase 2 T8：``asyncio.wait(FIRST_COMPLETED)`` 无 timeout，
+                abort_event 与 next_event 竞速，事件驱动响应 abort 信号。
                 """
                 stream_iter = stream.__aiter__()
                 abort_task = asyncio.ensure_future(abort_event.wait())
@@ -258,7 +605,6 @@ async def _run_subtask_stream(
                         done, _pending = await asyncio.wait(
                             {next_event_task, abort_task},
                             return_when=asyncio.FIRST_COMPLETED,
-                            timeout=5,
                         )
                         if abort_task in done:
                             next_event_task.cancel()
@@ -278,7 +624,6 @@ async def _run_subtask_stream(
                             if result is not None:
                                 return result
                             next_event_task = asyncio.ensure_future(stream_iter.__anext__())
-                        # timeout: both still pending, loop back and wait again
                 finally:
                     for _t in (next_event_task, abort_task):
                         if not _t.done():
@@ -321,6 +666,11 @@ async def _run_subtask_stream(
     )
 
 
+# ============================================================
+# _run_team_role_subtask：软件开发团队角色子任务
+# ============================================================
+
+
 async def _run_team_role_subtask(
     task: Any,
     thread_id: str,
@@ -340,6 +690,10 @@ async def _run_team_role_subtask(
 
     优先用 ``build_custom_agent`` 构建专属 agent（astream_events v2）；
     缺少 ``system_prompt`` 配置时显式失败（D7：不再静默降级到 coding Expert）。
+    显式失败时发射 ``warning`` SSE 事件（writer 可用时），让前端 trace 可见。
+
+    Phase 2 T8：abort 从 ``asyncio.wait(timeout=5)`` 轮询式改为事件驱动
+    （``asyncio.wait(FIRST_COMPLETED)`` 无 timeout）。
     """
     from app.team.blackboard import TeamPlanTask
 
@@ -362,6 +716,18 @@ async def _run_team_role_subtask(
             agent=task.agent,
             has_cfg=cfg is not None,
         )
+        # 新增 SSE warning 发射（writer 可用时），让前端 trace 可见
+        if writer is not None:
+            writer(
+                make_sse_event(
+                    "warning",
+                    {
+                        "source": "team",
+                        "agent": task.agent,
+                        "message": f"团队角色 {task.agent} 配置缺失 system_prompt",
+                    },
+                )
+            )
         return TeamSubtaskResult(
             agent=task.agent,
             success=False,
@@ -400,9 +766,8 @@ async def _run_team_role_subtask(
             async def _iterate() -> bool:
                 """返回 True 表示提前退出（abort），None/False 表示正常结束。
 
-                Phase 2 T8：用 ``asyncio.wait(FIRST_COMPLETED, timeout=5)`` 竞速
-                ``astream_events.__anext__()`` 与 ``abort_event.wait()``，确保 LLM
-                长调用期间 abort 信号在 5s 内被响应（M25 缺陷修复）。
+                Phase 2 T8：``asyncio.wait(FIRST_COMPLETED)`` 无 timeout，
+                abort_event 与 next_event 竞速，事件驱动响应 abort 信号。
                 """
                 # T12 评估：langchain_core 1.4.8 支持 version="v3"，但仅限
                 # BaseChatModel / CompiledGraph（build_custom_agent 返回 CompiledGraph，
@@ -419,7 +784,6 @@ async def _run_team_role_subtask(
                         done, _pending = await asyncio.wait(
                             {next_event_task, abort_task},
                             return_when=asyncio.FIRST_COMPLETED,
-                            timeout=5,
                         )
                         if abort_task in done:
                             next_event_task.cancel()
@@ -469,7 +833,6 @@ async def _run_team_role_subtask(
                                         )
                                     )
                             next_event_task = asyncio.ensure_future(stream_iter.__anext__())
-                        # timeout: both still pending, loop back and wait again
                 finally:
                     for _t in (next_event_task, abort_task):
                         if not _t.done():

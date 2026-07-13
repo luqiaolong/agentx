@@ -182,15 +182,18 @@ class Settings(BaseSettings):
     # 形如 {"frontend_dev":{"enabled":false,"temperature":0.5,...}}
     team_subagents_config: dict[str, Any] = Field(default_factory=dict)
 
-    # ---- Agent Team 配置（场景化架构下由 agents.teams.coding.enabled 控制）----
-    agent_team_max_tasks: int = Field(default=5, ge=1, le=10)
-    agent_team_max_parallel: int = Field(default=3, ge=1, le=5)
-    agent_team_result_max_chars: int = Field(default=2000, ge=500, le=8000)
-    agent_team_subtask_timeout: int = Field(
+    # ---- Agent Team v2 配置（场景化架构下由 agents.teams.coding.enabled 控制）----
+    # D15: 重命名 agent_team_* → team_*（v2 统一命名）
+    team_max_tasks: int = Field(default=5, ge=1, le=10)
+    team_max_concurrency: int = Field(default=5, ge=1, le=20)
+    team_result_max_chars: int = Field(default=2000, ge=500, le=8000)
+    team_subtask_timeout: int = Field(
         default=300, ge=30, le=1800, description="单个子任务最大执行时长（秒），超时强制失败"
     )
     # DAG 依赖编排：迭代式 replan 最大次数（防无限循环）；0=禁用 replan
-    agent_team_max_replans: int = Field(default=2, ge=0, le=5)
+    team_max_replan_attempts: int = Field(default=1, ge=0, le=5)
+    # T8: 单子任务瞬态错误最大重试次数（共 max_retries+1 次执行）
+    team_max_retries: int = Field(default=2, ge=0, le=5)
 
     # ---- 场景化智能体配置（Supervisor + Expert + ScenarioTeam）----
     # AGENTX_AGENTS_CONFIG: JSON 字符串，结构见 app.config.agents.AgentsConfig
