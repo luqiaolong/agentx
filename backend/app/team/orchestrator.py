@@ -1009,6 +1009,13 @@ async def _replan_check_node(state: TeamState) -> dict:
         if any(idx not in completed_tasks for idx in level)
     ]
 
+    # 同步追加新任务的展示用 todos，避免 _make_subtask_state_update 的 todo_update
+    # 引用越界索引（新任务在旧 todos 中不存在）。
+    existing_todos = state.get("todos", [])
+    new_todos = list(existing_todos) + [
+        {"content": t.input, "status": "pending"} for t in new_tasks
+    ]
+
     writer(make_sse_event("team_replan", {
         "new_tasks": [{"agent": t.agent, "input": t.input, "deps": t.deps} for t in new_tasks],
         "replan_count": replan_count + 1,
@@ -1021,6 +1028,7 @@ async def _replan_check_node(state: TeamState) -> dict:
 
     return {
         "plan": updated_plan,
+        "todos": new_todos,
         "pending_levels": pending_levels,
         "replan_count": replan_count + 1,
     }
