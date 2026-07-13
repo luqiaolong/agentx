@@ -70,7 +70,11 @@ Write-Host ""
 $prompt = Get-Content -Raw -Encoding UTF8 $PromptFile
 
 # === 阶段 1: headless 复盘，stdout 用 Tee-Object 同时输出到终端 + 报告文件 ===
-$prompt | claude -p --model sonnet --dangerously-skip-permissions --max-turns 25 |
+# max-turns=120：复盘任务需 dispatch 4 个专家 subagent 并行分析（前端/架构/测试/可观测性），
+# Claude CLI 的 subagent 机制下子代理所有工具调用 turn 都计入主代理 max-turns。
+# 4 专家 × ~8-12 turns + 主代理汇总 ~20 turns ≈ 60-80，留 50% 余量到 120。
+# 旧值 25 会导致后启动的专家被截断（"递归限制失败"）。
+$prompt | claude -p --model sonnet --dangerously-skip-permissions --max-turns 120 |
     Tee-Object -FilePath $ReportFile | Out-Null
 
 Write-Host ""
