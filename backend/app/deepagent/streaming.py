@@ -301,10 +301,21 @@ async def _stream_agent_events(
                 continue
             _seen_signatures.add(sig)
             msg_type = type(msg).__name__
+            # 工具调用模式可见化：ToolMessage 记录 tool_name，AIMessage 记录 tc_count，
+            # 便于从 INFO 日志判断是否陷入只读工具循环（无需开 DEBUG）
+            _tool_name = ""
+            _tc_count = 0
+            if isinstance(msg, ToolMessage):
+                _tool_name = getattr(msg, "name", "") or ""
+            elif isinstance(msg, AIMessage):
+                _tc_count = len(getattr(msg, "tool_calls", []) or [])
             logger.info(
-                "stream_agent_events: msg_type={msg_type} msg_count={msg_count} source={source}",
+                "stream_agent_events: msg_type={msg_type} msg_count={msg_count}"
+                " tool_name={tool_name} tc_count={tc_count} source={source}",
                 msg_type=msg_type,
                 msg_count=len(messages),
+                tool_name=_tool_name,
+                tc_count=_tc_count,
                 source=source,
             )
 
