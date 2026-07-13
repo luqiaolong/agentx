@@ -504,12 +504,16 @@ async def aggregate_node(state: TeamState) -> dict:
 
     流程：
     1. 发射 ``state.warnings`` 累积的 warning SSE（D14）
-    2. abort 检查
-    3. v2 ``Finding`` 对象 → v1 裸字符串（临时桥接 ``_run_aggregator``）
-    4. 质量门检查（``_quality_gate``）
-    5. 质量门通过 → 调用 ``_run_aggregator`` 流式输出
-    6. 发射 ``team_done`` SSE
-    7. 设置 ``quality_gate_passed`` 供 ``_route_after_aggregate`` 路由
+    2. BE-C 修复：findings 为空时直接终止（不进入 replan）
+    3. abort 检查
+    4. v2 ``Finding`` 对象 → v1 裸字符串（临时桥接 ``_run_aggregator``）
+    5. 质量门检查（``_quality_gate``）
+    6. 质量门通过 → 调用 ``_run_aggregator`` 流式输出
+    7. 发射 ``team_done`` SSE（BE-B 修复：仅此节点发射一次）
+    8. 设置 ``quality_gate_passed`` / ``should_terminate`` 供路由
+
+    BE-B 修复：``team_done`` 只在此节点发射一次，``replan_node`` 不再发射。
+    BE-C 修复：findings 为空时直接终止（``should_terminate=True``），不进 replan。
     """
     writer = get_stream_writer()
     thread_id = state.get("thread_id", "")
@@ -521,9 +525,14 @@ async def aggregate_node(state: TeamState) -> dict:
     for warning in state.get("warnings", []):
         writer(make_sse_event("warning", {"message": warning}))
 
+    # BE-C 修复：findings 为空时直接终止，不进入 replan
     if not findings:
         writer(make_sse_event("team_done", {"status": "error"}))
-        return {"quality_gate_passed": False}
+        return {
+            "quality_gate_passed": False,
+            "team_done_emitted": True,
+            "should_terminate": True,
+        }
 
     # abort 检查
     abort_event = state.get("abort_event")
@@ -535,7 +544,11 @@ async def aggregate_node(state: TeamState) -> dict:
                 "team_done", {"status": "error", "error": "用户中止"}
             )
         )
-        return {"quality_gate_passed": False}
+        return {
+            "quality_gate_passed": False,
+            "team_done_emitted": True,
+            "should_terminate": True,
+        }
 
     # v2 Finding → v1 裸字符串（临时桥接 _run_aggregator / _quality_gate）
     # BE-N 修复：findings 值可能是 Finding 或 list[Finding]，统一展开
@@ -583,8 +596,16 @@ async def aggregate_node(state: TeamState) -> dict:
         status = "error"
     else:
         status = "replanning"
+    # BE-N 适配：findings 值可能是 Finding 或 list[Finding]，统一展开
     agent_summaries = [
-        {"agent": f.agent, "summary": f.content} for f in findings.values()
+        {"agent": f.agent, "summary": f.content}
+        for f in findings.values()
+        if not isinstance(f, list)
+    ] + [
+        {"agent": f.agent, "summary": f.content}
+        for flist in findings.values()
+        if isinstance(flist, list)
+        for f in flist
     ]
     writer(
         make_sse_event(
@@ -603,11 +624,25 @@ async def aggregate_node(state: TeamState) -> dict:
         errors_count=len(errors),
     )
 
-    return {"quality_gate_passed": ok}
+    # BE-B 修复：标记 team_done 已发射，replan_node 不再发射
+    # should_terminate: ok=True (done) 或 has_error (error) 时直接终止
+    # 只有 ok=False 且无 error（replanning）时才进 replan
+    return {
+        "quality_gate_passed": ok,
+        "team_done_emitted": True,
+        "should_terminate": ok or has_error,
+    }
 
 
 def _route_after_aggregate(state: TeamState) -> str:
-    """D16: aggregate 条件边 — 质量门通过 → END；失败 → replan。"""
+    """D16 + BE-B/BE-C 修复：aggregate 条件边。
+
+    - ``should_terminate=True``（done / error / 空结果）→ END
+    - ``should_terminate=False``（replanning）→ replan
+    """
+    # BE-C: 空结果或已标记终止
+    if state.get("should_terminate", False):
+        return END
     quality_gate_passed = state.get("quality_gate_passed", True)
     if quality_gate_passed:
         return END
@@ -623,16 +658,29 @@ async def replan_node(state: TeamState) -> dict:
     """Replan 节点：质量门失败时迭代式重规划（D10/D16）。
 
     流程：
-    1. 检查 ``replan_count`` 是否超过 ``team_max_replan_attempts``
-    2. 调用 ``Planner.replan`` 把原 plan + findings + errors 喂回 LLM
-    3. 无新任务 → 返回空 ``pending_waves``（路由到 END）
-    4. 有新任务 → ``resolve_waves`` 分层 + 追加到 plan
-    5. 发射 ``replan`` SSE 事件
+    1. BE-S 修复：replan 前检查 ``abort_event``，已 set 则直接返回空 waves
+    2. 检查 ``replan_count`` 是否超过 ``team_max_replan_attempts``
+    3. 调用 ``Planner.replan`` 把原 plan + findings + errors 喂回 LLM
+    4. 无新任务 → 返回空 ``pending_waves``（路由到 END）
+    5. 有新任务 → ``resolve_waves`` 分层 + 追加到 plan
+    6. 发射 ``replan`` SSE 事件
+
+    BE-B 修复：不再发射 ``team_done``（由 ``aggregate_node`` 统一发射）。
+    达上限时返回空 ``pending_waves``，路由到 END。
     """
     writer = get_stream_writer()
     settings = get_settings()
     replan_count = state.get("replan_count", 0)
     max_replans = settings.team_max_replan_attempts
+
+    # BE-S 修复：replan 前检查 abort，已 set 则直接返回空 waves
+    abort_event = state.get("abort_event")
+    if abort_event is not None and abort_event.is_set():
+        logger.info(
+            "team replan aborted before LLM call",
+            replan_count=replan_count,
+        )
+        return {"pending_waves": []}
 
     if replan_count >= max_replans:
         logger.info(
@@ -640,12 +688,7 @@ async def replan_node(state: TeamState) -> dict:
             replan_count=replan_count,
             max=max_replans,
         )
-        writer(
-            make_sse_event(
-                "team_done",
-                {"status": "error", "error": "replan limit reached"},
-            )
-        )
+        # BE-B 修复：不再发射 team_done（aggregate_node 已发过）
         return {"pending_waves": []}
 
     findings = state.get("findings", {})
@@ -662,7 +705,7 @@ async def replan_node(state: TeamState) -> dict:
             previous_plan=plan,
             findings=findings,
             errors=errors,
-            hint=plan[0].is_dangerous_hint if plan else False,
+            hint=any(t.is_dangerous_hint for t in plan) if plan else False,  # BE-K 修复
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("team replan_node planner failed", error=str(exc))

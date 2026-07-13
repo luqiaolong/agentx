@@ -26,6 +26,7 @@ __all__ = [
     "_merge_warnings",
     "_merge_pending_waves",
     "_merge_completed_task_ids",
+    "_merge_team_done_emitted",
     "_serialize_blackboard",
 ]
 
@@ -129,6 +130,15 @@ def _merge_completed_task_ids(left: list[str], right: list[str]) -> list[str]:
         if tid not in result:
             result.append(tid)
     return result
+
+
+def _merge_team_done_emitted(left: bool, right: bool) -> bool:
+    """v2 reducer：``team_done_emitted`` 用 OR 合并（任一 True 则 True）。
+
+    BE-B 修复：确保 ``team_done`` 只发射一次的标记位，aggregate_node 写入 True
+    后即使 replan_node 返回 False 也保持 True，防止重复发射。
+    """
+    return bool(left or right)
 
 
 def _serialize_blackboard(blackboard: Mapping) -> str:

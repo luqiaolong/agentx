@@ -24,6 +24,7 @@ from app.team.blackboard import (
     _merge_completed_task_ids,
     _merge_findings,
     _merge_pending_waves,
+    _merge_team_done_emitted,
     _merge_warnings,
 )
 
@@ -124,6 +125,7 @@ class TeamState(TypedDict, total=False):
     completed_task_ids: Annotated[list[str], _merge_completed_task_ids]
     replan_count: int
     quality_gate_passed: bool  # D16: aggregate_node 写入，_route_after_aggregate 读取
+    team_done_emitted: Annotated[bool, _merge_team_done_emitted]  # BE-B: team_done 单次发射标记
 
     # 运行时对象（不参与 checkpoint 序列化，与旧 TeamState 同策略）
     team_semaphore: Any  # asyncio.Semaphore
