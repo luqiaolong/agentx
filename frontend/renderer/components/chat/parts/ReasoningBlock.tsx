@@ -80,6 +80,14 @@ export interface ReasoningBlockProps {
   startedAt: number;
   /** reasoning 标记 done 的时间（流式结束，毫秒） */
   doneAt?: number;
+  /** 默认展开状态，覆盖 sessionStorage 的折叠记忆。
+   * - 不传：沿用 sessionStorage 记忆（默认展开）
+   * - 传入 true：强制默认展开（不读 sessionStorage 的"0"）
+   * - 传入 false：强制默认折叠（不读 sessionStorage 的"1"）
+   *
+   * 子代理卡片场景下传 true，配合 SubAgentGroup 的 key 包含父组件 expanded 状态，
+   * 确保展开子代理卡片时 reasoning 也默认展开（即使用户此前主动折叠过）。 */
+  defaultExpanded?: boolean;
 }
 
 function ReasoningBlockImpl({
@@ -89,6 +97,7 @@ function ReasoningBlockImpl({
   done,
   startedAt,
   doneAt,
+  defaultExpanded,
 }: ReasoningBlockProps) {
   // 用户手动展开/折叠状态（null = 未手动操作，默认沿用"永远展开"）
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
@@ -96,14 +105,19 @@ function ReasoningBlockImpl({
   const [nowTick, setNowTick] = useState(Date.now());
 
   // 初始化：从 sessionStorage 恢复手动展开/折叠状态（写入过才覆盖默认）
+  // 当 defaultExpanded 显式传入时，覆盖 sessionStorage 的折叠记忆
   useEffect(() => {
+    if (defaultExpanded !== undefined) {
+      setManualExpanded(defaultExpanded);
+      return;
+    }
     const stored = sessionStorage.getItem(getStorageKey(messageId, partId));
     if (stored === "1") {
       setManualExpanded(true);
     } else if (stored === "0") {
       setManualExpanded(false);
     }
-  }, [messageId, partId]);
+  }, [messageId, partId, defaultExpanded]);
 
   // 流式中每秒 tick 一次刷新耗时显示；完成时停止
   useEffect(() => {
@@ -214,7 +228,8 @@ function areEqual(prev: ReasoningBlockProps, next: ReasoningBlockProps): boolean
     prev.text === next.text &&
     prev.done === next.done &&
     prev.startedAt === next.startedAt &&
-    prev.doneAt === next.doneAt
+    prev.doneAt === next.doneAt &&
+    prev.defaultExpanded === next.defaultExpanded
   );
 }
 

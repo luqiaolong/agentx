@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from "react";
-import { Bot, Code, BookOpen, Globe, Wrench, Palette, Server, TestTube, Layers, Cloud, PenTool, Briefcase } from "lucide-react";
+import { Bot, Code, BookOpen, Globe, Wrench, Palette, Server, TestTube, Layers, Cloud, PenTool, Briefcase, Loader2 } from "lucide-react";
 import { TraceCardHeader } from "./TraceCardHeader";
 
 /** 子代理类型 → 图标 + 中文名 映射。 */
@@ -37,6 +37,8 @@ export interface DelegationCardProps {
   expanded?: boolean;
   /** 折叠状态变化回调（可选） */
   onToggle?: (expanded: boolean) => void;
+  /** 子代理是否仍执行中：true 时左侧图标替换为旋转 spinner */
+  running?: boolean;
 }
 
 /**
@@ -52,6 +54,7 @@ function DelegationCardImpl({
   collapsible = true,
   expanded: controlledExpanded,
   onToggle,
+  running = false,
 }: DelegationCardProps) {
   const meta = getSubagentMeta(target);
   const Icon = meta.icon;
@@ -70,10 +73,17 @@ function DelegationCardImpl({
     }
   }, [collapsible, isExpanded, onToggle]);
 
+  // 执行中：左侧图标替换为旋转 spinner，传达子代理正在工作
+  const iconEl = running ? (
+    <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-600 dark:text-brand-400" />
+  ) : (
+    <Icon className="h-3.5 w-3.5" />
+  );
+
   return (
     <div className="w-full rounded-lg rounded-tl-md bg-surface px-3 py-2 shadow-soft">
       <TraceCardHeader
-        icon={<Icon className="h-3.5 w-3.5" />}
+        icon={iconEl}
         title={`由 ${meta.label} 执行`}
         subtitle={message || undefined}
         expanded={isExpanded}
@@ -92,7 +102,8 @@ function areEqual(prev: DelegationCardProps, next: DelegationCardProps): boolean
     prev.target === next.target &&
     prev.message === next.message &&
     prev.collapsible === next.collapsible &&
-    prev.expanded === next.expanded
+    prev.expanded === next.expanded &&
+    prev.running === next.running
   );
 }
 

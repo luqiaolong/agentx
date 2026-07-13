@@ -241,6 +241,17 @@ function collapseToolCallGroups(items: RenderItem[]): RenderItem[] {
  */
 /**
  * 子代理分组组件：delegation 在容器上方可折叠，下方容器内包含执行轨迹。
+ *
+ * 视觉规范（2026-07-13 改造）：
+ * - delegation 左侧图标：执行中（存在 running tool-call 或未完成 reasoning）替换为
+ *   旋转 spinner，传达子代理正在工作；完成后恢复为角色静态图标。
+ * - 执行轨迹容器：限高滚动区（maxHeight 320px），内容超出时内部纵向滚动，
+ *   避免子代理轨迹过长撑爆整条消息。
+ * - reasoning 默认展开：通过 defaultExpanded={true} + key 包含父组件 expanded 状态
+ *   实现"展开子代理卡片时 reasoning 也默认展开"（即使用户此前主动折叠过 reasoning）。
+ *   - key 变化触发 ReasoningBlock 重新挂载 → useEffect 重置 manualExpanded 为 true
+ *   - 用户在子代理内主动折叠 reasoning 仍能在当前展开周期内生效
+ *   - 重新折叠子代理卡片再展开 → reasoning 重新默认展开
  */
 function SubAgentGroup({
   group,
@@ -257,6 +268,17 @@ function SubAgentGroup({
   const delegationItem = group.items[0];
   const traceItems = group.items.slice(1);
 
+  // 子代理是否仍执行中：存在 running tool-call 或未完成 reasoning
+  const running = useMemo(() => {
+    return traceItems.some((item) => {
+      if (item.kind === "tool-call") return item.part.status === "running";
+      if (item.kind === "tool-call-group")
+        return item.items.some((it) => it.status === "running");
+      if (item.kind === "reasoning") return !item.part.done;
+      return false;
+    });
+  }, [traceItems]);
+
   return (
     <div className="flex w-full flex-col gap-3">
       {/* delegation 头部：可折叠 */}
@@ -266,18 +288,25 @@ function SubAgentGroup({
           message={delegationItem.part.message}
           expanded={expanded}
           onToggle={setExpanded}
+          running={running}
         />
       )}
-      {/* 执行轨迹容器：展开时显示 */}
+      {/* 执行轨迹容器：展开时显示，限高滚动避免内容过长 */}
       {expanded && traceItems.length > 0 && (
-        <div className="flex w-full flex-col gap-3 rounded-lg rounded-tl-md border border-default px-3 py-2 shadow-soft">
+        <div
+          className="flex w-full flex-col gap-3 overflow-y-auto rounded-lg rounded-tl-md border border-default px-3 py-2 shadow-soft"
+          style={{ maxHeight: "320px" }}
+        >
           {traceItems.map((item, itemIdx) => {
             const isSameKindAsPrev = itemIdx > 0 && traceItems[itemIdx - 1]?.kind === item.kind;
             const blockClass = isSameKindAsPrev ? "gap-1" : "";
             switch (item.kind) {
               case "reasoning":
                 return (
-                  <div key={`r-${item.part.id}`} className={blockClass}>
+                  <div
+                    key={`r-${item.part.id}-${expanded ? "open" : "closed"}`}
+                    className={blockClass}
+                  >
                     <ReasoningBlock
                       partId={item.part.id}
                       messageId={messageId}
@@ -285,6 +314,7 @@ function SubAgentGroup({
                       done={item.part.done}
                       startedAt={item.part.startedAt}
                       doneAt={item.part.doneAt}
+                      defaultExpanded={true}
                     />
                   </div>
                 );
