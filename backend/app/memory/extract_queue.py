@@ -18,7 +18,6 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import aiosqlite
 
@@ -184,9 +183,8 @@ async def _run_worker(poll_interval: float = 1.0) -> None:
                 await _process_job(job)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "profile extract job failed, will retry on next poll",
-                    job_id=job.id,
-                    error=str(exc),
+                    f"profile extract job failed (job_id={job.id}), "
+                    f"will retry on next poll: {type(exc).__name__}: {exc}"
                 )
                 # 不删除，留在队列中下次重试
                 await asyncio.sleep(poll_interval)
@@ -231,9 +229,8 @@ async def drain_queue(timeout: float = 5.0) -> None:
             await _delete_job(job.id)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "profile extract job failed during drain",
-                job_id=job.id,
-                error=str(exc),
+                f"profile extract job failed during drain (job_id={job.id}): "
+                f"{type(exc).__name__}: {exc}"
             )
 
 

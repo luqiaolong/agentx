@@ -94,7 +94,9 @@ async def extract_profile_via_llm(message: str, assistant_reply: str) -> list[di
     try:
         result: ProfileResult = await structured_llm.ainvoke(prompt)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("profile extract via llm failed", error=str(exc))
+        logger.warning(
+            f"profile extract via llm failed: {type(exc).__name__}: {exc}"
+        )
         return []
     return [entry.model_dump() for entry in result.entries]
 
