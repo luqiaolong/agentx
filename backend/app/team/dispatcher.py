@@ -218,6 +218,10 @@ def build_dispatch_sends(state: TeamState) -> list[Send]:
     ``pending_waves`` 为空时返回 ``[Send("aggregate", {})]``，确保 graph
     路由到 aggregate 节点。
 
+    BE-A 修复：``wave_index`` 使用 ``replan_count * 100 + len(completed_task_ids)``
+    作为启发式，避免 replan 后 findings key 语义错乱（replan_count 单独无法区分
+    同一轮 replan 内的多个 wave）。
+
     Args:
         state: Team 路径全局 state。
 
@@ -233,6 +237,10 @@ def build_dispatch_sends(state: TeamState) -> list[Send]:
 
     findings = state.get("findings", {})
     replan_count = state.get("replan_count", 0)
+    # BE-A 修复：wave_index 用 completed_task_ids 长度推断已完成 wave 数
+    # （更准确的方式是在 state 增加 wave_index 字段，但当前用启发式避免 schema 大改）
+    completed_task_ids = state.get("completed_task_ids", [])
+    wave_index = replan_count * 100 + len(completed_task_ids)
     thread_id = state.get("thread_id", "")
 
     sends: list[Send] = []
@@ -244,7 +252,7 @@ def build_dispatch_sends(state: TeamState) -> list[Send]:
                 {
                     "task": task,
                     "upstream_findings": upstream,
-                    "wave_index": replan_count,
+                    "wave_index": wave_index,  # BE-A: 实际波次索引
                     "remaining_waves": remaining_waves,
                     "parent_thread_id": thread_id,
                     "todos": state.get("todos", []),

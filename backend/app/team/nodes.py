@@ -538,7 +538,18 @@ async def aggregate_node(state: TeamState) -> dict:
         return {"quality_gate_passed": False}
 
     # v2 Finding → v1 裸字符串（临时桥接 _run_aggregator / _quality_gate）
-    blackboard_findings = {key: f.content for key, f in findings.items()}
+    # BE-N 修复：findings 值可能是 Finding 或 list[Finding]，统一展开
+    blackboard_findings: dict[str, str] = {}
+    for key, val in findings.items():
+        if isinstance(val, list):
+            # 同 key 多个 finding：合并 content
+            blackboard_findings[key] = "\n---\n".join(
+                f.content if hasattr(f, "content") else str(f) for f in val
+            )
+        else:
+            blackboard_findings[key] = (
+                val.content if hasattr(val, "content") else str(val)
+            )
     blackboard_errors = {f"error_{i}": e for i, e in enumerate(errors)}
     blackboard = {
         "findings": blackboard_findings,

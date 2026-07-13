@@ -66,12 +66,30 @@ class TeamSubtaskResult:
 
 
 def _merge_findings(left: dict, right: dict) -> dict:
-    """v2 reducer：合并 ``dict[str, Finding]``（right 覆盖 left）。
+    """v2 reducer：合并 ``dict[str, Finding | list[Finding]]``。
+
+    BE-N 修复：同 key 的 finding 收集到 list，避免整体覆盖丢失。
+    不同 key 直接合并。单值与 list 混合时统一提升为 list。
 
     并行 execute 节点返回部分 ``{key: Finding}`` 时合并到全局 state。
     """
     result = dict(left or {})
-    result.update(right or {})
+    for key, val in (right or {}).items():
+        if key not in result:
+            result[key] = val
+            continue
+        # 同 key：收集为 list
+        existing = result[key]
+        if isinstance(existing, list):
+            if isinstance(val, list):
+                result[key] = existing + val
+            else:
+                result[key] = existing + [val]
+        else:
+            if isinstance(val, list):
+                result[key] = [existing] + val
+            else:
+                result[key] = [existing, val]
     return result
 
 

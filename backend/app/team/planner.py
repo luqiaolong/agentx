@@ -811,13 +811,40 @@ class Planner:
     def _post_filter_replan(
         self, plan: TeamPlan, settings: Any, previous_plan: list[TeamTask]
     ) -> TeamPlan:
-        """replan 产出的 plan 后处理：过滤掉已在 previous_plan 中的任务 id。
+        """replan 产出的 plan 后处理。
 
-        replan 只返回追加的新任务，避免重复执行已完成任务。
+        BE-T 修复：
+        1. 过滤掉与 previous_plan id 完全相同的任务（避免重复执行）
+        2. 对新任务强制 id 唯一化：若新任务 id 与 previous_plan 或其他新任务冲突，
+           追加 `_r{replan_round}` 后缀（如 task_1 → task_1_r2）
         """
         if not plan.tasks:
             return plan
 
         prev_ids = {t.id for t in previous_plan}
-        new_tasks = [t for t in plan.tasks if t.id not in prev_ids]
-        return self._post_filter(TeamPlan(tasks=new_tasks), settings)
+        # 第一轮：过滤完全重复的任务（id 与 description 都与 previous_plan 一致）
+        # 仅当 id 冲突但 description 不同时才视为"重做"，保留并唯一化 id
+        prev_full = {(t.id, t.description) for t in previous_plan}
+        new_tasks = [
+            t for t in plan.tasks
+            if (t.id, t.description) not in prev_full
+        ]
+
+        # 第二轮：id 唯一化（新任务间的冲突 + 与 prev 的冲突）
+        # replan_round 用 previous_plan 长度作为 round 标识（启发式，足够避免冲突）
+        replan_round = len(previous_plan)
+        seen_ids: set[str] = set(prev_ids)
+        unique_tasks: list[TeamTask] = []
+        for t in new_tasks:
+            if t.id in seen_ids:
+                # 冲突：追加后缀
+                new_id = f"{t.id}_r{replan_round}"
+                counter = 1
+                while new_id in seen_ids:
+                    new_id = f"{t.id}_r{replan_round}_{counter}"
+                    counter += 1
+                t = t.model_copy(update={"id": new_id})
+            seen_ids.add(t.id)
+            unique_tasks.append(t)
+
+        return self._post_filter(TeamPlan(tasks=unique_tasks), settings)
