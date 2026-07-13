@@ -65,7 +65,7 @@ LangGraph/LangChain 底层；DeepAgents 不覆盖的能力，才退化到 LangGr
 | P4 | 类型安全 | Python 用 type hints；TypeScript 严格模式 + 路径别名 |
 | P5 | 配置外置 | 业务参数走 `.env` / `config.py`，不写死在代码里 |
 | P6 | 可测试 | 业务逻辑与 IO 解耦，核心函数可纯函数化测试 |
-| P7 | 框架优先 | 优先使用 LangChain/LangGraph/DeepAgents 最新稳定 API，而非兼容旧版本或自研替代 |
+| P7 | DeepAgents 优先 | 优先使用 DeepAgents 最新稳定 API；DeepAgents 不支持时退化到 LangGraph / LangChain；禁止兼容旧版本或自研替代 |
 | P8 | 需求澄清优先 | 当用户意图存在歧义、需求模糊或关键信息缺失时，AI 代理应主动暂停执行，通过弹窗/对话框向用户澄清，而非擅自猜测或按默认假设继续 | 避免
 
 ---
@@ -95,10 +95,11 @@ LangGraph/LangChain 底层；DeepAgents 不覆盖的能力，才退化到 LangGr
 
 | # | ❌ 不要做的 | ✅ 应该用的 | 理由 |
 |---|---|---|---|
-| R1 | 手写 LLM 路由 / 智能体编排循环 | LangGraph `StateGraph` / DeepAgents `create_deep_agent` | 框架已提供检查点、人在回路、断点恢复 |
-| R2 | 手写工具调用（ReAct/CoT）循环 | LangGraph `ToolNode` + `@tool` 装饰器 | 错误重试、token 计数、tool_choice 控制很容易错 |
-| R3 | 自己写 RAG 检索（chunk + embed + retrieve） | LangChain Retriever + TEI 嵌入服务 | 分块策略、rerank、元数据过滤是工程化重灾区 |
-| R4 | 自己写检查点 / 会话持久化 | LangGraph `SqliteSaver` | 序列化、thread_id 隔离、断点恢复由框架处理 |
+| **R0** | **DeepAgents 能直接解决却绕过，自行调 LangGraph / LangChain 底层** | **先看 DeepAgents `create_deep_agent` / `create_react_agent` / 内置 middleware 能否直接覆盖；不支持才退化** | **DeepAgents 是 P0 首选入口；绕过它直调底层等于绕过项目最高优先级的统一封装** |
+| R1 | 手写 LLM 路由 / 智能体编排循环 | DeepAgents `create_deep_agent` / `create_react_agent`（首选）→ LangGraph `StateGraph`（退化）| 框架已提供检查点、人在回路、断点恢复 |
+| R2 | 手写工具调用（ReAct/CoT）循环 | DeepAgents `create_react_agent`（首选）→ LangGraph `ToolNode` + `@tool` 装饰器（退化）| 错误重试、token 计数、tool_choice 控制很容易错 |
+| R3 | 自己写 RAG 检索（chunk + embed + retrieve） | DeepAgents 内置 RAG 能力（首选）→ LangChain Retriever + TEI 嵌入服务（退化）| 分块策略、rerank、元数据过滤是工程化重灾区 |
+| R4 | 自己写检查点 / 会话持久化 | DeepAgents 自带 checkpoint 集成（首选）→ LangGraph `SqliteSaver`（退化）| 序列化、thread_id 隔离、断点恢复由框架处理 |
 | R5 | 自己实现 SSE/流式分块协议 | LangChain `astream_events` + FastAPI `StreamingResponse` | 协议细节（heartbeat、reconnect）容易出错 |
 | R6 | 自己写桌面应用框架 | Tauri 2.x + `tauri::command` + `invoke()` | 跨平台、签名、自动更新都已就绪 |
 | R7 | 自己造状态管理（store）| zustand（已用）| 引入 Redux/MobX 会与现有架构冲突 |
@@ -107,43 +108,47 @@ LangGraph/LangChain 底层；DeepAgents 不覆盖的能力，才退化到 LangGr
 | R10 | 自己实现 OpenAPI 文档 | FastAPI 的 `pydantic` 模型 + 自动生成 `/docs` | 手动维护文档必然过时 |
 | R11 | 手写消息历史管理 / 上下文截断 | LangChain `trim_messages` / `filter_messages` + `ChatPromptTemplate` | 消息截断、token 计数、角色过滤极易出错 |
 | R12 | 手写 LLM 输出解析（JSON/结构化）| LangChain `with_structured_output` / `PydanticOutputParser` / `JsonOutputParser` | 模型输出格式不稳定，解析容错需大量 edge case 处理 |
-| R13 | 手写并行工具调用编排 | LangGraph `StateGraph` 并行分支 + `ToolNode` 批量执行 | 并发控制、错误隔离、结果聚合由框架处理 |
-| R14 | 手写记忆 / 画像存储层 | LangGraph `checkpointer` + `SqliteSaver` / `PostgresSaver` | 序列化、thread 隔离、时间旅行已内置 |
+| R13 | 手写并行工具调用编排 | DeepAgents 内置并行（首选）→ LangGraph `StateGraph` 并行分支 + `ToolNode` 批量执行（退化）| 并发控制、错误隔离、结果聚合由框架处理 |
+| R14 | 手写记忆 / 画像存储层 | DeepAgents 内置 memory / LangGraph `checkpointer`（首选）→ `SqliteSaver` / `PostgresSaver`（退化）| 序列化、thread 隔离、时间旅行已内置 |
 | R15 | 手写 prompt 模板拼接 | LangChain `ChatPromptTemplate` / `MessagesPlaceholder` / `PipelinePromptTemplate` | 变量注入、消息角色、条件渲染有成熟方案 |
 | R16 | 手写 embedding / 向量检索客户端 | LangChain `Embeddings` 接口 + `VectorStore` 抽象（Milvus/TEI）| 批量嵌入、索引管理、查询参数由驱动处理 |
 | R17 | 手写 LangGraph 旧版兼容代码 | 使用最新稳定版 API（如 `astream_events` v2、`interrupt` 语义）| 旧版 API 已废弃，维护成本极高 |
 | R18 | 自研 trace 协议 / 自研 checkpoint 序列化 | LangChain `BaseCallbackHandler` + LangSmith SDK（`from langsmith import trace`） + LangGraph `SqliteSaver` | 已提供完整的钩子、remotability、序列化、断点恢复；自研协议会与 LangChain 生态脱节 |
+| R19 | 子代理委派不走 DeepAgents `SubAgentMiddleware`，自实现调度 | DeepAgents 内置 `SubAgentMiddleware` + 子代理声明 | 子代理隔离、上下文传递、错误传播由 DeepAgents 处理 |
 
 ---
 
 ## 4. 正面例子（项目里"对"的做法）
 
 ```text
-需求                              │ 用现成框架 / API
-──────────────────────────────────┼────────────────────────────────────────────
-智能体对话编排                     │ DeepAgents `create_react_agent` / `create_deep_agent` + LangGraph `StateGraph`
-工具调用                           │ `@tool` 装饰器 + LangGraph `ToolNode` + `BindToolsMixin`
-ReAct 循环                         │ DeepAgents `create_react_agent`（内置 ReAct）
-状态图工作流                       │ LangGraph `StateGraph` + `add_node` / `add_edge` / `add_conditional_edges`
-人在回路 / 审批中断                │ LangGraph `interrupt_before=["tools"]` + `Command(resume=...)`
-检查点 / 会话持久化                │ LangGraph `SqliteSaver` / `AsyncSqliteSaver` + `checkpointer` 参数
-流式事件                           │ LangChain `astream_events` (v2) + FastAPI `StreamingResponse`
-消息历史截断                       │ LangChain `trim_messages` / `filter_messages` + `MessagesPlaceholder`
-结构化输出                         │ LangChain `with_structured_output` / `PydanticOutputParser`
-Prompt 模板                        │ LangChain `ChatPromptTemplate` / `MessagesPlaceholder` / `HumanMessagePromptTemplate`
-RAG 检索                           │ LangChain `Retriever` + `VectorStore`（Milvus）+ TEI 嵌入
-嵌入向量                           │ LangChain `Embeddings` 接口 + TEI 客户端
-并行子任务编排                     │ LangGraph `StateGraph` 并行分支 + `Send` 语法
-长期记忆 / 画像存储                │ LangGraph checkpointer + `InMemorySaver` / `PostgresSaver`
-Web API                            │ FastAPI + pydantic
-桌面壳                             │ Tauri 2.x + Rust + `invoke()` / `listen()`
-前端状态                           │ zustand
-文件 IO                            │ pathlib + with 块
-HTTP 客户端                        │ httpx
-CSV/JSON                           │ 标准库 csv / json
-配置                               │ pydantic-settings + .env
-观测                               │ LangSmith + Langfuse + loguru
-测试                               │ pytest + httpx.AsyncClient
+需求                              │ 首选（DeepAgents）                │ 退化（LangGraph / LangChain）
+──────────────────────────────────┼──────────────────────────────────┼────────────────────────────────────────────
+智能体对话编排                     │ DeepAgents `create_deep_agent`   │ LangGraph `StateGraph`
+ReAct 循环                         │ DeepAgents `create_react_agent`  │ LangGraph `ToolNode` + `@tool`
+工具调用                           │ DeepAgents 内置工具绑定          │ `@tool` 装饰器 + `ToolNode` + `BindToolsMixin`
+子代理委派                         │ DeepAgents `SubAgentMiddleware`  │ LangGraph `StateGraph` 子图 + `Send` 语法
+规划与回写（TodoList）             │ DeepAgents `TodoListMiddleware`  │ LangGraph 状态字段 + 工具实现
+文件系统隔离（虚拟 FS）            │ DeepAgents `FilesystemMiddleware`│ LangChain `ReadFile`/`WriteFile` 自封装
+状态图工作流                       │ DeepAgents 嵌套编排              │ LangGraph `StateGraph` + `add_node` / `add_edge` / `add_conditional_edges`
+人在回路 / 审批中断                │ DeepAgents 内置 interrupt hook   │ LangGraph `interrupt_before=["tools"]` + `Command(resume=...)`
+检查点 / 会话持久化                │ DeepAgents 自带 checkpointer 集成│ LangGraph `SqliteSaver` / `AsyncSqliteSaver` + `checkpointer` 参数
+长期记忆 / 画像存储                │ DeepAgents 内置 memory           │ LangGraph checkpointer + `InMemorySaver` / `PostgresSaver`
+并行子任务编排                     │ DeepAgents 内置并行              │ LangGraph `StateGraph` 并行分支 + `Send` 语法
+RAG 检索                           │ DeepAgents 内置 RAG              │ LangChain `Retriever` + `VectorStore`（Milvus）+ TEI 嵌入
+嵌入向量                           │ DeepAgents 内置 Embeddings 集成  │ LangChain `Embeddings` 接口 + TEI 客户端
+流式事件                           │ DeepAgents `astream`            │ LangChain `astream_events` (v2) + FastAPI `StreamingResponse`
+消息历史截断                       │ DeepAgents 上下文管理            │ LangChain `trim_messages` / `filter_messages` + `MessagesPlaceholder`
+结构化输出                         │ DeepAgents `response_format`     │ LangChain `with_structured_output` / `PydanticOutputParser`
+Prompt 模板                        │ DeepAgents `system_prompt` 参数  │ LangChain `ChatPromptTemplate` / `MessagesPlaceholder` / `HumanMessagePromptTemplate`
+Web API                            │ —                                │ FastAPI + pydantic
+桌面壳                             │ —                                │ Tauri 2.x + Rust + `invoke()` / `listen()`
+前端状态                           │ —                                │ zustand
+文件 IO                            │ —                                │ pathlib + with 块
+HTTP 客户端                        │ —                                │ httpx
+CSV/JSON                           │ —                                │ 标准库 csv / json
+配置                               │ —                                │ pydantic-settings + .env
+观测                               │ —                                │ LangSmith + Langfuse + loguru
+测试                               │ —                                │ pytest + httpx.AsyncClient
 ```
 
 ---
@@ -151,33 +156,36 @@ CSV/JSON                           │ 标准库 csv / json
 ## 5. 决策流程（写新代码前必走 5 步）
 
 ```
-┌─ Step 1: 问题归类 ───────────────────────────┐
-│  这个需求属于"已有框架能解决"还是"框架外"？   │
-│  先对照 §1.1 核心框架优先序表确认归属层级。    │
-└────────────────────┬────────────────────────┘
+┌─ Step 1: 问题归类（按 DeepAgents 优先序定位）─────────┐
+│  这个需求属于"已有框架能解决"还是"框架外"？           │
+│  优先级：DeepAgents → LangGraph → LangChain → 自研    │
+│  先对照 §1.1 核心框架优先序表确认归属层级。            │
+└────────────────────┬───────────────────────────────────┘
                      ▼
-┌─ Step 2: 查官方文档（最新稳定版）──────────────┐
-│  LangGraph / DeepAgents / LangChain 官方文档   │
-│  找现成 API / 官方示例 / cookbook / migration  │
-│  特别注意：是否已有新版 API 替代旧实现？       │
-└────────────────────┬────────────────────────┘
+┌─ Step 2: 查官方文档（最新稳定版，按优先序）────────────┐
+│  ① DeepAgents 文档 → ② LangGraph 文档 → ③ LangChain  │
+│  找现成 API / 官方示例 / cookbook / migration          │
+│  特别注意：是否已有新版 API 替代旧实现？               │
+│  （默认动作：DeepAgents 不支持才退化到下一层）         │
+└────────────────────┬───────────────────────────────────┘
                      ▼
-┌─ Step 3: 搜项目内现成代码 ────────────────────┐
-│  Grep 看看同事/历史 PR 怎么实现的              │
-│  优先复用已验证的模式，避免重复造轮子。        │
-└────────────────────┬────────────────────────┘
+┌─ Step 3: 搜项目内现成代码 ──────────────────────────────┐
+│  Grep 看看同事/历史 PR 怎么实现的                        │
+│  优先复用已验证的模式，避免重复造轮子。                  │
+└────────────────────┬─────────────────────────────────────┘
                      ▼
-┌─ Step 4: 确认缺口 ───────────────────────────┐
-│  仍不满足 → 评估"扩展现成" vs "自研"           │
-│  优先扩展（middleware/callback/子类/适配器）   │
-│  禁止因"学习成本高"而绕过框架。                │
-└────────────────────┬────────────────────────┘
+┌─ Step 4: 确认缺口 ──────────────────────────────────────┐
+│  三层都覆盖不到 → 评估"扩展现成" vs "自研"               │
+│  优先扩展（middleware / callback / 子类 / 适配器）       │
+│  禁止因"学习成本高"而绕过 DeepAgents。                   │
+└────────────────────┬─────────────────────────────────────┘
                      ▼
-┌─ Step 5: 记录原因 ───────────────────────────┐
-│  在 commit message / PR 描述里写明             │
-│  "为什么不用现成 / 为什么必须自研"             │
-│  若突破 §3 反面清单，须写 ADR 文档。           │
-└──────────────────────────────────────────────┘
+┌─ Step 5: 记录原因 ──────────────────────────────────────┐
+│  在 commit message / PR 描述里写明                       │
+│  "为什么 DeepAgents 不行 / 为什么退化到 LangGraph /       │
+│   为什么必须自研"                                        │
+│  若突破 §3 反面清单，须写 ADR 文档。                     │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -202,8 +210,8 @@ CSV/JSON                           │ 标准库 csv / json
 
 ## 7. 违反本规范的处置
 
-- AI 代理在生成代码前**应主动说明** "为什么没用现成框架"
-- 评审人**应优先质疑**任何自研部分
+- AI 代理在生成代码前**应主动说明** "为什么没用 DeepAgents、退化到 LangGraph / LangChain 的原因"
+- 评审人**应优先质疑**任何自研部分，以及**绕过 DeepAgents 直调底层**的写法（违反 §3 R0）
 - 突破例外清单时，须在 `docs/decisions/ADR-xxxx.md` 写 ADR
   （Architecture Decision Record），并在 PR 链接 ADR
 
@@ -277,7 +285,7 @@ AgentTeam 多代理协作（Orchestrator + 并行子代理 + Blackboard + Aggreg
 | 渲染层 | React 18 + TypeScript + Tailwind v4 + zustand |
 | 主进程 | Rust（tokio async runtime） |
 | 后端 | Python ≥ 3.11 + FastAPI + uvicorn |
-| AI 编排 | LangGraph `StateGraph` + DeepAgents (`create_react_agent`) |
+| AI 编排 | DeepAgents（首选入口）→ LangGraph `StateGraph`（退化）→ LangChain Core（退化）|
 | 嵌入 | TEI（BGE-M3，部署在 myserver:8093） |
 | 向量库 | Milvus（部署在 myserver:19530） |
 | 检查点 | LangGraph `SqliteSaver` / `AsyncSqliteSaver` |
@@ -541,7 +549,7 @@ ErrorBoundary 渲染错误恢复。
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **agentx** (15117 symbols, 24309 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **agentx** (15128 symbols, 24320 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
