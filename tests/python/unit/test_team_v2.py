@@ -83,8 +83,8 @@ def _mock_settings(
 ) -> Any:
     """构造 mock settings（供 Planner / dispatcher 使用）。"""
     return SimpleNamespace(
-        agent_team_max_tasks=max_tasks,
-        agent_team_result_max_chars=result_max_chars,
+        team_max_tasks=max_tasks,
+        team_result_max_chars=result_max_chars,
         llm_temperature_orchestrator=temperature,
         team_subagents={},
         subagents={},

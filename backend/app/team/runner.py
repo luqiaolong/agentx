@@ -41,12 +41,8 @@ __all__ = ["run_team_path"]
 
 
 def _resolve_subtask_timeout(settings: Any) -> int:
-    """从 settings 解析 subtask_timeout（兼容新旧配置名）。"""
-    val = getattr(
-        settings,
-        "subtask_timeout",
-        getattr(settings, "agent_team_subtask_timeout", 300),
-    )
+    """从 settings 解析 subtask_timeout。"""
+    val = settings.team_subtask_timeout
     if not isinstance(val, int) or val < 30:
         return 300
     return val

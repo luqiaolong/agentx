@@ -52,7 +52,7 @@ _AGGREGATOR_PROMPT = ChatPromptTemplate.from_messages([
 
 def _build_summary(text_parts: list[str], tool_traces: list[str], agent_name: str) -> str:
     settings = get_settings()
-    max_chars = settings.agent_team_result_max_chars
+    max_chars = settings.team_result_max_chars
     full_text = "".join(text_parts).strip()
     if not full_text and not tool_traces:
         return f"[{agent_name}] 未返回有效内容"

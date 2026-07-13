@@ -103,19 +103,12 @@ _running_tasks: dict[str, list[asyncio.Task[Any]]] = {}
 def _get_team_semaphore() -> asyncio.Semaphore:
     """全局单例 semaphore，从 ``settings.team_max_concurrency`` 获取。
 
-    T38 将重命名 ``agent_team_max_parallel`` → ``team_max_concurrency``（默认 5，
-    范围 1-20）。此处用 ``getattr`` 容错旧名，确保重命名前后均可用。
-
     ``lru_cache(maxsize=1)`` 保证全局唯一 semaphore 实例，避免每次 acquire 都
     重新创建导致限流失效。Semaphore 跨多个 event loop 不安全，本应用单 loop
     模型（FastAPI + asyncio 主 loop）。
     """
     settings = get_settings()
-    max_concurrency = getattr(
-        settings,
-        "team_max_concurrency",
-        getattr(settings, "agent_team_max_parallel", 5),
-    )
+    max_concurrency = settings.team_max_concurrency
     # 防御性校验：None / 0 / 负数降级到默认 5
     if not isinstance(max_concurrency, int) or max_concurrency <= 0:
         max_concurrency = 5
@@ -326,12 +319,6 @@ async def run_with_retry(
         ``TeamSubtaskResult``：成功 / 失败 / 重试耗尽结果，``retries`` 字段
         记录实际重试次数。
     """
-    # 读取配置：默认 max_retries=2，可被 settings.team_max_retries 覆盖
-    settings = get_settings()
-    configured_max = getattr(settings, "team_max_retries", None)
-    if isinstance(configured_max, int) and configured_max >= 0:
-        max_retries = configured_max
-
     last_exc: BaseException | None = None
     retries_done = 0
     for attempt in range(max_retries + 1):  # initial + max_retries

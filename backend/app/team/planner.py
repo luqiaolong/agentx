@@ -264,7 +264,7 @@ def _todos_to_team_tasks(
     依赖任务索引，剥离前缀后的内容作为 input。调用 ``_validate_task`` 校验 +
     ``_looks_like_dangerous_task`` 安全改写。
 
-    截断到 ``settings.agent_team_max_tasks`` 时同步清理 deps：引用被截断任务索引
+    截断到 ``settings.team_max_tasks`` 时同步清理 deps：引用被截断任务索引
     的 deps 项会被丢弃（避免悬空依赖）。
 
     Args:
@@ -321,7 +321,7 @@ def _todos_to_team_tasks(
             invalid_agents=list(errors.keys()),
         )
 
-    max_tasks = settings.agent_team_max_tasks
+    max_tasks = settings.team_max_tasks
     if len(tasks) > max_tasks:
         logger.warning(
             "team orchestrator tasks truncated",
@@ -629,7 +629,7 @@ class Planner:
         if self._structured is not None:
             system_prompt = _PLANNER_V2_SYSTEM_PROMPT.format(
                 experts=experts,
-                max_tasks=settings.agent_team_max_tasks,
+                max_tasks=settings.team_max_tasks,
                 context=project_context,
             )
             try:
@@ -649,7 +649,7 @@ class Planner:
         # Fallback：文本输出 + 正则解析
         system_prompt = _ORCHESTRATOR_SYSTEM_PROMPT.format(
             experts=experts,
-            max_tasks=settings.agent_team_max_tasks,
+            max_tasks=settings.team_max_tasks,
             context=project_context,
         )
         try:
@@ -791,7 +791,7 @@ class Planner:
         """对 LLM 产出的 plan 做安全改写与截断。
 
         - 危险任务但非 deep 的强制改写为 deep
-        - 超过 ``agent_team_max_tasks`` 的截断 + 清理悬空 depends_on
+        - 超过 ``team_max_tasks`` 的截断 + 清理悬空 depends_on
         """
         if not plan.tasks:
             return plan
@@ -803,7 +803,7 @@ class Planner:
                 tasks[i] = task.model_copy(update={"agent": "deep"})
 
         # 截断到 max_tasks + 清理悬空 depends_on
-        max_tasks = settings.agent_team_max_tasks
+        max_tasks = settings.team_max_tasks
         if len(tasks) > max_tasks:
             tasks = tasks[:max_tasks]
             valid_ids = {t.id for t in tasks}

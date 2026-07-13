@@ -1,0 +1,24 @@
+refactor(team): T38 配置项重命名 agent_team_* → team_*（D15）
+
+settings.py:
+- agent_team_max_tasks → team_max_tasks (默认 5, 1-10)
+- agent_team_max_parallel → team_max_concurrency (默认 3→5, 范围 1-5→1-20)
+- agent_team_result_max_chars → team_result_max_chars
+- agent_team_subtask_timeout → team_subtask_timeout
+- agent_team_max_replans → team_max_replan_attempts (默认 2→1)
+- 新增 team_max_retries (默认 2, 0-5)
+
+运行时代码迁移（7 个文件）：
+- scheduler.py: 移除 getattr fallback，直接访问 settings.team_max_concurrency
+- runner.py: 移除 getattr fallback，直接访问 settings.team_subtask_timeout
+- nodes.py: 移除 getattr fallback + 修复 run_with_retry 调用传 max_retries
+- planner.py: 6 处 settings.agent_team_max_tasks → settings.team_max_tasks
+- dispatcher.py: settings.agent_team_result_max_chars → settings.team_result_max_chars
+- aggregator.py: 同上
+
+Bug 修复（scheduler.py run_with_retry）：
+- 原代码无条件用 settings.team_max_retries 覆盖调用方显式传入的 max_retries
+- 修复：移除 settings 覆盖块，由调用方（nodes.py）负责传 max_retries=settings.team_max_retries
+- 这让 run_with_retry 成为纯 retry 工具，尊重调用方显式值
+
+验证: ruff check 通过, 1450 单元测试通过。

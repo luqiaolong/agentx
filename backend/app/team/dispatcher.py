@@ -11,7 +11,7 @@
 - ``_inject_upstream_findings``: 根据 ``task.depends_on`` 从 ``state.findings``
   提取依赖任务的结果（D4）。
 - ``_compose_input_with_upstream``: 把上游 findings 拼入 agent context，
-  每个依赖内容截断到 ``agent_team_result_max_chars``（D4）。
+  每个依赖内容截断到 ``team_result_max_chars``（D4）。
 
 与旧 ``orchestrator._dispatch_batch_node`` 的差异：
 - 使用 ``TeamTask``（含 ``id`` / ``depends_on`` str 列表）替代 ``TeamPlanTask``
@@ -162,7 +162,7 @@ def _compose_input_with_upstream(
 
     无上游时原样返回 ``task.description``。有上游时构造 ``[依赖任务结果]``
     头部 + 每个依赖的 ``--- #task_id [agent] ---`` + 内容（截断到
-    ``agent_team_result_max_chars``）+ ``[当前任务]`` + 原描述。
+    ``team_result_max_chars``）+ ``[当前任务]`` + 原描述。
 
     Args:
         task: 当前要执行的子任务。
@@ -175,7 +175,7 @@ def _compose_input_with_upstream(
         return task.description
 
     settings = get_settings()
-    max_chars = settings.agent_team_result_max_chars
+    max_chars = settings.team_result_max_chars
 
     sections: list[str] = ["[依赖任务结果]"]
     for key, finding in upstream.items():

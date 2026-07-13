@@ -445,6 +445,7 @@ async def execute_node(state: SubtaskState) -> dict:
             thread_id=parent_thread_id,
             abort_event=abort_event,
             writer=writer,
+            max_retries=settings.team_max_retries,
         )
     except asyncio.CancelledError:
         logger.info(
@@ -598,12 +599,7 @@ async def replan_node(state: TeamState) -> dict:
     writer = get_stream_writer()
     settings = get_settings()
     replan_count = state.get("replan_count", 0)
-    # D15: 优先 team_max_replan_attempts，兼容旧 agent_team_max_replans
-    max_replans = getattr(
-        settings,
-        "team_max_replan_attempts",
-        getattr(settings, "agent_team_max_replans", 1),
-    )
+    max_replans = settings.team_max_replan_attempts
 
     if replan_count >= max_replans:
         logger.info(
