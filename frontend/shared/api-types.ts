@@ -80,9 +80,13 @@ export type ChatEvent = (
       trace_id?: string;
     }
   // team_done 事件：AgentTeam 整体执行结束
+  // status:
+  //   - "done"：团队成功完成
+  //   - "error"：团队执行出错
+  //   - "replanning"：质量门失败但无 error，团队正在重新规划（前端不应终止 TeamNodeCard）
   | {
       type: "team_done";
-      status?: "error" | "done";
+      status?: "error" | "done" | "replanning";
       agents?: { agent: string; message?: string; summary?: string }[];
       trace_id?: string;
     }
@@ -97,6 +101,11 @@ export type ChatEvent = (
   // - error: 极少见的兼容字段
   // 前端 useChatStream 处理时按 data → error → message 优先级取值，避免显示"请求出错"兜底文案。
   | { type: "error"; data?: unknown; error?: string; message?: string; trace_id?: string }
+  // warning 事件：非致命告警（2026-07-13 新增）
+  // - 后端 warning 事件：未知 agent fallback / team_role 缺 system_prompt 等
+  // - message 字段携带人类可读告警文案，前端仅写入 console.warn 便于开发排查
+  // - 不影响流式状态（流仍继续），只是附带提示信息
+  | { type: "warning"; message: string; trace_id?: string }
 ) & { _tid?: string };
 
 /**

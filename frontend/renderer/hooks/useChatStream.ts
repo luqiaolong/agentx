@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { useChatStore } from "@/stores/chat";
+import type { ChatMessage, MessagePart } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent, TodoStatus } from "@/lib/utils";
 import { chat, getCurrentTraceId } from "@/lib/api/chat";
@@ -472,6 +473,13 @@ export function useChatStream(args: UseChatStreamArgs) {
           // team_done 事件：AgentTeam 整体执行结束。
           // 仅更新已存在的 team part（由 team_init 创建）；若 team part 不存在
           //（降级路径 / plan 失败），则不创建空 team part。
+          // status 语义：
+          //   - "error"      → 终止态：TeamNodeCard 显示失败 + finalizeAgents
+          //   - "done"       → 终止态：TeamNodeCard 显示已完成 + finalizeAgents
+          //   - "replanning" → 过渡态：质量门失败但无 error，团队正在重新规划；
+          //                     TeamNodeCard 保持 running，避免 finalizeAgents 把 agent
+          //                     全部标记为 done 导致后续新一轮 delegation 到达时
+          //                     agent 状态在 done ↔ running 间来回翻转（UI 闪烁）。
           if (!pendingIdRef.current) break;
           const agentMessages = Array.isArray(e.agents)
             ? e.agents.filter(
@@ -479,9 +487,15 @@ export function useChatStream(args: UseChatStreamArgs) {
                   typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).agent === "string",
               )
             : [];
+          const isReplanning = e.status === "replanning";
+          const teamStatus = e.status === "error"
+            ? "error"
+            : isReplanning
+              ? "running"
+              : "done";
           upsertTeamNode(pendingIdRef.current, {
-            status: e.status === "error" ? "error" : "done",
-            finalizeAgents: true,
+            status: teamStatus,
+            finalizeAgents: e.status === "done" || e.status === "error",
             createIfMissing: false,
             agentMessages,
           });
@@ -498,9 +512,40 @@ export function useChatStream(args: UseChatStreamArgs) {
             // 会话已切换或已停止 → 跳过（done 已到达或用户已发新消息）
             if (cid !== watchdogThreadId) return;
             const state = useChatStore.getState();
-            if (!state.sessions[cid]?.isRunning) return;
+            // 复用 isRunning 守卫的索引结果，避免在下方再次 state.sessions[cid]
+            // 触发与 line 515 重复的 TS2538 错误（pre-existing，已知忽略）。
+            const session = state.sessions[cid];
+            if (!session?.isRunning) return;
             finishRunning(false);
+            // team_done 丢失兜底（2026-07-13 修复）：
+            // 若 team_done 因网络中断未到达，TeamNodeCard 内 agent.status
+            // 会永久卡在 running spinner。强制 finalize 该消息的 team part，
+            // 把所有 running agent 收敛为 done，并标记 team 整体完成。
+            if (pendingIdRef.current) {
+              const message = session.messages.find(
+                (m: ChatMessage) => m.id === pendingIdRef.current,
+              );
+              const teamPart = message?.parts.find(
+                (p: MessagePart): p is Extract<MessagePart, { type: "team" }> => p.type === "team",
+              );
+              if (teamPart && teamPart.status === "running") {
+                upsertTeamNode(pendingIdRef.current, {
+                  status: "done",
+                  finalizeAgents: true,
+                  createIfMissing: false,
+                });
+              }
+            }
           }, 2000);
+          break;
+        }
+        case "warning": {
+          // 后端 warning 事件：未知 agent fallback / team_role 缺 system_prompt 等
+          // 仅写入 console.warn 便于开发排查，不影响流式状态；
+          // 未来可接入 toast/banner UI 给用户更友好的提示。
+          if (e.message) {
+            console.warn("[AgentTeam warning]", e.message);
+          }
           break;
         }
         default: {

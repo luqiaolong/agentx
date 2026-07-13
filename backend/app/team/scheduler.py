@@ -253,6 +253,7 @@ async def acquire_and_run(
                 make_sse_event(
                     "delegation",
                     {
+                        "target": task.agent,
                         "source": "team",
                         "event": "aborted",
                         "agent": task.agent,
@@ -636,6 +637,7 @@ async def _run_subtask_stream(
             except asyncio.TimeoutError:
                 # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
                 writer(make_sse_event("delegation", {
+                    "target": agent_name,
                     "source": "team",
                     "event": "timeout",
                     "agent": agent_name,
@@ -845,6 +847,7 @@ async def _run_team_role_subtask(
             except asyncio.TimeoutError:
                 # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
                 writer(make_sse_event("delegation", {
+                    "target": task.agent,
                     "source": "team",
                     "event": "timeout",
                     "agent": task.agent,
