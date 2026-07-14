@@ -199,6 +199,43 @@ def test_sse_done_data_is_empty_json():
     assert event == {"event": "done", "data": "{}"}
 
 
+def test_sse_done_with_reason_completed():
+    """done 事件可携带 reason=completed（REQ-CHAT-3）。"""
+    from app.sse.events import make_sse_event
+
+    event = make_sse_event("done", {"reason": "completed"})
+    assert event["event"] == "done"
+    payload = json.loads(event["data"])
+    assert payload["reason"] == "completed"
+
+
+def test_sse_done_with_reason_aborted():
+    """done 事件可携带 reason=aborted（REQ-CHAT-3）。"""
+    from app.sse.events import make_sse_event
+
+    event = make_sse_event("done", {"reason": "aborted"})
+    payload = json.loads(event["data"])
+    assert payload["reason"] == "aborted"
+
+
+def test_sse_done_with_reason_and_token_count():
+    """done 事件可同时携带 reason 和 token_count。"""
+    from app.sse.events import make_sse_event
+
+    event = make_sse_event("done", {"reason": "completed", "token_count": 42})
+    payload = json.loads(event["data"])
+    assert payload["reason"] == "completed"
+    assert payload["token_count"] == 42
+
+
+def test_sse_done_with_none_data_defaults_to_empty_json():
+    """done 事件 data 为 None 时默认返回 "{}"（向后兼容）。"""
+    from app.sse.events import make_sse_event
+
+    event = make_sse_event("done", None)
+    assert event == {"event": "done", "data": "{}"}
+
+
 def test_sse_error_is_structured_json():
     """error 事件 data 是结构化 JSON，至少包含 message。"""
     from app.sse.events import make_error_event

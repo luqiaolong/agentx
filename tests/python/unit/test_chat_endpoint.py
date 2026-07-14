@@ -5,7 +5,7 @@
 2. workspace_path 字段透传给 run_router
 3. 消息正文中的 <workspace> 标签不再被解析
 4. agent_mode="coding_team" 且 coding_team 未启用时降级为 "coding"
-5. system_prompt 字段仍被接受（向后兼容前端），但不传给 run_router
+5. system_prompt 字段被接受并透传给 run_router（I4.1：请求级 system_prompt 注入）
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ def _make_fake_run_router(captured: dict):
         workspace_path: str | None = None,
         revoked_paths: list[str] | None = None,
         trace_id: str | None = None,
+        system_prompt: str | None = None,
     ) -> AsyncIterator[dict[str, str]]:
         captured["message"] = message
         captured["thread_id"] = thread_id
@@ -40,6 +41,7 @@ def _make_fake_run_router(captured: dict):
         captured["permission_mode"] = permission_mode
         captured["revoked_paths"] = revoked_paths
         captured["trace_id"] = trace_id
+        captured["system_prompt"] = system_prompt
         yield {"event": "done", "data": "{}"}
 
     return fake_run_router
@@ -138,11 +140,11 @@ def test_chat_request_no_workspace_tag_parsing(client: TestClient, monkeypatch) 
     assert captured["message"] == "<workspace>d:/projects/bar</workspace> hello"
 
 
-def test_chat_request_system_prompt_accepted_but_not_passed(client: TestClient, monkeypatch) -> None:
-    """system_prompt 字段仍被 API 接受（向后兼容前端），但不再传给 run_router。
+def test_chat_request_system_prompt_passed_to_router(client: TestClient, monkeypatch) -> None:
+    """system_prompt 字段被接受并透传给 run_router（I4.1）。
 
-    新架构下，各场景有自己的 system_prompt 配置（Supervisor/Expert），
-    不再通过 API 参数覆盖。
+    请求级 system_prompt 会拼入 router 的 profile_prompt 顶层（优先级最高），
+    覆盖场景默认 prompt。
     """
     captured: dict = {}
     monkeypatch.setattr("app.main.run_router", _make_fake_run_router(captured))
@@ -158,8 +160,8 @@ def test_chat_request_system_prompt_accepted_but_not_passed(client: TestClient, 
     )
 
     assert resp.status_code == 200
-    # run_router 不再接收 scene_prompt 参数
-    assert "scene_prompt" not in captured or captured.get("scene_prompt") is None
+    # I4.1: system_prompt 透传到 run_router
+    assert captured.get("system_prompt") == "你是编程助手。"
 
 
 def test_chat_request_invalid_agent_mode_returns_422(client: TestClient, monkeypatch) -> None:

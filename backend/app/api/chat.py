@@ -23,6 +23,8 @@ from app.security.approval import (
     ApprovalResult,
     clear_abort,
     clear_pause,
+    consume_approval,
+    get_active_approval_for_thread,
     has_pending_approval,
     is_aborted,
     set_abort,
@@ -30,6 +32,12 @@ from app.security.approval import (
     submit_approval,
 )
 from app.config import get_settings
+from app.lifecycle.run_session import (
+    begin_cleanup,
+    complete_run_cleanup,
+    get_active_run,
+    register_run,
+)
 from app.observability.langsmith import dual_trace, mark_redacted, trace_span
 from app.observability.logger import logger
 from app.observability.observation import get_observation_sink
@@ -192,9 +200,40 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
 
         # M4: 同一 thread_id 的并发 SSE 流用锁串行化，避免竞态写 checkpoint。
         # 等待而非拒绝，因为前端通常会等上一条消息完成。
+        # HIGH-5 修复：acquire 加超时，避免死锁（旧 run 异常未释放锁时新 run 永久阻塞）
         stream_lock = await _get_stream_lock(req.thread_id)
-        await stream_lock.acquire()
         try:
+            await asyncio.wait_for(stream_lock.acquire(), timeout=300.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "stream lock acquire timeout",
+                thread_id=req.thread_id,
+                trace_id=trace_id,
+            )
+            yield {
+                "event": "error",
+                "data": f"会话繁忙，获取流锁超时，请稍后重试 | trace={trace_id}",
+            }
+            yield {"event": "done", "data": json.dumps({"reason": "error"})}
+            return
+        try:
+            # REQ-CHAT-1: 注册 live run session（run_id=trace_id）。
+            # 等待旧 run cleanup 完成后再开始新 run（wait_for_cleanup=True）。
+            _run_session = await register_run(
+                req.thread_id,
+                run_id=trace_id,
+                wait_for_cleanup=True,
+                timeout=300.0,
+            )
+            if _run_session is None:
+                # 旧 run 长时间未 cleanup，拒绝新 run
+                yield {
+                    "event": "error",
+                    "data": f"上一个请求仍在清理中，请稍后重试 | trace={trace_id}",
+                }
+                yield {"event": "done", "data": json.dumps({"reason": "error"})}
+                return
+
             # 更新 thread 最后活跃时间（供 checkpointer TTL 清理使用）
             from app.memory.checkpointer_view import touch_thread
             await touch_thread(req.thread_id)
@@ -217,7 +256,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                     yield {"event": "token", "data": "已清空会话状态与授权目录"}
                 else:
                     yield {"event": "token", "data": "已清空会话状态（授权目录已持久化，未清空）"}
-                yield {"event": "done", "data": "{}"}
+                yield {"event": "done", "data": json.dumps({"reason": "completed"})}
                 return
 
             # /resume：清除暂停标志，让后续消息正常执行（配合方案C：前端重发消息触发恢复）
@@ -227,7 +266,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 #  finally 块中引用时 UnboundLocalError）
                 await clear_pause(req.thread_id)
                 yield {"event": "token", "data": "已恢复执行"}
-                yield {"event": "done", "data": "{}"}
+                yield {"event": "done", "data": json.dumps({"reason": "completed"})}
                 return
 
             # 其他消息：走 Router 场景分发（传入 checkpointer 加载历史）
@@ -257,6 +296,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                         workspace_path=req.workspace_path,
                         revoked_paths=req.revoked_paths,
                         trace_id=trace_id,
+                        system_prompt=req.system_prompt,
                     ).__aiter__()
                     # 内部心跳：run_router 长时间不 yield 事件时（如 agent 跑长任务），
                     # 主动 yield heartbeat 防止前端断连。作为 sse-starlette ping 的双重保险。
@@ -308,6 +348,8 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                                     "event": "error",
                                     "data": f"用户已中止 | trace={trace_id}",
                                 }
+                                # REQ-CHAT-3: abort 必须发出唯一 terminal signal（done{reason=aborted}）
+                                yield {"event": "done", "data": json.dumps({"reason": "aborted"})}
                                 await clear_abort(req.thread_id)
                                 return
                             if event.get("event") == "token":
@@ -381,7 +423,7 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                         token_count=_real_tc,
                         result_text_len=len("".join(assistant_content_parts)),
                     )
-                    yield {"event": "done", "data": json.dumps({"token_count": _real_tc})}
+                    yield {"event": "done", "data": json.dumps({"reason": "completed", "token_count": _real_tc})}
                 except Exception as inner_exc:
                     # FR-4.5: 异常分支写 error_type + error_message（在 dual_trace 退出前设置）
                     obs_ctx.add_metadata("error_type", type(inner_exc).__name__)
@@ -404,39 +446,62 @@ async def _event_generator(req: ChatRequest) -> AsyncIterator[dict[str, str]]:
                 "data": f"{_user_msg} | trace={trace_id}",
             }
             # 异常分支必须 yield done，否则前端一直显示"..."等待中
-            yield {"event": "done", "data": "{}"}
+            # REQ-CHAT-3: error 终态标记 reason=error
+            yield {"event": "done", "data": json.dumps({"reason": "error"})}
         finally:
             # C1: 无论正常退出、异常、还是客户端断连（GeneratorExit 继承自
             # BaseException 不被 except Exception 捕获），都必须清理 abort/pause
-            # 标志，避免泄漏到下次会话。同时释放 stream_lock（M4）。
+            # 标志，避免泄漏到下次会话。
+            #
+            # REQ-CHAT-2 / I1.3: cleanup 必须在 stream_lock 释放之前完成。
+            # 旧实现先 release lock 再 cleanup，导致新 run 可在旧 run cleanup
+            # 期间启动，旧 cleanup 的 set_abort/clear_abort 会误伤新 run。
+            # 现在用 begin_cleanup / complete_run_cleanup 包裹 cleanup 逻辑，
+            # 并通过 run_id 验证确保 cleanup 只作用于当前 run。
             logger.info(
                 "chat generator finally",
                 trace_id=trace_id,
                 thread_id=req.thread_id,
             )
-            stream_lock.release()
-            # M8: 释放锁后若无人等待（锁未被再次获取），从 dict 移除避免内存泄漏
-            async with _stream_locks_guard:
-                if not stream_lock.locked():
-                    _stream_locks.pop(req.thread_id, None)
-            # H4: 先 set_abort 通知子任务节点（deep/code/rag/web）检查 is_aborted()
-            # 后停止，避免 SSE 断连后后台继续消耗 LLM token；再 clear_abort 清理状态
-            await set_abort(req.thread_id)
-            await clear_abort(req.thread_id)
-            await clear_pause(req.thread_id)
-            # B12 修复：清残留审批决策。若 pause 之前已有 pending approval（用户在
-            # 审批弹窗点击暂停），approval_runner pause 分支走完后未调 pop_approval，
-            # 下次会话首个 pop_approval 会拿到上次的残留决策并误用。
-            # chat.py finally 兜底清空，与 approval_runner pause 分支的双保险保持一致。
+            # HIGH-1 修复：cleanup 逻辑包裹 try/except，任何步骤异常都不能阻止
+            # stream_lock.release()，否则新 run 永久死锁。
             try:
-                from app.security.approval import pop_approval
-                await pop_approval(req.thread_id)
+                # 1. 标记当前 run 进入 cleaning_up（run_id 验证确保不误伤其他 run）
+                await begin_cleanup(req.thread_id, trace_id)
+                # 2. H4: 先 set_abort 通知子任务节点（deep/code/rag/web）检查 is_aborted()
+                #    后停止，避免 SSE 断连后后台继续消耗 LLM token；再 clear_abort 清理状态
+                await set_abort(req.thread_id)
+                await clear_abort(req.thread_id)
+                await clear_pause(req.thread_id)
+                # B12 修复：清残留审批决策。若 pause 之前已有 pending approval（用户在
+                # 审批弹窗点击暂停），approval_runner pause 分支走完后未调 pop_approval，
+                # 下次会话首个 pop_approval 会拿到上次的残留决策并误用。
+                # chat.py finally 兜底清空，与 approval_runner pause 分支的双保险保持一致。
+                try:
+                    from app.security.approval import pop_approval
+                    await pop_approval(req.thread_id)
+                except Exception as exc:  # noqa: BLE001 — best-effort
+                    logger.warning(
+                        "chat finally pop_approval failed",
+                        thread_id=req.thread_id,
+                        error=str(exc),
+                    )
+                # 3. 标记 cleanup 完成（唤醒等待新 run 的 register_run waiter）
+                await complete_run_cleanup(req.thread_id, trace_id)
             except Exception as exc:  # noqa: BLE001 — best-effort
                 logger.warning(
-                    "chat finally pop_approval failed",
+                    "chat finally cleanup failed",
                     thread_id=req.thread_id,
+                    trace_id=trace_id,
                     error=str(exc),
                 )
+            finally:
+                # 4. 现在才释放 stream_lock，确保新 run 不会在 cleanup 期间启动
+                stream_lock.release()
+                # M8: 释放锁后若无人等待（锁未被再次获取），从 dict 移除避免内存泄漏
+                async with _stream_locks_guard:
+                    if not stream_lock.locked():
+                        _stream_locks.pop(req.thread_id, None)
 
 
 def register_chat_routes(app: FastAPI) -> None:
@@ -450,6 +515,9 @@ def register_chat_routes(app: FastAPI) -> None:
     async def chat_approve(req: ApproveRequest) -> dict[str, Any]:
         """提交审批决定，写入 ``app.security.approval`` 供 DeepAgent 消费。
 
+        REQ-APR-2: 必须先 consume 活跃审批请求（compare-and-consume）。
+        前端必须传 ``approval_id`` + ``run_id``，后端验证通过后才写入决策。
+
         支持两种审批场景：
         - dangerous_tool：approval=True/False，decision="approve"/"deny"
         - directory_extension：decision="once"/"session"/"deny"，path/writable 描述目标
@@ -458,31 +526,65 @@ def register_chat_routes(app: FastAPI) -> None:
         # approval=False → 强制 deny（覆盖 decision 默认值 "approve"）
         effective_decision = "deny" if not req.approval else req.decision
 
+        # REQ-APR-2: compare-and-consume 活跃请求
+        # HIGH-2/HIGH-3 修复：强制要求 approval_id + run_id，移除开发兼容分支，
+        # 消除可绕过 consume-once 的安全旁路。所有审批决策必须走 submit_approval。
+        run_id = req.run_id or ""
+        approval_id = req.approval_id or ""
+        if not approval_id or not run_id:
+            raise HTTPException(
+                status_code=403,
+                detail="approval_id 和 run_id 必填（consume-once 审批模式）",
+            )
+
+        consumed = await consume_approval(approval_id, run_id)
+        if consumed is None:
+            logger.warning(
+                "approval rejected: consume failed",
+                thread_id=req.thread_id,
+                approval_id=approval_id,
+                run_id=run_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="审批请求已失效（不存在、已过期、已消费或 run 不匹配）",
+            )
+        # consume 成功，thread_id 以注册表为准
+        thread_id = consumed.thread_id
+
         # full_trust 决策：设置会话为 full_trust 模式，同时提交一个 approve 决策
+        # REQ-APR-3: full_trust 只在 consume 成功后开启
         if effective_decision == "full_trust":
             from app.main import get_sandbox
 
             sandbox = get_sandbox()
-            await sandbox.set_full_trust(req.thread_id, True)
-            logger.info("full_trust enabled", thread_id=req.thread_id)
+            await sandbox.set_full_trust(thread_id, True)
+            logger.info("full_trust enabled", thread_id=thread_id)
             # 提交 approve 决策让当前审批流继续
             await submit_approval(
-                req.thread_id,
+                approval_id,
                 ApprovalResult(
                     decision=ApprovalDecision.APPROVE,
                     path=req.path,
                     writable=req.writable,
                 ),
+                run_id,
             )
         else:
-            await submit_approval(
-                req.thread_id,
+            ok = await submit_approval(
+                approval_id,
                 ApprovalResult(
                     decision=ApprovalDecision(effective_decision),
                     path=req.path,
                     writable=req.writable,
                 ),
+                run_id,
             )
+            if not ok:
+                raise HTTPException(
+                    status_code=409,
+                    detail="审批提交失败：请求已失效",
+                )
 
         # LangSmith trace：区分用户批准 / 拒绝
         if req.approval:
@@ -494,7 +596,7 @@ def register_chat_routes(app: FastAPI) -> None:
 
         with trace_span(
             span_name,
-            thread_id=req.thread_id,
+            thread_id=thread_id,
             action=action,
             decision=effective_decision,
             path=req.path,
@@ -530,9 +632,10 @@ def register_chat_routes(app: FastAPI) -> None:
 
         logger.info(
             "approval submitted",
-            thread_id=req.thread_id,
+            thread_id=thread_id,
             approval=req.approval,
             decision=req.decision,
+            approval_id=approval_id or None,
         )
         return {"ok": True}
 
@@ -590,7 +693,18 @@ def register_chat_routes(app: FastAPI) -> None:
         5. 返回 ``{ok: true, summary: str, compressed_count: int}``
 
         LLM 失败时不写回 checkpoint，返回 ``{ok: false, error: str}``。
+
+        REQ-CHAT-4: compact 必须与 live run 互斥，避免并发写同一份 checkpoint。
         """
+        # REQ-CHAT-4: 活跃 run 期间拒绝 compact，避免并发写 checkpoint
+        active_run = await get_active_run(req.thread_id)
+        if active_run is not None:
+            return {
+                "ok": False,
+                "error": "有活跃请求，请等待完成后再压缩",
+                "run_id": active_run.run_id,
+            }
+
         from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
         from app.memory import summarize_messages

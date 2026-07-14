@@ -95,7 +95,14 @@ def make_sse_event(
         data = _inject_trace(data, trace_id)
         return {"event": event, "data": json.dumps(data, ensure_ascii=False, default=str)}
     if event == "done":
-        return {"event": "done", "data": "{}"}
+        # REQ-CHAT-3: done 事件可携带 reason 字段（completed/aborted/recovered/error）。
+        # 向后兼容：data 为 None / "{}" / 空字符串时返回 "{}"；
+        # data 为 dict 时序列化为 JSON（支持 reason / token_count 等字段）。
+        if data is None or (isinstance(data, str) and (data == "{}" or data == "")):
+            return {"event": "done", "data": "{}"}
+        if isinstance(data, dict):
+            return {"event": "done", "data": json.dumps(data, ensure_ascii=False, default=str)}
+        return {"event": "done", "data": str(data)}
     # token / 未知事件：data 直接 str()，不注入 trace_id
     return {"event": event, "data": str(data)}
 

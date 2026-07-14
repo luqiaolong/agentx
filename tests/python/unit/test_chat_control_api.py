@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -17,6 +19,29 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def _register_active_approval(tid: str, run_id: str) -> str:
+    """直接在 _active_approval_requests 注册表中创建活跃审批请求（同步，绕过 async lock）。
+
+    返回 approval_id，供 /api/chat/approve consume-once 使用。
+    """
+    from app.security.approval.request import ApprovalRequest
+    from app.security.approval.state import _active_approval_requests, _ACTIVE_APPROVAL_TTL
+
+    now = time.monotonic()
+    req = ApprovalRequest(
+        approval_id=f"test-aid-{tid}-{now}",
+        thread_id=tid,
+        run_id=run_id,
+        request_kind="dangerous_tool",
+        tool_call_id=None,
+        created_at=now,
+        expires_at=now + _ACTIVE_APPROVAL_TTL,
+        consumed_at=None,
+    )
+    _active_approval_requests[req.approval_id] = req
+    return req.approval_id
+
+
 # ============================================================
 # POST /api/chat/approve
 # ============================================================
@@ -24,14 +49,16 @@ def client() -> TestClient:
 
 def test_approve_true_records_pending_approval(client: TestClient) -> None:
     """POST /api/chat/approve approval=true → 写入 _pending_approvals[tid] = True。"""
-    from app.security.approval.state import _pending_approvals
+    from app.security.approval.state import _pending_approvals, _active_approval_requests
 
     tid = "unit-test-approve-1"
+    run_id = "run-approve-1"
     _pending_approvals.pop(tid, None)
     try:
+        aid = _register_active_approval(tid, run_id)
         r = client.post(
             "/api/chat/approve",
-            json={"thread_id": tid, "approval": True},
+            json={"thread_id": tid, "approval": True, "approval_id": aid, "run_id": run_id},
         )
         assert r.status_code == 200
         assert r.json() == {"ok": True}
@@ -41,18 +68,21 @@ def test_approve_true_records_pending_approval(client: TestClient) -> None:
         assert decision[0].approved is True
     finally:
         _pending_approvals.pop(tid, None)
+        _active_approval_requests.pop(aid, None)
 
 
 def test_approve_false_records_pending_approval(client: TestClient) -> None:
     """POST /api/chat/approve approval=false → 写入 _pending_approvals[tid].approved = False。"""
-    from app.security.approval.state import _pending_approvals
+    from app.security.approval.state import _pending_approvals, _active_approval_requests
 
     tid = "unit-test-approve-2"
+    run_id = "run-approve-2"
     _pending_approvals.pop(tid, None)
     try:
+        aid = _register_active_approval(tid, run_id)
         r = client.post(
             "/api/chat/approve",
-            json={"thread_id": tid, "approval": False},
+            json={"thread_id": tid, "approval": False, "approval_id": aid, "run_id": run_id},
         )
         assert r.status_code == 200
         decision = _pending_approvals.get(tid)
@@ -60,22 +90,33 @@ def test_approve_false_records_pending_approval(client: TestClient) -> None:
         assert decision[0].approved is False
     finally:
         _pending_approvals.pop(tid, None)
+        _active_approval_requests.pop(aid, None)
 
 
 def test_approve_overwrites_previous_decision(client: TestClient) -> None:
     """同一 thread_id 多次调用 approve，后值覆盖前值。"""
-    from app.security.approval.state import _pending_approvals
+    from app.security.approval.state import _pending_approvals, _active_approval_requests
 
     tid = "unit-test-approve-3"
+    run_id = "run-approve-3"
     _pending_approvals.pop(tid, None)
+    aid1 = aid2 = None
     try:
-        client.post("/api/chat/approve", json={"thread_id": tid, "approval": True})
-        client.post("/api/chat/approve", json={"thread_id": tid, "approval": False})
+        # 第一次 approve=True（需要独立 approval_id，consume-once）
+        aid1 = _register_active_approval(tid, run_id)
+        client.post("/api/chat/approve", json={"thread_id": tid, "approval": True, "approval_id": aid1, "run_id": run_id})
+        # 第二次 approve=False（新 approval_id）
+        aid2 = _register_active_approval(tid, run_id)
+        client.post("/api/chat/approve", json={"thread_id": tid, "approval": False, "approval_id": aid2, "run_id": run_id})
         decision = _pending_approvals.get(tid)
         assert decision is not None
         assert decision[0].approved is False
     finally:
         _pending_approvals.pop(tid, None)
+        if aid1:
+            _active_approval_requests.pop(aid1, None)
+        if aid2:
+            _active_approval_requests.pop(aid2, None)
 
 
 # ============================================================

@@ -160,6 +160,7 @@ async def _run_router_inner(
     workspace_path: str | None,
     revoked_paths: list[str] | None,
     chat_model: BaseChatModel | None,
+    system_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """run_router 实际逻辑（被外层 trace bind 包裹）。"""
     with trace_span("router.run", thread_id=thread_id, message_len=len(message), agent_mode=agent_mode):
@@ -286,6 +287,15 @@ async def _run_router_inner(
             profile_prompt = (project_system_prompt + "\n" + profile_prompt).strip()
         if agent_mode == "work" and skill_content:
             profile_prompt = (skill_content + "\n" + profile_prompt).strip()
+        # REQ-CHAT-6 / I4.1: 请求级 system_prompt 拼入 profile_prompt 顶层，
+        # 供执行器作为场景 prompt 使用。优先级：request > project > skill > profile。
+        if system_prompt:
+            profile_prompt = (system_prompt.strip() + "\n" + profile_prompt).strip()
+            logger.info(
+                "router.request_system_prompt_injected",
+                thread_id=thread_id,
+                prompt_len=len(system_prompt),
+            )
 
         # ---- 5. 加载历史 messages ----
         history: list = []
@@ -501,10 +511,15 @@ async def run_router(
     revoked_paths: list[str] | None = None,
     chat_model: BaseChatModel | None = None,
     trace_id: str | None = None,
+    system_prompt: str | None = None,
 ) -> AsyncIterator[dict[str, str]]:
     """运行 Router，按 ``agent_mode`` 分发到对应场景 runner，yield SSE 事件。
 
     外层包裹 trace_id ContextVar，确保 LangGraph 内部节点也能读取到 trace_id。
+
+    Args:
+        system_prompt: 请求级场景 prompt（REQ-CHAT-6）。非空时拼入
+                       ``profile_prompt`` 顶层，优先级：request > project > skill > profile。
     """
     from app.observability.trace import bind_trace, current_trace_id
 
@@ -522,6 +537,7 @@ async def run_router(
             workspace_path=workspace_path,
             revoked_paths=revoked_paths,
             chat_model=chat_model,
+            system_prompt=system_prompt,
         ):
             yield sse
 

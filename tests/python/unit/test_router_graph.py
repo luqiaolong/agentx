@@ -444,6 +444,75 @@ async def test_router_workspace_path_passed_to_runner(
 
 
 # ============================================================
+# 7b. system_prompt 透传（REQ-CHAT-6 / I4.1）
+# ============================================================
+
+
+async def test_router_system_prompt_passed_to_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """请求级 system_prompt 被拼入 profile_prompt 透传给场景 runner（REQ-CHAT-6）。"""
+
+    captured: dict = {}
+
+    async def _fake_run_work_supervisor(
+        message: str,
+        thread_id: str,
+        profile_prompt: str = "",
+        **kwargs: Any,
+    ) -> AsyncIterator[dict]:
+        captured["profile_prompt"] = profile_prompt
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr(
+        "app.router.graph.run_work_supervisor",
+        _fake_run_work_supervisor,
+    )
+
+    await _collect_events(
+        run_router(
+            "你好",
+            "t-sys-prompt",
+            agent_mode="work",
+            system_prompt="只用英文回答",
+        )
+    )
+
+    # system_prompt 必须出现在 profile_prompt 中
+    assert "只用英文回答" in captured["profile_prompt"]
+
+
+async def test_router_system_prompt_none_does_not_break(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """system_prompt=None 时正常运行（不拼入 profile_prompt）。"""
+
+    captured: dict = {}
+
+    async def _fake_run_work_supervisor(
+        message: str,
+        thread_id: str,
+        profile_prompt: str = "",
+        **kwargs: Any,
+    ) -> AsyncIterator[dict]:
+        captured["profile_prompt"] = profile_prompt
+        yield {"event": "token", "data": "ok"}
+
+    monkeypatch.setattr(
+        "app.router.graph.run_work_supervisor",
+        _fake_run_work_supervisor,
+    )
+
+    events = await _collect_events(
+        run_router("你好", "t-no-sys-prompt", agent_mode="work")
+    )
+
+    # 不传 system_prompt 时仍正常完成
+    assert any(e["event"] == "done" for e in events)
+
+
+
+# ============================================================
 # 9. /reset 消息触发 checkpoint 清理（保留原测试，从 _event_generator 入口测试）
 # ============================================================
 

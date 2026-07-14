@@ -178,11 +178,16 @@ def _make_approval_event(
     kind: str = "dangerous_tool",
     requested_path: str | None = None,
     writable: bool = False,
+    approval_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, str]:
     """构造 approval_request SSE 事件。
 
     MUST 包含 ``thread_id``：前端 ApprovalDialog 据此调
     ``POST /api/chat/approve {thread_id, approval}``。
+
+    REQ-APR-1: 同时包含 ``approval_id`` 和 ``run_id``，前端提交审批时必须
+    回传这两个字段，后端据此 compare-and-consume 活跃请求。
 
     使用 ``app.security.command_filter.redact_args`` 做参数脱敏（支持
     write_file / edit_file 内容隐藏 + cli_execute 命令凭证脱敏）。
@@ -220,6 +225,11 @@ def _make_approval_event(
         "kind": kind,
         "tool_call_id": tool_call.get("id", ""),
     }
+    # REQ-APR-1: 审批请求携带独立 approval_id + run_id
+    if approval_id is not None:
+        data["approval_id"] = approval_id
+    if run_id is not None:
+        data["run_id"] = run_id
     if kind == "directory_extension":
         data["requestedPath"] = requested_path or ""
         data["writable"] = writable
