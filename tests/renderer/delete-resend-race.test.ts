@@ -33,9 +33,10 @@ vi.hoisted(() => {
   });
 });
 
-// mock @/lib/api/http：rewindThread 的行为由各测试用例通过 mockImplementation 控制
+// mock @/lib/api/http：listCheckpoints / rewindThread 的行为由各测试用例通过 mockImplementation 控制
 const { memoryMock } = vi.hoisted(() => ({
   memoryMock: {
+    listCheckpoints: vi.fn(),
     rewindThread: vi.fn(),
   },
 }));
@@ -64,15 +65,24 @@ describe("T1.8: deleteMessagesAfter 等待后端 rewind", () => {
       isStreaming: false,
       approvalQueue: [],
     });
+    memoryMock.listCheckpoints.mockReset();
     memoryMock.rewindThread.mockReset();
   });
 
   it("rewind 成功时删除前端消息并返回 success=true", async () => {
+    // keepMessagesCount=1（保留 m1）→ targetIdx=1 → rewind 到 checkpoints[1]
+    memoryMock.listCheckpoints.mockResolvedValue({
+      checkpoints: [
+        { checkpoint_id: "cp0", parent_checkpoint_id: null, rowid: 1 },
+        { checkpoint_id: "cp1", parent_checkpoint_id: "cp0", rowid: 2 },
+        { checkpoint_id: "cp2", parent_checkpoint_id: "cp1", rowid: 3 },
+      ],
+    });
     memoryMock.rewindThread.mockResolvedValue({
       ok: true,
       deleted: 2,
       kept: 1,
-      cutoff_checkpoint_id: "ckpt-1",
+      cutoff_checkpoint_id: "cp1",
     });
 
     const sid = await useChatStore.getState().createSession();
@@ -95,11 +105,19 @@ describe("T1.8: deleteMessagesAfter 等待后端 rewind", () => {
     // m1 保留
     expect(lookupSessionId("m1")).toBe(sid);
 
-    // rewindThread 被调用，keepMessagesCount=1（保留 m1）
-    expect(memoryMock.rewindThread).toHaveBeenCalledWith(sid, 1);
+    // rewindThread 被调用，传入真实 checkpoint_id（keepMessagesCount=1 → checkpoints[1].checkpoint_id）
+    expect(memoryMock.rewindThread).toHaveBeenCalledWith(sid, "cp1");
   });
 
   it("rewind 抛错时**不**删除前端消息，返回 success=false", async () => {
+    // keepMessagesCount=1（保留 m1）→ targetIdx=1 → rewind 到 checkpoints[1]
+    memoryMock.listCheckpoints.mockResolvedValue({
+      checkpoints: [
+        { checkpoint_id: "cp0", parent_checkpoint_id: null, rowid: 1 },
+        { checkpoint_id: "cp1", parent_checkpoint_id: "cp0", rowid: 2 },
+        { checkpoint_id: "cp2", parent_checkpoint_id: "cp1", rowid: 3 },
+      ],
+    });
     memoryMock.rewindThread.mockRejectedValue(new Error("HTTP 500: Internal Server Error"));
 
     const sid = await useChatStore.getState().createSession();
@@ -121,11 +139,19 @@ describe("T1.8: deleteMessagesAfter 等待后端 rewind", () => {
     expect(lookupSessionId("m2")).toBe(sid);
     expect(lookupSessionId("m3")).toBe(sid);
 
-    // rewindThread 被调用
-    expect(memoryMock.rewindThread).toHaveBeenCalledWith(sid, 1);
+    // rewindThread 被调用，传入真实 checkpoint_id（keepMessagesCount=1 → checkpoints[1].checkpoint_id）
+    expect(memoryMock.rewindThread).toHaveBeenCalledWith(sid, "cp1");
   });
 
   it("rewind 返回 ok=false 时**不**删除前端消息，返回 success=false", async () => {
+    // keepMessagesCount=1（保留 m1）→ targetIdx=1 → rewind 到 checkpoints[1]
+    memoryMock.listCheckpoints.mockResolvedValue({
+      checkpoints: [
+        { checkpoint_id: "cp0", parent_checkpoint_id: null, rowid: 1 },
+        { checkpoint_id: "cp1", parent_checkpoint_id: "cp0", rowid: 2 },
+        { checkpoint_id: "cp2", parent_checkpoint_id: "cp1", rowid: 3 },
+      ],
+    });
     memoryMock.rewindThread.mockResolvedValue({
       ok: false,
       deleted: 0,
@@ -148,6 +174,14 @@ describe("T1.8: deleteMessagesAfter 等待后端 rewind", () => {
   });
 
   it("rewind 确实被 await（不是 fire-and-forget）", async () => {
+    // keepMessagesCount=1（保留 m1）→ targetIdx=1 → rewind 到 checkpoints[1]
+    memoryMock.listCheckpoints.mockResolvedValue({
+      checkpoints: [
+        { checkpoint_id: "cp0", parent_checkpoint_id: null, rowid: 1 },
+        { checkpoint_id: "cp1", parent_checkpoint_id: "cp0", rowid: 2 },
+        { checkpoint_id: "cp2", parent_checkpoint_id: "cp1", rowid: 3 },
+      ],
+    });
     // 用延迟 resolve 验证 deleteMessagesAfter 确实 await 了 rewind
     let resolveRewind: ((value: { ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null }) => void) | null = null;
     const rewindPromise = new Promise<{ ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null }>((resolve) => {
@@ -183,9 +217,15 @@ describe("T1.8: deleteMessagesAfter 等待后端 rewind", () => {
     expect(sessAfter.messages[0].id).toBe("m1");
   });
 
-  it("keepMessagesCount=0 时不调 rewind，直接删除并返回 success=true", async () => {
-    // 从第一条消息开始删除 → keepMessagesCount=0 → 无需 rewind
-    memoryMock.rewindThread.mockResolvedValue({ ok: true, deleted: 0, kept: 0, cutoff_checkpoint_id: null });
+  it("keepMessagesCount=0 时 rewind 到初始 checkpoint 并删除所有消息", async () => {
+    // T2.6: 从第一条消息开始删除 → keepMessagesCount=0 → targetIdx=0 → rewind 到 checkpoints[0]（初始状态）
+    memoryMock.listCheckpoints.mockResolvedValue({
+      checkpoints: [
+        { checkpoint_id: "cp0", parent_checkpoint_id: null, rowid: 1 },
+        { checkpoint_id: "cp1", parent_checkpoint_id: "cp0", rowid: 2 },
+      ],
+    });
+    memoryMock.rewindThread.mockResolvedValue({ ok: true, deleted: 2, kept: 0, cutoff_checkpoint_id: "cp0" });
 
     const sid = await useChatStore.getState().createSession();
     useChatStore.getState().addMessage({ id: "m1", role: "user", content: "first", ts: 1 });
@@ -194,8 +234,8 @@ describe("T1.8: deleteMessagesAfter 等待后端 rewind", () => {
     const result = await useChatStore.getState().deleteMessagesAfter("m1");
 
     expect(result.success).toBe(true);
-    // rewind 不应被调用（没有消息需要保留）
-    expect(memoryMock.rewindThread).not.toHaveBeenCalled();
+    // rewind 被调用，传入初始 checkpoint_id（keepMessagesCount=0 → checkpoints[0].checkpoint_id）
+    expect(memoryMock.rewindThread).toHaveBeenCalledWith(sid, "cp0");
 
     // 所有消息被删除
     const sess = useChatStore.getState().sessions[sid];

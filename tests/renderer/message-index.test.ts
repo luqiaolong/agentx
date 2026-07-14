@@ -24,15 +24,22 @@ vi.hoisted(() => {
   });
 });
 
-// T1.8: deleteMessagesAfter 现在 await memory.rewindThread 才删除前端消息。
-// mock http 模块，让 rewindThread 解析成功，测试才能验证删除后的索引行为。
+// T1.8: deleteMessagesAfter 现在 await memory.listCheckpoints + memory.rewindThread 才删除前端消息。
+// mock http 模块，让 listCheckpoints / rewindThread 解析成功，测试才能验证删除后的索引行为。
 vi.mock("@/lib/api/http", () => ({
   sandbox: {
     authorize: vi.fn().mockResolvedValue({}),
     revoke: vi.fn().mockResolvedValue({}),
   },
   memory: {
-    rewindThread: vi.fn().mockResolvedValue({ ok: true, deleted: 0, kept: 0, cutoff_checkpoint_id: null }),
+    listCheckpoints: vi.fn().mockResolvedValue({
+      checkpoints: [
+        { checkpoint_id: "cp0", parent_checkpoint_id: null, rowid: 1 },
+        { checkpoint_id: "cp1", parent_checkpoint_id: "cp0", rowid: 2 },
+        { checkpoint_id: "cp2", parent_checkpoint_id: "cp1", rowid: 3 },
+      ],
+    }),
+    rewindThread: vi.fn().mockResolvedValue({ ok: true, deleted: 3, kept: 1, cutoff_checkpoint_id: "cp1" }),
   },
 }));
 

@@ -114,6 +114,8 @@ class MemoryEntry:
     scenarios: list[str] = field(default_factory=list)
     # scope 固定为 "workspace"（memory_store 只管工作区级），与 profile_store 对齐
     scope: str = "workspace"
+    # T5.2/T5.3：敏感等级（public 可注入 prompt，private 仅存储不注入）
+    sensitivity: str = "public"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +129,7 @@ class MemoryEntry:
             "keywords": list(self.keywords),
             "scenarios": list(self.scenarios),
             "scope": self.scope,
+            "sensitivity": self.sensitivity,
         }
 
 
@@ -166,6 +169,8 @@ def _serialize_entry(entry: MemoryEntry) -> str:
         frontmatter["keywords"] = list(entry.keywords)
     if entry.scenarios:
         frontmatter["scenarios"] = list(entry.scenarios)
+    if entry.sensitivity and entry.sensitivity != "public":
+        frontmatter["sensitivity"] = entry.sensitivity
     try:
         import yaml
         yaml_block = yaml.safe_dump(
@@ -208,6 +213,8 @@ def _read_entry_file(file_path: Path) -> MemoryEntry | None:
         scenarios = [str(s) for s in scenarios_raw]
     else:
         scenarios = []
+    # T5.2/T5.3：读取 sensitivity（旧文件缺失时默认 public）
+    sensitivity = str(frontmatter.get("sensitivity", "public"))
     return MemoryEntry(
         key=key,
         category=category,
@@ -218,6 +225,7 @@ def _read_entry_file(file_path: Path) -> MemoryEntry | None:
         title=title,
         keywords=keywords,
         scenarios=scenarios,
+        sensitivity=sensitivity,
     )
 
 
@@ -264,6 +272,7 @@ async def save_entry(
     title: str | None = None,
     keywords: list[str] | None = None,
     scenarios: list[str] | None = None,
+    sensitivity: str = "public",
 ) -> MemoryEntry:
     """写入/覆盖工作区记忆条目。
 
@@ -276,14 +285,25 @@ async def save_entry(
         title: 可读标题。
         keywords: 关键词标签列表。
         scenarios: 应用场景列表。
+        sensitivity: 敏感等级（public / private）。
 
     Returns:
         写入后的 MemoryEntry。
+
+    Raises:
+        ValueError: content 中检测到密钥/凭证（T5.2）。
     """
     _validate_key(key)
     _validate_category(category)
     _validate_source(source)
     _validate_content(content)
+    # T5.2：密钥/凭证检测 → 拒绝入库
+    from app.memory.profile_store import detect_secret
+    secret_type = detect_secret(content)
+    if secret_type:
+        raise ValueError(
+            f"content 中检测到 {secret_type}，拒绝入库以防止密钥泄露"
+        )
 
     lock = _get_workspace_lock(workspace_path)
     async with lock:
@@ -305,6 +325,7 @@ async def save_entry(
             title=title,
             keywords=list(keywords) if keywords is not None else [],
             scenarios=list(scenarios) if scenarios is not None else [],
+            sensitivity=sensitivity,
         )
         file_path = _entry_file_path(workspace_path, key)
         text = _serialize_entry(entry)
@@ -317,6 +338,7 @@ async def save_entry(
             workspace=workspace_path,
             key=key,
             category=category,
+            sensitivity=sensitivity,
         )
         return entry
 
@@ -388,6 +410,16 @@ async def upsert_from_llm(
             except ValueError as exc:
                 logger.warning("workspace_memory.llm_extract_invalid", entry=raw, error=str(exc))
                 continue
+            # T5.2：密钥/凭证检测 → 跳过（批量操作不抛异常，仅记日志）
+            from app.memory.profile_store import detect_secret
+            secret_type = detect_secret(content)
+            if secret_type:
+                logger.warning(
+                    "workspace_memory.llm_extract_secret_detected_skip",
+                    key=key,
+                    secret_type=secret_type,
+                )
+                continue
 
             file_path = _entry_file_path(workspace_path, key)
             existing = _read_entry_file(file_path)
@@ -396,6 +428,8 @@ async def upsert_from_llm(
             keywords = raw.get("keywords") or (existing.keywords if existing is not None else [])
             scenarios = raw.get("scenarios") or (existing.scenarios if existing is not None else [])
             created_at = existing.created_at if existing is not None and existing.created_at else now
+            # T5.2/T5.3：读取 sensitivity（LLM 返回的 dict 可能包含此字段）
+            sensitivity = str(raw.get("sensitivity", "public"))
             entry = MemoryEntry(
                 key=key,
                 category=category,
@@ -406,6 +440,7 @@ async def upsert_from_llm(
                 title=title,
                 keywords=list(keywords),
                 scenarios=list(scenarios),
+                sensitivity=sensitivity,
             )
             text = _serialize_entry(entry)
             tmp = file_path.with_suffix(".md.tmp")
@@ -420,11 +455,133 @@ async def upsert_from_llm(
         return written
 
 
+async def migrate_legacy_profile(workspace_path: str) -> dict[str, Any]:
+    """将旧格式 ``<workspace>/.agentx/profile.json`` 迁移到新格式 ``.agentx/memory/*.md``。
+
+    迁移策略：
+    1. 检查 ``<workspace>/.agentx/profile.json`` 是否存在
+    2. 若存在且 ``<workspace>/.agentx/memory/`` 不存在或为空，执行迁移
+    3. 将每条 entry 写为独立的 ``.md`` 文件（YAML frontmatter + content）
+    4. 迁移成功后将旧文件重命名为 ``profile.json.bak``（不删除，保留兜底）
+    5. 若 memory 目录已有 .md 文件，跳过迁移（避免覆盖用户已编辑的新格式）
+
+    Args:
+        workspace_path: 工作区根目录绝对路径。
+
+    Returns:
+        ``{"migrated": int, "skipped": bool, "backup": str | None}``
+        - migrated: 实际迁移的条目数
+        - skipped: 是否因 memory 目录非空而跳过
+        - backup: 备份文件路径（迁移成功时），或 None
+    """
+    ws = Path(workspace_path)
+    if not ws.is_absolute():
+        ws = ws.resolve()
+    agentx_dir = ws / ".agentx"
+    legacy_file = agentx_dir / "profile.json"
+    memory_dir = agentx_dir / "memory"
+
+    if not legacy_file.exists():
+        return {"migrated": 0, "skipped": False, "backup": None}
+
+    # 若 memory 目录已有 .md 文件，跳过迁移（用户已在使用新格式）
+    if memory_dir.exists() and any(memory_dir.glob("*.md")):
+        return {"migrated": 0, "skipped": True, "backup": None}
+
+    # 读取旧 profile.json
+    try:
+        raw = legacy_file.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "migrate_legacy_profile.read_failed",
+            workspace=workspace_path,
+            error=str(exc),
+        )
+        return {"migrated": 0, "skipped": False, "backup": None}
+
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        logger.warning(
+            "migrate_legacy_profile.invalid_structure",
+            workspace=workspace_path,
+        )
+        return {"migrated": 0, "skipped": False, "backup": None}
+
+    entries = data["entries"]
+    migrated = 0
+    for raw_entry in entries:
+        if not isinstance(raw_entry, dict):
+            continue
+        try:
+            key = _validate_key(str(raw_entry.get("key", "")))
+            content = _validate_content(str(raw_entry.get("content", "")))
+            category = _validate_category(str(raw_entry.get("category", "custom")))
+        except ValueError as exc:
+            logger.warning(
+                "migrate_legacy_profile.skip_invalid",
+                workspace=workspace_path,
+                entry=raw_entry,
+                error=str(exc),
+            )
+            continue
+        source = str(raw_entry.get("source", "manual"))
+        if source not in _VALID_SOURCES:
+            source = "manual"
+        title = raw_entry.get("title")
+        keywords = raw_entry.get("keywords", [])
+        scenarios = raw_entry.get("scenarios", [])
+        # 复用 save_entry 写入 .md 文件；单条失败不阻塞其余迁移
+        try:
+            await save_entry(
+                workspace_path,
+                key,
+                category,
+                content,
+                source=source,
+                title=title if isinstance(title, str) else None,
+                keywords=list(keywords) if isinstance(keywords, list) else [],
+                scenarios=list(scenarios) if isinstance(scenarios, list) else [],
+            )
+        except Exception as exc:  # noqa: BLE001 — 单条失败继续迁移其余
+            logger.warning(
+                "migrate_legacy_profile.save_failed",
+                workspace=workspace_path,
+                key=key,
+                error=str(exc),
+            )
+            continue
+        migrated += 1
+
+    # 迁移成功后重命名旧文件为 .bak（不删除）
+    backup_path = None
+    if migrated > 0:
+        backup_path = str(legacy_file.with_suffix(".json.bak"))
+        try:
+            legacy_file.rename(backup_path)
+        except OSError as exc:
+            logger.warning(
+                "migrate_legacy_profile.backup_failed",
+                workspace=workspace_path,
+                error=str(exc),
+            )
+            backup_path = None
+        else:
+            logger.info(
+                "migrate_legacy_profile.done",
+                workspace=workspace_path,
+                migrated=migrated,
+                backup=backup_path,
+            )
+
+    return {"migrated": migrated, "skipped": False, "backup": backup_path}
+
+
 __all__ = [
     "MemoryEntry",
     "delete_entry",
     "get_entry",
     "list_entries",
+    "migrate_legacy_profile",
     "save_entry",
     "upsert_from_llm",
 ]

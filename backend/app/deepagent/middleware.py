@@ -12,15 +12,23 @@
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, NotRequired
 
 from loguru import logger
-from langchain.agents.middleware.types import AgentMiddleware
+from deepagents.middleware.memory import MemoryMiddleware, MemoryState, MemoryStateUpdate
+from langchain.agents.middleware.types import AgentMiddleware, PrivateStateAttr
 from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage
 
 from app.security.approval.flow import _READONLY_TOOLS
 
-__all__ = ["ReadonlyLoopGuardMiddleware"]
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from langchain_core.runnables import RunnableConfig
+    from langgraph.runtime import Runtime
+
+__all__ = ["ReadonlyLoopGuardMiddleware", "WorkspaceMemoryMiddleware"]
 
 
 class ReadonlyLoopGuardMiddleware(AgentMiddleware[Any, Any, Any]):
@@ -94,3 +102,88 @@ class ReadonlyLoopGuardMiddleware(AgentMiddleware[Any, Any, Any]):
             tool_choice="none",
         )
         return await handler(modified)
+
+
+class WorkspaceMemoryState(MemoryState):
+    """State schema with mtime signature for workspace memory cache invalidation."""
+
+    memory_sources_signature: NotRequired[Annotated[str, PrivateStateAttr]]
+
+
+class WorkspaceMemoryMiddleware(MemoryMiddleware):
+    """MemoryMiddleware with mtime-aware workspace memory reload (T4.5).
+
+    DeepAgents ``MemoryMiddleware`` caches ``memory_contents`` in state and skips
+    reload if already present. This subclass computes an mtime signature from all
+    source files (``.agentx/memory/*.md``, ``.agentx/AGENTS.md``, ``.agentx/rules/*.md``)
+    and invalidates the cache when files change on disk, ensuring subsequent turns
+    in the same thread see updated memory content.
+
+    Spec: memory-safety-contract "DeepAgents memory 缓存必须感知 workspace 变更".
+    """
+
+    state_schema = WorkspaceMemoryState
+
+    def _compute_signature(self) -> str:
+        """Compute mtime signature from all source files.
+
+        Returns a string that changes when any source file is modified, created,
+        or deleted. Uses ``st_mtime_ns`` for nanosecond precision.
+        """
+        parts: list[str] = []
+        for path in self.sources:
+            p = Path(path)
+            try:
+                if p.exists():
+                    parts.append(f"{path}:{p.stat().st_mtime_ns}")
+                else:
+                    parts.append(f"{path}:missing")
+            except OSError:
+                parts.append(f"{path}:error")
+        return "|".join(parts)
+
+    def _is_cache_fresh(self, state: Mapping) -> bool:
+        """Check if cached memory_contents is still fresh.
+
+        Cache is fresh when:
+        - ``memory_contents`` is present in state, AND
+        - stored ``memory_sources_signature`` matches current file mtimes
+        """
+        if "memory_contents" not in state:
+            return False
+        current_sig = self._compute_signature()
+        stored_sig = state.get("memory_sources_signature", "")
+        return current_sig == stored_sig
+
+    async def abefore_agent(
+        self,
+        state: WorkspaceMemoryState,
+        runtime: Runtime,
+        config: RunnableConfig,
+    ) -> MemoryStateUpdate | None:
+        """Load memory content with mtime-aware cache invalidation (async)."""
+        if self._is_cache_fresh(state):
+            return None
+        # Cache stale or missing → invalidate so parent reloads from disk
+        state_copy = {k: v for k, v in state.items() if k != "memory_contents"}
+        update = await super().abefore_agent(state_copy, runtime, config)
+        if update is None:
+            return None
+        current_sig = self._compute_signature()
+        return {**update, "memory_sources_signature": current_sig}
+
+    def before_agent(
+        self,
+        state: WorkspaceMemoryState,
+        runtime: Runtime,
+        config: RunnableConfig,
+    ) -> MemoryStateUpdate | None:
+        """Load memory content with mtime-aware cache invalidation (sync)."""
+        if self._is_cache_fresh(state):
+            return None
+        state_copy = {k: v for k, v in state.items() if k != "memory_contents"}
+        update = super().before_agent(state_copy, runtime, config)
+        if update is None:
+            return None
+        current_sig = self._compute_signature()
+        return {**update, "memory_sources_signature": current_sig}

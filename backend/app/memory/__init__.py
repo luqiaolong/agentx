@@ -28,6 +28,7 @@ from .checkpointer_view import (
     ThreadIdInvalid,
     delete_thread,
     get_db_size,
+    list_checkpoints,
     list_threads,
     rewind_thread,
 )
@@ -36,7 +37,9 @@ from .profile_store import (
     ProfileContentTooLong,
     ProfileEntry,
     ProfileKeyInvalid,
+    ProfileSecretDetected,
     ProfileStore,
+    ProjectMemoryWithoutWorkspace,
     build_profile_prompt,
 )
 from .skills_loader import SkillDef
@@ -57,7 +60,9 @@ __all__ = [
     "ProfileContentTooLong",
     "ProfileEntry",
     "ProfileKeyInvalid",
+    "ProfileSecretDetected",
     "ProfileStore",
+    "ProjectMemoryWithoutWorkspace",
     "SkillDef",
     "SkillFileInfo",
     "SkillNameInvalid",
@@ -72,6 +77,7 @@ __all__ = [
     "get_checkpointer",
     "get_db_size",
     "get_skill_file",
+    "list_checkpoints",
     "list_skills",
     "list_skills_files",
     "list_threads",

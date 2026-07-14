@@ -14,6 +14,7 @@ import contextlib
 from typing import TYPE_CHECKING, Any, AsyncIterator, Mapping
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import SystemMessage
 
 from app.config import get_settings
 from app.observability.logger import logger
@@ -151,6 +152,7 @@ async def _run_aggregator(
     blackboard: Mapping,
     chat_model: BaseChatModel | None = None,
     abort_event: Any = None,
+    profile_prompt: str = "",
 ) -> AsyncIterator[dict[str, str]]:
     """调用 Aggregator LLM，流式输出最终回复。
 
@@ -160,6 +162,8 @@ async def _run_aggregator(
             None 时调用 ``app.llm.get_chat_model()`` 获取真实 LLM。
         abort_event: 可选 ``asyncio.Event``，在流式输出过程中检查中止信号，
             已中止则提前返回部分结果（H3 修复）。
+        profile_prompt: 用户画像 prompt（由 ``profile_store.build_profile_prompt`` 生成），
+            注入为 system message 前缀，确保 aggregator 能看到用户偏好。
     """
     # 直接从 app.llm 获取 get_chat_model（v2：不再通过 orchestrator 模块属性访问）
     from app.llm import get_chat_model
@@ -196,6 +200,11 @@ async def _run_aggregator(
             "blackboard_summary": _serialize_blackboard(blackboard),
             "error_summary": "\n".join(f"{k}: {v}" for k, v in errors.items()) or "无",
         })
+        # 注入 profile_prompt 作为 system message 前缀（T4.3）
+        if profile_prompt:
+            prompt = prompt.__class__(
+                messages=[SystemMessage(content=profile_prompt)] + prompt.to_messages()
+            )
 
         think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
         token_count = 0

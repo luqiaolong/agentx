@@ -63,14 +63,13 @@ async def list_threads() -> list[dict[str, Any]]:
         {
           "thread_id": "abc",
           "checkpoint_count": 5,
-          "last_updated": "1ef4a3b0-...",  # 最新插入 checkpoint 的 checkpoint_id
-          "size_bytes": 20480               # SUM(LENGTH(checkpoint))
+          "last_updated": "2026-07-14T10:00:00+00:00",  # thread_meta.last_active_at
+          "size_bytes": 20480                              # SUM(LENGTH(checkpoint))
         }
 
-    ``last_updated`` 是按 ``rowid`` 取最新插入的 checkpoint 的 ``checkpoint_id``
-    （langgraph 按时间顺序插入，``rowid`` 单调递增）。
-    注意：在生产环境中 ``checkpoint_id`` 是 UUID 而非时间戳；
-    早期实现用 ``MAX(checkpoint_id)`` 返回字典序最大的 UUID，语义错误。
+    ``last_updated`` 取自 ``thread_meta.last_active_at``（由 ``touch_thread`` 在
+    chat 请求入口更新），是真实的 ISO 时间戳。
+    旧 thread 若未在 ``thread_meta`` 中登记，``last_updated`` 为 ``None``。
 
     数据库不存在或表不存在时返回空列表（不报错）。
     """
@@ -87,22 +86,22 @@ async def list_threads() -> list[dict[str, Any]]:
             await cur.close()
             if row is None:
                 return []
-            # 用 MAX(rowid) 取最新插入的 checkpoint（langgraph 按时间顺序插入）
-            # 而非 MAX(checkpoint_id)（字典序最大的 UUID，语义错误）
+            # 确保 thread_meta 表存在（LEFT JOIN 需要）
+            await _ensure_thread_meta_table(conn)
+            # LEFT JOIN thread_meta 取 last_active_at（真实时间戳），
+            # 替代旧的 checkpoint_id（UUID，不是时间戳，前端格式化为时间是错误的）
             cur = await conn.execute(
                 """
                 SELECT
-                    thread_id,
+                    c.thread_id,
                     COUNT(*) AS checkpoint_count,
-                    (SELECT c2.checkpoint_id FROM checkpoints c2
-                     WHERE c2.thread_id = checkpoints.thread_id
-                       AND c2.checkpoint_ns = checkpoints.checkpoint_ns
-                     ORDER BY c2.rowid DESC LIMIT 1) AS last_updated,
-                    SUM(LENGTH(checkpoint)) AS size_bytes
-                FROM checkpoints
-                WHERE checkpoint_ns = ?
-                GROUP BY thread_id
-                ORDER BY MAX(rowid) DESC
+                    tm.last_active_at AS last_updated,
+                    SUM(LENGTH(c.checkpoint)) AS size_bytes
+                FROM checkpoints c
+                LEFT JOIN thread_meta tm ON tm.thread_id = c.thread_id
+                WHERE c.checkpoint_ns = ?
+                GROUP BY c.thread_id
+                ORDER BY MAX(c.rowid) DESC
                 """,
                 (_MAIN_NS,),
             )
@@ -188,32 +187,86 @@ async def delete_thread(thread_id: str) -> int:
     return deleted
 
 
-async def rewind_thread(thread_id: str, keep_messages_count: int) -> dict[str, Any]:
-    """回退指定 thread 的 checkpoint，保留编辑点之前的状态。
+async def list_checkpoints(thread_id: str) -> list[dict[str, Any]]:
+    """返回指定 thread 的 checkpoint 列表（按插入顺序升序）。
 
-    用于「编辑历史消息」场景：用户编辑第 N 条消息后重新发送，需要回退到
-    第 N 条消息之前的状态（保留前 N-1 条消息的上下文）。
+    每项结构::
 
-    实现策略：
-    - 查询该 thread 的所有 checkpoints，按 rowid 升序（时间顺序）
-    - 估算保留的 checkpoint 数量 = keep_messages_count * 2（安全余量）
-    - 找到 cutoff checkpoint（第 N 个），删除 rowid 更大的所有 checkpoints 和 writes
+        {
+          "checkpoint_id": "1ef4a3b0-...",
+          "parent_checkpoint_id": "..." | null,
+          "rowid": 1
+        }
+
+    用于前端「编辑历史消息」场景：前端根据消息数量估算保留到第几个
+    checkpoint，然后将其 ``checkpoint_id`` 传给 :func:`rewind_thread`。
 
     Args:
         thread_id: 会话 ID。
-        keep_messages_count: 保留前多少条消息对应的状态（即编辑点之前的消息数）。
-            例如编辑第 3 条消息，则传 2（保留前 2 条消息的上下文）。
 
     Returns:
-        {"deleted": int, "kept": int, "cutoff_checkpoint_id": str | None}
+        checkpoint 列表（空 thread 或数据库不存在时返回空列表）。
 
     Raises:
         ThreadIdInvalid: thread_id 非法。
+    """
+    _validate_thread_id(thread_id)
+    db_path = _get_db_path()
+    if not db_path.exists():
+        return []
+    try:
+        async with aiosqlite.connect(str(db_path)) as conn:
+            cur = await conn.execute(
+                "SELECT rowid, checkpoint_id, parent_checkpoint_id "
+                "FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? "
+                "ORDER BY rowid ASC",
+                (thread_id, _MAIN_NS),
+            )
+            rows = await cur.fetchall()
+            await cur.close()
+    except sqlite3.Error as exc:
+        logger.warning("list_checkpoints 查询失败", thread_id=thread_id, error=str(exc))
+        return []
+    return [
+        {
+            "checkpoint_id": r[1],
+            "parent_checkpoint_id": r[2],
+            "rowid": r[0],
+        }
+        for r in rows
+    ]
+
+
+async def rewind_thread(thread_id: str, checkpoint_id: str) -> dict[str, Any]:
+    """回退指定 thread 的 checkpoint 到 ``checkpoint_id``（含）。
+
+    用于「编辑历史消息」场景：用户编辑第 N 条消息后重新发送，需要回退到
+    编辑点之前的状态。调用方通过 :func:`list_checkpoints` 获取该 thread 的
+    checkpoint 列表，选出要保留到的 checkpoint_id（含），本函数删除该
+    checkpoint 之后的所有 checkpoints 和 writes。
+
+    修复点（Phase 2）：
+    - 不再使用 ``keep_messages_count * 2 + 1`` 猜测保留数量，改为直接
+      接受真实 ``checkpoint_id`` 定位截止点
+    - 不再跨表比较 ``writes.rowid > checkpoints.rowid``（二者独立序列），
+      改为按 ``checkpoint_id`` 关联删除 writes：删除 checkpoint_id 不在
+      保留集合中的 writes
+
+    Args:
+        thread_id: 会话 ID。
+        checkpoint_id: 回退到的 checkpoint ID（保留该 checkpoint 及之前的所有）。
+
+    Returns:
+        ``{"deleted": int, "kept": int, "cutoff_checkpoint_id": str | None}``
+
+    Raises:
+        ThreadIdInvalid: thread_id 非法。
+        ValueError: checkpoint_id 为空或在该 thread 中找不到。
         sqlite3.Error: 数据库错误。
     """
     _validate_thread_id(thread_id)
-    if keep_messages_count < 0:
-        keep_messages_count = 0
+    if not checkpoint_id or not isinstance(checkpoint_id, str):
+        raise ValueError("checkpoint_id 不能为空")
 
     db_path = _get_db_path()
     if not db_path.exists():
@@ -221,44 +274,46 @@ async def rewind_thread(thread_id: str, keep_messages_count: int) -> dict[str, A
 
     try:
         async with aiosqlite.connect(str(db_path)) as conn:
-            # 1. 查询该 thread 的所有 checkpoints 按 rowid 升序
+            # 1. 定位 cutoff checkpoint 的 rowid（同表内查找，语义有效）
             cur = await conn.execute(
-                "SELECT rowid, checkpoint_id FROM checkpoints "
-                "WHERE thread_id = ? AND checkpoint_ns = ? "
-                "ORDER BY rowid ASC",
-                (thread_id, _MAIN_NS),
+                "SELECT rowid FROM checkpoints "
+                "WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?",
+                (thread_id, _MAIN_NS, checkpoint_id),
             )
-            rows = await cur.fetchall()
+            row = await cur.fetchone()
             await cur.close()
 
-            total = len(rows)
-            if total == 0:
-                return {"deleted": 0, "kept": 0, "cutoff_checkpoint_id": None}
+            if row is None:
+                raise ValueError(
+                    f"checkpoint_id {checkpoint_id} 不存在于 thread {thread_id}"
+                )
+            cutoff_rowid = row[0]
 
-            # 2. 估算保留的 checkpoint 数量
-            # 经验值：每条消息大约产生 2 个 checkpoints（input + loop）
-            # 加 1 个安全余量（保留初始状态）
-            keep_checkpoints = max(1, keep_messages_count * 2 + 1)
-            if keep_checkpoints >= total:
-                # 保留数量 >= 总数，无需删除
-                return {
-                    "deleted": 0,
-                    "kept": total,
-                    "cutoff_checkpoint_id": rows[-1][1] if rows else None,
-                }
-
-            # 3. 找到 cutoff checkpoint（第 keep_checkpoints 个，0-indexed）
-            cutoff_rowid = rows[keep_checkpoints - 1][0]
-            cutoff_checkpoint_id = rows[keep_checkpoints - 1][1]
-
-            # 4. 删除 cutoff 之后的所有 writes
-            await conn.execute(
-                "DELETE FROM writes WHERE thread_id = ? AND rowid > ?",
-                (thread_id, cutoff_rowid),
+            # 2. 统计总数（用于返回 kept）
+            cur = await conn.execute(
+                "SELECT COUNT(*) FROM checkpoints "
+                "WHERE thread_id = ? AND checkpoint_ns = ?",
+                (thread_id, _MAIN_NS),
             )
-            # 5. 删除 cutoff 之后的所有 checkpoints
+            total_row = await cur.fetchone()
+            await cur.close()
+            total = total_row[0] if total_row else 0
+
+            # 3. 删除 cutoff 之后的 writes（按 checkpoint_id 关联，不按 rowid 跨表比较）
+            #    保留的 checkpoint_id 集合 = rowid <= cutoff_rowid 的那些
+            await conn.execute(
+                "DELETE FROM writes WHERE thread_id = ? AND checkpoint_ns = ? "
+                "AND checkpoint_id NOT IN ("
+                "  SELECT checkpoint_id FROM checkpoints "
+                "  WHERE thread_id = ? AND checkpoint_ns = ? AND rowid <= ?"
+                ")",
+                (thread_id, _MAIN_NS, thread_id, _MAIN_NS, cutoff_rowid),
+            )
+
+            # 4. 删除 cutoff 之后的 checkpoints（同表 rowid 比较，语义有效）
             del_cur = await conn.execute(
-                "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ? AND rowid > ?",
+                "DELETE FROM checkpoints "
+                "WHERE thread_id = ? AND checkpoint_ns = ? AND rowid > ?",
                 (thread_id, _MAIN_NS, cutoff_rowid),
             )
             deleted = del_cur.rowcount or 0
@@ -268,22 +323,21 @@ async def rewind_thread(thread_id: str, keep_messages_count: int) -> dict[str, A
             logger.info(
                 "thread checkpoint 已回退",
                 thread_id=thread_id,
-                keep_messages_count=keep_messages_count,
-                keep_checkpoints=keep_checkpoints,
+                cutoff_checkpoint_id=checkpoint_id,
+                cutoff_rowid=cutoff_rowid,
                 total_checkpoints=total,
                 deleted=deleted,
-                cutoff_checkpoint_id=cutoff_checkpoint_id,
             )
             return {
                 "deleted": deleted,
                 "kept": total - deleted,
-                "cutoff_checkpoint_id": cutoff_checkpoint_id,
+                "cutoff_checkpoint_id": checkpoint_id,
             }
     except sqlite3.Error as exc:
         logger.warning(
             "rewind_thread DB 错误",
             thread_id=thread_id,
-            keep_messages_count=keep_messages_count,
+            checkpoint_id=checkpoint_id,
             error=str(exc),
             error_type=type(exc).__name__,
         )
@@ -421,6 +475,7 @@ __all__ = [
     "cleanup_expired_checkpoints",
     "delete_thread",
     "get_db_size",
+    "list_checkpoints",
     "list_threads",
     "rewind_thread",
     "start_checkpoint_reaper",

@@ -824,7 +824,10 @@ def register_chat_routes(app: FastAPI) -> None:
             **config,
             "configurable": {
                 **config.get("configurable", {}),
-                "checkpoint_id": new_checkpoint_id,
+                # T2.2: LangGraph aput 用 config.configurable.checkpoint_id 作为
+                # parent_checkpoint_id 存入 DB（而非 checkpoint["parent_checkpoint_id"]）。
+                # 因此这里必须传旧 checkpoint 的 id（父节点），不是新 checkpoint 的 id。
+                "checkpoint_id": checkpoint.get("id"),
                 "checkpoint_ns": "",
             },
         }

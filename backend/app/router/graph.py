@@ -470,6 +470,24 @@ async def _run_router_inner(
                         AIMessage(content=assistant_content),
                     ]
                     await _append_messages_to_checkpointer(checkpointer, thread_id, new_messages)
+
+                    # T3.6: coding_team 也触发画像抽取（与 work/coding 路径一致）
+                    # team graph 无 checkpointer state，无法复用 trigger_profile_auto_extract
+                    # 的 aget_state 读取；此处直接用已收集的 assistant_content 入队。
+                    if get_settings().profile_auto_extract:
+                        from app.memory.extract_queue import enqueue as _eq_enqueue
+                        try:
+                            await _eq_enqueue(
+                                message=cleaned_message,
+                                assistant_reply=assistant_content,
+                                workspace_path=effective_workspace,
+                            )
+                        except Exception as exc:  # noqa: BLE001 — best-effort
+                            logger.warning(
+                                "coding_team profile auto extract enqueue failed",
+                                thread_id=thread_id,
+                                error=str(exc),
+                            )
         finally:
             # ---- 7. 观测中心 end（best-effort，确保异常/断连时也能执行）----
             if run_id and sink is not None:

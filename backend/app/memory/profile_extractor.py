@@ -50,11 +50,25 @@ class ProfileEntry(BaseModel):
     """单条用户画像条目。"""
 
     key: str = Field(description="条目唯一键，如 uses_ts / project_framework")
-    category: str = Field(description="分类：preference / project / fact")
+    category: str = Field(description="分类：preference / project / fact / custom")
     content: str = Field(description="条目内容描述")
     title: str | None = Field(default=None, description="可读标题,不超过20字")
     keywords: list[str] = Field(default_factory=list, description="3-5个关键词标签")
     scenarios: list[str] = Field(default_factory=list, description="1-3个应用场景")
+    scope: str = Field(
+        default="global",
+        description="存储层级：global（跨工作区生效）或 workspace（仅当前工作区）",
+    )
+    confidence: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="抽取置信度 0.0-1.0，低于 0.6 不会被自动写入",
+    )
+    sensitivity: str = Field(
+        default="public",
+        description="敏感等级：public（可注入 prompt）或 private（不注入 prompt，仅存储）",
+    )
 
 
 class ProfileResult(BaseModel):
@@ -72,7 +86,22 @@ _PROFILE_SYSTEM = (
     "对每条记忆，必须生成以下结构化字段：\n"
     "- title：可读标题，不超过20字，概括该条记忆的核心要点\n"
     "- keywords：3-5个关键词标签，用于检索与分类\n"
-    "- scenarios：1-3个应用场景，描述该记忆在何种情境下应被引用"
+    "- scenarios：1-3个应用场景，描述该记忆在何种情境下应被引用\n"
+    "- scope：存储层级，取值 \"global\" 或 \"workspace\"：\n"
+    "  · preference（用户长期偏好，如\"喜欢中文回复\"）→ scope=\"global\"\n"
+    "  · fact（用户个人事实，如\"是前端工程师\"）→ scope=\"global\"\n"
+    "  · project（当前工作区的技术栈/约定/任务，如\"项目用 FastAPI\"）→ scope=\"workspace\"\n"
+    "  · custom → scope 视内容而定：与用户个人相关 → \"global\"；与项目相关 → \"workspace\"\n"
+    "  注意：用户偏好（如\"我喜欢中文回复\"）即使在某工作区内说出，也属于 global，\n"
+    "  因为它是跨工作区的个人偏好，不是项目特定约定。\n"
+    "- confidence：抽取置信度 0.0-1.0，基于用户表达的明确程度：\n"
+    "  · 0.9-1.0：用户明确陈述（如\"我用 TypeScript\"）\n"
+    "  · 0.7-0.8：从对话可合理推断（如多次提及 TypeScript）\n"
+    "  · 0.5-0.6：模糊或间接暗示\n"
+    "  · 低于 0.6 的条目不会被自动写入\n"
+    "- sensitivity：敏感等级，取值 \"public\" 或 \"private\"：\n"
+    "  · private：个人敏感信息（如真实姓名、手机号、密码、密钥、薪资等）\n"
+    "  · public：一般技术偏好/项目约定等非敏感信息\n"
 )
 
 _PROFILE_PROMPT = ChatPromptTemplate.from_messages(

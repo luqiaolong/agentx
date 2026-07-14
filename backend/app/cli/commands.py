@@ -310,7 +310,10 @@ async def _cmd_compact(thread_id: str, checkpointer: object | None) -> None:
         **config,
         "configurable": {
             **config.get("configurable", {}),
-            "checkpoint_id": new_checkpoint_id,
+            # T2.2: LangGraph aput 用 config.configurable.checkpoint_id 作为
+            # parent_checkpoint_id 存入 DB（而非 checkpoint["parent_checkpoint_id"]）。
+            # 因此这里必须传旧 checkpoint 的 id（父节点），不是新 checkpoint 的 id。
+            "checkpoint_id": checkpoint.get("id"),
             "checkpoint_ns": "",
         },
     }

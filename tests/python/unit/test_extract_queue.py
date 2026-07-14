@@ -128,7 +128,7 @@ async def test_worker_processes_global_job(tmp_path: Path) -> None:
         [
             ProfileEntry(
                 key="uses_ts",
-                category="project",
+                category="fact",
                 content="用户用 TypeScript",
                 title="TS 用户",
                 keywords=["ts"],

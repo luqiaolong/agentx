@@ -314,9 +314,10 @@ async def plan_node(state: TeamState) -> dict:
     chat_model = state.get("chat_model")
     planner = Planner(chat_model)
     message = state["message"]
+    profile_prompt = state.get("profile_prompt", "")
 
     try:
-        plan = await planner.plan_with_llm(message)
+        plan = await planner.plan_with_llm(message, profile_prompt=profile_prompt)
     except Exception as exc:  # noqa: BLE001
         logger.warning("team plan_node planner failed", error=str(exc))
         writer(make_sse_event("error", {"message": f"Planner 调用失败: {exc}"}))
@@ -634,6 +635,7 @@ async def aggregate_node(state: TeamState) -> dict:
 
     message = state["message"]
     chat_model = state.get("chat_model")
+    profile_prompt = state.get("profile_prompt", "")
 
     # 质量门检查（内容质量：截断 / identical）
     ok, reason = _quality_gate(blackboard)
@@ -650,6 +652,7 @@ async def aggregate_node(state: TeamState) -> dict:
                 blackboard,
                 chat_model=chat_model,
                 abort_event=abort_event,
+                profile_prompt=profile_prompt,
             ):
                 writer(sse)
         except Exception as exc:  # noqa: BLE001
@@ -845,6 +848,7 @@ async def replan_node(state: TeamState) -> dict:
 
     chat_model = state.get("chat_model")
     planner = Planner(chat_model)
+    profile_prompt = state.get("profile_prompt", "")
 
     try:
         new_plan = await planner.replan(
@@ -853,6 +857,7 @@ async def replan_node(state: TeamState) -> dict:
             findings=findings,
             errors=errors,
             hint=any(t.is_dangerous_hint for t in plan) if plan else False,  # BE-K 修复
+            profile_prompt=profile_prompt,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("team replan_node planner failed", error=str(exc))

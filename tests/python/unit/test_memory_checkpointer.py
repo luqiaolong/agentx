@@ -16,6 +16,7 @@ from app.memory.checkpointer_view import (
     ThreadIdInvalid,
     delete_thread,
     get_db_size,
+    list_checkpoints,
     list_threads,
     rewind_thread,
 )
@@ -96,14 +97,18 @@ def test_list_threads_empty_when_db_not_exists(tmp_path: Path) -> None:
 
 
 def test_list_threads_returns_aggregated(tmp_path: Path) -> None:
-    """list_threads 返回 thread_id + checkpoint_count + last_updated + size_bytes。"""
+    """list_threads 返回 thread_id + checkpoint_count + last_updated + size_bytes。
+
+    T5.7: ``last_updated`` 取自 ``thread_meta.last_active_at``，无 meta 记录时为 None
+    （旧的 checkpoint_id 不再作为 last_updated 返回）。
+    """
     db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
         [
-            ("thread_a", "2026-07-04T10:00:00+00:00", b"blob_a_1"),
-            ("thread_a", "2026-07-04T11:00:00+00:00", b"blob_a_2"),
-            ("thread_b", "2026-07-04T09:00:00+00:00", b"blob_b_1"),
+            ("thread_a", "cp_uuid_1", b"blob_a_1"),
+            ("thread_a", "cp_uuid_2", b"blob_a_2"),
+            ("thread_b", "cp_uuid_3", b"blob_b_1"),
         ],
     )
 
@@ -112,17 +117,17 @@ def test_list_threads_returns_aggregated(tmp_path: Path) -> None:
     result = asyncio.run(list_threads())
     assert len(result) == 2
 
-    # 按 last_updated 降序排列
     by_thread = {r["thread_id"]: r for r in result}
 
     a = by_thread["thread_a"]
     assert a["checkpoint_count"] == 2
-    assert a["last_updated"] == "2026-07-04T11:00:00+00:00"
+    # T5.7: 无 thread_meta 记录时 last_updated 为 None（不再是 checkpoint_id）
+    assert a["last_updated"] is None
     assert a["size_bytes"] == len(b"blob_a_1") + len(b"blob_a_2")
 
     b = by_thread["thread_b"]
     assert b["checkpoint_count"] == 1
-    assert b["last_updated"] == "2026-07-04T09:00:00+00:00"
+    assert b["last_updated"] is None
     assert b["size_bytes"] == len(b"blob_b_1")
 
 
@@ -305,12 +310,58 @@ async def test_delete_thread_async(tmp_path: Path) -> None:
 
 
 # ============================================================
+# list_checkpoints
+# ============================================================
+
+
+def test_list_checkpoints_returns_ordered(tmp_path: Path) -> None:
+    """list_checkpoints 返回按 rowid 升序的 checkpoint 列表。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(
+        db_path,
+        [
+            ("thread_lc", "cp1", b"blob1"),
+            ("thread_lc", "cp2", b"blob2"),
+            ("thread_lc", "cp3", b"blob3"),
+        ],
+    )
+
+    import asyncio
+
+    result = asyncio.run(list_checkpoints("thread_lc"))
+    assert len(result) == 3
+    assert result[0]["checkpoint_id"] == "cp1"
+    assert result[1]["checkpoint_id"] == "cp2"
+    assert result[2]["checkpoint_id"] == "cp3"
+    assert result[0]["rowid"] < result[1]["rowid"] < result[2]["rowid"]
+
+
+def test_list_checkpoints_empty_thread(tmp_path: Path) -> None:
+    """不存在的 thread 返回空列表。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(db_path, [("t1", "cp1", b"x")])
+
+    import asyncio
+
+    result = asyncio.run(list_checkpoints("nonexistent"))
+    assert result == []
+
+
+def test_list_checkpoints_invalid_id() -> None:
+    """thread_id 非法抛 ThreadIdInvalid。"""
+    import asyncio
+
+    with pytest.raises(ThreadIdInvalid):
+        asyncio.run(list_checkpoints("../etc"))
+
+
+# ============================================================
 # rewind_thread
 # ============================================================
 
 
 def test_rewind_thread_keeps_early_checkpoints(tmp_path: Path) -> None:
-    """回退保留早期的 checkpoints，删除后期的。"""
+    """回退到指定 checkpoint_id，保留该 checkpoint 及之前的所有。"""
     db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
@@ -326,8 +377,8 @@ def test_rewind_thread_keeps_early_checkpoints(tmp_path: Path) -> None:
 
     import asyncio
 
-    # 保留前 2 条消息 ≈ 保留 2*2+1=5 个 checkpoints
-    result = asyncio.run(rewind_thread("thread_rw", 2))
+    # 回退到 cp5：保留 cp1-cp5，删除 cp6
+    result = asyncio.run(rewind_thread("thread_rw", "cp5"))
     assert result["deleted"] == 1
     assert result["kept"] == 5
     assert result["cutoff_checkpoint_id"] == "cp5"
@@ -340,8 +391,8 @@ def test_rewind_thread_keeps_early_checkpoints(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_rewind_thread_keep_more_than_total(tmp_path: Path) -> None:
-    """保留数量超过总数时不删除。"""
+def test_rewind_thread_to_last_checkpoint_noop(tmp_path: Path) -> None:
+    """回退到最后一个 checkpoint 时不删除。"""
     db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
@@ -353,17 +404,28 @@ def test_rewind_thread_keep_more_than_total(tmp_path: Path) -> None:
 
     import asyncio
 
-    result = asyncio.run(rewind_thread("thread_rw", 10))
+    result = asyncio.run(rewind_thread("thread_rw", "cp2"))
     assert result["deleted"] == 0
     assert result["kept"] == 2
     assert result["cutoff_checkpoint_id"] == "cp2"
 
 
-def test_rewind_thread_empty_thread(tmp_path: Path) -> None:
-    """回退不存在的 thread 返回零值。"""
+def test_rewind_thread_nonexistent_checkpoint_raises(tmp_path: Path) -> None:
+    """checkpoint_id 不存在时抛 ValueError。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(db_path, [("thread_rw", "cp1", b"blob1")])
+
     import asyncio
 
-    result = asyncio.run(rewind_thread("nonexistent", 2))
+    with pytest.raises(ValueError):
+        asyncio.run(rewind_thread("thread_rw", "nonexistent_cp"))
+
+
+def test_rewind_thread_db_not_exists(tmp_path: Path) -> None:
+    """数据库不存在时返回零值。"""
+    import asyncio
+
+    result = asyncio.run(rewind_thread("nonexistent", "cp1"))
     assert result["deleted"] == 0
     assert result["kept"] == 0
     assert result["cutoff_checkpoint_id"] is None
@@ -374,11 +436,22 @@ def test_rewind_thread_invalid_id() -> None:
     import asyncio
 
     with pytest.raises(ThreadIdInvalid):
-        asyncio.run(rewind_thread("../etc", 2))
+        asyncio.run(rewind_thread("../etc", "cp1"))
 
 
-def test_rewind_thread_zero_keep_messages(tmp_path: Path) -> None:
-    """keep_messages_count=0 时保留 1 个初始 checkpoint。"""
+def test_rewind_thread_empty_checkpoint_id(tmp_path: Path) -> None:
+    """checkpoint_id 为空时抛 ValueError。"""
+    db_path = tmp_path / "agentx.db"
+    _create_test_db(db_path, [("thread_rw", "cp1", b"blob1")])
+
+    import asyncio
+
+    with pytest.raises(ValueError):
+        asyncio.run(rewind_thread("thread_rw", ""))
+
+
+def test_rewind_thread_to_first_checkpoint(tmp_path: Path) -> None:
+    """回退到第一个 checkpoint（编辑首条消息场景）。"""
     db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
@@ -391,15 +464,15 @@ def test_rewind_thread_zero_keep_messages(tmp_path: Path) -> None:
 
     import asyncio
 
-    # keep=0 → keep_checkpoints = max(1, 0*2+1) = 1
-    result = asyncio.run(rewind_thread("thread_rw", 0))
+    # 回退到 cp1：保留 cp1，删除 cp2, cp3
+    result = asyncio.run(rewind_thread("thread_rw", "cp1"))
     assert result["deleted"] == 2
     assert result["kept"] == 1
     assert result["cutoff_checkpoint_id"] == "cp1"
 
 
 def test_rewind_thread_also_clears_writes(tmp_path: Path) -> None:
-    """rewind_thread 同时清理 writes 表。"""
+    """rewind_thread 按 checkpoint_id 关联清理 writes 表（不跨表比较 rowid）。"""
     db_path = tmp_path / "agentx.db"
     _create_test_db(
         db_path,
@@ -429,10 +502,11 @@ def test_rewind_thread_also_clears_writes(tmp_path: Path) -> None:
 
     import asyncio
 
-    result = asyncio.run(rewind_thread("thread_rw", 0))
+    # 回退到 cp1：保留 cp1 的 writes，删除 cp2, cp3 的 writes
+    result = asyncio.run(rewind_thread("thread_rw", "cp1"))
     assert result["deleted"] == 2
 
-    # 验证 writes 表也已清理（只保留 cp1 的）
+    # 验证 writes 表已清理（只保留 cp1 的）
     conn = sqlite3.connect(str(db_path))
     cur = conn.execute("SELECT checkpoint_id FROM writes WHERE thread_id = 'thread_rw' ORDER BY idx")
     ids = [r[0] for r in cur.fetchall()]
@@ -453,6 +527,7 @@ async def test_rewind_thread_async(tmp_path: Path) -> None:
         ],
     )
 
-    result = await rewind_thread("t_async_rw", 1)
+    # 回退到 cp3：保留 cp1-cp3，删除 cp4
+    result = await rewind_thread("t_async_rw", "cp3")
     assert result["deleted"] == 1
     assert result["kept"] == 3

@@ -593,12 +593,16 @@ class Planner:
                 )
                 self._structured = None
 
-    async def plan_with_llm(self, message: str, context: str = "") -> TeamPlan:
+    async def plan_with_llm(
+        self, message: str, context: str = "", profile_prompt: str = ""
+    ) -> TeamPlan:
         """调用 LLM 生成 ``TeamPlan``（结构化输出优先，fallback 正则解析）。
 
         Args:
             message: 用户原始请求。
             context: 项目上下文摘要（可选，默认走 ``_build_project_context``）。
+            profile_prompt: 用户画像 prompt（由 ``profile_store.build_profile_prompt``
+                生成），注入到 system prompt 前缀，确保 planner 能看到用户偏好。
 
         Returns:
             ``TeamPlan``（含 ``tasks`` 列表）。LLM 调用失败或未生成有效任务时
@@ -623,6 +627,8 @@ class Planner:
                 max_tasks=settings.team_max_tasks,
                 context=project_context,
             )
+            if profile_prompt:
+                system_prompt = profile_prompt + "\n\n" + system_prompt
             try:
                 plan = await self._structured.ainvoke(
                     [
@@ -643,6 +649,8 @@ class Planner:
             max_tasks=settings.team_max_tasks,
             context=project_context,
         )
+        if profile_prompt:
+            system_prompt = profile_prompt + "\n\n" + system_prompt
         try:
             response = await llm.ainvoke(
                 [
@@ -675,6 +683,7 @@ class Planner:
         findings: dict[str, Finding],
         errors: list[str],
         hint: bool = False,
+        profile_prompt: str = "",
     ) -> TeamPlan:
         """质量门失败后的迭代式重规划（D10）。
 
@@ -687,6 +696,7 @@ class Planner:
             findings: 已完成子任务的结果（``dict[str, Finding]``）。
             errors: 失败错误列表。
             hint: 上一轮是否含危险任务提示。
+            profile_prompt: 用户画像 prompt，注入到 system prompt 前缀。
 
         Returns:
             新的 ``TeamPlan``（仅含追加任务）。无需追加时返回空 tasks。
@@ -713,6 +723,8 @@ class Planner:
             errors=errors_text,
             user_message=original_message,
         )
+        if profile_prompt:
+            system_prompt = profile_prompt + "\n\n" + system_prompt
 
         # 结构化输出路径
         if self._structured is not None:

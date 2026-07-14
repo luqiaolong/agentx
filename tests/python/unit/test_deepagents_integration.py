@@ -247,17 +247,16 @@ async def test_create_agent_passes_correct_config(tmp_path: Path, monkeypatch: p
         assert kwargs["checkpointer"] is checkpointer
         assert kwargs["name"] == "test_agent"
         assert kwargs["interrupt_on"] == build_interrupt_config()
-        assert kwargs["memory"] == resolve_memory_paths(str(tmp_path))
+        # T4.5: memory=None — WorkspaceMemoryMiddleware 替代 create_deep_agent 内置 MemoryMiddleware
+        assert kwargs["memory"] is None
         assert kwargs["backend"] is not None
 
         # 验证 SkillsMiddleware 已注入 middleware 列表
         from deepagents.middleware.skills import SkillsMiddleware
+        from app.deepagent.middleware import WorkspaceMemoryMiddleware
         middleware_types = [type(mw) for mw in kwargs["middleware"]]
         assert SkillsMiddleware in middleware_types
-
-        # 验证 memory 非空
-        assert len(kwargs["memory"]) == 1
-        assert kwargs["memory"][0].endswith("AGENTS.md")
+        assert WorkspaceMemoryMiddleware in middleware_types
 
 
 @pytest.mark.asyncio

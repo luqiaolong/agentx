@@ -47,7 +47,7 @@ from deepagents.middleware.skills import SkillsMiddleware
 
 from app.config import DATA_DIR, get_settings
 from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
-from app.deepagent.middleware import ReadonlyLoopGuardMiddleware
+from app.deepagent.middleware import ReadonlyLoopGuardMiddleware, WorkspaceMemoryMiddleware
 from app.deepagent.tool_assembly import DANGEROUS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
@@ -312,12 +312,27 @@ def create_agent(
             source_labels=[s[1] if isinstance(s, tuple) else s for s in labeled_sources],
         )
 
+    # T4.5: 使用 mtime-aware WorkspaceMemoryMiddleware 替代 create_deep_agent 内置的
+    # MemoryMiddleware。当 .agentx/memory/*.md 等文件变更时，同一 thread 的后续运行
+    # 能重新加载变更后的内容（spec: memory-safety-contract）。
+    # 传 memory=None 避免 create_deep_agent 内部再创建一个 MemoryMiddleware。
+    if memory_paths:
+        middleware.append(WorkspaceMemoryMiddleware(
+            backend=backend,
+            sources=memory_paths,
+            add_cache_control=True,
+        ))
+        logger.info(
+            "workspace_memory_middleware.enabled",
+            sources=memory_paths,
+        )
+
     return create_deep_agent(
         model=model,
         tools=tools,
         system_prompt=system_prompt,
         interrupt_on=interrupt_on,
-        memory=memory_paths or None,
+        memory=None,
         backend=backend,
         subagents=subagents,
         middleware=middleware,
