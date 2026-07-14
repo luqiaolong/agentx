@@ -44,6 +44,7 @@ from app.team.scheduler import (
     acquire_and_run,
     cancel_running_tasks,
     register_running_task,
+    reset_team_semaphore,
     run_with_retry,
 )
 from app.team.state import TeamTask
@@ -64,12 +65,13 @@ def _task(
 
 
 def _reset_semaphore_cache(max_concurrency: int = 5) -> asyncio.Semaphore:
-    """清空 ``_get_team_semaphore`` lru_cache 并注入新 semaphore。
+    """重置 ``_get_team_semaphore`` 并注入新 semaphore。
 
-    ``_get_team_semaphore`` 用 ``lru_cache`` 保证全局单例，测试需要按用例
-    覆盖并发上限时必须 cache_clear 后注入新实例。
+    BE-M 修复后 ``_get_team_semaphore`` 移除 ``lru_cache``，改用模块级变量 +
+    配置版本比对。测试通过 ``reset_team_semaphore()`` 清空缓存，再 patch
+    ``get_settings`` 返回带新 ``team_max_concurrency`` 的 mock 重建 semaphore。
     """
-    _get_team_semaphore.cache_clear()
+    reset_team_semaphore()
     # 通过 patch get_settings 返回带 team_max_concurrency 的 mock
     mock_settings = MagicMock()
     mock_settings.team_max_concurrency = max_concurrency
@@ -87,10 +89,10 @@ def _reset_registry() -> None:
 def _isolate_registry_and_semaphore():
     """每个用例前后清理全局状态（registry + semaphore cache）。"""
     _reset_registry()
-    _get_team_semaphore.cache_clear()
+    reset_team_semaphore()
     yield
     _reset_registry()
-    _get_team_semaphore.cache_clear()
+    reset_team_semaphore()
 
 
 # ============================================================

@@ -132,6 +132,8 @@ async def run_team_path(
         }
 
         # stream_mode=["custom"]：消费节点通过 get_stream_writer() 写入的事件
+        # BE-H 修复：跟踪 team_done 是否已发，graph 正常完成后统一发 done
+        team_done_emitted = False
         async for chunk in graph.astream(
             initial_state,
             stream_mode=["custom"],
@@ -140,9 +142,16 @@ async def run_team_path(
                 continue
             mode, payload = chunk
             if mode == "custom":
+                # BE-H 修复：跟踪 team_done 是否已发
+                if isinstance(payload, dict) and payload.get("event") == "team_done":
+                    team_done_emitted = True
                 yield payload
 
-        # graph 正常完成后发射 done 事件
-        # aggregate_node 已通过 custom stream 发射 team_done，
-        # 这里补 done 保证前端 SSE 流终结
+        # BE-H 修复：graph 正常完成后发射 done 事件
+        # team_done 已通过 custom stream 发射，done 保证 SSE 流终结
+        logger.debug(
+            "team.run_team_path done emitted",
+            thread_id=thread_id,
+            team_done_emitted=team_done_emitted,
+        )
         yield make_sse_event("done", {})

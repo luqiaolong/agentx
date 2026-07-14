@@ -23,7 +23,7 @@ import asyncio
 import contextlib
 import json
 import uuid
-from functools import lru_cache
+from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine, Optional
 
 import httpx
@@ -47,6 +47,8 @@ __all__ = [
     "register_running_task",
     "cancel_running_tasks",
     "_get_team_semaphore",
+    "reset_team_semaphore",
+    "IterResult",
     "_run_subtask_stream",
     "_run_team_role_subtask",
     "_route_event_for_node",
@@ -66,6 +68,21 @@ __all__ = [
 
 # 子任务完成哨兵事件类型（旧实现兼容，新实现通过返回值传递结果）
 _SUBTASK_DONE_EVENT = "_subtask_done"
+
+
+# BE-D 修复：_iterate 统一返回协议枚举
+class IterResult(Enum):
+    """``_iterate`` 闭包统一返回协议。
+
+    - ``NORMAL_END``：runner 流自然结束（StopAsyncIteration），未收到 ``_subtask_done`` 哨兵
+    - ``ABORTED``：``abort_event`` 触发，循环被中止
+    - ``SUBTASK_DONE``：收到 ``_subtask_done`` 哨兵（仅 ``_run_subtask_stream`` 路径，
+      ``_run_team_role_subtask`` 自行发射哨兵后归入 ``NORMAL_END``）
+    """
+
+    NORMAL_END = "normal_end"
+    ABORTED = "aborted"
+    SUBTASK_DONE = "subtask_done"
 
 # 需要实时透传到前端的事件类型
 # approval_request 必须直达前端，否则 DeepAgent 审批流会死锁
@@ -98,21 +115,38 @@ _default_runners_cache: dict[str, Any] | None = None
 # asyncio.Task 在 create_task 时绑定当前 loop，registry 只持有引用。
 _running_tasks: dict[str, list[asyncio.Task[Any]]] = {}
 
+# BE-M 修复：移除 lru_cache，改用模块级变量 + 配置版本比对，支持配置热更新
+_team_semaphore: asyncio.Semaphore | None = None
+_team_semaphore_concurrency: int | None = None
 
-@lru_cache(maxsize=1)
+
 def _get_team_semaphore() -> asyncio.Semaphore:
-    """全局单例 semaphore，从 ``settings.team_max_concurrency`` 获取。
+    """全局 semaphore，配置变更时自动重建。
 
-    ``lru_cache(maxsize=1)`` 保证全局唯一 semaphore 实例，避免每次 acquire 都
-    重新创建导致限流失效。Semaphore 跨多个 event loop 不安全，本应用单 loop
-    模型（FastAPI + asyncio 主 loop）。
+    BE-M 修复：移除 ``lru_cache``，比对当前配置与缓存配置，不一致时重建。
+    Semaphore 跨多个 event loop 不安全，本应用单 loop 模型（FastAPI + asyncio 主 loop）。
     """
+    global _team_semaphore, _team_semaphore_concurrency
     settings = get_settings()
     max_concurrency = settings.team_max_concurrency
     # 防御性校验：None / 0 / 负数降级到默认 5
     if not isinstance(max_concurrency, int) or max_concurrency <= 0:
         max_concurrency = 5
-    return asyncio.Semaphore(max_concurrency)
+    if _team_semaphore is None or _team_semaphore_concurrency != max_concurrency:
+        _team_semaphore = asyncio.Semaphore(max_concurrency)
+        _team_semaphore_concurrency = max_concurrency
+    return _team_semaphore
+
+
+def reset_team_semaphore() -> None:
+    """配置变更时主动重置 semaphore（供 settings reload 调用）。
+
+    BE-M 修复：与 ``_get_team_semaphore`` 配合，移除 ``lru_cache`` 后提供
+    显式重置入口，便于测试隔离与配置热更新场景下强制重建。
+    """
+    global _team_semaphore, _team_semaphore_concurrency
+    _team_semaphore = None
+    _team_semaphore_concurrency = None
 
 
 def register_running_task(thread_id: str, task: asyncio.Task[Any]) -> None:
@@ -617,12 +651,22 @@ async def _run_subtask_stream(
         try:
             stream = runner(*runner_args, **runner_kwargs)
 
-            async def _iterate() -> TeamSubtaskResult | None:
+            # BE-D 修复：_subtask_done 哨兵到达时由 _route_event_for_node 返回
+            # TeamSubtaskResult，存入 last_result 供外层读取，_iterate 统一返回 IterResult
+            last_result: TeamSubtaskResult | None = None
+
+            async def _iterate() -> IterResult:
                 """实际事件迭代循环，被 ``asyncio.wait_for`` 包裹。
 
                 Phase 2 T8：``asyncio.wait(FIRST_COMPLETED)`` 无 timeout，
                 abort_event 与 next_event 竞速，事件驱动响应 abort 信号。
+
+                BE-D 修复：统一返回 ``IterResult`` 枚举，调用方按枚举处理：
+                - ``ABORTED`` → 外层包装 "用户中止" 失败结果
+                - ``NORMAL_END`` → runner 流自然结束（未发 ``_subtask_done``）
+                - ``SUBTASK_DONE`` → ``_subtask_done`` 哨兵到达，结果存 ``last_result``
                 """
+                nonlocal last_result
                 stream_iter = stream.__aiter__()
                 abort_task = asyncio.ensure_future(abort_event.wait())
                 next_event_task = asyncio.ensure_future(stream_iter.__anext__())
@@ -636,19 +680,18 @@ async def _run_subtask_stream(
                             next_event_task.cancel()
                             with contextlib.suppress(asyncio.CancelledError):
                                 await next_event_task
-                            return TeamSubtaskResult(
-                                agent=agent_name, success=False, payload="用户中止"
-                            )
+                            return IterResult.ABORTED
                         if next_event_task in done:
                             try:
                                 event = next_event_task.result()
                             except StopAsyncIteration:
-                                return None  # sentinel: runner 正常结束但未发 _subtask_done
+                                return IterResult.NORMAL_END
                             result = _route_event_for_node(
                                 event, collected_text, tool_traces, writer, abort_event
                             )
                             if result is not None:
-                                return result
+                                last_result = result
+                                return IterResult.SUBTASK_DONE
                             next_event_task = asyncio.ensure_future(stream_iter.__anext__())
                 finally:
                     for _t in (next_event_task, abort_task):
@@ -658,7 +701,7 @@ async def _run_subtask_stream(
                                 await _t
 
             try:
-                result = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
+                iter_result = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
             except asyncio.TimeoutError:
                 # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
                 logger.warning(
@@ -681,8 +724,13 @@ async def _run_subtask_stream(
                     success=False,
                     payload=f"子任务超时（{subtask_timeout}s）",
                 )
-            if result is not None:
-                return result
+            # BE-D 修复：按 IterResult 枚举统一处理
+            if iter_result == IterResult.ABORTED:
+                return TeamSubtaskResult(
+                    agent=agent_name, success=False, payload="用户中止"
+                )
+            if iter_result == IterResult.SUBTASK_DONE and last_result is not None:
+                return last_result
         except Exception as exc:  # noqa: BLE001
             return TeamSubtaskResult(agent=agent_name, success=False, payload=f"{agent_name} 子任务异常: {exc}")
 
@@ -797,11 +845,15 @@ async def _run_team_role_subtask(
     with _trace_cm:
         try:
             # Phase 1 稳定性硬化：asyncio.wait_for 包裹事件迭代循环，超时后返回失败。
-            async def _iterate() -> bool:
-                """返回 True 表示提前退出（abort），None/False 表示正常结束。
+            async def _iterate() -> IterResult:
+                """``_iterate`` 闭包，返回 ``IterResult`` 枚举（BE-D 修复）。
 
                 Phase 2 T8：``asyncio.wait(FIRST_COMPLETED)`` 无 timeout，
                 abort_event 与 next_event 竞速，事件驱动响应 abort 信号。
+
+                BE-D 修复：统一返回 ``IterResult``，与 ``_run_subtask_stream._iterate``
+                协议一致。BE-J 修复：runner 流自然结束时发射 ``_subtask_done`` 哨兵，
+                与通用 runner 路径对称（build_custom_agent + astream_events 不发哨兵）。
                 """
                 # T12 评估：langchain_core 1.4.8 支持 version="v3"，但仅限
                 # BaseChatModel / CompiledGraph（build_custom_agent 返回 CompiledGraph，
@@ -823,12 +875,27 @@ async def _run_team_role_subtask(
                             next_event_task.cancel()
                             with contextlib.suppress(asyncio.CancelledError):
                                 await next_event_task
-                            return True
+                            return IterResult.ABORTED
                         if next_event_task in done:
                             try:
                                 event = next_event_task.result()
                             except StopAsyncIteration:
-                                return False
+                                # BE-J 修复：runner 流自然结束，发射 _subtask_done
+                                # 哨兵事件，与通用 runner 路径对称（deep/code/rag/web
+                                # 等子代理 runner 自行发射该哨兵，team_role 路径补齐）
+                                writer(
+                                    make_sse_event(
+                                        _SUBTASK_DONE_EVENT,
+                                        {
+                                            "agent": task.agent,
+                                            "success": True,
+                                            "payload": _build_summary(
+                                                collected_text, tool_traces, task.agent
+                                            ),
+                                        },
+                                    )
+                                )
+                                return IterResult.NORMAL_END
                             kind = event["event"]
                             ename = event.get("name", "")
                             edata = event.get("data", {}) or {}
@@ -875,7 +942,7 @@ async def _run_team_role_subtask(
                                 await _t
 
             try:
-                aborted = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
+                iter_result = await asyncio.wait_for(_iterate(), timeout=subtask_timeout)
             except asyncio.TimeoutError:
                 # Phase 1 D3：超时分支发射 delegation 事件让前端 trace 可见
                 logger.warning(
@@ -895,7 +962,8 @@ async def _run_team_role_subtask(
                     "message": f"子任务超时（{subtask_timeout}s）",
                 }))
                 return _done(False, f"子任务超时（{subtask_timeout}s）")
-            if aborted:
+            # BE-D 修复：按 IterResult 枚举统一处理
+            if iter_result == IterResult.ABORTED:
                 return _done(False, "用户中止")
         except Exception as exc:  # noqa: BLE001
             return _done(False, f"团队角色 {task.agent} 子任务异常: {exc}")

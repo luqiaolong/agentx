@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import re
 from pathlib import Path
 
@@ -420,7 +421,15 @@ async def _run_router_inner(
                         elif sse.get("event") == "error":
                             has_error = True
                         elif sse.get("event") == "team_done":
+                            # BE-R 修复：team_done 区分 status，error 时设 has_error
                             team_done_received = True
+                            data_str = sse.get("data", "{}")
+                            try:
+                                data = json.loads(data_str) if isinstance(data_str, str) else data_str
+                                if isinstance(data, dict) and data.get("status") == "error":
+                                    has_error = True
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                         yield sse
 
                 async for sse in _collect_team_sse(
