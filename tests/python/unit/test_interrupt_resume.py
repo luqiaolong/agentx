@@ -57,12 +57,12 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(
         agent_module,
-        "_make_deep_tools",
+        "make_deep_tools",
         lambda *args, **kwargs: [_fake_tool("read_file")],
     )
     monkeypatch.setattr(
         agent_module,
-        "_load_mcp_tools",
+        "load_mcp_tools",
         AsyncMock(return_value=([], set())),
     )
 

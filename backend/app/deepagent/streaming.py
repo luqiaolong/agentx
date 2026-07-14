@@ -3,7 +3,7 @@
 从 ``app.deepagent.agent`` 拆出（Phase 2.3），保持公共 API 不变。
 
 职责:
-- ``_stream_agent_events``：驱动 ``agent.astream(stream_mode=["custom", "values", "messages"])``，
+- ``stream_agent_events``：驱动 ``agent.astream(stream_mode=["custom", "values", "messages"])``，
   尊重 ``interrupt_on``，把 LangGraph state 转换为前端 SSE 事件。
   ``custom`` 模式用于透传工具节点内部通过 ``get_stream_writer()`` 写入的事件
   （如 Supervisor ``delegate_to_expert`` 透传的 Expert approval_request 等）。
@@ -42,10 +42,10 @@ from app.sse.events import (
 )
 from app.utils.text import ThinkFilter, extract_chunk_text
 
-__all__ = ["_stream_agent_events"]
+__all__ = ["stream_agent_events"]
 
 
-async def _stream_agent_events(
+async def stream_agent_events(
     agent: Any,
     inputs: Any,
     config: dict,
@@ -79,7 +79,7 @@ async def _stream_agent_events(
         source: SSE 事件 source 标识，默认 "deep"（DeepAgent）。
             Supervisor 传 "work"，Expert 传 "coding" 等。
         seen_signatures: 可选外部去重集合。若提供，使用它替代内部新建的 set，
-            用于跨 ``_stream_agent_events`` 调用（如 approval_runner resume）
+            用于跨 ``stream_agent_events`` 调用（如 approval_runner resume）
             共享"已 yield 的消息签名"，避免 astream resume 时重发历史消息
             被重复 yield（root cause: trace=64851677fced422c）。
     """

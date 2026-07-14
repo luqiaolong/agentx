@@ -1,33 +1,28 @@
 """子代理公共基类与工具函数。
 
-提取 code/rag/web/custom agent 共享的：
-- ``make_rag_tools`` / ``make_web_tools``：工具构造（公开名，去掉下划线前缀）
+提供内置子代理（rag/web）共享的：
 - ``extract_text``：流式 chunk 文本提取
 - ``THINK_PROMPT_SUFFIX``：思考过程提示常量
 - ``run_react_agent_stream``：标准化事件流转换
+- ``build_builtin_subagent`` / ``run_builtin_subagent``：子代理构建/运行工厂
+
+工具工厂（``make_rag_tools`` / ``make_web_tools``）已下沉到
+``app.tools.subagent_tools``，供 ``app.deepagent.tool_assembly`` 与本模块
+共同复用，消除 ``deepagent ↔ subagents`` 循环依赖。
 
 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
 自动注入，子代理通过 ``create_agent(excluded_tools=FORBIDDEN_SUBAGENT_TOOLS)`` 过滤写工具。
-本模块不再提供 ``make_fs_tools``（Phase A.2 已删除）与 ``make_git_tools``（Phase B.1 已删除，
-Git 操作改由 deepagents 内置 ``execute`` 工具承担，写操作在 ``SafeLocalShellBackend.execute``
-通过 ``is_git_write_command`` 拦截）。
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
 from typing import Any, AsyncIterator
-
-from langchain_core.tools import tool
 
 from app.config import get_settings
 from app.llm import get_chat_model
 from app.utils.text import extract_chunk_text
 
 __all__ = [
-    "make_rag_tools",
-    "make_web_tools",
     "extract_text",
     "THINK_PROMPT_SUFFIX",
     "run_react_agent_stream",
@@ -47,79 +42,6 @@ THINK_PROMPT_SUFFIX = (
     "\n\n重要：思考标签外不要输出任何可见文本。所有可见内容必须在工具调用完成后，"
     "根据工具返回结果再输出。"
 )
-
-
-def make_rag_tools(thread_id: str) -> list:
-    """构建绑定 ``thread_id`` 的 RAG 检索工具列表。
-
-    ``rag_retrieve`` 的 ``thread_id`` 用于 trace，不暴露给 LLM。
-
-    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``rag_retrieve``）。
-    """
-    from app.tools.rag_retrieve import rag_retrieve as _rag_retrieve
-
-    @tool
-    async def rag_retrieve(query: str, top_k: int = 5) -> str:
-        """检索知识库，返回带来源与相似度的上下文。"""
-        return await _rag_retrieve(query, thread_id=thread_id, top_k=top_k)
-
-    tools = [rag_retrieve]
-    enabled = get_settings().tools_enabled
-    return [t for t in tools if enabled.get(t.name, True)]
-
-
-# Tavily API Key 环境变量名（config.py 未声明该字段，从 env 读取）
-_TAVILY_KEY_ENV = "AGENTX_TAVILY_API_KEY"
-# 缺 key 时的统一错误提示
-_NO_KEY_MSG = "web_search 不可用：未配置 AGENTX_TAVILY_API_KEY"
-
-
-def _get_tavily_key() -> str | None:
-    """读取 Tavily API Key，缺失返回 None。"""
-    return os.environ.get(_TAVILY_KEY_ENV)
-
-
-def _format_tavily(result: dict) -> str:
-    """将 Tavily search 返回值格式化为带来源的字符串。"""
-    lines: list[str] = []
-    answer = result.get("answer")
-    if answer:
-        lines.append(f"摘要: {answer}")
-    for i, item in enumerate(result.get("results", []), start=1):
-        title = item.get("title", "")
-        url = item.get("url", "")
-        content = item.get("content", "")
-        lines.append(f"[{i}] {title}\n  链接: {url}\n  内容: {content}")
-    if not lines:
-        return "未检索到相关网页。"
-    return "\n\n".join(lines)
-
-
-def make_web_tools(thread_id: str) -> list:
-    """构建 Web 搜索工具列表（``thread_id`` 保留以与其他子代理签名对齐）。
-
-    工具启用由 ``get_settings().tools_enabled`` 过滤（key: ``web_search``）。
-    """
-
-    @tool
-    async def web_search(query: str, max_results: int = 5) -> str:
-        """联网搜索，返回带标题、链接与摘要的结果。"""
-        key = _get_tavily_key()
-        if not key:
-            return _NO_KEY_MSG
-        try:
-            from tavily import TavilyClient
-
-            client = TavilyClient(api_key=key)
-            # TavilyClient.search 是同步阻塞调用，放线程池避免阻塞事件循环
-            result = await asyncio.to_thread(client.search, query, max_results=max_results)
-        except Exception as exc:  # noqa: BLE001 — 工具层兜底，错误以字符串回流
-            return f"web_search 失败: {exc}"
-        return _format_tavily(result)
-
-    tools = [web_search]
-    enabled = get_settings().tools_enabled
-    return [t for t in tools if enabled.get(t.name, True)]
 
 
 def extract_text(chunk: Any) -> str:
@@ -201,6 +123,7 @@ def build_builtin_subagent(
     """
     from app.deepagent.factory import create_agent
     from app.security.dangerous_tools import FORBIDDEN_SUBAGENT_TOOLS
+    from app.tools.subagent_tools import make_rag_tools, make_web_tools
 
     settings = get_settings()
     cfg = settings.subagents[name]
@@ -236,8 +159,3 @@ async def run_builtin_subagent(
     config = {"configurable": {"thread_id": thread_id}}
     async for event in run_react_agent_stream(agent, inputs, source=name, config=config):
         yield event
-
-
-# 向后兼容别名（历史 import 路径：from app.subagents.code_agent import _make_rag_tools）
-_make_rag_tools = make_rag_tools
-_make_web_tools = make_web_tools

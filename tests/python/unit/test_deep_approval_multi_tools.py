@@ -49,7 +49,7 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     # 工具加载：包含测试中会用到的所有危险工具，确保 runtime_dangerous 命中
     monkeypatch.setattr(
         agent_module,
-        "_make_deep_tools",
+        "make_deep_tools",
         lambda *args, **kwargs: [
             _fake_tool("write_file"),
             _fake_tool("edit_file"),
@@ -59,7 +59,7 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     )
     monkeypatch.setattr(
         agent_module,
-        "_load_mcp_tools",
+        "load_mcp_tools",
         AsyncMock(return_value=([], set())),
     )
 
@@ -84,7 +84,7 @@ def _patch_deep_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     )
 
     # 流式事件：直接 patch ``app.deepagent.approval_runner._stream_default``，避免
-    # 对 ``_stream_agent_events`` 局部 import 的间接寻址
+    # 对 ``stream_agent_events`` 局部 import 的间接寻址
     monkeypatch.setattr(exec_module, "_stream_default", _empty_stream)
 
     return {

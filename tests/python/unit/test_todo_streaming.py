@@ -44,7 +44,7 @@ def _clear_approval_state() -> None:
 @pytest.mark.asyncio
 async def test_todos_change_yields_todo_update() -> None:
     """state.todos 变化时产出 todo_update 事件，payload 是原生 {content, status} schema。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -59,7 +59,7 @@ async def test_todos_change_yields_todo_update() -> None:
     ])
     config = {"configurable": {"thread_id": "t-todos-1"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     todo_events = [e for e in events if e.get("event") == "todo_update"]
     assert len(todo_events) == 1
@@ -76,7 +76,7 @@ async def test_todos_change_yields_todo_update() -> None:
 @pytest.mark.asyncio
 async def test_todos_unchanged_no_duplicate() -> None:
     """todos 未变化时不重复 yield todo_update（去重）。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -87,7 +87,7 @@ async def test_todos_unchanged_no_duplicate() -> None:
     ])
     config = {"configurable": {"thread_id": "t-dedup"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     todo_events = [e for e in events if e.get("event") == "todo_update"]
     assert len(todo_events) == 1  # 只在首次变化时 yield
@@ -96,7 +96,7 @@ async def test_todos_unchanged_no_duplicate() -> None:
 @pytest.mark.asyncio
 async def test_todos_status_update_yields_new_event() -> None:
     """todo status 从 in_progress → completed 时 yield 新的 todo_update。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -112,7 +112,7 @@ async def test_todos_status_update_yields_new_event() -> None:
     ])
     config = {"configurable": {"thread_id": "t-status"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     todo_events = [e for e in events if e.get("event") == "todo_update"]
     assert len(todo_events) == 2
@@ -124,14 +124,14 @@ async def test_todos_status_update_yields_new_event() -> None:
 @pytest.mark.asyncio
 async def test_normal_text_yields_token() -> None:
     """AIMessage 内容为普通文本时发射 token 事件。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
     agent = _FakeAgent([{"messages": [AIMessage(content="你好")]}])
     config = {"configurable": {"thread_id": "t-token"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     token_events = [e for e in events if e.get("event") == "token"]
     assert len(token_events) == 1
@@ -141,7 +141,7 @@ async def test_normal_text_yields_token() -> None:
 @pytest.mark.asyncio
 async def test_tool_call_no_todo_event() -> None:
     """AIMessage with tool_calls 产出 tool_call 事件，不再附带手造 todo 事件。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -157,7 +157,7 @@ async def test_tool_call_no_todo_event() -> None:
     ])
     config = {"configurable": {"thread_id": "t-toolcall"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     tool_call_events = [e for e in events if e.get("event") == "tool_call"]
     assert len(tool_call_events) == 1
@@ -169,7 +169,7 @@ async def test_tool_call_no_todo_event() -> None:
 @pytest.mark.asyncio
 async def test_tool_result_no_todo_event() -> None:
     """ToolMessage 产出 tool_result 事件，不再附带手造 todo 事件。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -178,7 +178,7 @@ async def test_tool_result_no_todo_event() -> None:
     ])
     config = {"configurable": {"thread_id": "t-toolresult"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     tool_result_events = [e for e in events if e.get("event") == "tool_result"]
     assert len(tool_result_events) == 1
@@ -243,7 +243,7 @@ class _FakeStreamingAgent:
 @pytest.mark.asyncio
 async def test_think_block_streaming_yields_reasoning_delta() -> None:
     """<think> 块在 messages 模式下以 reasoning_delta 实时增量推送。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -269,7 +269,7 @@ async def test_think_block_streaming_yields_reasoning_delta() -> None:
     agent = _FakeStreamingAgent(chunks)
     config = {"configurable": {"thread_id": "t-think-1"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     delta_events = [e for e in events if e.get("event") == "reasoning_delta"]
     # <think> 标签本身不产生 delta，hello 和 world 分两次到达
@@ -289,7 +289,7 @@ async def test_think_block_streaming_yields_reasoning_delta() -> None:
 @pytest.mark.asyncio
 async def test_no_messages_mode_keeps_original_reasoning_behavior() -> None:
     """不支持 messages 模式时（如测试桩），仍从完整 AIMessage 发射 reasoning。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -307,7 +307,7 @@ async def test_no_messages_mode_keeps_original_reasoning_behavior() -> None:
     ])
     config = {"configurable": {"thread_id": "t-think-2"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     delta_events = [e for e in events if e.get("event") == "reasoning_delta"]
     assert len(delta_events) == 0
@@ -320,7 +320,7 @@ async def test_no_messages_mode_keeps_original_reasoning_behavior() -> None:
 @pytest.mark.asyncio
 async def test_visible_text_streaming_with_tool_calls_emits_token_rollback() -> None:
     """messages 模式下可见文本被推为 token，AIMessage 带 tool_calls 时发 token_rollback 撤回。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -345,7 +345,7 @@ async def test_visible_text_streaming_with_tool_calls_emits_token_rollback() -> 
     agent = _FakeStreamingAgent(chunks)
     config = {"configurable": {"thread_id": "t-rollback-1"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     token_events = [e for e in events if e.get("event") == "token"]
     # 可见文本被推为 token（具体切分取决于 ThinkFilter max_hold 缓冲，尾部缓冲在 rollback 时丢失）
@@ -367,7 +367,7 @@ async def test_visible_text_streaming_with_tool_calls_emits_token_rollback() -> 
 @pytest.mark.asyncio
 async def test_final_answer_streaming_emits_token_without_duplicate() -> None:
     """messages 模式下最终答案以 token 实时推送，values 模式不再重复 yield。"""
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
     _clear_approval_state()
 
@@ -386,7 +386,7 @@ async def test_final_answer_streaming_emits_token_without_duplicate() -> None:
     agent = _FakeStreamingAgent(chunks)
     config = {"configurable": {"thread_id": "t-answer-1"}}
 
-    events = [e async for e in _stream_agent_events(agent, {"messages": []}, config)]
+    events = [e async for e in stream_agent_events(agent, {"messages": []}, config)]
 
     token_events = [e for e in events if e.get("event") == "token"]
     token_texts = [e["data"] for e in token_events]

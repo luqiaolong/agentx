@@ -1,7 +1,7 @@
 """自定义子代理工厂：按 key 动态构建 ReAct 子图。
 
 设计：
-- 工具池复用 ``make_rag_tools`` / ``make_web_tools``，按配置的 ``tools`` 字段筛选并组装。
+- 工具池复用 ``make_rag_tools`` / ``make_web_tools``（来自 ``app.tools.subagent_tools``），按配置的 ``tools`` 字段筛选并组装。
 - 内置 fs 工具（ls/read_file/glob/grep）由 ``AuthorizedLocalShellBackend`` 自动注入，
   通过 ``create_agent(excluded_tools=FORBIDDEN_SUBAGENT_TOOLS)`` 过滤写工具（write_file/edit_file/delete_file）。
 - **安全硬约束**：危险工具已在 config 层被 ``_sanitize_custom_tools`` 过滤，本模块再次
@@ -34,7 +34,7 @@ def _make_custom_tools(
     注意：fs 工具（read_file/ls/glob/grep）不再通过本函数提供，
     由 ``AuthorizedLocalShellBackend`` 自动注入。本函数仅返回 rag/web 工具。
     """
-    from app.subagents.base import make_rag_tools, make_web_tools
+    from app.tools.subagent_tools import make_rag_tools, make_web_tools
 
     # 防御性过滤：移除危险工具
     safe_names = {t for t in tool_names if t not in FORBIDDEN_SUBAGENT_TOOLS}

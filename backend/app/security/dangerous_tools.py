@@ -35,7 +35,7 @@ CLI_TOOL_NAME = "execute"
 # Git 写操作已移除：由 ``SafeLocalShellBackend.execute`` 通过 ``is_git_write_command``
 # 拦截（返回 exit_code=126），不再通过独立工具 + interrupt_on 审批。
 # write_file / edit_file 由 deepagents 内置（AuthorizedLocalShellBackend 提供），
-# delete_file 为项目自研工具（tool_assembly._make_deep_tools 闭包构建）。
+# delete_file 为项目自研工具（tool_assembly.make_deep_tools 闭包构建）。
 DANGEROUS_TOOLS: frozenset[str] = frozenset(
     {
         "edit_file",

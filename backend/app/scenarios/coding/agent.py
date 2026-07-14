@@ -23,15 +23,16 @@ from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
 from app.deepagent.agent import build_deep_agent, trigger_profile_auto_extract
 from app.deepagent.approval_runner import run_agent_with_approval
 from app.deepagent.context import current_thread_id
-from app.deepagent.streaming import _stream_agent_events
+from app.deepagent.streaming import stream_agent_events
 from app.deepagent.tool_assembly import (
-    _load_mcp_tools,
-    _make_deep_tools,
     compute_runtime_dangerous,
+    load_mcp_tools,
+    make_deep_tools,
 )
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.subagents.base import THINK_PROMPT_SUFFIX, make_rag_tools, make_web_tools
+from app.subagents.base import THINK_PROMPT_SUFFIX
+from app.tools.subagent_tools import make_rag_tools, make_web_tools
 from app.sse.events import make_error_event
 from app.utils.prompts import build_workspace_prompt_suffix
 
@@ -162,7 +163,7 @@ async def build_coding_expert(
         )
 
     if tools is None:
-        tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
+        tools = make_deep_tools(thread_id, workspace_path=workspace_path)
 
     # scene_prompt 透传给 build_deep_agent，覆盖默认 _DEEP_SYSTEM_PROMPT
     scene_prompt = expert_cfg.system_prompt or _DEFAULT_CODING_EXPERT_SYSTEM_PROMPT
@@ -237,8 +238,8 @@ async def run_coding_expert(
 
         # 构建 agent 工具集（标准工具 + MCP）并构造 agent
         try:
-            agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-            mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
+            agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
+            mcp_tools, mcp_untrusted_names = await load_mcp_tools()
             if mcp_tools:
                 agent_tools.extend(mcp_tools)
                 logger.info(
@@ -271,7 +272,7 @@ async def run_coding_expert(
 
         # 统一审批执行循环（deep.execution.run_agent_with_approval）
         # stream_fn 传入模块级引用，以便测试通过
-        # patch("app.scenarios.coding.agent._stream_agent_events") 替换。
+        # patch("app.scenarios.coding.agent.stream_agent_events") 替换。
         # is_interrupted_fn 使用 execution 默认值（app.deepagent.approval_runner._is_interrupted）。
         async for sse in run_agent_with_approval(
             agent,
@@ -284,7 +285,7 @@ async def run_coding_expert(
             inputs=inputs,
             sandbox=sandbox,
             parent_thread_id=parent_thread_id,
-            stream_fn=_stream_agent_events,
+            stream_fn=stream_agent_events,
             yield_event=yield_event,
         ):
             yield sse

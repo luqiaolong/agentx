@@ -39,7 +39,7 @@ async def test_build_custom_agent_forbids_dangerous_tools() -> None:
     rag_tool = MagicMock()
     rag_tool.name = "rag_retrieve"
     with patch("app.subagents.custom_agent.get_chat_model"), \
-         patch("app.subagents.base.make_rag_tools", return_value=[rag_tool]), \
+         patch("app.tools.subagent_tools.make_rag_tools", return_value=[rag_tool]), \
          patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
 

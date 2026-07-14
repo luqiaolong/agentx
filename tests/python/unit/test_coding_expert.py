@@ -120,7 +120,7 @@ class TestBuildCodingExpert:
 
         mock_agent = MagicMock()
         with patch("app.scenarios.coding.agent.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
-            with patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]):
+            with patch("app.scenarios.coding.agent.make_deep_tools", return_value=[]):
                 with patch("app.scenarios.coding.agent._build_subagents", return_value=[]):
                     agent = await build_coding_expert("test-thread")
 
@@ -139,7 +139,7 @@ class TestBuildCodingExpert:
         mock_agent = MagicMock()
         fake_subagents = [{"name": "rag"}, {"name": "web"}]
         with patch("app.scenarios.coding.agent.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
-            with patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]):
+            with patch("app.scenarios.coding.agent.make_deep_tools", return_value=[]):
                 with patch("app.scenarios.coding.agent._build_subagents", return_value=fake_subagents):
                     await build_coding_expert("test-thread")
 
@@ -169,7 +169,7 @@ class TestBuildCodingExpert:
 
         mock_agent = MagicMock()
         with patch("app.scenarios.coding.agent.build_deep_agent", new_callable=AsyncMock, return_value=mock_agent) as mock_build:
-            with patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]):
+            with patch("app.scenarios.coding.agent.make_deep_tools", return_value=[]):
                 with patch("app.scenarios.coding.agent._build_subagents", return_value=[]):
                     await build_coding_expert("test-thread")
 
@@ -194,8 +194,8 @@ class TestRunCodingExpert:
         async def mock_approval_loop(*args, **kwargs):
             yield {"event": "token", "data": "hello"}
 
-        with patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]):
-            with patch("app.scenarios.coding.agent._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
+        with patch("app.scenarios.coding.agent.make_deep_tools", return_value=[]):
+            with patch("app.scenarios.coding.agent.load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
                 with patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock):
                     with patch("app.scenarios.coding.agent.run_agent_with_approval", side_effect=mock_approval_loop) as mock_run:
                         events = []
@@ -220,8 +220,8 @@ class TestRunCodingExpert:
         async def mock_approval_loop(*args, **kwargs):
             yield {"event": "done", "data": ""}
 
-        with patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]):
-            with patch("app.scenarios.coding.agent._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
+        with patch("app.scenarios.coding.agent.make_deep_tools", return_value=[]):
+            with patch("app.scenarios.coding.agent.load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
                 with patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock):
                     with patch("app.scenarios.coding.agent.run_agent_with_approval", side_effect=mock_approval_loop) as mock_run:
                         async for _ in run_coding_expert(
@@ -239,8 +239,8 @@ class TestRunCodingExpert:
         """LLM 不可用时 yield error 事件。"""
         from app.scenarios.coding.agent import run_coding_expert
 
-        with patch("app.scenarios.coding.agent._make_deep_tools", return_value=[]):
-            with patch("app.scenarios.coding.agent._load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
+        with patch("app.scenarios.coding.agent.make_deep_tools", return_value=[]):
+            with patch("app.scenarios.coding.agent.load_mcp_tools", new_callable=AsyncMock, return_value=([], set())):
                 with patch("app.scenarios.coding.agent.build_coding_expert", new_callable=AsyncMock, side_effect=ValueError("LLM 不可用")):
                     events = []
                     async for sse in run_coding_expert(

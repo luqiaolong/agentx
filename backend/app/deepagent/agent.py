@@ -18,9 +18,9 @@ from app.deepagent.context import current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
-    _load_mcp_tools,
-    _make_deep_tools,
     compute_runtime_dangerous,
+    load_mcp_tools,
+    make_deep_tools,
 )
 from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
@@ -47,6 +47,10 @@ __all__ = [
     "build_deep_agent",
     "run_deep_path",
     "trigger_profile_auto_extract",
+    # 公开 re-export 自 tool_assembly（统一入口见 app.deepagent.__init__）
+    "compute_runtime_dangerous",
+    "load_mcp_tools",
+    "make_deep_tools",
 ]
 
 
@@ -70,7 +74,7 @@ async def build_deep_agent(
             temperature=get_settings().llm_temperature_orchestrator, streaming=True
         )
     if tools is None:
-        tools = _make_deep_tools(thread_id)
+        tools = make_deep_tools(thread_id)
     if checkpointer is None:
         checkpointer = await get_async_checkpointer()
     base_prompt = resolve_system_prompt(
@@ -158,8 +162,8 @@ async def run_deep_path(
     inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
 
     try:
-        agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-        mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
+        agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
+        mcp_tools, mcp_untrusted_names = await load_mcp_tools()
         if mcp_tools:
             agent_tools.extend(mcp_tools)
             logger.info(

@@ -32,9 +32,9 @@ from app.deepagent.agent import trigger_profile_auto_extract
 from app.deepagent.context import current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
-    _load_mcp_tools,
-    _make_deep_tools,
     compute_runtime_dangerous,
+    load_mcp_tools,
+    make_deep_tools,
 )
 from app.llm import get_chat_model
 from app.memory.checkpointer import get_async_checkpointer
@@ -144,7 +144,7 @@ def make_expert_delegation_tool(
       确保 Expert 与 Supervisor 的权限模式一致（full_trust 不丢失）。
     - **事件透传**：非 token 事件（``approval_request`` / ``error`` / ``tool_call`` /
       ``tool_result`` 等）通过 ``get_stream_writer()`` 写入 Supervisor 图的 custom stream，
-      由 ``_stream_agent_events`` 消费后 yield 给前端，避免审批流挂死。
+      由 ``stream_agent_events`` 消费后 yield 给前端，避免审批流挂死。
     - **full_trust 恢复**：Expert 的 ``finally`` 会清除 ``full_trust``，工具返回前恢复。
     """
     from langchain_core.tools import tool
@@ -189,7 +189,7 @@ def make_expert_delegation_tool(
 
         # 获取 Supervisor 图的 stream writer（在 ToolNode 上下文中可用）。
         # Expert 的非 token 事件通过此 writer 写入 Supervisor 图的 custom stream，
-        # 由 _stream_agent_events(stream_mode=["custom","values"]) 消费后 yield 给前端。
+        # 由 stream_agent_events(stream_mode=["custom","values"]) 消费后 yield 给前端。
         supervisor_writer = None
         try:
             from langgraph.config import get_stream_writer
@@ -292,7 +292,7 @@ async def build_work_supervisor(
         # 标准工具集（fs + cli + git + rag + web）+ coding Expert 委派
         # M25 修复：透传 profile_prompt / permission_mode / chat_model，确保
         # tools is None 分支与 run_work_supervisor 显式构造 expert_tool 的行为一致。
-        standard_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
+        standard_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
         expert_tool = make_expert_delegation_tool(
             thread_id=thread_id,
             workspace_path=workspace_path,
@@ -434,8 +434,8 @@ async def run_work_supervisor(
         inputs = {"messages": [{"role": "user", "content": cleaned_message}]}
 
         try:
-            agent_tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
-            mcp_tools, mcp_untrusted_names = await _load_mcp_tools()
+            agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
+            mcp_tools, mcp_untrusted_names = await load_mcp_tools()
             if mcp_tools:
                 agent_tools.extend(mcp_tools)
                 logger.info(

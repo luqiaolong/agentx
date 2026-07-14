@@ -7,8 +7,8 @@
 4. 未授权路径拒绝（PathNotAuthorized → 返回错误字符串）
 5. recursive=False 遇目录返回错误
 
-delete_file 由 ``_make_deep_tools`` 闭包构建，捕获 ``thread_id`` 与
-``workspace_path``。测试通过 ``_make_deep_tools`` 取得工具实例后用
+delete_file 由 ``make_deep_tools`` 闭包构建，捕获 ``thread_id`` 与
+``workspace_path``。测试通过 ``make_deep_tools`` 取得工具实例后用
 ``ainvoke`` 调用。
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.deepagent.tool_assembly import _make_deep_tools
+from app.deepagent.tool_assembly import make_deep_tools
 from app.sandbox.session_sandbox import get_sandbox
 
 
@@ -38,12 +38,12 @@ def reset_sandbox() -> None:
 
 
 def _find_delete_file(thread_id: str, workspace_path: str):
-    """从 _make_deep_tools 返回列表中取出 delete_file 工具实例。"""
-    tools = _make_deep_tools(thread_id, workspace_path=workspace_path)
+    """从 make_deep_tools 返回列表中取出 delete_file 工具实例。"""
+    tools = make_deep_tools(thread_id, workspace_path=workspace_path)
     for t in tools:
         if t.name == "delete_file":
             return t
-    raise AssertionError("delete_file tool not found in _make_deep_tools output")
+    raise AssertionError("delete_file tool not found in make_deep_tools output")
 
 
 # ============================================================

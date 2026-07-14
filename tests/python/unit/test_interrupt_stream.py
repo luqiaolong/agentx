@@ -31,7 +31,7 @@ def _clear_abort_state() -> None:
 async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) -> None:
     """DeepAgent 流式事件生成器在中止后应抛出 CancelledError。"""
     from langchain_core.messages import AIMessage
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
     from app.security.approval import set_abort
 
     async def _fake_astream(*args: Any, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
@@ -50,7 +50,7 @@ async def test_deep_stream_responds_to_abort(monkeypatch: pytest.MonkeyPatch) ->
     task = asyncio.create_task(_abort_after())
     events: list[dict[str, str]] = []
     try:
-        async for event in _stream_agent_events(
+        async for event in stream_agent_events(
             fake_agent, {"messages": []}, {"configurable": {"thread_id": "t-abort-deep"}}
         ):
             events.append(event)

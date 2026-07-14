@@ -63,7 +63,9 @@ async def test_web_search_no_key_returns_error(
 ) -> None:
     monkeypatch.delenv("AGENTX_TAVILY_API_KEY", raising=False)
 
-    tools = web_agent_mod._make_web_tools("t1")
+    from app.tools.subagent_tools import make_web_tools
+
+    tools = make_web_tools("t1")
     assert len(tools) == 1
     web_search = tools[0]
 

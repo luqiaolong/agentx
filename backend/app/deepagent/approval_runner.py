@@ -62,14 +62,14 @@ def _make_hitl_resume_decisions(pending_calls: list[dict], decision_type: str = 
 async def _stream_default(
     agent: Any, inputs: Any, config: dict, source: str = "deep", **kwargs: Any
 ) -> AsyncIterator[dict[str, str]]:
-    """默认 stream_fn：委托到 ``app.deepagent.streaming._stream_agent_events``。
+    """默认 stream_fn：委托到 ``app.deepagent.streaming.stream_agent_events``。
 
     ``**kwargs`` 透传 ``seen_signatures`` 等跨 resume 去重参数，避免
     ``_stream`` 包装器因签名不匹配触发 TypeError 降级，导致去重集合每次重建为空。
     """
-    from app.deepagent.streaming import _stream_agent_events
+    from app.deepagent.streaming import stream_agent_events
 
-    async for sse in _stream_agent_events(agent, inputs, config, source=source, **kwargs):
+    async for sse in stream_agent_events(agent, inputs, config, source=source, **kwargs):
         yield sse
 
 
@@ -160,7 +160,7 @@ async def run_agent_with_approval(
         inputs: 初始输入，形如 ``{"messages": [...]}``。
         sandbox: ``SessionSandbox`` 实例。None 时自动 ``get_sandbox()``。
         parent_thread_id: 父 thread_id（Team 模式授权继承）。
-        stream_fn: 流式事件生成函数，默认 ``_stream_agent_events``。
+        stream_fn: 流式事件生成函数，默认 ``stream_agent_events``。
         is_interrupted_fn: 中断检测函数。
         get_pending_calls_fn: 提取 pending tool_calls 函数。
         inject_tool_error_for_call_fn: 单条 tool_call 错误注入函数。

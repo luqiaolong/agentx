@@ -5,11 +5,11 @@
 职责:
 - ``DANGEROUS_TOOLS``：触发人工审批中断的工具集合（写操作 + 删除）
 - ``compute_runtime_dangerous``：计算运行时危险工具集合（DANGEROUS_TOOLS + MCP untrusted + workspace fs 写工具）
-- ``_make_deep_tools``：构建 DeepAgent 工具集（delete_file + rag + web）
-- ``_load_mcp_tools``：异步加载 MCP 工具并标记非可信工具
+- ``make_deep_tools``：构建 DeepAgent 工具集（delete_file + rag + web）
+- ``load_mcp_tools``：异步加载 MCP 工具并标记非可信工具
 
 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
-自动注入，不在 ``_make_deep_tools`` 返回的工具列表中。CLI 执行（含 Git 操作）由 backend 提供的
+自动注入，不在 ``make_deep_tools`` 返回的工具列表中。CLI 执行（含 Git 操作）由 backend 提供的
 deepagents 内置 ``execute`` 工具承担；Git 写操作在 ``SafeLocalShellBackend.execute`` 通过
 ``is_git_write_command`` 拦截。
 
@@ -26,13 +26,13 @@ from app.observability.logger import logger
 from app.sandbox import get_sandbox
 from app.sandbox.path_guard import PathNotAuthorized
 from app.security.dangerous_tools import DANGEROUS_TOOLS
-from app.subagents.base import _make_rag_tools, _make_web_tools
+from app.tools.subagent_tools import make_rag_tools, make_web_tools
 
 __all__ = [
     "DANGEROUS_TOOLS",
     "compute_runtime_dangerous",
-    "_make_deep_tools",
-    "_load_mcp_tools",
+    "make_deep_tools",
+    "load_mcp_tools",
 ]
 
 # 沙箱根目录保护：禁止删除这两个目录本身（允许删除其下的子项）。
@@ -65,7 +65,7 @@ def compute_runtime_dangerous(
     return dangerous
 
 
-def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
+def make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     """构建 DeepAgent 工具集：delete_file + rag + web。
 
     内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
@@ -86,7 +86,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     T4: 根据 ``get_settings().tools_enabled`` 过滤工具集。若工具被禁用，
     则不暴露给 LLM，且运行时 dangerous 集合也不含该工具（见 ``run_deep_path``）。
 
-    MCP 工具由 ``_load_mcp_tools`` 异步加载并合并（见 ``run_deep_path``）。
+    MCP 工具由 ``load_mcp_tools`` 异步加载并合并（见 ``run_deep_path``）。
 
     Args:
         thread_id: 会话 ID，用于沙箱授权校验。
@@ -94,8 +94,8 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     """
     from langchain_core.tools import tool
 
-    rag_tools = _make_rag_tools(thread_id)
-    web_tools = _make_web_tools(thread_id)
+    rag_tools = make_rag_tools(thread_id)
+    web_tools = make_web_tools(thread_id)
 
     # 危险工具：删除文件/目录，配合 interrupt_on 审批 + 沙箱授权
     @tool
@@ -166,7 +166,7 @@ def _make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     return [t for t in all_tools if enabled.get(t.name, True)]
 
 
-async def _load_mcp_tools() -> tuple[list, set[str]]:
+async def load_mcp_tools() -> tuple[list, set[str]]:
     """加载 MCP 工具，返回 (tools, untrusted_tool_names)。
 
     - ``tools``: MCP 工具列表（LangChain BaseTool），失败时为空列表。

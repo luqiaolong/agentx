@@ -1,6 +1,6 @@
 """Web 子代理：联网搜索（薄 re-export，实现见 base.build_builtin_subagent）。
 
-工具集: web_search（Tavily Search API）
+工具集: web_search（Tavily Search API，来自 ``app.tools.subagent_tools.make_web_tools``）
 
 实际逻辑已收敛到 ``app.subagents.base.build_builtin_subagent`` /
 ``run_builtin_subagent`` 工厂函数；本文件仅保留薄 re-export 以维持向后兼容
@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import Any, AsyncIterator
 
 from app.subagents.base import (
-    _make_web_tools,
     build_builtin_subagent,
     run_builtin_subagent,
 )
@@ -48,4 +47,4 @@ async def run_web_agent(
         yield event
 
 
-__all__ = ["build_web_agent", "run_web_agent", "_make_web_tools"]
+__all__ = ["build_web_agent", "run_web_agent"]

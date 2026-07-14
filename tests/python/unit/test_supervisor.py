@@ -267,7 +267,7 @@ class TestBuildWorkSupervisor:
 
         mock_model = MagicMock()
         with patch("app.scenarios.work.agent.get_chat_model", return_value=mock_model):
-            with patch("app.scenarios.work.agent._make_deep_tools", return_value=[]):
+            with patch("app.scenarios.work.agent.make_deep_tools", return_value=[]):
                 with patch("app.scenarios.work.agent.make_expert_delegation_tool") as mock_expert_tool:
                     mock_expert_tool.return_value = MagicMock(name="delegate_to_expert")
                     with patch("app.scenarios.work.agent.get_async_checkpointer", new_callable=AsyncMock):
@@ -352,13 +352,13 @@ class TestMentionRouting:
             yield {"event": "token", "data": "supervisor synthesis"}
 
         with patch("app.subagents.rag_agent.run_rag_agent", mock_rag_stream):
-            with patch("app.scenarios.work.agent._make_deep_tools", return_value=[]):
+            with patch("app.scenarios.work.agent.make_deep_tools", return_value=[]):
                 with patch(
                     "app.scenarios.work.agent.make_expert_delegation_tool"
                 ) as mock_expert_tool:
                     mock_expert_tool.return_value = MagicMock(name="delegate_to_expert")
                     with patch(
-                        "app.scenarios.work.agent._load_mcp_tools",
+                        "app.scenarios.work.agent.load_mcp_tools",
                         new_callable=AsyncMock,
                         return_value=([], set()),
                     ):

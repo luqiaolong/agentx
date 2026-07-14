@@ -230,8 +230,8 @@ def test_subagents_env_trigger_description_empty_string_becomes_empty(
 def test_make_rag_tools_filters_when_rag_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """tools_enabled.rag_retrieve=false，_make_rag_tools 返回空列表。"""
-    from app.subagents.rag_agent import _make_rag_tools
+    """tools_enabled.rag_retrieve=false，make_rag_tools 返回空列表。"""
+    from app.tools.subagent_tools import make_rag_tools
 
     monkeypatch.setenv(
         "AGENTX_TOOLS_CONFIG",
@@ -239,7 +239,7 @@ def test_make_rag_tools_filters_when_rag_disabled(
     )
     get_settings.cache_clear()
 
-    tools = _make_rag_tools("t1")
+    tools = make_rag_tools("t1")
     assert len(tools) == 0
 
 

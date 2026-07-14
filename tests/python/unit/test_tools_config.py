@@ -3,7 +3,7 @@
 覆盖：
 1. tools_enabled 数据结构 (R1) — 工具字段名 + 默认全 true
 2. env override 合并 (R4) — 部分覆盖 + 无效 JSON fallback
-3. DeepAgent 工具过滤 (R5) — _make_deep_tools 按 tools_enabled 过滤
+3. DeepAgent 工具过滤 (R5) — make_deep_tools 按 tools_enabled 过滤
 4. DANGEROUS_TOOLS 解耦 (R3) — 常量不变 + runtime_dangerous 交集计算
 """
 
@@ -16,7 +16,7 @@ import pytest
 from app.config import get_settings
 from app.deepagent.agent import (
     DANGEROUS_TOOLS,
-    _make_deep_tools,
+    make_deep_tools,
 )
 from app.deepagent.tool_assembly import compute_runtime_dangerous
 
@@ -98,28 +98,28 @@ def test_tools_enabled_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
 # ============================================================
 
 
-def test_make_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """tools_enabled.web_search=false，_make_deep_tools 返回的列表不含 web_search。"""
+def testmake_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """tools_enabled.web_search=false，make_deep_tools 返回的列表不含 web_search。"""
     monkeypatch.setenv(
         "AGENTX_TOOLS_CONFIG",
         json.dumps({"web_search": False}),
     )
     get_settings.cache_clear()
 
-    tools = _make_deep_tools("t1")
+    tools = make_deep_tools("t1")
     tool_names = {t.name for t in tools}
     assert "web_search" not in tool_names
     # 其他工具仍在
     assert "rag_retrieve" in tool_names
     assert "delete_file" in tool_names
-    # 内置 fs 工具不在 _make_deep_tools 输出中（由 backend 注入）
+    # 内置 fs 工具不在 make_deep_tools 输出中（由 backend 注入）
     assert "read_file" not in tool_names
     assert "write_file" not in tool_names
 
 
-def test_make_deep_tools_all_enabled() -> None:
+def testmake_deep_tools_all_enabled() -> None:
     """默认全启用，返回 delete_file + rag + web（内置 fs 工具由 backend 注入）。"""
-    tools = _make_deep_tools("t1")
+    tools = make_deep_tools("t1")
     # delete_file(1) + rag(1) + web(1) = 3
     assert len(tools) == 3
     tool_names = {t.name for t in tools}
@@ -131,7 +131,7 @@ def test_make_deep_tools_all_enabled() -> None:
     assert tool_names == expected
 
 
-def test_make_deep_tools_all_disabled_returns_empty(
+def testmake_deep_tools_all_disabled_returns_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """全禁用，返回空列表。"""
@@ -153,7 +153,7 @@ def test_make_deep_tools_all_disabled_returns_empty(
     )
     get_settings.cache_clear()
 
-    tools = _make_deep_tools("t1")
+    tools = make_deep_tools("t1")
     assert len(tools) == 0
 
 
@@ -182,9 +182,9 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
     """tools_enabled.delete_file=false，runtime_dangerous 不含 delete_file。
 
     runtime_dangerous = DANGEROUS_TOOLS ∩ enabled_tool_names
-    （enabled_tool_names 来自 _make_deep_tools 返回的工具名集合）。
+    （enabled_tool_names 来自 make_deep_tools 返回的工具名集合）。
 
-    注意：write_file/edit_file 由 backend 注入，不在 _make_deep_tools 输出中，
+    注意：write_file/edit_file 由 backend 注入，不在 make_deep_tools 输出中，
     故无 workspace_path 时 runtime_dangerous 不含它们（交集运算自动排除）。
     """
     monkeypatch.setenv(
@@ -194,25 +194,25 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
     get_settings.cache_clear()
 
     # 模拟 run_deep_path 中的 runtime_dangerous 计算
-    agent_tools = _make_deep_tools("t1")
+    agent_tools = make_deep_tools("t1")
     runtime_dangerous = compute_runtime_dangerous(agent_tools, set(), None)
 
     assert "delete_file" not in runtime_dangerous
-    assert runtime_dangerous == set()  # delete_file 是唯一在 _make_deep_tools 中的危险工具
+    assert runtime_dangerous == set()  # delete_file 是唯一在 make_deep_tools 中的危险工具
 
 
 def test_runtime_dangerous_all_enabled() -> None:
     """默认全启用，runtime_dangerous = DANGEROUS_TOOLS ∩ 已启用工具名。
 
-    注意：write_file/edit_file 由 backend 注入、不在 _make_deep_tools 返回的工具集中，
+    注意：write_file/edit_file 由 backend 注入、不在 make_deep_tools 返回的工具集中，
     故无 workspace_path 时 runtime_dangerous 不含它们（交集运算自动排除）。
     有 workspace_path 时由 run_deep_path 显式补充（见 agent.py）。
     git_* 工具已删除（Phase B.1），不再出现在 runtime_dangerous 中。
     """
-    agent_tools = _make_deep_tools("t1")
+    agent_tools = make_deep_tools("t1")
     runtime_dangerous = compute_runtime_dangerous(agent_tools, set(), None)
 
-    # _make_deep_tools 仅含 delete_file（write_file/edit_file 由 backend 注入）
+    # make_deep_tools 仅含 delete_file（write_file/edit_file 由 backend 注入）
     assert runtime_dangerous == {
         "delete_file",
     }

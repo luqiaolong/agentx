@@ -116,7 +116,7 @@ def make_todo_update_event(
         trace_id: 观测中心 trace_id。
         source: SSE 事件 source 标识（``"work"`` / ``"coding"`` / ``"rag"`` / ``"web"``
                 或 Team 子任务角色如 ``"frontend_dev"`` / ``"backend_dev"`` 等）。
-                主路径（DeepAgent/Supervisor/Expert）由 ``_stream_agent_events`` 透传；
+                主路径（DeepAgent/Supervisor/Expert）由 ``stream_agent_events`` 透传；
                 Team 子任务路径由 ``_emit_todo_in_progress`` 注入 ``task.agent``。
                 前端用于区分任务来源、按角色分组渲染。
         parent_task_id: 父任务 ID（Team 多子任务场景注入 ``parent_thread_id``）。
