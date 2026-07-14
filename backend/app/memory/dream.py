@@ -29,7 +29,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
-from app.llm import get_chat_model
+from app.llm import get_chat_model, make_structured_llm
 from app.observability.logger import logger
 
 
@@ -140,7 +140,7 @@ async def dream_all_memory(workspace_path: str | None = None) -> dict[str, Any]:
 
     # 2. 调 LLM 分析
     llm = get_chat_model(temperature=get_settings().llm_temperature_extraction)
-    structured_llm = llm.with_structured_output(DreamResult)
+    structured_llm = make_structured_llm(llm, DreamResult)
     prompt = _DREAM_PROMPT.invoke({
         "count": len(all_tagged),
         "entries": _format_entries_for_llm(all_tagged),

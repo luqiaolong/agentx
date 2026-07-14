@@ -22,7 +22,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.config.subagents import BUILTIN_TEAM_KEYS
-from app.llm import get_chat_model
+from app.llm import get_chat_model, make_structured_llm
 from app.observability.logger import logger
 from app.team.blackboard import TeamPlanTask
 from app.team.classifier import _DANGEROUS_PATTERNS
@@ -584,7 +584,8 @@ class Planner:
         self._structured: Any = None
         if chat_model is not None:
             try:
-                self._structured = chat_model.with_structured_output(TeamPlan)
+                # 强制使用非流式副本，避免 OpenAI SDK 解析空 chunk 崩溃
+                self._structured = make_structured_llm(chat_model, TeamPlan)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "team planner LLM does not support structured output, will use fallback",

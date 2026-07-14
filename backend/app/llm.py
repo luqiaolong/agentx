@@ -44,6 +44,36 @@ def clear_chat_model_cache() -> None:
     _chat_model_cache.clear()
 
 
+def make_structured_llm(llm: Any, schema: Any, **kwargs: Any) -> Any:
+    """构造非流式结构化输出 LLM，规避 OpenAI SDK 空 chunk 解析崩溃。
+
+    背景：``get_chat_model(streaming=True)`` 返回的模型在调用
+    ``with_structured_output(schema).ainvoke()`` 时会走流式 API；OpenAI SDK
+    在累积 JSON 过程中若收到空 ``content`` chunk，会抛出
+    ``ValueError: expected value at line 1 column 1``（参见
+    ``openai.lib.streaming.chat._completions._accumulate_chunk``）。
+
+    结构化输出不需要 token 流，因此当检测到 ``streaming=True`` 时，先复制一个
+    ``streaming=False`` 的模型副本，再绑定结构化输出 schema。
+
+    Args:
+        llm: LangChain ChatModel 实例（可能启用了 streaming）。
+        schema: 结构化输出 schema（Pydantic class / dict / TypedDict）。
+        **kwargs: 透传给 ``with_structured_output`` 的额外参数。
+
+    Returns:
+        已绑定结构化输出且 ``streaming=False`` 的 Runnable。
+    """
+    # 严格判断 ``streaming is True``，避免 MagicMock 等动态属性被误判为启用
+    if getattr(llm, "streaming", False) is True:
+        try:
+            llm = llm.model_copy(update={"streaming": False})
+        except Exception:
+            # 非 Pydantic 模型或旧版 LangChain 无法复制，保持原样
+            pass
+    return llm.with_structured_output(schema, **kwargs)
+
+
 def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     """返回 LangChain ChatModel 实例。
 
@@ -173,4 +203,4 @@ def get_chat_model(temperature: float = 0.7, streaming: bool = True) -> Any:
     )
 
 
-__all__ = ["get_chat_model", "clear_chat_model_cache"]
+__all__ = ["get_chat_model", "clear_chat_model_cache", "make_structured_llm"]

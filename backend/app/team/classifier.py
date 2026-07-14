@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from app.llm import make_structured_llm
 from app.observability.logger import logger
 from app.utils.text import compile_keyword_patterns, matches_any
 
@@ -81,7 +82,10 @@ class DangerousTaskClassifier:
         self._structured: Any | None = None
         if chat_model is not None:
             try:
-                self._structured = chat_model.with_structured_output(ClassificationResult)
+                # 强制使用非流式副本，避免 OpenAI SDK 解析空 chunk 崩溃
+                self._structured = make_structured_llm(
+                    chat_model, ClassificationResult
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "DangerousTaskClassifier LLM does not support structured output, "
