@@ -25,9 +25,9 @@ from app.security.approval import (
     set_abort,
     set_pause,
     start_reaper,
-    submit_approval,
     wait_for_abort,
     wait_for_resume,
+    write_approval_decision,
 )
 from app.security.approval import state as security_state
 
@@ -40,12 +40,14 @@ def _clear_state() -> None:
     security_state._abort_events.clear()
     security_state._pause_flags.clear()
     security_state._pause_events.clear()
+    security_state._active_approval_requests.clear()
     yield
     security_state._pending_approvals.clear()
     security_state._abort_flags.clear()
     security_state._abort_events.clear()
     security_state._pause_flags.clear()
     security_state._pause_events.clear()
+    security_state._active_approval_requests.clear()
 
 
 # ============================================================
@@ -56,7 +58,7 @@ def _clear_state() -> None:
 async def test_submit_and_pop_approval() -> None:
     """submit 写入决策，pop 取出并移除。"""
     decision = ApprovalResult(decision=ApprovalDecision.APPROVE)
-    await submit_approval("t1", decision)
+    await write_approval_decision("t1", decision)
     result = await pop_approval("t1")
     assert result is decision
     # 二次 pop 返回 None
@@ -231,7 +233,7 @@ async def test_concurrent_wait_for_resume_all_wake_on_clear() -> None:
 async def test_reaper_cleans_stale_thread_ids() -> None:
     """reaper 清理 30 分钟无活动的 thread_id。"""
     # 写入一个审批决策
-    await submit_approval("stale", ApprovalResult(decision=ApprovalDecision.APPROVE))
+    await write_approval_decision("stale", ApprovalResult(decision=ApprovalDecision.APPROVE))
     # 篡改 timestamp 为 35 分钟前
     stale_ts = time.monotonic() - 35 * 60
     security_state._pending_approvals["stale"] = (
@@ -257,7 +259,7 @@ async def test_reaper_cleans_stale_thread_ids() -> None:
 
 async def test_reaper_preserves_active_thread_ids() -> None:
     """reaper 不清理近期有活动的 thread_id。"""
-    await submit_approval("active", ApprovalResult(decision=ApprovalDecision.APPROVE))
+    await write_approval_decision("active", ApprovalResult(decision=ApprovalDecision.APPROVE))
     # active 的 timestamp 是现在，不应被清理
 
     now = security_state._now()
@@ -287,7 +289,7 @@ async def test_start_reaper_returns_task() -> None:
 
 async def test_reaper_preserves_thread_with_mixed_activity() -> None:
     """thread_id 在多个 dict 中有条目时，只要有一个 dict 的 timestamp 较新就不清理。"""
-    await submit_approval("mixed", ApprovalResult(decision=ApprovalDecision.APPROVE))
+    await write_approval_decision("mixed", ApprovalResult(decision=ApprovalDecision.APPROVE))
     # 篡改 _pending_approvals 的 timestamp 为旧，但 _abort_flags 为新
     stale_ts = time.monotonic() - 35 * 60
     security_state._pending_approvals["mixed"] = (

@@ -21,6 +21,7 @@ from app.observability.trace import bind_trace, current_trace_id
 from app.sse.events import make_sse_event
 from app.utils.text import ThinkFilter, compile_keyword_patterns, extract_chunk_text, matches_any
 from app.team.blackboard import _serialize_blackboard
+from app.team.state import TeamOutcome
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -32,6 +33,8 @@ __all__ = [
     "_build_summary",
     "_should_downgrade_to_single",
     "_SIMPLE_TASK_KEYWORDS",
+    "_compute_team_outcome",
+    "_flatten_findings",
 ]
 
 
@@ -64,6 +67,55 @@ def _build_summary(text_parts: list[str], tool_traces: list[str], agent_name: st
         traces = "\n".join(tool_traces[:5])
         summary += f"\n\n工具痕迹：\n{traces}"
     return summary.strip()
+
+
+def _flatten_findings(findings: Mapping) -> list:
+    """把 ``dict[str, Finding | list[Finding]]`` 展平为 ``list[Finding]``。
+
+    BE-N 修复后同 key 的 finding 会收集为 list，本函数统一展平，
+    供 outcome 判定与 agents 列表构造使用。使用 duck typing（``hasattr``
+    检查 ``success`` 属性）识别 Finding 对象，避免反向 import 造成循环依赖。
+    """
+    flat: list = []
+    for val in (findings or {}).values():
+        if isinstance(val, list):
+            for f in val:
+                if hasattr(f, "success"):
+                    flat.append(f)
+        elif hasattr(val, "success"):
+            flat.append(val)
+    return flat
+
+
+def _compute_team_outcome(findings: Mapping, aborted: bool = False) -> TeamOutcome:
+    """基于 ``Finding.success`` 判定 Team 最终 outcome（D4 / REQ-TEAM-OUTCOME-2）。
+
+    判定规则：
+    - ``aborted=True`` → ``ABORTED``（优先级最高，即使全部失败也返回 ABORTED）
+    - 无有效 findings → ``ERROR``
+    - 全部 ``Finding.success=True`` → ``SUCCESS``
+    - 全部 ``Finding.success=False`` → ``ERROR``
+    - 部分成功部分失败 → ``PARTIAL``
+
+    Args:
+        findings: ``dict[str, Finding | list[Finding]]``，state.findings 原始值。
+        aborted: 是否因用户中止或上游取消而终止。
+
+    Returns:
+        ``TeamOutcome`` 枚举值。
+    """
+    if aborted:
+        return TeamOutcome.ABORTED
+    all_findings = _flatten_findings(findings)
+    if not all_findings:
+        return TeamOutcome.ERROR
+    success_count = sum(1 for f in all_findings if f.success)
+    total = len(all_findings)
+    if success_count == total:
+        return TeamOutcome.SUCCESS
+    if success_count == 0:
+        return TeamOutcome.ERROR
+    return TeamOutcome.PARTIAL
 
 
 def _quality_gate(blackboard: Mapping) -> tuple[bool, str]:

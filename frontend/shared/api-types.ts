@@ -11,6 +11,89 @@
 export type TodoStatus = "pending" | "in_progress" | "completed";
 
 /**
+ * Team 业务终态（D4 typed outcome）。
+ * - success: 全部必需子任务成功，聚合成功
+ * - partial: 存在成功结果，也存在失败/跳过，但系统仍可给出带风险标记的总结
+ * - error: 无法给出有效团队结果，或聚合失败
+ * - aborted: 用户中止或上游 run 被取消
+ *
+ * 与 team_done.outcome 字段对齐；前端 reducer 优先消费 outcome，
+ * fallback 到旧字段 status。
+ */
+export type TeamOutcome = "success" | "partial" | "error" | "aborted";
+
+/**
+ * Transport / 业务 run 的终态 reason（D3 终态分层）。
+ * - completed: 正常成功完成
+ * - aborted: 用户主动中止
+ * - recovered: 断连恢复后补发的终态
+ * - error: 异常中断
+ *
+ * 与 done.reason 字段对齐；旧 done 事件不携带 reason 时视为 completed。
+ */
+export type DoneReason = "completed" | "aborted" | "recovered" | "error";
+
+/**
+ * 黑板单条 finding（来自 team_done.blackboard.findings）。
+ *
+ * 后端 AgentTeam 执行结束时，team_done 事件可选携带 blackboard 字段，
+ * 包含每个子任务的 finding 摘要 + 错误列表。前端 BlackboardPanel 优先消费
+ * 此快照（含 task_id / wave_index / retries / error 等富信息），
+ * 缺失时回退到档位 A 的纯前端 agents 聚合。
+ *
+ * 字段对齐后端实际推送（task_id / wave_index / success / retries 均为必填，
+ * 后端聚合器在推送前已完成填充）；isBlackboardSnapshot 守卫严格校验。
+ */
+export interface BlackboardFinding {
+  /** 子代理角色名（如 frontend_dev / backend_dev / code 等） */
+  agent: string;
+  /** TeamTask.id，对应前端 TeamAgentState.taskId */
+  task_id: string;
+  /** wave 索引（重规划 / 多轮编排时递增） */
+  wave_index: number;
+  /** finding 内容摘要 */
+  content: string;
+  /** 是否成功（false 时通常伴随 error 字段） */
+  success: boolean;
+  /** 失败原因（仅 success=false 时通常存在） */
+  error?: string;
+  /** 重试次数 */
+  retries: number;
+}
+
+/**
+ * 后端黑板快照类型（来自 team_done SSE 事件的 blackboard payload）。
+ *
+ * 提升到 shared 层供前后端共享（REQ-SSE-5）；与 frontend/renderer/lib/api/blackboard.ts
+ * 的本地定义保持同构（renderer 内 re-export 此 shared 类型以避免双份维护）。
+ */
+export interface BlackboardSnapshot {
+  findings: BlackboardFinding[];
+  /** 错误列表（团队级聚合） */
+  errors: string[];
+}
+
+/**
+ * Team 子任务最终摘要（team_done.agents[] 每项的结构）。
+ *
+ * 后端 team_done 事件的 agents 数组每项至少含 agent + summary；
+ * 新增 task_id / success / retries 用于稳定关联键与 typed outcome（D5）。
+ */
+export interface TeamAgentSummary {
+  agent: string;
+  /** 稳定关联键，与 delegation.task_id / TeamAgentState.taskId 对齐（REQ-SSE-3） */
+  task_id?: string;
+  /** 子任务最终摘要内容 */
+  summary?: string;
+  /** 兼容旧字段：等价于 summary，旧后端可能只发 message */
+  message?: string;
+  /** 子任务是否成功（D4 typed outcome） */
+  success?: boolean;
+  /** 重试次数 */
+  retries?: number;
+}
+
+/**
  * SSE 事件契约（AGENTS.md §13 两处同步：main.py + useChatStream.ts）。
  *
  * Discriminated union on `type` 字段。token 事件 data 是纯字符串；
@@ -55,7 +138,20 @@ export type ChatEvent = (
   //   - undefined: 正常委派
   //   - "aborted": 子任务被用户中止（message="用户中止"）
   //   - "timeout": 子任务执行超时（message 含超时信息）
-  | { type: "delegation"; target: string; source: string; message: string; event?: "aborted" | "timeout"; agent?: string; task_id?: string; timeout?: number; trace_id?: string }
+  // task_id（REQ-SSE-3）：稳定关联键，后端已补齐为必填；旧事件可能缺失，前端读取时
+  //                    仍按 string | undefined 防御。run_id 可选，用于 run 级回链。
+  | {
+      type: "delegation";
+      target: string;
+      source: string;
+      message: string;
+      event?: "aborted" | "timeout";
+      agent?: string;
+      task_id: string;
+      run_id?: string;
+      timeout?: number;
+      trace_id?: string;
+    }
   // classification 事件：Router 分类决策展示
   | { type: "classification"; label: string; reason: string; trace_id?: string }
   // todo_update 事件：DeepAgent 任务级 todo 列表（deepagents 原生 {content, status} schema）
@@ -72,8 +168,31 @@ export type ChatEvent = (
       parent_task_id?: string;
       trace_id?: string;
     }
-  // approval_request 事件：危险工具/目录扩展审批（payload 字段较多，用索引签名）
-  | { type: "approval_request"; [k: string]: unknown; trace_id?: string }
+  // approval_request 事件：危险工具 / 目录扩展 / 沙箱升级审批。
+  // D5 + REQ-SSE-3：approval_id / run_id 是稳定关联键，后端已补齐为必填；
+  //                  kind 取值见 ApprovalKind（含 sandbox_escalation，REQ-SSE-2 端到端保真）。
+  // 旧事件可能缺失结构化字段，前端读取时按可选防御（[k: string]: unknown 保留兼容）。
+  | {
+      type: "approval_request";
+      approval_id: string;
+      run_id: string;
+      thread_id: string;
+      kind: ApprovalKind;
+      tool_name?: string;
+      tool_call_id?: string;
+      args?: unknown;
+      preview?: string;
+      requestedPath?: string;
+      writable?: boolean;
+      // sandbox_escalation 专用字段
+      command?: string;
+      exit_code?: number;
+      reason?: string;
+      suggested_action?: "retry_with_auth" | "execute_unsandboxed";
+      suggested_path?: string;
+      [k: string]: unknown;
+      trace_id?: string;
+    }
   // team_init 事件：AgentTeam 计划生成完成，前端据此在消息顶部创建 TeamNodeCard
   // 携带 plan + agents + summary，在 _plan_node 成功后立即发射（早于 delegation / tool_call）
   // plan 项字段：
@@ -87,15 +206,20 @@ export type ChatEvent = (
       summary: string;
       trace_id?: string;
     }
-  // team_done 事件：AgentTeam 整体执行结束
-  // status:
-  //   - "done"：团队成功完成
-  //   - "error"：团队执行出错
+  // team_done 事件：AgentTeam 整体执行结束（业务终态，D3）
+  // outcome（权威字段，D4 typed outcome）：success | partial | error | aborted
+  //   前端 reducer 优先消费 outcome，fallback 到旧字段 status（兼容迁移期）
+  // status（兼容字段，保留一个迁移周期）：
+  //   - "done"：团队成功完成（≈ outcome=success）
+  //   - "error"：团队执行出错（≈ outcome=error）
   //   - "replanning"：质量门失败但无 error，团队正在重新规划（前端不应终止 TeamNodeCard）
+  // blackboard（REQ-SSE-5）：后端推送的 finding/error 快照，前端优先消费
   | {
       type: "team_done";
       status?: "error" | "done" | "replanning";
-      agents?: { agent: string; task_id?: string; message?: string; summary?: string }[];
+      outcome?: TeamOutcome;
+      agents?: TeamAgentSummary[];
+      blackboard?: BlackboardSnapshot;
       trace_id?: string;
     }
   // replan 事件：质量门失败后触发重规划，携带新增任务列表和重规划次数
@@ -109,8 +233,11 @@ export type ChatEvent = (
     }
   // paused 事件：后端流被用户暂停
   | { type: "paused"; data?: unknown; trace_id?: string }
-  // done 事件：流式结束
-  | { type: "done"; data?: unknown; trace_id?: string }
+  // done 事件：transport 终态（D3 与业务终态解耦）
+  // reason（REQ-SSE-6 / REQ-CHAT-3）：completed | aborted | recovered | error
+  //   旧事件不携带 reason 时视为 completed；前端 reducer 据此区分终态语义，
+  //   不再用 done 默认等价于成功。
+  | { type: "done"; data?: unknown; reason?: DoneReason; trace_id?: string }
   // error 事件：流式出错（data / error / message 字段均可能携带信息）
   // - data: chat.py 手工构造 error 事件时使用（如 `内部错误: ... | trace=...`）
   // - message: make_sse_event("error", {"message": "..."}) 构造的 payload 展开后字段，
@@ -149,6 +276,9 @@ export interface ApprovalRequest {
   writable?: boolean;           // directory_extension 时必填
   traceId?: string;             // 后端 SSE 事件顶层 trace_id（用户报问题时复制）
   toolCallId?: string;          // 关联的 tool-call id（内联授权时定位对应步骤）
+  // REQ-SSE-3 / D5: 审批请求稳定关联键（后端已补齐为必填）
+  approvalId?: string;          // compare-and-consume active request 的主键
+  runId?: string;               // 关联到具体 run lifecycle（REQ-CHAT-7 恢复绑定）
   // sandbox_escalation 专用字段
   command?: string;             // 原始命令
   exitCode?: number;            // 沙箱失败退出码

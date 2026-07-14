@@ -32,7 +32,8 @@ from app.config import get_settings
 from app.observability.logger import logger
 from app.security.approval import get_abort_event
 from app.sse.events import make_sse_event
-from app.team.aggregator import _quality_gate, _run_aggregator
+from app.team.aggregator import _compute_team_outcome, _flatten_findings, _quality_gate, _run_aggregator
+from app.team.classifier import DangerousTaskClassifier
 from app.team.blackboard import (
     TeamPlanTask,
     TeamSubtaskResult,
@@ -47,7 +48,7 @@ from app.team.scheduler import (
     _run_team_role_subtask,
     run_with_retry,
 )
-from app.team.state import Finding, SubtaskState, TeamState, TeamTask
+from app.team.state import Finding, SubtaskState, TeamOutcome, TeamState, TeamTask
 
 __all__ = [
     "plan_node",
@@ -274,14 +275,25 @@ def _make_subtask_state_update(
     return update
 
 
-def _emit_delegation(writer: Callable[[dict], None], agent: str, purpose: str) -> None:
-    """发射 ``delegation`` SSE 事件，前端据此创建 SubAgentGroup 容器。"""
-    writer(
-        make_sse_event(
-            "delegation",
-            {"target": agent, "source": "team", "message": purpose},
-        )
-    )
+def _emit_delegation(
+    writer: Callable[[dict], None],
+    agent: str,
+    purpose: str,
+    *,
+    task_id: str | None = None,
+    run_id: str | None = None,
+) -> None:
+    """发射 ``delegation`` SSE 事件，前端据此创建 SubAgentGroup 容器（D5）。
+
+    ``task_id`` 为稳定关联键，前端以此为主键关联一行 UI（替代角色名）。
+    重复角色（如两个 ``frontend_dev``）通过不同 ``task_id`` 区分。
+    """
+    payload: dict[str, Any] = {"target": agent, "source": "team", "message": purpose}
+    if task_id is not None:
+        payload["task_id"] = task_id
+    if run_id is not None:
+        payload["run_id"] = run_id
+    writer(make_sse_event("delegation", payload))
 
 
 # ============================================================
@@ -385,6 +397,28 @@ async def execute_node(state: SubtaskState) -> dict:
             remaining_waves,
         )
 
+    # I4.3: DangerousTaskClassifier 接入执行主链（REQ-TEAM-SAFETY-1）
+    # 非 deep 任务在执行前分类；危险任务升级为 deep + 发射 classification SSE
+    if task.agent != "deep":
+        classifier = DangerousTaskClassifier(chat_model=state.get("chat_model"))
+        classification = await classifier.classify(task)
+        if classification.is_dangerous:
+            original_agent = task.agent
+            task.agent = classification.suggested_agent or "deep"
+            config = _resolve_subtask_config(task.agent, settings)
+            writer(
+                make_sse_event(
+                    "classification",
+                    {
+                        "task_id": task.id,
+                        "is_dangerous": True,
+                        "reason": classification.reason,
+                        "suggested_agent": task.agent,
+                        "original_agent": original_agent,
+                    },
+                )
+            )
+
     # pre_run_hook：fallback warning
     warnings: list[str] = []
     if config.pre_run_hook is not None:
@@ -406,8 +440,11 @@ async def execute_node(state: SubtaskState) -> dict:
     # 注入上游 findings（BE-P 修复：实际使用 composed_input 作为子任务输入）
     composed_input = _compose_input_with_upstream(task, upstream_findings)
 
-    # 发射 delegation SSE
-    _emit_delegation(writer, task.agent, task.expected_output)
+    # 发射 delegation SSE（D5: 含 task_id 关联键）
+    _emit_delegation(
+        writer, task.agent, task.expected_output,
+        task_id=task.id,
+    )
 
     subtask_timeout = state.get("subtask_timeout", 600)
 
@@ -435,6 +472,7 @@ async def execute_node(state: SubtaskState) -> dict:
                 abort_event=abort_event,
                 writer=writer,
                 subtask_timeout=subtask_timeout,
+                scene_prompt=state.get("scene_prompt", "") or "",
             )
     else:
         # deep/code/builtin/custom/default 走通用 _run_subtask_stream
@@ -510,12 +548,15 @@ async def aggregate_node(state: TeamState) -> dict:
     1. 发射 ``state.warnings`` 累积的 warning SSE（D14）
     2. BE-C 修复：findings 为空时直接终止（不进入 replan）
     3. abort 检查
-    4. v2 ``Finding`` 对象 → v1 裸字符串（临时桥接 ``_run_aggregator``）
-    5. 质量门检查（``_quality_gate``）
-    6. 质量门通过 → 调用 ``_run_aggregator`` 流式输出
-    7. 发射 ``team_done`` SSE（BE-B 修复：仅此节点发射一次）
-    8. 设置 ``quality_gate_passed`` / ``should_terminate`` 供路由
+    4. 基于 ``Finding.success`` 计算 ``TeamOutcome``（D4 / REQ-TEAM-OUTCOME-2）
+    5. v2 ``Finding`` 对象 → v1 裸字符串（临时桥接 ``_run_aggregator``）
+    6. 质量门检查（``_quality_gate``）
+    7. 质量门通过且 outcome 允许 → 调用 ``_run_aggregator`` 流式输出
+    8. 发射 ``team_done`` SSE（BE-B 修复：仅此节点发射一次），含权威 ``outcome`` 字段
+    9. 设置 ``quality_gate_passed`` / ``should_terminate`` 供路由
 
+    D4 修复：``outcome`` 基于 ``Finding.success`` 判定，不再因「存在 findings 文本」
+    而误判为成功。聚合器异常时 outcome 降级为 ERROR。
     BE-B 修复：``team_done`` 只在此节点发射一次，``replan_node`` 不再发射。
     BE-C 修复：findings 为空时直接终止（``should_terminate=True``），不进 replan。
     """
@@ -529,10 +570,20 @@ async def aggregate_node(state: TeamState) -> dict:
     for warning in state.get("warnings", []):
         writer(make_sse_event("warning", {"message": warning}))
 
+    # abort 检查（提前解析，供 outcome 判定）
+    abort_event = state.get("abort_event")
+    if abort_event is None:
+        abort_event = await get_abort_event(thread_id)
+    aborted = abort_event.is_set()
+
+    # D4: 基于 Finding.success 计算 outcome（权威字段）
+    outcome = _compute_team_outcome(findings, aborted=aborted)
+
     # BE-C 修复：findings 为空时直接终止，不进入 replan
     if not findings:
         writer(make_sse_event("team_done", {
             "status": "error",
+            "outcome": outcome.value,
             "blackboard": {"findings": [], "errors": list(errors)},
         }))
         return {
@@ -541,15 +592,13 @@ async def aggregate_node(state: TeamState) -> dict:
             "should_terminate": True,
         }
 
-    # abort 检查
-    abort_event = state.get("abort_event")
-    if abort_event is None:
-        abort_event = await get_abort_event(thread_id)
-    if abort_event.is_set():
+    # abort → ABORTED
+    if aborted:
         writer(
             make_sse_event(
                 "team_done", {
                     "status": "error",
+                    "outcome": outcome.value,
                     "error": "用户中止",
                     "blackboard": {
                         "findings": _serialize_findings_for_sse(findings),
@@ -586,46 +635,90 @@ async def aggregate_node(state: TeamState) -> dict:
     message = state["message"]
     chat_model = state.get("chat_model")
 
-    # 质量门检查
+    # 质量门检查（内容质量：截断 / identical）
     ok, reason = _quality_gate(blackboard)
 
-    if ok:
-        # 流式输出 aggregator 回复
-        async for sse in _run_aggregator(
-            message,
-            blackboard,
-            chat_model=chat_model,
-            abort_event=abort_event,
-        ):
-            writer(sse)
+    # D4: 全失败的 outcome=ERROR 时不得聚合（即使内容质量门通过）
+    if outcome == TeamOutcome.ERROR:
+        ok = False
 
-    # 发射 team_done：status 反映实际状态
-    # - ok=True → "done"
-    # - ok=False + has_error → "error"
-    # - ok=False + 无 error（质量门失败触发 replan）→ "replanning"
-    has_error = bool(errors)
+    # 质量门通过且 outcome 允许 → 流式输出 aggregator 回复
     if ok:
+        try:
+            async for sse in _run_aggregator(
+                message,
+                blackboard,
+                chat_model=chat_model,
+                abort_event=abort_event,
+            ):
+                writer(sse)
+        except Exception as exc:  # noqa: BLE001
+            # 聚合器异常 → outcome 降级为 ERROR（REQ-TEAM-OUTCOME-2）
+            logger.warning(
+                "team aggregator iteration failed, downgrading outcome to error",
+                error=str(exc),
+            )
+            outcome = TeamOutcome.ERROR
+            ok = False
+
+    # HIGH-4 修复：进入 replan 时不发 team_done（避免前端看到 outcome=success
+    # 误判终态）。只有真正终态才发 team_done；replan 时发非终态 replan 事件，
+    # team_done_emitted=False，由后续 replan_node 放弃时或下一次 aggregate 补发。
+    entering_replan = not ok and outcome in (TeamOutcome.SUCCESS, TeamOutcome.PARTIAL)
+
+    if entering_replan:
+        writer(
+            make_sse_event(
+                "replan",
+                {
+                    "reason": "quality_gate_failed",
+                    "detail": reason,
+                    "outcome": outcome.value,
+                    "new_tasks": [],
+                    "replan_count": state.get("replan_count", 0),
+                    "blackboard": {
+                        "findings": _serialize_findings_for_sse(findings),
+                        "errors": list(errors),
+                    },
+                },
+            )
+        )
+        logger.info(
+            "team aggregate_node entering replan",
+            outcome=outcome.value,
+            reason=reason,
+            findings_count=len(findings),
+            errors_count=len(errors),
+        )
+        return {
+            "quality_gate_passed": False,
+            "team_done_emitted": False,
+            "should_terminate": False,
+        }
+
+    # 终态：映射 outcome → 旧 status 字段（向后兼容）
+    if outcome in (TeamOutcome.SUCCESS, TeamOutcome.PARTIAL):
         status = "done"
-    elif has_error:
-        status = "error"
     else:
-        status = "replanning"
-    # BE-N 适配：findings 值可能是 Finding 或 list[Finding]，统一展开
+        status = "error"
+
+    # D5: agents 列表补齐 task_id / success / retries 关联键
     agent_summaries = [
-        {"agent": f.agent, "summary": f.content}
-        for f in findings.values()
-        if not isinstance(f, list)
-    ] + [
-        {"agent": f.agent, "summary": f.content}
-        for flist in findings.values()
-        if isinstance(flist, list)
-        for f in flist
+        {
+            "agent": f.agent,
+            "task_id": f.task_id,
+            "summary": f.content,
+            "success": f.success,
+            "retries": f.retries,
+        }
+        for f in _flatten_findings(findings)
     ]
     writer(
         make_sse_event(
             "team_done",
             {
                 "status": status,
+                "outcome": outcome.value,
                 "agents": agent_summaries,
                 "blackboard": {
                     "findings": _serialize_findings_for_sse(findings),
@@ -637,18 +730,16 @@ async def aggregate_node(state: TeamState) -> dict:
     logger.info(
         "team aggregate_node completed",
         quality_gate_passed=ok,
+        outcome=outcome.value,
         reason=reason,
         findings_count=len(findings),
         errors_count=len(errors),
     )
 
-    # BE-B 修复：标记 team_done 已发射，replan_node 不再发射
-    # should_terminate: ok=True (done) 或 has_error (error) 时直接终止
-    # 只有 ok=False 且无 error（replanning）时才进 replan
     return {
         "quality_gate_passed": ok,
         "team_done_emitted": True,
-        "should_terminate": ok or has_error,
+        "should_terminate": True,
     }
 
 
@@ -683,22 +774,63 @@ async def replan_node(state: TeamState) -> dict:
     5. 有新任务 → ``resolve_waves`` 分层 + 追加到 plan
     6. 发射 ``replan`` SSE 事件
 
-    BE-B 修复：不再发射 ``team_done``（由 ``aggregate_node`` 统一发射）。
-    达上限时返回空 ``pending_waves``，路由到 END。
+    HIGH-4 修复：放弃重规划时（abort/上限/失败/无新任务）必须发射终态 team_done，
+    因为 aggregate_node 进入 replan 时不再发射 team_done（避免前端误判终态）。
     """
     writer = get_stream_writer()
     settings = get_settings()
     replan_count = state.get("replan_count", 0)
     max_replans = settings.team_max_replan_attempts
+    findings = state.get("findings", {})
+    errors = state.get("errors", [])
+
+    def _emit_terminal_team_done(
+        outcome: TeamOutcome, error_msg: str = ""
+    ) -> dict:
+        """放弃重规划时发射终态 team_done（HIGH-4 修复）。
+
+        ``outcome`` 映射：abort→ABORTED，planner 异常→ERROR，上限/无新任务→PARTIAL。
+        若 team_done 已发射（如 aggregate_node 终态路径），跳避免重复。
+        """
+        if state.get("team_done_emitted", False):
+            return {"pending_waves": []}
+        status = "done" if outcome == TeamOutcome.PARTIAL else "error"
+        payload: dict[str, Any] = {
+            "status": status,
+            "outcome": outcome.value,
+            "agents": [
+                {
+                    "agent": f.agent,
+                    "task_id": f.task_id,
+                    "summary": f.content,
+                    "success": f.success,
+                    "retries": f.retries,
+                }
+                for f in _flatten_findings(findings)
+            ],
+            "blackboard": {
+                "findings": _serialize_findings_for_sse(findings),
+                "errors": list(errors),
+            },
+        }
+        if error_msg:
+            payload["error"] = error_msg
+        writer(make_sse_event("team_done", payload))
+        return {
+            "pending_waves": [],
+            "team_done_emitted": True,
+        }
 
     # BE-S 修复：replan 前检查 abort，已 set 则直接返回空 waves
     abort_event = state.get("abort_event")
-    if abort_event is not None and abort_event.is_set():
+    if abort_event is None:
+        abort_event = await get_abort_event(state.get("thread_id", ""))
+    if abort_event.is_set():
         logger.info(
             "team replan aborted before LLM call",
             replan_count=replan_count,
         )
-        return {"pending_waves": []}
+        return _emit_terminal_team_done(TeamOutcome.ABORTED, "用户中止")
 
     if replan_count >= max_replans:
         logger.info(
@@ -706,11 +838,8 @@ async def replan_node(state: TeamState) -> dict:
             replan_count=replan_count,
             max=max_replans,
         )
-        # BE-B 修复：不再发射 team_done（aggregate_node 已发过）
-        return {"pending_waves": []}
+        return _emit_terminal_team_done(TeamOutcome.PARTIAL)
 
-    findings = state.get("findings", {})
-    errors = state.get("errors", [])
     plan = state.get("plan", [])
     message = state["message"]
 
@@ -727,11 +856,11 @@ async def replan_node(state: TeamState) -> dict:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("team replan_node planner failed", error=str(exc))
-        return {"pending_waves": []}
+        return _emit_terminal_team_done(TeamOutcome.ERROR, f"重规划失败: {exc}")
 
     if not new_plan.tasks:
         logger.info("team replan produced no new tasks")
-        return {"pending_waves": []}
+        return _emit_terminal_team_done(TeamOutcome.PARTIAL)
 
     waves = resolve_waves(new_plan.tasks)
 

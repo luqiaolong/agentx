@@ -16,6 +16,7 @@ blackboard.py 供 orchestrator.py（待 T35 删除）使用，v2 模块不得引
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated, Any, Optional, TypedDict
 
 from pydantic import BaseModel, Field
@@ -33,9 +34,23 @@ __all__ = [
     "TeamPlan",
     "Finding",
     "ClassificationResult",
+    "TeamOutcome",
     "TeamState",
     "SubtaskState",
 ]
+
+
+class TeamOutcome(str, Enum):
+    """Team 最终结果的显式类型化 outcome（D4 / REQ-TEAM-OUTCOME-1）。
+
+    替代旧 ``status`` 字段中基于「存在 findings」推断成功的逻辑。
+    ``team_done`` 事件同时输出 ``status``（向后兼容）与 ``outcome``（权威字段）。
+    """
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    ERROR = "error"
+    ABORTED = "aborted"
 
 
 class TeamTask(BaseModel):

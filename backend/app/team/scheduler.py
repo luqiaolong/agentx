@@ -767,12 +767,17 @@ async def _run_team_role_subtask(
     writer: Callable[[dict], None],
     *,
     subtask_timeout: int = 600,
+    scene_prompt: str = "",
 ) -> TeamSubtaskResult:
     """软件开发团队角色子任务（frontend_dev / backend_dev / tester / ...）。
 
     优先用 ``build_custom_agent`` 构建专属 agent（astream_events v2）；
     缺少 ``system_prompt`` 配置时显式失败（D7：不再静默降级到 coding Expert）。
     显式失败时发射 ``warning`` SSE 事件（writer 可用时），让前端 trace 可见。
+
+    I4.2（D6 / REQ-TEAM-PROMPT-1）：``chat_model`` 透传给 ``build_custom_agent``，
+    ``profile_prompt`` + ``scene_prompt`` 拼入 ``extra_system_prompt``，让 team role
+    继承父会话的模型选择和用户画像 / 场景上下文。
 
     Phase 2 T8：abort 从 ``asyncio.wait(timeout=5)`` 轮询式改为事件驱动
     （``asyncio.wait(FIRST_COMPLETED)`` 无 timeout）。
@@ -825,6 +830,14 @@ async def _run_team_role_subtask(
     if inherit_result is not None:
         return inherit_result
 
+    # I4.2: 拼接 profile_prompt + scene_prompt 作为 extra_system_prompt
+    extra_parts: list[str] = []
+    if profile_prompt:
+        extra_parts.append(profile_prompt)
+    if scene_prompt:
+        extra_parts.append(scene_prompt)
+    extra_system_prompt = "\n".join(extra_parts)
+
     agent_obj = build_custom_agent(
         key=task.agent,
         thread_id=child_thread_id,
@@ -832,6 +845,8 @@ async def _run_team_role_subtask(
         tools=cfg.tools,
         temperature=cfg.temperature,
         workspace_path=workspace_path,
+        chat_model=chat_model,
+        extra_system_prompt=extra_system_prompt,
     )
     history_msgs = list(history) if history else []
     inputs = {"messages": [*history_msgs, {"role": "user", "content": task.input}]}

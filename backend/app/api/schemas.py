@@ -43,6 +43,10 @@ class ApproveRequest(BaseModel):
         default=None,
         description="可选 tool_call_id，直接定位 observation_tool_call 行；缺失时按 run_id 查最近 pending 行",
     )
+    approval_id: str | None = Field(
+        default=None,
+        description="审批请求 ID（REQ-APR-1）；后端据此 compare-and-consume 活跃请求",
+    )
 
 
 class AbortRequest(BaseModel):

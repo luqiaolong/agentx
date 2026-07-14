@@ -30,8 +30,12 @@ async def test_aggregate_node_empty_findings_no_replan_no_team_done():
 
 
 @pytest.mark.asyncio
-async def test_replan_limit_no_duplicate_team_done():
-    """replan 达上限时不应再发 team_done（aggregate_node 已发过）。"""
+async def test_replan_limit_emits_terminal_team_done():
+    """replan 达上限时发射终态 team_done（HIGH-4 修复：outcome=PARTIAL）。
+
+    aggregate_node 进入 replan 时不再发 team_done（避免前端误判终态），
+    由 replan_node 放弃时补发终态 team_done。
+    """
     emitted_events = []
     writer = lambda ev: emitted_events.append(ev)
 
@@ -48,5 +52,9 @@ async def test_replan_limit_no_duplicate_team_done():
         result = await replan_node(state)
 
     team_done_events = [e for e in emitted_events if e.get("event") == "team_done"]
-    # replan_node 不应发射 team_done（由 aggregate_node 统一发射）
-    assert len(team_done_events) == 0, f"replan_node 不应发 team_done，实际发了 {len(team_done_events)}"
+    # HIGH-4b: replan_node 放弃时发射 1 次终态 team_done
+    assert len(team_done_events) == 1, f"应发射 1 次终态 team_done，实际 {len(team_done_events)}"
+    import json
+    data = json.loads(team_done_events[0]["data"])
+    assert data["outcome"] == "partial"
+    assert result.get("team_done_emitted") is True

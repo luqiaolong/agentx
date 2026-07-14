@@ -22,6 +22,8 @@ import type {
   CompactResult,
   FeedbackRequest,
   FeedbackResponse,
+  TeamOutcome,
+  DoneReason,
 } from "../../../shared/api-types";
 import { API_BASE } from "../api-constants";
 import { apiPost } from "./request";
@@ -38,9 +40,35 @@ interface ChatConnection {
   isActive: boolean;
   /** team 模式标记：team_init 事件收到后置 true，用于断连恢复时补发 team_done。 */
   hasTeamPart: boolean;
+  /**
+   * REQ-SSE-4 / D3 终态分层：team_done 已收到的业务终态。
+   * - undefined: 未收到 team_done
+   * - "success" / "partial" / "error" / "aborted": 已收到对应 outcome
+   *
+   * synthesizeTeamDone 据此跳过补发（避免覆盖先到的 error/aborted 终态）；
+   * useChatStream 据此让后续 done 不覆盖已有的 team_done 业务终态。
+   */
+  teamDoneReceived: boolean;
+  teamOutcome?: TeamOutcome;
+  /**
+   * REQ-CHAT-7: 当前连接绑定的 run_id（后端已支持）。
+   * 恢复轮询时优先用 run_id 校验，避免旧 run 恢复结果覆盖新 run UI。
+   */
+  runId?: string;
 }
 
 const connections: Map<string, ChatConnection> = new Map();
+
+/**
+ * REQ-CHAT-5: 按 thread_id 隔离的 pending message ID 注册表。
+ *
+ * 用途：useChatStream 事件处理时按事件所属 thread_id 查找对应 pending 消息 ID，
+ * 而不是依赖 singleton ref（前台 ref 切换会丢失后台会话的 pendingId）。
+ *
+ * 写入时机：ChatView 在 chat.send 前调用 setPendingMessageId(tid, pendingId)；
+ * 清理时机：useChatStream 收到 done/error 事件时调用 setPendingMessageId(tid, null)。
+ */
+const pendingMessageIds: Map<string, string> = new Map();
 
 /**
  * 每个连接独立的 trace_id（在 send() 开始时由前端生成，POST body 携带；
@@ -59,6 +87,7 @@ function getConnection(threadId: string): ChatConnection {
       reader: null,
       isActive: false,
       hasTeamPart: false,
+      teamDoneReceived: false,
     };
     connections.set(threadId, conn);
   }
@@ -75,6 +104,66 @@ function generateTraceId(): string {
 export function getCurrentTraceId(threadId: string): string | null {
   const conn = connections.get(threadId);
   return conn?.traceId ?? null;
+}
+
+/**
+ * REQ-CHAT-5: 按 thread_id 注册 / 查询 / 清理 pending 消息 ID。
+ *
+ * ChatView 在 chat.send 前调 setPendingMessageId(tid, pendingId) 注册；
+ * useChatStream 事件处理时用 getPendingMessageId(tid) 查询对应 pendingId，
+ * 而不是依赖 singleton ref（前台 ref 切换会丢失后台会话的 pendingId）。
+ * 收到 done / error 终态事件时调 setPendingMessageId(tid, null) 清理。
+ */
+export function setPendingMessageId(threadId: string, pendingId: string | null): void {
+  if (pendingId === null) {
+    pendingMessageIds.delete(threadId);
+  } else {
+    pendingMessageIds.set(threadId, pendingId);
+  }
+}
+
+export function getPendingMessageId(threadId: string): string | null {
+  return pendingMessageIds.get(threadId) ?? null;
+}
+
+/**
+ * REQ-CHAT-5: 按 thread_id 隔离的 current task ID 注册表。
+ *
+ * 用途：done / todo_update 事件处理时按 thread_id 查找对应任务 ID，
+ * 避免后台会话事件用前台 singleton ref 的 taskId 误更新错误任务。
+ */
+const currentTaskIds: Map<string, string> = new Map();
+
+export function setCurrentTaskId(threadId: string, taskId: string | null): void {
+  if (taskId === null) {
+    currentTaskIds.delete(threadId);
+  } else {
+    currentTaskIds.set(threadId, taskId);
+  }
+}
+
+export function getCurrentTaskId(threadId: string): string | null {
+  return currentTaskIds.get(threadId) ?? null;
+}
+
+/**
+ * REQ-CHAT-5: 按 thread_id 隔离的 last user query 注册表。
+ *
+ * 用途：todo_update 事件创建任务时按 thread_id 查找对应查询文本作为标题，
+ * 避免后台会话事件用前台 singleton ref 的 query 误生成错误标题。
+ */
+const lastUserQueries: Map<string, string> = new Map();
+
+export function setLastUserQuery(threadId: string, query: string | null): void {
+  if (query === null) {
+    lastUserQueries.delete(threadId);
+  } else {
+    lastUserQueries.set(threadId, query);
+  }
+}
+
+export function getLastUserQuery(threadId: string): string | null {
+  return lastUserQueries.get(threadId) ?? null;
 }
 
 interface SendMessageOpts {
@@ -127,6 +216,10 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
   conn.traceId = traceId;
   conn.isActive = true;
   conn.hasTeamPart = false;
+  // REQ-SSE-4: 重置 team_done 终态标记，新 run 开始时清空旧终态
+  conn.teamDoneReceived = false;
+  conn.teamOutcome = undefined;
+  conn.runId = undefined;
 
   const abortController = new AbortController();
   conn.abortController = abortController;
@@ -246,21 +339,67 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
         if (eventType === "done") {
           receivedDone = true;
         }
+        // REQ-SSE-4: 记录 team_done 业务终态，避免 synthesizeTeamDone / done 覆盖
+        if (eventType === "team_done") {
+          conn.teamDoneReceived = true;
+          const outcomeRaw = (payload as Record<string, unknown> | null)?.outcome;
+          if (
+            outcomeRaw === "success" ||
+            outcomeRaw === "partial" ||
+            outcomeRaw === "error" ||
+            outcomeRaw === "aborted"
+          ) {
+            conn.teamOutcome = outcomeRaw;
+          } else {
+            // 旧事件只有 status → 映射到 outcome
+            const statusRaw = (payload as Record<string, unknown> | null)?.status;
+            if (statusRaw === "error") conn.teamOutcome = "error";
+            else if (statusRaw === "done") conn.teamOutcome = "success";
+          }
+        }
+        // REQ-CHAT-7: 从 team_init / delegation / approval_request 事件中提取 run_id
+        //（后端在团队事件中已补 run_id；绑定到 conn 供恢复路径校验）
+        if (!conn.runId) {
+          const runIdRaw = (payload as Record<string, unknown> | null)?.run_id;
+          if (typeof runIdRaw === "string" && runIdRaw.length > 0) {
+            conn.runId = runIdRaw;
+          }
+        }
         if (eventType === "approval_request") {
           const obj =
             typeof payload === "object" && payload !== null
               ? (payload as Record<string, unknown>)
               : {};
+          // REQ-SSE-2 端到端保真：sandbox_escalation 必须保持原始 kind，
+          // 不再强制映射为 dangerous_tool。ApprovalKind 已包含全部三种取值。
+          const kind =
+            obj.kind === "directory_extension"
+              ? "directory_extension"
+              : obj.kind === "sandbox_escalation"
+                ? "sandbox_escalation"
+                : "dangerous_tool";
           const req: ApprovalRequest = {
             threadId: String(obj.thread_id ?? ""),
             toolName: String(obj.tool_name ?? ""),
             args: obj.args,
             preview: String(obj.preview ?? ""),
-            kind: obj.kind === "directory_extension" ? "directory_extension" : "dangerous_tool",
+            kind,
             requestedPath: typeof obj.requestedPath === "string" ? obj.requestedPath : undefined,
             writable: typeof obj.writable === "boolean" ? obj.writable : undefined,
             traceId: typeof obj.trace_id === "string" ? obj.trace_id : undefined,
             toolCallId: typeof obj.tool_call_id === "string" ? obj.tool_call_id : undefined,
+            // REQ-SSE-3 / D5: 透传 approval_id / run_id（后端已补齐为必填，
+            // 旧事件缺失时为 undefined，前端 ApprovalDialog 据此精确关联审批请求）
+            ...(typeof obj.approval_id === "string" ? { approvalId: obj.approval_id } : {}),
+            ...(typeof obj.run_id === "string" ? { runId: obj.run_id } : {}),
+            // sandbox_escalation 专用字段（保真透传）
+            ...(typeof obj.command === "string" ? { command: obj.command } : {}),
+            ...(typeof obj.exit_code === "number" ? { exitCode: obj.exit_code } : {}),
+            ...(typeof obj.reason === "string" ? { reason: obj.reason } : {}),
+            ...(obj.suggested_action === "retry_with_auth" || obj.suggested_action === "execute_unsandboxed"
+              ? { suggestedAction: obj.suggested_action }
+              : {}),
+            ...(typeof obj.suggested_path === "string" ? { suggestedPath: obj.suggested_path } : {}),
           };
           conn.approvalHandlers.forEach((h) => h(req));
         }
@@ -320,14 +459,31 @@ async function send(msg: { role: string; content: string }, opts?: SendMessageOp
 
 /**
  * team 模式断连恢复：当恢复拉取到终态响应时，若 team part 已存在
- *（由 team_init 事件创建，conn.hasTeamPart=true），补发 team_done 事件
+ * *（由 team_init 事件创建，conn.hasTeamPart=true），补发 team_done 事件
  * 让 TeamNodeCard 收尾。createIfMissing:false 语义：若 team part 不存在则跳过。
+ *
+ * REQ-SSE-4 / D3: 不无条件补发 status:"done"。
+ * - 若连接已收到 team_done 业务终态（error/aborted/success/partial），
+ *   不再补发，避免覆盖先到的非成功终态。
+ * - 仅当未收到 team_done 时才补发；补发时使用 outcome:"error"
+ *   （恢复路径无法判断业务是否成功，按保守策略标记为 error）。
  */
 async function synthesizeTeamDone(conn: ChatConnection): Promise<void> {
   if (!conn.hasTeamPart) return;
+  // 已收到 team_done 业务终态 → 不覆盖
+  if (conn.teamDoneReceived) return;
+  // 未收到 team_done → 补发 error outcome（恢复路径保守标记）
   conn.eventHandlers.forEach((h) =>
-    h({ type: "team_done", status: "done", agents: [] } as unknown as ChatEvent),
+    h({
+      type: "team_done",
+      outcome: "error",
+      status: "error",
+      agents: [],
+    } as unknown as ChatEvent),
   );
+  // 标记已补发，避免重复补发
+  conn.teamDoneReceived = true;
+  conn.teamOutcome = "error";
 }
 
 /**
@@ -351,6 +507,14 @@ async function synthesizeTeamDone(conn: ChatConnection): Promise<void> {
  *
  * receivedTextLength 用于切片：断连前可能已收到部分 token，恢复时只补发
  * result_text 中尚未收到的部分（slice(receivedTextLength)），避免重复。
+ *
+ * REQ-CHAT-7: 恢复逻辑必须绑定 run_id（不止 trace/thread）。
+ * - 后端在 team_init / delegation / approval_request 事件中已补 run_id；
+ * - 本函数从 conn.runId 读取（由 SSE 事件分发时提取），用于校验恢复结果归属。
+ * - 若后端响应中 run_id 与 conn.runId 不匹配，跳过补发（避免旧 run 覆盖新 run）。
+ *
+ * REQ-SSE-6 / REQ-CHAT-3: 补发的 done 事件携带 reason:"recovered"，
+ * 让前端 reducer 区分恢复路径与正常完成路径。
  */
 async function tryRecoverResult(
   traceId: string,
@@ -378,6 +542,11 @@ async function tryRecoverResult(
         if (r.ok) {
           const data = await r.json();
           if (data.status === "completed" || data.status === "failed") {
+            // REQ-CHAT-7: 若 conn 已绑定 run_id，校验响应中的 run_id 是否匹配
+            //（响应缺失 run_id 时不阻塞，兼容旧后端）
+            if (conn.runId && typeof data.run_id === "string" && data.run_id !== conn.runId) {
+              return false;
+            }
             // team 模式：在 token+done 之前补发 team_done，让 TeamNodeCard 收尾
             if (data.agent_mode === "coding_team") {
               await synthesizeTeamDone(conn);
@@ -392,10 +561,12 @@ async function tryRecoverResult(
                 h({ type: "token", data: remainingText } as unknown as ChatEvent),
               );
             }
-            // 补发 done 事件（data 为对象，携带 token_count 如果有）
+            // 补发 done 事件（REQ-SSE-6: 携带 reason:"recovered"）
+            const doneReason: DoneReason = "recovered";
             conn.eventHandlers.forEach((h) =>
               h({
                 type: "done",
+                reason: doneReason,
                 data: tokenCount !== undefined ? { token_count: tokenCount } : {},
               } as unknown as ChatEvent),
             );
@@ -416,6 +587,10 @@ async function tryRecoverResult(
       const run = data.run;
       // 后端还未完成（ended_at 为 null），继续等待
       if (!run.ended_at) continue;
+      // REQ-CHAT-7: 校验 run_id（observation DB 中 run_id == trace_id）
+      if (conn.runId && typeof run.run_id === "string" && run.run_id !== conn.runId) {
+        return false;
+      }
       // team 模式：在 token+done 之前补发 team_done，让 TeamNodeCard 收尾
       if (run.agent_mode === "coding_team") {
         await synthesizeTeamDone(conn);
@@ -431,10 +606,12 @@ async function tryRecoverResult(
           h({ type: "token", data: remainingText } as unknown as ChatEvent),
         );
       }
-      // 补发 done 事件（data 为对象，携带 token_count 如果有）
+      // 补发 done 事件（REQ-SSE-6: 携带 reason:"recovered"）
+      const doneReason: DoneReason = "recovered";
       conn.eventHandlers.forEach((h) =>
         h({
           type: "done",
+          reason: doneReason,
           data: resultTokenCount !== undefined ? { token_count: resultTokenCount } : {},
         } as unknown as ChatEvent),
       );

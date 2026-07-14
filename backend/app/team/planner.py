@@ -782,6 +782,7 @@ class Planner:
         """对 LLM 产出的 plan 做安全改写与截断。
 
         - 危险任务但非 deep 的强制改写为 deep
+        - task_id 唯一性校验（REQ-TEAM-PLANNER-1）：重复 id 追加 ``_2``/``_3`` 后缀
         - 超过 ``team_max_tasks`` 的截断 + 清理悬空 depends_on
         """
         if not plan.tasks:
@@ -792,6 +793,27 @@ class Planner:
         for i, task in enumerate(tasks):
             if task.agent != "deep" and _looks_like_dangerous_task(task.description):
                 tasks[i] = task.model_copy(update={"agent": "deep"})
+
+        # I4.4 / REQ-TEAM-PLANNER-1: task_id 唯一性校验
+        # 结构化输出路径可能返回重复 id；首个同 id 任务保持不变（depends_on 仍指向它），
+        # 后续重复任务追加 ``_2``/``_3``/... 后缀。
+        seen_ids: set[str] = set()
+        for i, task in enumerate(tasks):
+            new_id = task.id
+            if new_id in seen_ids:
+                original = task.id
+                counter = 2
+                new_id = f"{original}_{counter}"
+                while new_id in seen_ids:
+                    counter += 1
+                    new_id = f"{original}_{counter}"
+                tasks[i] = task.model_copy(update={"id": new_id})
+                logger.warning(
+                    "team planner duplicate task_id renamed",
+                    original_id=original,
+                    new_id=new_id,
+                )
+            seen_ids.add(new_id)
 
         # 截断到 max_tasks + 清理悬空 depends_on
         max_tasks = settings.team_max_tasks

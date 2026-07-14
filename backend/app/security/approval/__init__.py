@@ -14,29 +14,39 @@
 """
 
 from app.security.approval.decision import ApprovalDecision, ApprovalResult
+from app.security.approval.request import ApprovalRequest
 from app.security.approval.state import (
     clear_abort,
     clear_pause,
+    consume_approval,
     get_abort_event,
+    get_active_approval_for_thread,
     get_pause_event,
     has_pending_approval,
     is_aborted,
     is_paused,
     peek_approval,
     pop_approval,
+    register_approval_request,
     set_abort,
     set_pause,
     start_reaper,
     submit_approval,
     wait_for_abort,
     wait_for_resume,
+    write_approval_decision,
 )
 
 __all__ = [
     "ApprovalDecision",
     "ApprovalResult",
+    "ApprovalRequest",
     "submit_approval",
+    "write_approval_decision",
     "pop_approval",
+    "register_approval_request",
+    "consume_approval",
+    "get_active_approval_for_thread",
     "has_pending_approval",
     "peek_approval",
     "set_abort",

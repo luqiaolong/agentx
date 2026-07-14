@@ -59,6 +59,7 @@ def build_custom_agent(
     rubric: str = "",
     grader_model: Any = None,
     chat_model: Any = None,
+    extra_system_prompt: str = "",
 ) -> Any:
     """构建自定义子代理 ReAct 子图，返回 CompiledStateGraph。
 
@@ -79,6 +80,8 @@ def build_custom_agent(
         checkpointer: 可选的 LangGraph checkpointer，用于状态持久化。
         rubric: 可选自纠规则文本；非空时由 create_agent 挂载 RubricMiddleware。
         grader_model: 可选判官模型；为 None 时 create_agent 默认用 get_chat_model(temperature=0)。
+        chat_model: 可选注入的 chat model；提供时直接使用，否则 fallback 到 get_chat_model。
+        extra_system_prompt: 额外 system prompt 片段（如 profile/scene prompt），拼接到 system_prompt 之后。
 
     Raises:
         KeyError: 模式 1 中 key 不存在于 custom_subagents。
@@ -96,10 +99,11 @@ def build_custom_agent(
                 key=key,
             )
         _temp = temperature if temperature is not None else 0.2
-        model = get_chat_model(temperature=_temp, streaming=True)
+        model = chat_model if chat_model is not None else get_chat_model(temperature=_temp, streaming=True)
         _tools = _make_custom_tools(thread_id or "", tools or [], workspace_path)
         prompt = (
             (system_prompt or "")
+            + (extra_system_prompt + "\n" if extra_system_prompt else "")
             + THINK_PROMPT_SUFFIX
             + build_workspace_prompt_suffix(workspace_path)
         )

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { devtools, persist, createJSONStorage } from "zustand/middleware";
-import type { ApprovalRequest, PermissionMode } from "../../../shared/api-types";
+import type { ApprovalRequest, PermissionMode, TeamOutcome } from "../../../shared/api-types";
 import { sandbox, memory } from "@/lib/api/http";
 import { initProjectConfig, getProjectConfig } from "@/lib/api/projectConfig";
 import { logger } from "@/lib/logger";
@@ -119,6 +119,17 @@ export type MessagePart =
       plan?: { agent: string; input: string; purpose: string }[];
       status: "running" | "done" | "error";
       doneAt?: number;
+      /**
+       * 团队业务终态 typed outcome（D4）。
+       * - success: 全部必需子任务成功
+       * - partial: 存在成功结果，也存在失败/跳过
+       * - error: 无法给出有效团队结果
+       * - aborted: 用户中止或上游 run 被取消
+       *
+       * 来自 team_done.outcome；缺省时前端 fallback 到 status（D3 终态分层）。
+       * TeamNodeCard 头部图标 / 文案优先消费此字段。
+       */
+      outcome?: TeamOutcome;
       /** 重规划历史记录 */
       replanHistory?: { newTasks: { id: string; agent: string; description: string; dependsOn: string[] }[]; replanCount: number; reason: string }[];
       /** 累积告警消息列表 */
@@ -318,6 +329,11 @@ export interface ChatState {
       reasoning?: string;
       agentUpdate?: { agent: string; taskId?: string; patch: Partial<TeamAgentState> };
       status?: "running" | "done" | "error";
+      /**
+       * 团队业务终态 typed outcome（D4）。
+       * 来自 team_done.outcome；TeamNodeCard 头部优先消费此字段，fallback 到 status。
+       */
+      outcome?: TeamOutcome;
       /** 后端黑板快照（来自 team_done SSE） */
       blackboard?: BlackboardSnapshot;
       /**
@@ -916,6 +932,7 @@ export const useChatStore = create<ChatState>()(
                   ...(updaters.blackboard ? { blackboard: updaters.blackboard } : {}),
                   ...(updaters.plan ? { plan: updaters.plan } : {}),
                   status: updaters.status ?? ("running" as const),
+                  ...(updaters.outcome ? { outcome: updaters.outcome } : {}),
                 };
                 // 插入到 parts 数组开头，让 TeamNodeCard 出现在消息顶部
                 parts.unshift(newPart);
@@ -1012,6 +1029,7 @@ export const useChatStore = create<ChatState>()(
                   doneAt,
                   ...(updaters.reasoning !== undefined ? { reasoning: updaters.reasoning } : {}),
                   ...(updaters.blackboard ? { blackboard: updaters.blackboard } : {}),
+                  ...(updaters.outcome !== undefined ? { outcome: updaters.outcome } : {}),
                   ...(newReplanHistory !== undefined ? { replanHistory: newReplanHistory } : {}),
                   ...(newWarnings !== undefined ? { warnings: newWarnings } : {}),
                 };

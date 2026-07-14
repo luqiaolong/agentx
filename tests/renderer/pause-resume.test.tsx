@@ -54,7 +54,18 @@ const chatMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("@/lib/api/chat", () => ({ chat: chatMock.chat }));
+vi.mock("@/lib/api/chat", () => ({
+  chat: chatMock.chat,
+  // pause-resume chatMock 未定义 getCurrentTraceId，这里补桩
+  getCurrentTraceId: vi.fn().mockReturnValue(null),
+  // I2.1: 新增按 thread_id 隔离的注册表函数（mock 返回 null 以 fallback 到 ref）
+  getPendingMessageId: vi.fn().mockReturnValue(null),
+  setPendingMessageId: vi.fn(),
+  getCurrentTaskId: vi.fn().mockReturnValue(null),
+  setCurrentTaskId: vi.fn(),
+  getLastUserQuery: vi.fn().mockReturnValue(null),
+  setLastUserQuery: vi.fn(),
+}));
 
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { useChatStream, type TodoItem } from "@/hooks/useChatStream";
