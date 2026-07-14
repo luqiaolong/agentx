@@ -251,14 +251,23 @@ def _cmd_models() -> None:
 
 async def _cmd_compact(thread_id: str, checkpointer: object | None) -> None:
     """压缩会话历史。"""
+    import uuid
+
     from langchain_core.messages import SystemMessage
     from app.memory import summarize_messages
+    from app.memory.compact_utils import split_messages_for_compact
 
     if not checkpointer:
         print("[checkpointer 未初始化]")
         return
 
-    config = {"configurable": {"thread_id": thread_id}}
+    # T1.7: fail-fast — 若 checkpointer 不支持写回，立即退出
+    if not (hasattr(checkpointer, "aput") or hasattr(checkpointer, "put")):
+        print("[checkpointer 不支持写回（缺少 aput/put 方法）]")
+        return
+
+    # T1.6: checkpoint_ns 是 LangGraph saver 必需字段（主线程命名空间为空字符串）
+    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
 
     try:
         if hasattr(checkpointer, "aget"):
@@ -279,8 +288,7 @@ async def _cmd_compact(thread_id: str, checkpointer: object | None) -> None:
         print("[消息不足，无需压缩]")
         return
 
-    to_compress = messages[:-2]
-    keep_recent = messages[-2:]
+    to_compress, keep_recent = split_messages_for_compact(messages)
     try:
         summary = await summarize_messages(to_compress)
     except Exception as exc:
@@ -289,13 +297,34 @@ async def _cmd_compact(thread_id: str, checkpointer: object | None) -> None:
 
     new_messages = [SystemMessage(content=summary), *keep_recent]
     new_channel_values = {**channel_values, "messages": new_messages}
-    new_checkpoint = {**checkpoint, "channel_values": new_channel_values}
+    # T1.6: 生成新 checkpoint ID 并设置 parent_checkpoint_id，
+    # 避免覆盖旧 checkpoint、破坏历史链
+    new_checkpoint_id = str(uuid.uuid4())
+    new_checkpoint = {
+        **checkpoint,
+        "id": new_checkpoint_id,
+        "parent_checkpoint_id": checkpoint.get("id"),
+        "channel_values": new_channel_values,
+    }
+    new_config = {
+        **config,
+        "configurable": {
+            **config.get("configurable", {}),
+            "checkpoint_id": new_checkpoint_id,
+            "checkpoint_ns": "",
+        },
+    }
+    # T1.6: new_versions 必须是 dict（channel -> version），而非 list
+    new_versions = {
+        **(checkpoint.get("channel_versions") or {}),
+        "messages": str(uuid.uuid4()),
+    }
 
     try:
         if hasattr(checkpointer, "aput"):
-            await checkpointer.aput(config, new_checkpoint, {"messages": "any"}, [])
+            await checkpointer.aput(new_config, new_checkpoint, {}, new_versions)
         elif hasattr(checkpointer, "put"):
-            checkpointer.put(config, new_checkpoint, {"messages": "any"}, [])
+            checkpointer.put(new_config, new_checkpoint, {}, new_versions)
         else:
             print("[checkpointer 不支持写回]")
             return

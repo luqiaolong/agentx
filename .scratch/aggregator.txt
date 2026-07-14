@@ -1,0 +1,188 @@
+﻿"""AgentTeam Aggregator锛氱患鍚堥粦鏉垮唴瀹圭敓鎴愭渶缁堝洖澶嶃€?
+鍖呭惈锛?- ``_AGGREGATOR_PROMPT``锛欰ggregator LLM prompt 妯℃澘銆?- ``_build_summary``锛氬崟涓瓙浠诲姟杈撳嚭姹囨€伙紙鎴柇 + 宸ュ叿鐥曡抗鎷兼帴锛夈€?- ``_quality_gate``锛欰ggregator 璐ㄩ噺闂紙鎷掔粷鍏ㄥけ璐?/ 鍏ㄧ浉鍚?/ 鍏ㄦ埅鏂殑鎯呭喌锛夈€?- ``_run_aggregator``锛氳皟鐢?Aggregator LLM锛屾祦寮忚緭鍑烘渶缁堝洖澶嶃€?- ``_SIMPLE_TASK_KEYWORDS`` / ``_should_downgrade_to_single``锛氱畝鍗曚换鍔￠檷绾ц瘎浼般€?"""
+
+from __future__ import annotations
+
+import contextlib
+from typing import TYPE_CHECKING, Any, AsyncIterator, Mapping
+
+from langchain_core.prompts import ChatPromptTemplate
+
+from app.config import get_settings
+from app.observability.logger import logger
+from app.observability.trace import bind_trace, current_trace_id
+from app.sse.events import make_sse_event
+from app.utils.text import ThinkFilter, compile_keyword_patterns, extract_chunk_text, matches_any
+from app.team.blackboard import _serialize_blackboard
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+
+__all__ = [
+    "_AGGREGATOR_PROMPT",
+    "_run_aggregator",
+    "_quality_gate",
+    "_build_summary",
+    "_should_downgrade_to_single",
+    "_SIMPLE_TASK_KEYWORDS",
+]
+
+
+# Aggregator prompt锛氫娇鐢?LangChain ChatPromptTemplate 鏇夸唬鎵嬪啓 f-string
+_AGGREGATOR_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "human",
+        "浣犳槸鍥㈤槦姹囨€讳笓瀹躲€備互涓嬫槸涓€缇や笓瀹堕拡瀵圭敤鎴烽棶棰樼殑鍗忎綔缁撴灉銆俓n\n"
+        "鐢ㄦ埛闂锛歿user_message}\n\n"
+        "涓撳鍙戠幇锛歕n{blackboard_summary}\n\n"
+        "澶辫触璇存槑锛歕n{error_summary}\n\n"
+        "璇风患鍚堜互涓婁俊鎭紝缁欏嚭瀹屾暣銆佸噯纭殑鏈€缁堝洖绛斻€?
+        "濡傛灉涓撳缁撴灉鏈夊啿绐侊紝璇疯鏄庡苟缁欏嚭鍒ゆ柇渚濇嵁銆?
+        "淇濇寔鍥炵瓟绠€娲侊紝浣跨敤鏍囧噯 Markdown銆?,
+    ),
+])
+
+
+def _build_summary(text_parts: list[str], tool_traces: list[str], agent_name: str) -> str:
+    settings = get_settings()
+    max_chars = settings.team_result_max_chars
+    full_text = "".join(text_parts).strip()
+    if not full_text and not tool_traces:
+        return f"[{agent_name}] 鏈繑鍥炴湁鏁堝唴瀹?
+    # 鑻ユ枃鏈緝闀匡紝鍙栧墠 max_chars
+    if len(full_text) > max_chars:
+        full_text = full_text[:max_chars] + "\n[缁撴灉宸叉埅鏂璢"
+    summary = full_text
+    if tool_traces:
+        traces = "\n".join(tool_traces[:5])
+        summary += f"\n\n宸ュ叿鐥曡抗锛歕n{traces}"
+    return summary.strip()
+
+
+def _quality_gate(blackboard: Mapping) -> tuple[bool, str]:
+    """Aggregator 璐ㄩ噺闂細妫€鏌ラ粦鏉跨粨鏋滆川閲忋€?
+    Args:
+        blackboard: 鍚?``findings`` / ``errors`` key 鐨?Mapping锛堥€氬父涓?TeamState dict锛夈€?
+    Returns:
+        (ok, reason) 鈥?ok=False 鏃?reason 璇存槑鎷掔粷鍘熷洜
+    """
+    findings = blackboard.get("findings", {})
+    if not findings:
+        return False, "鏃犱换浣曟垚鍔熺殑瀛愪换鍔＄粨鏋?
+    # M2: 浠呭綋鍐呭纭疄鍙墿鎴柇鏍囪鏃舵墠鎷掔粷锛堝師 len<50 妫€鏌ュ洜 max_chars鈮?000 姘歌繙涓?False锛?    truncated_only = all(
+        v.strip() == "[缁撴灉宸叉埅鏂璢"
+        for v in findings.values()
+    )
+    if truncated_only:
+        return False, "鎵€鏈夌粨鏋滃潎涓烘埅鏂墖娈碉紝鏃犳湁鏁堝唴瀹?
+    # R5: 鎵€鏈?findings 瀹屽叏鐩稿悓锛堜笖闈炵┖銆侀潪鎴柇鏍囪锛夆啋 鎷掔粷
+    # 鎴柇鏍囪鍦烘櫙宸茬敱涓婃柟 truncated_only 鍒嗘敮澶勭悊锛屾澶?identical 鍊间笉浼氭槸 "[缁撴灉宸叉埅鏂璢"銆?    values = [v.strip() for v in findings.values()]
+    if len(values) >= 2 and values[0] and all(v == values[0] for v in values):
+        logger.info("quality gate rejected: all findings identical")
+        return False, "all_findings_identical"
+    return True, ""
+
+
+async def _run_aggregator(
+    user_message: str,
+    blackboard: Mapping,
+    chat_model: BaseChatModel | None = None,
+    abort_event: Any = None,
+) -> AsyncIterator[dict[str, str]]:
+    """璋冪敤 Aggregator LLM锛屾祦寮忚緭鍑烘渶缁堝洖澶嶃€?
+    Args:
+        blackboard: 鍚?``findings`` / ``errors`` key 鐨?Mapping锛堥€氬父涓?TeamState dict锛夈€?        chat_model: 鍙€夋敞鍏ョ殑 ChatModel銆傞潪 None 鏃剁洿鎺ヤ娇鐢紙璇勬祴妗嗘灦娉ㄥ叆 MockChatModel锛夛紱
+            None 鏃惰皟鐢?``app.llm.get_chat_model()`` 鑾峰彇鐪熷疄 LLM銆?        abort_event: 鍙€?``asyncio.Event``锛屽湪娴佸紡杈撳嚭杩囩▼涓鏌ヤ腑姝俊鍙凤紝
+            宸蹭腑姝㈠垯鎻愬墠杩斿洖閮ㄥ垎缁撴灉锛圚3 淇锛夈€?    """
+    # 鐩存帴浠?app.llm 鑾峰彇 get_chat_model锛坴2锛氫笉鍐嶉€氳繃 orchestrator 妯″潡灞炴€ц闂級
+    from app.llm import get_chat_model
+
+    settings = get_settings()
+
+    # trace_id 閫忎紶锛歘run_aggregator 閫氬父鐢?LangGraph 鑺傜偣锛坃aggregate_node锛夎皟鐢紝
+    # 鑺傜偣鐢?asyncio.create_task 璋冨害锛孋ontextVar 涓嶄細鑷姩璺ㄥ崗绋嬩紶鎾€?    # 鏄惧紡缁戝畾璁?aggregator 鐨?logger / make_sse_event 涔熻兘鎷垮埌 trace_id銆?    _trace_id = current_trace_id() or ""
+    _trace_cm = bind_trace(_trace_id) if _trace_id else contextlib.nullcontext()
+    with _trace_cm:
+        # 璐ㄩ噺闂ㄦ鏌?        ok, reason = _quality_gate(blackboard)
+        if not ok:
+            logger.warning("team aggregator quality gate rejected", reason=reason)
+            yield make_sse_event(
+                "error",
+                {"message": f"涓撳缁撴灉璐ㄩ噺涓嶈冻: {reason}"},
+            )
+            return
+
+        try:
+            llm = chat_model if chat_model is not None else get_chat_model(
+                temperature=settings.llm_temperature_aggregator, streaming=True
+            )
+        except ValueError as exc:
+            yield make_sse_event("error", {"message": f"LLM 涓嶅彲鐢? {exc}"})
+            return
+
+        errors = blackboard.get("errors", {})
+        prompt = _AGGREGATOR_PROMPT.invoke({
+            "user_message": user_message,
+            "blackboard_summary": _serialize_blackboard(blackboard),
+            "error_summary": "\n".join(f"{k}: {v}" for k, v in errors.items()) or "鏃?,
+        })
+
+        think_filter = ThinkFilter(max_hold=settings.think_filter_max_hold, retain_think=True)
+        token_count = 0
+        reasoning_count = 0
+        total_token_chars = 0
+        try:
+            async for chunk in llm.astream(prompt):
+                # H3: 娴佸紡杈撳嚭杩囩▼涓鏌?abort_event锛屽凡涓鍒欐彁鍓嶈繑鍥為儴鍒嗙粨鏋?                if abort_event is not None and abort_event.is_set():
+                    logger.info("team aggregator aborted mid-stream", token_events=token_count)
+                    return
+                raw = extract_chunk_text(chunk, strip=False)
+                cleaned = think_filter.feed(raw)
+                if getattr(think_filter, "_retain_think", False):
+                    reasoning = think_filter.take_think()
+                    if reasoning:
+                        reasoning_count += 1
+                        yield make_sse_event("reasoning", {"content": reasoning, "source": "team"})
+                if cleaned:
+                    token_count += 1
+                    total_token_chars += len(cleaned)
+                    yield make_sse_event("token", cleaned)
+            tail = think_filter.flush()
+            if tail:
+                token_count += 1
+                total_token_chars += len(tail)
+                yield make_sse_event("token", tail)
+            logger.info(
+                "team aggregator stream completed",
+                token_events=token_count,
+                reasoning_events=reasoning_count,
+                total_token_chars=total_token_chars,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("team aggregator stream failed", error=str(exc))
+            yield make_sse_event("error", {"message": f"Aggregator 娴佸紡澶辫触: {exc}"})
+
+
+_SIMPLE_TASK_KEYWORDS = frozenset({
+    # 浠呭尮閰嶅己璇箟锛氶棶鍊?/ 鑷磋阿 / 绠€鍗曞懡浠ゅ紡缈昏瘧
+    # 娉ㄦ剰锛氶伩鍏?"瑙ｉ噴"/"浠€涔堟槸"/"鎬荤粨"/"鍒楀嚭" 绛夋櫘閫氬姩璇嶏紝
+    # 鍚﹀垯澶嶆潅浠诲姟锛?璇峰府鎴戝垎鏋愬苟瑙ｉ噴..." / "鍒楀嚭 3 涓楠ゅ苟鎬荤粨"锛変細琚闄嶇骇
+    "浣犲ソ", "hello", "hi", "璋㈣阿", "缈昏瘧涓€涓?,
+})
+
+# 鍖归厤妯″紡锛氫腑鏂?keywords 鐢ㄥ瓙涓插尮閰嶏紱鑻辨枃 keywords 鐢ㄥ崟璇嶈竟鐣屽尮閰?# 閬垮厤 "hi" 瀛愪覆鍛戒腑 "this"/"think" 绛夎嫳鏂囪瘝銆?# D3: 缁熶竴浣跨敤 app.utils.text.compile_keyword_patterns锛屼笌 planner 鍏变韩閫昏緫銆?_KEYWORD_PATTERNS = compile_keyword_patterns(list(_SIMPLE_TASK_KEYWORDS))
+
+
+def _should_downgrade_to_single(message: str) -> tuple[bool, str]:
+    """璇勪及鏄惁搴旈檷绾у埌鍗?agent 璺緞銆?
+    鐭秷鎭槇鍊兼寜瀛楃绫诲瀷鑷€傚簲锛?    - 鍚?ASCII锛堣嫳鏂?鏁板瓧锛夛細< 12 瀛楃瑙嗕负鐭紙閬垮厤鑻辨枃 10 瀛楃琚悶鎺夛級
+    - 鍏ㄤ腑鏂?鍏ㄨ锛? 6 瀛楃瑙嗕负鐭紙涓枃 10 瀛楃淇℃伅閲忓凡楗卞拰锛?
+    鍏抽敭璇嶅尮閰嶏細涓枃瀛楃鐢ㄥ瓙涓诧紱鑻辨枃瀛楃鐢?``\\b\\w+\\b`` 鍗曡瘝杈圭晫锛?    閬垮厤 ``"hi" in "this"`` 绛夊瓙涓茶鍛戒腑銆?    """
+    lower = message.lower().strip()
+    has_ascii = any(ord(c) < 128 and c.isalnum() for c in lower)
+    threshold = 12 if has_ascii else 6
+    if len(lower) < threshold:
+        return True, "娑堟伅杩囩煭锛屾棤闇€ team 鍗忎綔"
+    if matches_any(lower, _KEYWORD_PATTERNS):
+        return True, "鍛戒腑绠€鍗曚换鍔″叧閿瘝"
+    return False, ""

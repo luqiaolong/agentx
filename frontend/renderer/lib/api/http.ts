@@ -277,10 +277,12 @@ export const models = {
 export const memory = {
   listSkills: async (): Promise<{ skills: SkillFileInfo[] }> => {
     const r = await fetch(`${API_BASE}/api/memory/skills`);
+    await assertOk(r);
     return (await r.json()) as { skills: SkillFileInfo[] };
   },
   getSkill: async (name: string): Promise<{ content: string }> => {
     const r = await fetch(`${API_BASE}/api/memory/skills/${encodeURIComponent(name)}`);
+    await assertOk(r);
     return (await r.json()) as { content: string };
   },
   saveSkill: async (name: string, content: string): Promise<unknown> => {
@@ -289,22 +291,26 @@ export const memory = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, content }),
     });
+    await assertOk(r);
     return r.json();
   },
   deleteSkill: async (name: string): Promise<unknown> => {
     const r = await fetch(`${API_BASE}/api/memory/skills/${encodeURIComponent(name)}`, {
       method: "DELETE",
     });
+    await assertOk(r);
     return r.json();
   },
   getCheckpointer: async (): Promise<{ db_size: number; threads: ThreadInfo[] }> => {
     const r = await fetch(`${API_BASE}/api/memory/checkpointer`);
+    await assertOk(r);
     return (await r.json()) as { db_size: number; threads: ThreadInfo[] };
   },
   deleteThread: async (threadId: string): Promise<{ deleted: number }> => {
     const r = await fetch(`${API_BASE}/api/memory/checkpointer/${encodeURIComponent(threadId)}`, {
       method: "DELETE",
     });
+    await assertOk(r);
     return (await r.json()) as { deleted: number };
   },
   rewindThread: async (
@@ -317,6 +323,7 @@ export const memory = {
         method: "POST",
       },
     );
+    await assertOk(r);
     return (await r.json()) as { ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null };
   },
   getProfile: async (
@@ -333,6 +340,7 @@ export const memory = {
       ? `${API_BASE}/api/memory/profile?${qs}`
       : `${API_BASE}/api/memory/profile`;
     const r = await fetch(url);
+    await assertOk(r);
     return (await r.json()) as { entries: ProfileEntry[] };
   },
   saveProfile: async (
@@ -347,6 +355,7 @@ export const memory = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(entry),
     });
+    await assertOk(r);
     return r.json();
   },
   updateProfile: async (
@@ -366,6 +375,7 @@ export const memory = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content, category, title, keywords, scenarios }),
     });
+    await assertOk(r);
     return r.json();
   },
   deleteProfile: async (
@@ -378,6 +388,7 @@ export const memory = {
     const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs}`, {
       method: "DELETE",
     });
+    await assertOk(r);
     return r.json();
   },
   extractProfile: async (
@@ -394,11 +405,12 @@ export const memory = {
         assistant_reply: reply,
       }),
     });
+    await assertOk(r);
     return (await r.json()) as { extracted: number };
   },
   dream: async (
     workspacePath?: string,
-  ): Promise<{ ok: boolean; promoted: number; compressed: number; removed: number; summary: string }> => {
+  ): Promise<{ ok: boolean; applied: number; rolled_back: number; summary: string }> => {
     const qs = workspacePath
       ? `?workspace_path=${encodeURIComponent(workspacePath)}`
       : "";
@@ -408,9 +420,8 @@ export const memory = {
     await assertOk(r);
     return (await r.json()) as {
       ok: boolean;
-      promoted: number;
-      compressed: number;
-      removed: number;
+      applied: number;
+      rolled_back: number;
       summary: string;
     };
   },

@@ -583,13 +583,18 @@ export function ChatView() {
     // pending assistant 消息并存导致内容重复/错位。暂停事件（paused SSE）
     // 只调用 markReasoningDone + markRunningToolCallsComplete 收尾，不删除消息，
     // 因此这里需要手动清理最后一条 assistant 消息。
+    // T1.8: 等待后端 rewind 成功后才继续恢复；失败时显示错误，不 resend。
     if (sess && resumeContent.trim()) {
       const lastAssistantMsg = sess.messages
         .slice()
         .reverse()
         .find((m) => m.role === "assistant");
       if (lastAssistantMsg) {
-        deleteMessagesAfter(lastAssistantMsg.id);
+        const result = await deleteMessagesAfter(lastAssistantMsg.id);
+        if (!result.success) {
+          setErrorMsg("回退后端检查点失败，无法恢复会话。请重试。");
+          return;
+        }
       }
     }
 
@@ -628,10 +633,16 @@ export function ChatView() {
             key={currentId ?? 'empty'}
             messages={messages}
             isStreaming={currentSessionRunning}
-            onEditSubmit={(messageId, newContent) => {
+            onEditSubmit={async (messageId, newContent) => {
               // 就地编辑提交：删除该消息及之后的所有消息，重新发送编辑后的内容
               if (currentSessionRunning) return;
-              deleteMessagesAfter(messageId);
+              // T1.8: 必须等待后端 rewind 成功后才 resend；
+              // rewind 失败时不 resend，显示可恢复错误
+              const result = await deleteMessagesAfter(messageId);
+              if (!result.success) {
+                setErrorMsg("回退后端检查点失败，未重新发送。请重试或刷新会话。");
+                return;
+              }
               setErrorMsg(null);
               // 触发重新发送（复用 handleSend）
               void handleSend(newContent);

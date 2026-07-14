@@ -408,9 +408,18 @@ export interface ChatState {
   clearMessages: () => void;
   /**
    * 删除指定消息及其之后的所有消息（用于重新编辑后重发）。
-   * 返回被删除的消息中最后一条 user 消息的 text parts 拼接（用于回填输入框）。
+   *
+   * T1.8: 必须先 await 后端 rewind 成功后才删除前端消息并返回 success=true。
+   * rewind 失败时返回 success=false 且**不**修改前端消息列表，
+   * 调用方据此决定是否 resend（rewind 失败时禁止 resend）。
+   *
+   * @returns
+   *   - `success`: 后端 rewind 是否成功（无 rewind 调用时视为成功）
+   *   - `lastUserContent`: 被删除段中最后一条 user 消息的 text parts 拼接（用于回填输入框）
    */
-  deleteMessagesAfter: (messageId: string) => string | null;
+  deleteMessagesAfter: (
+    messageId: string,
+  ) => Promise<{ success: boolean; lastUserContent: string | null }>;
   /**
    * 删除指定单条消息（用于 error 时清理空 pending assistant 消息）。
    */
@@ -1171,48 +1180,65 @@ export const useChatStore = create<ChatState>()(
           });
         },
 
-        deleteMessagesAfter: (messageId) => {
+        deleteMessagesAfter: async (messageId) => {
           let lastUserContent: string | null = null;
           const cid = get().currentId;
-          let keepMessagesCount = 0;
+
+          // Phase 1: 计算删除计划（不修改 store）
+          if (!cid) {
+            return { success: false, lastUserContent: null };
+          }
+          const sessBefore = get().sessions[cid];
+          if (!sessBefore) {
+            return { success: false, lastUserContent: null };
+          }
+          const idx = sessBefore.messages.findIndex((m) => m.id === messageId);
+          if (idx === -1) {
+            return { success: false, lastUserContent: null };
+          }
+          const kept = sessBefore.messages.slice(0, idx);
+          const keepMessagesCount = kept.length;
+          const removed = sessBefore.messages.slice(idx);
+          const lastUser = removed.slice().reverse().find((m) => m.role === "user");
+          if (lastUser) {
+            lastUserContent = lastUser.parts
+              .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
+              .map((p) => p.text)
+              .join("");
+          }
+
+          // Phase 2: await 后端 rewind 成功后才删除前端消息
+          // T1.8: rewind 失败时禁止 resend，且不修改前端消息列表
+          // （保持 UI 与后端 checkpoint 一致，调用方显示可恢复错误）
+          if (keepMessagesCount > 0) {
+            try {
+              const result = await memory.rewindThread(cid, keepMessagesCount);
+              if (!result.ok) {
+                return { success: false, lastUserContent };
+              }
+            } catch {
+              // rewind 失败（网络错误 / HTTP 4xx/5xx / preload API 不可用）
+              return { success: false, lastUserContent };
+            }
+          }
+
+          // Phase 3: rewind 成功，删除前端消息
           set((s) => {
             if (!cid || !s.sessions[cid]) return s;
             const sess = s.sessions[cid];
-            const idx = sess.messages.findIndex((m) => m.id === messageId);
-            if (idx === -1) return s;
-            const kept = sess.messages.slice(0, idx);
-            // 记录保留的消息数量（用于后端 checkpoint 精准回退）
-            keepMessagesCount = kept.length;
-            // 记录被删除段中最后一条 user 消息的 text parts 拼接（用于回填输入框）
-            const removed = sess.messages.slice(idx);
-            const lastUser = removed.reverse().find((m) => m.role === "user");
-            if (lastUser) {
-              // 从 parts 中的 text parts 派生（移除 content 兼容字段后改用 parts）
-              lastUserContent = lastUser.parts
-                .filter((p): p is { type: "text"; id: string; text: string } => p.type === "text")
-                .map((p) => p.text)
-                .join("");
-            }
+            // 重新定位（防止并发修改），idx 可能已变
+            const currentIdx = sess.messages.findIndex((m) => m.id === messageId);
+            if (currentIdx === -1) return s;
+            const currentKept = sess.messages.slice(0, currentIdx);
+            const currentRemoved = sess.messages.slice(currentIdx);
             // 同步清理 messageIndex 反向索引（被删除的 message 都 unindex）
-            for (const m of removed) {
+            for (const m of currentRemoved) {
               unindexMessage(m.id);
             }
-            const sessions = { ...s.sessions, [cid]: { ...sess, messages: kept } };
+            const sessions = { ...s.sessions, [cid]: { ...sess, messages: currentKept } };
             return { sessions };
           });
-          // 同步回退后端 checkpoint 到编辑点之前的状态，保留编辑点之前的上下文
-          // 防止重新编辑后历史消息中的 tool_calls 残留导致 LangGraph INVALID_CHAT_HISTORY
-          // best-effort，失败不阻塞前端
-          if (cid && keepMessagesCount > 0) {
-            try {
-              memory.rewindThread(cid, keepMessagesCount).catch(() => {
-                /* 后端不可用或 thread 不存在时静默忽略 */
-              });
-            } catch {
-              /* preload API 不可用时静默忽略 */
-            }
-          }
-          return lastUserContent;
+          return { success: true, lastUserContent };
         },
 
         deleteMessage: (messageId) => {

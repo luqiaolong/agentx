@@ -1,0 +1,25 @@
+﻿import type { Session } from "./index";
+
+/**
+ * @deprecated 已被 `stores/chat/messageIndex.ts` 的 `lookupSessionId` 取代。
+ *
+ * 旧实现遍历所有 sessions × messages 定位 messageId，复杂度 O(S×M)；
+ * 新代码用 module-level Map 反向索引实现 O(1) 查找，由 store actions 同步维护。
+ *
+ * 保留此函数仅为兼容外部引用，后续清理后移除。新代码请用：
+ * ```ts
+ * import { lookupSessionId } from "./messageIndex";
+ * ```
+ */
+export function findSessionIdByMessageId(
+  sessions: Record<string, Session>,
+  messageId: string,
+): string | null {
+  for (const sid of Object.keys(sessions)) {
+    const candidate = sessions[sid];
+    if (candidate && candidate.messages.some((m) => m.id === messageId)) {
+      return sid;
+    }
+  }
+  return null;
+}

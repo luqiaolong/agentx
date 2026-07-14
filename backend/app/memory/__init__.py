@@ -6,6 +6,7 @@
 - ``profile_store``：长期用户画像 CRUD（``data/config/profile.json``）
 - ``checkpointer_view``：checkpointer 只读视图 + 单会话清理
 - ``summarizer``：消息摘要压缩（``/compact`` 命令后端）
+- ``compact_utils``：``/compact`` 切分辅助（ToolMessage / AIMessage 配对保护）
 
 上下文管理（消息截断 + token 预算）已由 deepagents SummarizationMiddleware
 + PatchToolCallsMiddleware 接管，``context`` 模块已删除。
@@ -22,6 +23,7 @@ from .checkpointer import (
     get_async_checkpointer,
     get_checkpointer,
 )
+from .compact_utils import split_messages_for_compact
 from .checkpointer_view import (
     ThreadIdInvalid,
     delete_thread,
@@ -75,5 +77,6 @@ __all__ = [
     "list_threads",
     "rewind_thread",
     "save_skill_file",
+    "split_messages_for_compact",
     "summarize_messages",
 ]

@@ -24,6 +24,18 @@ vi.hoisted(() => {
   });
 });
 
+// T1.8: deleteMessagesAfter 现在 await memory.rewindThread 才删除前端消息。
+// mock http 模块，让 rewindThread 解析成功，测试才能验证删除后的索引行为。
+vi.mock("@/lib/api/http", () => ({
+  sandbox: {
+    authorize: vi.fn().mockResolvedValue({}),
+    revoke: vi.fn().mockResolvedValue({}),
+  },
+  memory: {
+    rewindThread: vi.fn().mockResolvedValue({ ok: true, deleted: 0, kept: 0, cutoff_checkpoint_id: null }),
+  },
+}));
+
 import { useChatStore } from "@/stores/chat";
 import {
   lookupSessionId,
@@ -126,7 +138,9 @@ describe("messageIndex 反向索引一致性", () => {
     useChatStore.getState().addMessage({ id: "m3", role: "user", content: "third", ts: 3 });
     useChatStore.getState().addMessage({ id: "m4", role: "assistant", content: "fourth", ts: 4 });
     // 从 m2 开始删除（含 m2 及之后）
-    useChatStore.getState().deleteMessagesAfter("m2");
+    // T1.8: deleteMessagesAfter 现在是 async，必须 await
+    const result = await useChatStore.getState().deleteMessagesAfter("m2");
+    expect(result.success).toBe(true);
     // m1 保留
     expect(lookupSessionId("m1")).toBe(sid);
     // m2/m3/m4 被删除
