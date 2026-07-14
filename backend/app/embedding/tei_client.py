@@ -19,7 +19,6 @@ from tenacity import (
 )
 
 from app.config import get_settings
-from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
 
 
@@ -111,36 +110,27 @@ class TeiClient:
         return results
 
     async def _do_embed(self, payload: dict, batch_size: int) -> list[list[float]]:
-        """发送一次嵌入请求（带重试与 tracing），返回 ``list[list[float]]``。
+        """发送一次嵌入请求（带重试），返回 ``list[list[float]]``。
 
         ``payload["input"]`` 由调用方决定是单元素列表（单文本）还是多元素列表（批量）。
         响应格式为 ``{"embeddings": [[float, ...], ...]}``，提取 ``embeddings`` 字段。
         """
-        settings = get_settings()
-        with trace_span(
-            "embedding.tei.embed",
-            model=settings.embedding_model,
-            batch_size=batch_size,
-            embedding_url=settings.embedding_url,
-            inputs=mark_redacted(),
-            outputs=mark_redacted(),
-        ):
-            response = await self._post_with_retry(payload)
-            data = response.json()
-            # BGE-M3 服务返回 {"embeddings": [[float, ...], ...]}
-            if isinstance(data, dict) and "embeddings" in data:
-                embeddings = data["embeddings"]
-                if not isinstance(embeddings, list):
-                    raise EmbeddingUnavailable(
-                        f"BGE-M3 返回 embeddings 字段非 list: {type(embeddings).__name__}"
-                    )
-                return embeddings
-            # 兼容旧 TEI 格式 [[float, ...], ...]
-            if isinstance(data, list):
-                return data
-            raise EmbeddingUnavailable(
-                f"BGE-M3 返回非预期格式: {type(data).__name__}"
-            )
+        response = await self._post_with_retry(payload)
+        data = response.json()
+        # BGE-M3 服务返回 {"embeddings": [[float, ...], ...]}
+        if isinstance(data, dict) and "embeddings" in data:
+            embeddings = data["embeddings"]
+            if not isinstance(embeddings, list):
+                raise EmbeddingUnavailable(
+                    f"BGE-M3 返回 embeddings 字段非 list: {type(embeddings).__name__}"
+                )
+            return embeddings
+        # 兼容旧 TEI 格式 [[float, ...], ...]
+        if isinstance(data, list):
+            return data
+        raise EmbeddingUnavailable(
+            f"BGE-M3 返回非预期格式: {type(data).__name__}"
+        )
 
     async def _post_with_retry(self, payload: dict) -> httpx.Response:
         """带 tenacity 重试的 POST。重试耗尽或非重试错误转为 ``EmbeddingUnavailable``。"""
@@ -291,52 +281,44 @@ class LangChainTeiEmbeddings(Embeddings):
         return results
 
     def _sync_post(self, payload: dict, batch_size: int) -> list[list[float]]:
-        """同步 POST + tenacity 重试 + tracing，返回 ``list[list[float]]``。
+        """同步 POST + tenacity 重试，返回 ``list[list[float]]``。
 
         重试策略与异步 ``_post_with_retry`` 一致：超时 / 网络层错误重试 4 次，
         HTTP 状态码错误不重试。重试耗尽或非重试错误转为 ``EmbeddingUnavailable``。
         """
         settings = get_settings()
-        with trace_span(
-            "embedding.tei.embed",
-            model=settings.embedding_model,
-            batch_size=batch_size,
-            embedding_url=settings.embedding_url,
-            inputs=mark_redacted(),
-            outputs=mark_redacted(),
-        ):
-            try:
-                for attempt in Retrying(
-                    stop=_RETRY_STOP,
-                    wait=_RETRY_WAIT,
-                    retry=_RETRY_RETRY,
-                    reraise=True,
-                ):
-                    with attempt:
-                        with httpx.Client(timeout=settings.embedding_timeout) as client:
-                            response = client.post(
-                                settings.embedding_url,
-                                json=payload,
-                                timeout=settings.embedding_timeout,
-                            )
-                            response.raise_for_status()
-                            data = response.json()
-                            if isinstance(data, dict) and "embeddings" in data:
-                                embeddings = data["embeddings"]
-                                if not isinstance(embeddings, list):
-                                    raise EmbeddingUnavailable(
-                                        f"BGE-M3 返回 embeddings 字段非 list: "
-                                        f"{type(embeddings).__name__}"
-                                    )
-                                return embeddings
-                            if isinstance(data, list):
-                                return data
-                            raise EmbeddingUnavailable(
-                                f"BGE-M3 返回非预期格式: {type(data).__name__}"
-                            )
-            except httpx.HTTPError as exc:
-                raise EmbeddingUnavailable(f"BGE-M3 嵌入服务不可用: {exc}") from exc
-            raise EmbeddingUnavailable("BGE-M3 嵌入服务不可用: 未知原因")
+        try:
+            for attempt in Retrying(
+                stop=_RETRY_STOP,
+                wait=_RETRY_WAIT,
+                retry=_RETRY_RETRY,
+                reraise=True,
+            ):
+                with attempt:
+                    with httpx.Client(timeout=settings.embedding_timeout) as client:
+                        response = client.post(
+                            settings.embedding_url,
+                            json=payload,
+                            timeout=settings.embedding_timeout,
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+                        if isinstance(data, dict) and "embeddings" in data:
+                            embeddings = data["embeddings"]
+                            if not isinstance(embeddings, list):
+                                raise EmbeddingUnavailable(
+                                    f"BGE-M3 返回 embeddings 字段非 list: "
+                                    f"{type(embeddings).__name__}"
+                                )
+                            return embeddings
+                        if isinstance(data, list):
+                            return data
+                        raise EmbeddingUnavailable(
+                            f"BGE-M3 返回非预期格式: {type(data).__name__}"
+                        )
+        except httpx.HTTPError as exc:
+            raise EmbeddingUnavailable(f"BGE-M3 嵌入服务不可用: {exc}") from exc
+        raise EmbeddingUnavailable("BGE-M3 嵌入服务不可用: 未知原因")
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         """异步批量嵌入。``None`` 跳过位替换为零向量（保留顺序对齐）。"""

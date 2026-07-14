@@ -19,7 +19,6 @@ import time
 from typing import Any
 
 from app.config import get_settings
-from app.observability.langsmith import mark_redacted, trace_span
 from app.observability.logger import logger
 
 # ---- pymilvus 顶层 import（失败时降级为 None，便于单测 mock）----
@@ -340,82 +339,77 @@ class MilvusClient:
             raise MilvusUnavailable("embedding module not available")
         collection = self._ensure_collection()
 
-        with trace_span(
-            "vectorstore.milvus.ingest",
-            source_type=source_type,
-            count=len(texts),
-        ):
-            # 1. 嵌入（on_skip 回调记录被跳过的 source + chunk_idx）
-            # tei_client.embed_texts 调用约定：on_skip(text, err) — 2 个参数。
-            # 此处通过闭包捕获 texts 索引以记录 source + chunk_idx。
-            skipped_indices: list[int] = []
+        # 1. 嵌入（on_skip 回调记录被跳过的 source + chunk_idx）
+        # tei_client.embed_texts 调用约定：on_skip(text, err) — 2 个参数。
+        # 此处通过闭包捕获 texts 索引以记录 source + chunk_idx。
+        skipped_indices: list[int] = []
 
-            def _on_skip(text: str, err: Any) -> None:
-                # 在 texts 中定位被跳过的索引（按对象身份匹配，避免重复文本误判）
-                meta = {}
-                for i, t in enumerate(texts):
-                    if t is text:
-                        if i not in skipped_indices:
-                            skipped_indices.append(i)
-                        meta = metadatas[i] if i < len(metadatas) else {}
-                        break
-                logger.warning(
-                    "skip chunk in ingest: source={!r} chunk_idx={!r} reason={}",
-                    meta.get("source"),
-                    meta.get("chunk_idx"),
-                    str(err),
-                )
+        def _on_skip(text: str, err: Any) -> None:
+            # 在 texts 中定位被跳过的索引（按对象身份匹配，避免重复文本误判）
+            meta = {}
+            for i, t in enumerate(texts):
+                if t is text:
+                    if i not in skipped_indices:
+                        skipped_indices.append(i)
+                    meta = metadatas[i] if i < len(metadatas) else {}
+                    break
+            logger.warning(
+                "skip chunk in ingest: source={!r} chunk_idx={!r} reason={}",
+                meta.get("source"),
+                meta.get("chunk_idx"),
+                str(err),
+            )
 
-            try:
-                vectors = await embed_texts(texts, on_skip=_on_skip)
-            except Exception as exc:
-                raise MilvusUnavailable(f"embedding failed: {exc}") from exc
+        try:
+            vectors = await embed_texts(texts, on_skip=_on_skip)
+        except Exception as exc:
+            raise MilvusUnavailable(f"embedding failed: {exc}") from exc
 
-            # vectors[i] 为 None 表示该位置文本被跳过
-            kept_indices = [i for i, v in enumerate(vectors) if v is not None]
-            if not kept_indices:
-                logger.warning("ingest: all chunks skipped, nothing to insert")
-                return []
+        # vectors[i] 为 None 表示该位置文本被跳过
+        kept_indices = [i for i, v in enumerate(vectors) if v is not None]
+        if not kept_indices:
+            logger.warning("ingest: all chunks skipped, nothing to insert")
+            return []
 
-            now = int(time.time())
-            kept_texts = [texts[i] for i in kept_indices]
-            kept_sources = [metadatas[i].get("source", "") for i in kept_indices]
-            kept_source_types = [source_type for _ in kept_indices]
-            kept_chunk_idx = [int(metadatas[i].get("chunk_idx", 0)) for i in kept_indices]
-            kept_created_at = [
-                int(metadatas[i].get("created_at", now)) for i in kept_indices
-            ]
-            kept_vectors = [vectors[i] for i in kept_indices]
+        now = int(time.time())
+        kept_texts = [texts[i] for i in kept_indices]
+        kept_sources = [metadatas[i].get("source", "") for i in kept_indices]
+        kept_source_types = [source_type for _ in kept_indices]
+        kept_chunk_idx = [int(metadatas[i].get("chunk_idx", 0)) for i in kept_indices]
+        kept_created_at = [
+            int(metadatas[i].get("created_at", now)) for i in kept_indices
+        ]
+        kept_vectors = [vectors[i] for i in kept_indices]
 
-            data = [
-                kept_texts,
-                kept_sources,
-                kept_source_types,
-                kept_chunk_idx,
-                kept_created_at,
-                kept_vectors,
-            ]
+        data = [
+            kept_texts,
+            kept_sources,
+            kept_source_types,
+            kept_chunk_idx,
+            kept_created_at,
+            kept_vectors,
+        ]
 
-            # 2. 插入到对应 partition
-            try:
-                result = await asyncio.to_thread(
-                    collection.insert,
-                    data=data,
-                    partition_name=source_type,
-                )
-            except Exception as exc:
-                raise MilvusUnavailable(
-                    f"Milvus insert failed: {exc}"
-                ) from exc
+        # 2. 插入到对应 partition
+        try:
+            result = await asyncio.to_thread(
+                collection.insert,
+                data=data,
+                partition_name=source_type,
+            )
+        except Exception as exc:
+            raise MilvusUnavailable(
+                f"Milvus insert failed: {exc}"
+            ) from exc
 
-            # MutationResult.primary_keys -> numpy array of inserted ids
-            primary_keys = getattr(result, "primary_keys", None)
-            if primary_keys is None:
-                return []
-            try:
-                return [int(pk) for pk in list(primary_keys)]
-            except TypeError:
-                return list(primary_keys)
+        # MutationResult.primary_keys -> numpy array of inserted ids
+        primary_keys = getattr(result, "primary_keys", None)
+        if primary_keys is None:
+            return []
+        try:
+            return [int(pk) for pk in list(primary_keys)]
+        except TypeError:
+            return list(primary_keys)
 
     # ---------------- 检索 ----------------
 
@@ -435,62 +429,61 @@ class MilvusClient:
         collection = self._ensure_collection()
 
         start = time.perf_counter()
-        with trace_span(
-            "vectorstore.milvus.search",
+
+        # 1. 嵌入 query
+        try:
+            vec = await embed_text(query)
+        except Exception as exc:
+            raise MilvusUnavailable(f"embedding failed: {exc}") from exc
+
+        # 2. HNSW 检索（不传 partition_name，仅用 expr/filter）
+        try:
+            results = await asyncio.to_thread(
+                collection.search,
+                data=[vec],
+                anns_field="vector",
+                param={
+                    "metric_type": "COSINE",
+                    "params": {"ef": get_settings().milvus_hnsw_ef_search},
+                },
+                limit=top_k,
+                expr=filter,
+                output_fields=["text", "source"],
+            )
+        except Exception as exc:
+            raise MilvusUnavailable(
+                f"Milvus search failed: {exc}"
+            ) from exc
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+
+        # 3. 解析结果（Milvus COSINE 越大越相似，已按 score 降序返回）
+        hits: list[tuple[str, str, float]] = []
+        search_results = results[0] if results else []
+        for hit in search_results:
+            entity = getattr(hit, "entity", None)
+            if entity is not None and hasattr(entity, "get"):
+                text_val = entity.get("text")
+                source_val = entity.get("source")
+            else:
+                fields = getattr(hit, "fields", {}) or {}
+                text_val = fields.get("text")
+                source_val = fields.get("source")
+            score_val = getattr(hit, "score", None)
+            if score_val is None:
+                score_val = getattr(hit, "distance", 0.0)
+            hits.append((str(text_val or ""), str(source_val or ""), float(score_val)))
+
+        # 防御性按 score 降序（Milvus 一般已排序）
+        hits.sort(key=lambda x: x[2], reverse=True)
+
+        logger.debug(
+            "vectorstore.milvus.search done",
             top_k=top_k,
             filter=filter,
-        ) as span:
-            # 1. 嵌入 query
-            try:
-                vec = await embed_text(query)
-            except Exception as exc:
-                raise MilvusUnavailable(f"embedding failed: {exc}") from exc
-
-            # 2. HNSW 检索（不传 partition_name，仅用 expr/filter）
-            try:
-                results = await asyncio.to_thread(
-                    collection.search,
-                    data=[vec],
-                    anns_field="vector",
-                    param={
-                        "metric_type": "COSINE",
-                        "params": {"ef": get_settings().milvus_hnsw_ef_search},
-                    },
-                    limit=top_k,
-                    expr=filter,
-                    output_fields=["text", "source"],
-                )
-            except Exception as exc:
-                raise MilvusUnavailable(
-                    f"Milvus search failed: {exc}"
-                ) from exc
-
-            latency_ms = int((time.perf_counter() - start) * 1000)
-
-            # 3. 解析结果（Milvus COSINE 越大越相似，已按 score 降序返回）
-            hits: list[tuple[str, str, float]] = []
-            search_results = results[0] if results else []
-            for hit in search_results:
-                entity = getattr(hit, "entity", None)
-                if entity is not None and hasattr(entity, "get"):
-                    text_val = entity.get("text")
-                    source_val = entity.get("source")
-                else:
-                    fields = getattr(hit, "fields", {}) or {}
-                    text_val = fields.get("text")
-                    source_val = fields.get("source")
-                score_val = getattr(hit, "score", None)
-                if score_val is None:
-                    score_val = getattr(hit, "distance", 0.0)
-                hits.append((str(text_val or ""), str(source_val or ""), float(score_val)))
-
-            # 防御性按 score 降序（Milvus 一般已排序）
-            hits.sort(key=lambda x: x[2], reverse=True)
-
-            # trace metadata：result_count + latency_ms，绝不放原文（mark_redacted 占位）
-            span["metadata"]["result_count"] = len(hits)
-            span["metadata"]["latency_ms"] = latency_ms
-            span["metadata"]["retrieved_text"] = mark_redacted()
+            result_count=len(hits),
+            latency_ms=latency_ms,
+        )
 
         return hits
 

@@ -20,7 +20,6 @@ import asyncio
 from pathlib import Path
 
 from app.config import get_settings
-from app.observability.langsmith import trace_span
 from app.observability.logger import logger
 from app.sandbox.path_guard import (
     DEFAULT_WHITELIST,
@@ -162,8 +161,7 @@ class SessionSandbox:
         return self._parent_map.get(thread_id)
 
     def _deny(self, thread_id: str, path: str | Path, action: str) -> None:
-        with trace_span("sandbox.deny", thread_id=thread_id, path=str(path), action=action):
-            pass
+        logger.debug("sandbox.deny", thread_id=thread_id, path=str(path), action=action)
 
     # ---- 公共 API ----
 
@@ -437,16 +435,9 @@ class SessionSandbox:
                 await self._store.upsert(thread_id, str(resolved), writable, source)
 
             # DB 写成功，更新内存
-            with trace_span(
-                "sandbox.authorize",
-                thread_id=thread_id,
-                path=str(path),
-                writable=writable,
-                action="authorize",
-            ):
-                entries = {(p, w) for (p, w) in entries if p != resolved}
-                entries.add((resolved, writable))
-                self._authorized_dirs[thread_id] = entries
+            entries = {(p, w) for (p, w) in entries if p != resolved}
+            entries.add((resolved, writable))
+            self._authorized_dirs[thread_id] = entries
         return resolved
 
     async def revoke(self, thread_id: str, path: str | Path) -> bool:
@@ -464,12 +455,10 @@ class SessionSandbox:
                 entries = self._authorized_dirs.get(thread_id, set())
                 existed = any(p == resolved for (p, _w) in entries)
 
-            with trace_span(
-                "sandbox.revoke", thread_id=thread_id, path=str(path), action="revoke"
-            ):
-                entries = self._authorized_dirs.get(thread_id, set())
-                entries = {(p, w) for (p, w) in entries if p != resolved}
-                self._authorized_dirs[thread_id] = entries
+            # DB 写成功，更新内存
+            entries = self._authorized_dirs.get(thread_id, set())
+            entries = {(p, w) for (p, w) in entries if p != resolved}
+            self._authorized_dirs[thread_id] = entries
         return existed
 
     async def clear(self, thread_id: str) -> None:
