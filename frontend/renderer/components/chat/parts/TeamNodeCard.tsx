@@ -1,7 +1,8 @@
 import { memo, useState, useMemo } from "react";
-import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronDown, AlertTriangle, GitBranch, RotateCw, StickyNote } from "lucide-react";
+import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronDown, AlertTriangle, GitBranch, RotateCw, StickyNote, Ban } from "lucide-react";
 import type { TeamAgentState } from "@/stores/chat";
 import type { BlackboardSnapshot, Finding } from "@/lib/api/blackboard";
+import type { TeamOutcome } from "../../../../shared/api-types";
 import { TraceCardHeader } from "./TraceCardHeader";
 import { TraceItems } from "./TraceItems";
 import { SUBAGENT_META } from "./DelegationCard";
@@ -19,6 +20,12 @@ interface TeamNodeCardProps {
   reasoning: string;
   agents: TeamAgentState[];
   status: "running" | "done" | "error";
+  /**
+   * 团队业务终态 typed outcome（D4）。
+   * - 优先消费此字段决定头部图标 / 文案（5 态：success / partial / error / aborted）
+   * - 缺省时 fallback 到 status（3 态：running / done / error）
+   */
+  outcome?: TeamOutcome;
   doneAt?: number;
   /** 后端黑板快照（来自 team_done SSE），含 task_id/retries/error；缺省走 agents 聚合 */
   blackboard?: BlackboardSnapshot;
@@ -62,8 +69,12 @@ function buildTaskLabelMap(agents: TeamAgentState[]): Map<string, string> {
  * 黑板面板行：findings（成功写入）或 errors（失败）。
  *
  * 数据源：纯前端从 `TeamAgentState[]` 聚合而成，不依赖后端新增字段。
- * - finding = status==='done' 的 agent 的 summary / message
+ * - finding = status==='done' 的 agent 的 summary / message（等价于 success===true）
  * - error   = status==='error' 的 agent（无具体 payload，沿用 message）
+ *
+ * D4 typed outcome: team 级 outcome（success/partial/error/aborted）决定 TeamNodeCard
+ * 头部显示；agent 级 finding/error 判断仍基于 agent.status，因为 TeamAgentState
+ * 没有独立的 success 字段（snapshot 路径的 BlackboardFinding.success 才有）。
  *
  * 故意不显示 pending / running 行：未完成的任务尚未"写入"黑板，
  * 归入面板反而会污染语义。展开面板时只显示已下笔的条目。
@@ -490,6 +501,7 @@ function TeamNodeCardImpl({
   reasoning,
   agents,
   status,
+  outcome,
   doneAt,
   blackboard,
   replanHistory = [],
@@ -501,16 +513,63 @@ function TeamNodeCardImpl({
   const [expanded, setExpanded] = useState(true);
   const parentExpandedKey = expanded ? "open" : "closed";
 
-  const headerIcon =
-    status === "running" ? (
-      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-    ) : status === "done" ? (
-      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-    ) : (
-      <AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400" />
-    );
+  /**
+   * D4 typed outcome: 5 态头部图标 / 文案。
+   *
+   * 优先消费 outcome（success / partial / error / aborted）；
+   * 缺省时 fallback 到 status（running / done / error）以兼容旧数据。
+   *
+   * 视觉规范：
+   * - running → Loader2 spinner
+   * - success → CheckCircle2 绿色
+   * - partial → AlertTriangle 琥珀色（部分成功，带风险标记）
+   * - error → AlertCircle 红色
+   * - aborted → Ban 灰色（用户中止 / run 取消）
+   */
+  const headerIcon = (() => {
+    if (outcome === "success") {
+      return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />;
+    }
+    if (outcome === "partial") {
+      return <AlertTriangle className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" />;
+    }
+    if (outcome === "error") {
+      return <AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400" />;
+    }
+    if (outcome === "aborted") {
+      return <Ban className="h-3.5 w-3.5 text-muted-c/60" />;
+    }
+    // fallback 到 status（兼容旧数据 / running 态）
+    if (status === "running") {
+      return <Loader2 className="h-3.5 w-3.5 animate-spin" />;
+    }
+    if (status === "done") {
+      return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />;
+    }
+    return <AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400" />;
+  })();
 
-  const statusText = status === "running" ? "执行中" : status === "done" ? "已完成" : "失败";
+  const statusText = (() => {
+    if (outcome === "success") return "成功";
+    if (outcome === "partial") return "部分成功";
+    if (outcome === "error") return "失败";
+    if (outcome === "aborted") return "已中止";
+    // fallback 到 status
+    return status === "running" ? "执行中" : status === "done" ? "已完成" : "失败";
+  })();
+
+  /**
+   * doneAt 显示条件：outcome 存在时，任何终态（success/partial/error/aborted）都显示完成时间；
+   * outcome 缺省时 fallback 到 status === "done"（兼容旧数据）。
+   */
+  const showDoneAt =
+    doneAt &&
+    (outcome === "success" ||
+      outcome === "partial" ||
+      outcome === "error" ||
+      outcome === "aborted" ||
+      status === "done" ||
+      status === "error");
 
   // 构建 taskId → agent label 映射，用于 depends_on 展示
   const taskLabelMap = useMemo(() => buildTaskLabelMap(agents), [agents]);
@@ -656,7 +715,7 @@ function TeamNodeCardImpl({
               />
             ))}
           </div>
-          {status === "done" && doneAt && (
+          {showDoneAt && (
             <div
               className="mt-1 text-muted-c/60"
               style={{ fontSize: "var(--fs-msg-tool)" }}
@@ -671,13 +730,14 @@ function TeamNodeCardImpl({
 }
 
 /**
- * 自定义 areEqual：reasoning/agents/status/doneAt/subAgentGroups/standaloneItems/replanHistory/warnings 变化时重渲。
+ * 自定义 areEqual：reasoning/agents/status/outcome/doneAt/subAgentGroups/standaloneItems/replanHistory/warnings 变化时重渲。
  */
 function areEqual(prev: TeamNodeCardProps, next: TeamNodeCardProps): boolean {
   return (
     prev.reasoning === next.reasoning &&
     prev.agents === next.agents &&
     prev.status === next.status &&
+    prev.outcome === next.outcome &&
     prev.doneAt === next.doneAt &&
     prev.blackboard === next.blackboard &&
     prev.subAgentGroups === next.subAgentGroups &&

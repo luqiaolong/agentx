@@ -18,7 +18,7 @@ import {
   findBuiltinCommand,
   type BuiltinCommand,
 } from "@/stores/commands";
-import { chat, getCurrentTraceId } from "@/lib/api/chat";
+import { chat, getCurrentTraceId, setPendingMessageId, setCurrentTaskId, setLastUserQuery } from "@/lib/api/chat";
 import { parseMentions, buildMentionPayload, stripMentions } from "@/lib/mention";
 import { useMentionPickerStore } from "@/stores/mention";
 import { stripSkillTag } from "@/lib/skillTag";
@@ -215,6 +215,10 @@ export function ChatView() {
         clearMessages();
         currentTaskIdRef.current = null;
         lastUserQueryRef.current = "";
+        // REQ-CHAT-5: 同步清理 Map 中的 thread_id 隔离状态
+        setPendingMessageId(resetTid, null);
+        setCurrentTaskId(resetTid, null);
+        setLastUserQuery(resetTid, null);
         setErrorMsg(null);
         appendCommandResult({ kind: "info", text: "已清空当前会话消息。" });
         return true;
@@ -438,6 +442,9 @@ export function ChatView() {
     addMessage({ id: crypto.randomUUID(), role: "user", content: sendContent, ts: Date.now() });
     const pendingId = `pending-${crypto.randomUUID()}`;
     pendingIdRef.current = pendingId;
+    // REQ-CHAT-5: 按 thread_id 注册 pendingId 到 Map，让 useChatStream 事件处理时
+    // 按 thread_id 查询对应 pendingId，避免 singleton ref 在会话切换时被覆盖。
+    setPendingMessageId(tid, pendingId);
     // 观测中心：pending assistant 消息创建时预填 traceId（前端生成，后端应沿用）。
     // 后端 SSE 事件若带回 trace_id，useChatStream 会用 setMessageTraceId 覆盖为后端确认值。
     const initialTraceId = getCurrentTraceId(tid) ?? undefined;
@@ -446,6 +453,8 @@ export function ChatView() {
     // 每次对话都创建任务流水记录（不只是深度任务才显示在任务面板）
     const taskId = `task-${crypto.randomUUID()}`;
     currentTaskIdRef.current = taskId;
+    // REQ-CHAT-5: 按 thread_id 注册 taskId 到 Map
+    setCurrentTaskId(tid, taskId);
     const rawQuery = sendContent
       .replace(/<workspace>.*?<\/workspace>\s?/g, "")
       .replace(/<file>.*?<\/file>\s?/g, "")
@@ -466,6 +475,8 @@ export function ChatView() {
       taskSource,
     });
     lastUserQueryRef.current = sendContent;
+    // REQ-CHAT-5: 按 thread_id 注册 lastUserQuery 到 Map
+    setLastUserQuery(tid, sendContent);
     setStreaming(true);
     setErrorMsg(null);
     // 标记当前会话进入执行状态

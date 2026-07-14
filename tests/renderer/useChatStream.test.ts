@@ -66,6 +66,13 @@ const chatMock = vi.hoisted(() => {
 vi.mock("@/lib/api/chat", () => ({
   chat: chatMock.chat,
   getCurrentTraceId: chatMock.chat.getCurrentTraceId,
+  // I2.1: 新增按 thread_id 隔离的注册表函数（mock 返回 null 以 fallback 到 ref）
+  getPendingMessageId: vi.fn().mockReturnValue(null),
+  setPendingMessageId: vi.fn(),
+  getCurrentTaskId: vi.fn().mockReturnValue(null),
+  setCurrentTaskId: vi.fn(),
+  getLastUserQuery: vi.fn().mockReturnValue(null),
+  setLastUserQuery: vi.fn(),
 }));
 
 // Mock projectConfig API：useChatStream 的 done 事件分支会调 ensureAgentxGenerated，
@@ -196,7 +203,7 @@ describe("useChatStream hook", () => {
 
     renderHook(() =>
       useChatStream({
-        threadId: "test-thread",
+        threadId: id,
         activeThreadIdRef: { current: id },
         pendingIdRef: { current: null },
         currentTaskIdRef: { current: null },
@@ -206,23 +213,27 @@ describe("useChatStream hook", () => {
     );
 
     await act(async () => {
-      emitEvent('test-thread', { type: "done", data: {} });
+      emitEvent(id, { type: "done", data: {} });
       // 让 getProjectConfig (mocked async) 跑完 microtask
       await Promise.resolve();
     });
 
     // getProjectConfig 必被调用（证明 ensureAgentxGenerated 进入第二层防护）
+    // I2.1: ensureAgentxGenerated 使用事件归属的 tid，而非 singleton activeThreadIdRef
     expect(projectConfigMock.getProjectConfig).toHaveBeenCalledWith("/ws/proj", id);
   });
 
-  it("regression: 切换会话后到达的 todo_update 用当前会话 ID（不是首次渲染闭包）", async () => {
-    // 1) 首次渲染时无当前会话（currentId=null）
-    const activeThreadIdRef: { current: string | null } = { current: null };
+  it("regression: 切换会话后到达的 todo_update 用事件 thread_id（I2.1: 不依赖闭包）", async () => {
+    // 1) 先创建会话 B
+    const idB = await useChatStore.getState().createSession("/ws/proj-b");
+
+    // 2) 渲染 hook，threadId = idB
+    const activeThreadIdRef: { current: string | null } = { current: idB };
     const currentTaskIdRef: { current: string | null } = { current: null };
 
     renderHook(() =>
       useChatStream({
-        threadId: "test-thread",
+        threadId: idB,
         activeThreadIdRef,
         pendingIdRef: { current: null },
         currentTaskIdRef,
@@ -231,21 +242,12 @@ describe("useChatStream hook", () => {
       }),
     );
 
-    // 2) 用户新建会话 B，currentId 变为 B，store 触发重渲染
-    const idB = await useChatStore
-      .getState()
-      .createSession("/ws/proj-b");
-    // 重渲染以让 currentIdRef 同步到 idB
-    await act(async () => {
-      await Promise.resolve();
-    });
-
     // 3) 流已进入"已完成"阶段,activeThreadIdRef 被 ChatView useEffect 置 null,
-    // 但用户已经切到会话 B。模拟延迟到达的 todo_update。
+    // 但事件仍按 thread_id 路由。模拟延迟到达的 todo_update。
     activeThreadIdRef.current = null;
 
     await act(async () => {
-      emitEvent('test-thread', {
+      emitEvent(idB, {
         type: "todo_update",
         todos: [{ content: "延迟到的 todo", status: "pending" }],
         task_id: undefined,
@@ -253,7 +255,8 @@ describe("useChatStream hook", () => {
       await Promise.resolve();
     });
 
-    // 4) 新建的 task 应该被归属到会话 B（currentIdRef.current），而不是首次渲染的 null 或 ""
+    // 4) I2.1: 新建的 task 的 sessionId 使用事件归属的 tid（= idB），
+    // 不依赖 activeThreadIdRef 闭包（即使被置 null 也能正确归属）
     // lastUserQueryRef.current=""，title 走 fallback "深度任务"
     const tasks = useTasksStore.getState().tasks;
     const newTask = tasks.find((t) => t.title === "深度任务");

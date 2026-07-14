@@ -65,6 +65,13 @@ const chatMock = vi.hoisted(() => {
 vi.mock("@/lib/api/chat", () => ({
   chat: chatMock.chat,
   getCurrentTraceId: chatMock.chat.getCurrentTraceId,
+  // I2.1: 新增按 thread_id 隔离的注册表函数（mock 返回 null 以 fallback 到 ref）
+  getPendingMessageId: vi.fn().mockReturnValue(null),
+  setPendingMessageId: vi.fn(),
+  getCurrentTaskId: vi.fn().mockReturnValue(null),
+  setCurrentTaskId: vi.fn(),
+  getLastUserQuery: vi.fn().mockReturnValue(null),
+  setLastUserQuery: vi.fn(),
 }));
 
 // Mock projectConfig API：useChatStream 的 done 事件分支会调 ensureAgentxGenerated

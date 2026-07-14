@@ -31,13 +31,15 @@
 | `reasoning` | JSON `{"content": str, "source": str}` | 思考过程完整 chunk（observation / team 等一次性推送路径；主 agent 路径仅推送非 think 的计划文本） |
 | `tool_call` | JSON `{"id","name","args","source"}` | 工具调用开始（id 供前端配对 tool_result；subagent 用 astream_events v2 run_id） |
 | `tool_result` | JSON `{"id","name","result","source","error?"}` | 工具调用结束 |
-| `delegation` | JSON `{"target","source","message"}` | 子代理委派标记（路径 B 入口下发） |
+| `delegation` | JSON `{"target","source","message","task_id","run_id?"}` | 子代理委派标记（路径 B 入口下发）。`task_id` 为 Team 子任务唯一标识（必填），前端据此关联 delegation → findings → team_done.agents[]；`run_id` 为当前 Team run 的唯一标识。 |
 | `todo_update` | JSON `{"todos": [{"content": str, "status": "pending"\|"in_progress"\|"completed"}], "task_id?": str, "source?": str, "parent_task_id?": str}` | DeepAgent/Team 任务列表更新（deepagents 原生 TodoListMiddleware 维护）。`task_id` 区分 Team 子任务；`source` 标识来源（`work`/`coding`/`rag`/`web` 或 Team 子任务角色 `frontend_dev`/`backend_dev` 等），前端按角色分组；`parent_task_id` 为 Team 子任务的父 thread_id，前端据此把子任务 todo 嵌套到父任务卡片下。主路径（单 agent）不传 `parent_task_id`。 |
-| `approval_request` | JSON `{"thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界 / 沙箱权限升级审批请求。`kind` 取值：`"dangerous_tool"`（危险工具）、`"directory_extension"`（目录越界）、`"sandbox_escalation"`（沙箱权限升级）。`sandbox_escalation` 额外字段：`command`、`exit_code`、`reason`、`suggested_action`、`suggested_path`。 |
+| `approval_request` | JSON `{"approval_id","run_id","thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界 / 沙箱权限升级审批请求。`approval_id` 为审批请求唯一标识（UUID），`submit_approval` 必须命中此 ID；`run_id` 绑定当前 run，旧 run 的审批决定不能作用于新 run。`kind` 取值：`"dangerous_tool"`（危险工具）、`"directory_extension"`（目录越界）、`"sandbox_escalation"`（沙箱权限升级，端到端保真，前端 parser 不得降级为 `dangerous_tool`）。`sandbox_escalation` 额外字段：`command`、`exit_code`、`reason`、`suggested_action`、`suggested_path`。 |
 | `paused` | `"{}"` | 用户暂停，SSE 流在下一轮迭代退出并保留状态，等待 `resume` |
 | `team_init` | JSON `{"plan","agents","reasoning"}` | AgentTeam 计划生成完成，前端据此在消息顶部创建 TeamNodeCard（在 `team_done` 之前发出） |
-| `team_done` | JSON `{"status": "done"|"error"|"replanning", "agents"?, "blackboard"?}` | AgentTeam 整体执行结束或过渡态。`status` 枚举：`"done"` 终态（团队完成）；`"error"` 终态（团队失败）；`"replanning"` 过渡态（质量门失败，正在重规划，前端不应 finalize）。`agents` 为可选的子代理摘要列表（终态时携带）。`blackboard` 为可选的黑板快照（终态时携带），结构 `{"findings": Finding[], "errors": string[]}`，其中 `Finding` 含 `{agent, task_id, wave_index, content, success, error?, retries}`。前端 `BlackboardPanel` 优先消费 `blackboard`，fallback 到 `agents` 聚合。在 `done` 之前发出。 |
-| `done` | `"{}"` | 流结束 |
+| `team_done` | JSON `{"status"?, "outcome"?, "agents"?, "blackboard"?}` | AgentTeam 业务终态（在 transport `done` 之前发出）。`outcome` 为权威字段（REQ-TEAM-OUTCOME-1），取值：`"success"`（全部成功）、`"partial"`（部分成功）、`"error"`（全失败或聚合异常）、`"aborted"`（用户中止）。`status` 保留兼容（`"done"`/`"error"`/`"replanning"`），前端 reducer 优先消费 `outcome`。`agents` 为子代理摘要列表，每项含 `{agent, task_id, summary, success?, retries?}`（REQ-TEAM-CORRELATION-1）。`blackboard` 为黑板快照 `{"findings": Finding[], "errors": string[]}`，`Finding` 含 `{agent, task_id, wave_index, content, success, error?, retries}`。**前端不得用后到的 transport `done` 覆盖 `team_done.outcome`**（REQ-SSE-4）。 |
+| `replan` | JSON `{"new_tasks","replan_count","reason"}` | Team 重规划事件。`new_tasks` 为新增子任务列表，`replan_count` 为当前 replan 轮次，`reason` 为重规划原因。前端追加到 TeamNodeCard.replanHistory。**两个发射点**：(1) `aggregate_node` 质量门失败进入 replan 时发（`new_tasks=[]`，额外携带 `detail`/`outcome`/`blackboard`）；(2) `replan_node` 生成新任务后发（`new_tasks` 含实际新任务）。 |
+| `warning` | JSON `{"message"}` | Team 执行期间的告警事件（非致命）。前端追加到 TeamNodeCard.warnings。 |
+| `done` | JSON `{"reason"?, "token_count"?}` 或 `"{}"` | Transport 终态。`reason` 取值（REQ-SSE-6 / REQ-CHAT-3）：`"completed"`（正常完成）、`"aborted"`（用户中止）、`"recovered"`（断连恢复后补发）、`"error"`（异常）。前端 reducer 根据 `reason` 完成清理，不得默认等价于成功。若先收到 `team_done{outcome:"error"}`，后到的 `done` 不得覆盖 Team 终态。 |
 | `error` | 错误消息字符串 | 错误 |
 
 ## `source` 字段标识

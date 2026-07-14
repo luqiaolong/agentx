@@ -4,9 +4,19 @@ import { useChatStore } from "@/stores/chat";
 import type { ChatMessage, MessagePart, TeamAgentState } from "@/stores/chat";
 import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent, TodoStatus } from "@/lib/utils";
-import { chat, getCurrentTraceId } from "@/lib/api/chat";
+import {
+  chat,
+  getCurrentTraceId,
+  getPendingMessageId,
+  setPendingMessageId,
+  getCurrentTaskId,
+  setCurrentTaskId,
+  getLastUserQuery,
+  setLastUserQuery,
+} from "@/lib/api/chat";
 import { stripSkillTag } from "@/lib/skillTag";
 import type { BlackboardSnapshot } from "@/lib/api/blackboard";
+import type { TeamOutcome, DoneReason, TeamAgentSummary } from "../../shared/api-types";
 
 export interface TodoItem {
   content: string;
@@ -133,11 +143,76 @@ export function useChatStream(args: UseChatStreamArgs) {
     callbacksRef.current = { setErrorMsg, setPaused };
   }, [setErrorMsg, setPaused]);
 
+  /**
+   * REQ-CHAT-5: 订阅所有正在运行的会话（稳定字符串键，避免数组引用变化导致重渲）。
+   *
+   * 后台会话的 SSE 事件也必须被处理（写回对应 thread_id 的 pending 消息），
+   * 不能因用户切换到前台会话就丢弃后台会话的事件。
+   * 字符串 join 保证只在运行集合实际变化时才触发 effect 重订阅。
+   */
+  const runningSessionKey = useChatStore((s) =>
+    Object.values(s.sessions)
+      .filter((sess) => sess.isRunning)
+      .map((sess) => sess.id)
+      .sort()
+      .join(","),
+  );
+
   // done 看门狗：team_done 后若 done 事件 2s 内未到达，强制收尾流式状态
   const doneWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /**
+   * REQ-SSE-4: 跟踪 team_done 已收到的 outcome（按 threadId 隔离）。
+   * - 后台会话也保留独立条目，防止前台会话切换时被覆盖
+   * - done 事件据此判断是否覆盖 team_done 业务终态
+   *   （若 team_done 已是 error/aborted，done 不再标记任务为 done）
+   */
+  const teamDoneOutcomeByThreadRef = useRef<Map<string, TeamOutcome>>(new Map());
+
   /** 获取 SSE 事件应归属的 thread id：优先使用发送时固定的 activeThreadIdRef。 */
   const targetThreadId = () => activeThreadIdRef?.current ?? threadIdRef.current;
+
+  /**
+   * REQ-CHAT-5: 按 thread_id 查询 pending message ID（事件接收侧隔离）。
+   *
+   * 优先从 chat.ts 的 pendingMessageIds Map 查询（按 thread_id 隔离），
+   * 缺失时回退到 singleton pendingIdRef.current（兼容旧调用方 / 测试）。
+   * 后台会话的事件不会被前台 ref 覆盖：每个 thread_id 有独立的 pendingId 条目。
+   */
+  const effectivePendingId = (tid: string | null | undefined): string | null => {
+    if (!tid) return pendingIdRef.current;
+    return getPendingMessageId(tid) ?? pendingIdRef.current;
+  };
+
+  /** REQ-CHAT-5: 按 thread_id 查询 current task ID（Map 优先，ref 回退）。 */
+  const effectiveCurrentTaskId = (tid: string | null | undefined): string | null => {
+    if (!tid) return currentTaskIdRef.current;
+    return getCurrentTaskId(tid) ?? currentTaskIdRef.current;
+  };
+
+  /** REQ-CHAT-5: 按 thread_id 查询 last user query（Map 优先，ref 回退）。 */
+  const effectiveLastUserQuery = (tid: string | null | undefined): string => {
+    if (!tid) return lastUserQueryRef.current;
+    return getLastUserQuery(tid) ?? lastUserQueryRef.current;
+  };
+
+  /**
+   * REQ-CHAT-5: 清理指定 thread_id 的所有流式状态（pendingId / taskId / query）。
+   *
+   * 在 done / error / paused 终态事件时调用：
+   * - 清理 chat.ts Map 条目（避免后台会话残留状态被后续事件误读）
+   * - 同步清理 singleton ref（仅当 tid 匹配前台 thread 时，避免误清前台 ref）
+   */
+  const clearStreamState = (tid: string | null | undefined) => {
+    if (!tid) return;
+    setPendingMessageId(tid, null);
+    setCurrentTaskId(tid, null);
+    setLastUserQuery(tid, null);
+    // 仅当清理的是前台会话时，同步清 ref（避免后台清理误清前台 ref）
+    if (tid === threadIdRef.current) {
+      pendingIdRef.current = null;
+    }
+  };
 
   /**
    * 观测中心：把 SSE 事件携带的 trace_id 同步到 pending assistant 消息。
@@ -148,542 +223,644 @@ export function useChatStream(args: UseChatStreamArgs) {
    * token 事件 data 是纯字符串不携带 trace_id，故不调用；其余 JSON 事件
    * （reasoning / tool_call / tool_result / delegation 等）均通过 `_tid ?? trace_id`
    * 字段读取。
+   *
+   * REQ-CHAT-5: 通过 tid（事件归属 thread_id）查询 pendingId，避免 singleton ref 覆盖。
    */
-  const syncTraceId = (e: ChatEvent) => {
-    const tid = e._tid ?? e.trace_id;
-    if (tid && pendingIdRef.current) {
-      setMessageTraceId(pendingIdRef.current, tid);
+  const syncTraceId = (e: ChatEvent, tid: string) => {
+    const traceId = e._tid ?? e.trace_id;
+    const pid = effectivePendingId(tid);
+    if (traceId && pid) {
+      setMessageTraceId(pid, traceId);
     }
   };
 
-  const finishRunning = (running: boolean) => {
-    const cid = targetThreadId();
-    if (cid) {
-      setSessionRunning(cid, running);
+  /** REQ-CHAT-5: finishRunning 使用事件归属的 tid，而非 singleton targetThreadId()。 */
+  const finishRunning = (running: boolean, tid: string) => {
+    if (tid) {
+      setSessionRunning(tid, running);
     }
+  };
+
+  /**
+   * REQ-CHAT-5: 判断 tid 是否为前台会话（用于 gate setErrorMsg / setPaused）。
+   *
+   * 后台会话的 error / paused 事件不应影响前台 UI 状态：
+   * - setErrorMsg 仅对前台会话触发（避免后台错误覆盖前台显示）
+   * - setPaused 仅对前台会话触发（避免后台暂停状态影响前台 composer）
+   */
+  const isForegroundSession = (tid: string): boolean => {
+    return tid === threadIdRef.current;
   };
 
   useEffect(() => {
-    if (!threadId) return;
-    const unsubEvents = chat.onEvent(threadId, (e: ChatEvent) => {
-      // 观测中心：先把可能的 trace_id 同步到 pending 消息（每个事件都跑一次，幂等）。
-      syncTraceId(e);
-      switch (e.type) {
-        case "token": {
-          // token 事件 data 是纯字符串
-          // B6 修复：后端 router 在 workspace_fallback 时 yield 的 "[工作区恢复] ..." 通知
-          // token 仅用于提示用户当前 workspace 是自动恢复的历史授权（§13 SSE 契约
-          // 未引入新事件类型，避免破坏前后端对齐）。
-          // 前端识别此前缀后跳过渲染为 message text part，改由工作区徽章 / toast
-          // 组件订阅 store 单独展示（具体组件实现由后续 PR 完成，本处仅过滤避免污染文本流）。
-          const tokenStr = String(e.data ?? "");
-          if (tokenStr.startsWith("[工作区恢复]")) {
-            // 暂不消费，后续接入工作区徽章 / toast 时再处理
+    // REQ-CHAT-5: 订阅所有正在运行的会话 + 当前前台会话。
+    // 后台会话的 SSE 事件必须被处理（写回对应 thread_id 的 pending 消息），
+    // 不能因用户切换到前台会话就丢弃后台会话的事件。
+    const targetIds = new Set<string>();
+    if (threadId) targetIds.add(threadId);
+    if (runningSessionKey) {
+      for (const id of runningSessionKey.split(",")) {
+        if (id) targetIds.add(id);
+      }
+    }
+
+    const unsubs: (() => void)[] = [];
+
+    for (const tid of targetIds) {
+      const unsubEvents = chat.onEvent(tid, (e: ChatEvent) => {
+        // 观测中心：先把可能的 trace_id 同步到 pending 消息（每个事件都跑一次，幂等）。
+        syncTraceId(e, tid);
+        // REQ-CHAT-5: 通过 tid 查询 pendingId，避免 singleton ref 覆盖
+        const pid = effectivePendingId(tid);
+        switch (e.type) {
+          case "token": {
+            // token 事件 data 是纯字符串
+            // B6 修复：后端 router 在 workspace_fallback 时 yield 的 "[工作区恢复] ..." 通知
+            // token 仅用于提示用户当前 workspace 是自动恢复的历史授权（§13 SSE 契约
+            // 未引入新事件类型，避免破坏前后端对齐）。
+            // 前端识别此前缀后跳过渲染为 message text part，改由工作区徽章 / toast
+            // 组件订阅 store 单独展示（具体组件实现由后续 PR 完成，本处仅过滤避免污染文本流）。
+            const tokenStr = String(e.data ?? "");
+            if (tokenStr.startsWith("[工作区恢复]")) {
+              // 暂不消费，后续接入工作区徽章 / toast 时再处理
+              break;
+            }
+            if (pid) {
+              appendPartText(pid, "text", tokenStr);
+            }
+            if (isForegroundSession(tid)) {
+              callbacksRef.current.setPaused?.(false);
+            }
             break;
           }
-          if (pendingIdRef.current) {
-            appendPartText(pendingIdRef.current, "text", tokenStr);
+          case "token_rollback": {
+            // 模型把计划文本误推为 token 后撤回：删除当前最后一个 text part
+            if (pid) {
+              removeLastTextPart(pid);
+            }
+            break;
           }
-          callbacksRef.current.setPaused?.(false);
-          break;
-        }
-        case "token_rollback": {
-          // 模型把计划文本误推为 token 后撤回：删除当前最后一个 text part
-          if (pendingIdRef.current) {
-            removeLastTextPart(pendingIdRef.current);
+          case "reasoning_delta": {
+            // 主 agent 路径的实时 thinking token：追加到当前未 done 的 reasoning part
+            if (pid) {
+              appendPartText(pid, "reasoning", String(e.delta ?? ""));
+            }
+            break;
           }
-          break;
-        }
-        case "reasoning_delta": {
-          // 主 agent 路径的实时 thinking token：追加到当前未 done 的 reasoning part
-          if (pendingIdRef.current) {
-            appendPartText(pendingIdRef.current, "reasoning", String(e.delta ?? ""));
+          case "reasoning": {
+            // 多 LLM step 推理各自独立展示为独立 ReasoningBlock，
+            // 不再 appendPartText（会累积合并）；走 appendReasoningStep：
+            // 关闭上一个未 done 的 reasoning + push 独立新 part。
+            if (pid) {
+              appendReasoningStep(pid, e.content);
+            }
+            break;
           }
-          break;
-        }
-        case "reasoning": {
-          // 多 LLM step 推理各自独立展示为独立 ReasoningBlock，
-          // 不再 appendPartText（会累积合并）；走 appendReasoningStep：
-          // 关闭上一个未 done 的 reasoning + push 独立新 part。
-          if (pendingIdRef.current) {
-            appendReasoningStep(pendingIdRef.current, e.content);
+          case "tool_call": {
+            if (pid) {
+              addPart(pid, {
+                type: "tool-call",
+                id: e.id,
+                toolName: e.name,
+                args: e.args,
+                source: e.source,
+                status: "running",
+                startedAt: Date.now(),
+              });
+            }
+            break;
           }
-          break;
-        }
-        case "tool_call": {
-          if (pendingIdRef.current) {
-            addPart(pendingIdRef.current, {
-              type: "tool-call",
-              id: e.id,
-              toolName: e.name,
-              args: e.args,
-              source: e.source,
-              status: "running",
-              startedAt: Date.now(),
-            });
+          case "tool_result": {
+            if (pid) {
+              addPart(pid, {
+                type: "tool-result",
+                id: e.id,
+                toolName: e.name,
+                result: e.result,
+                source: e.source,
+                arrivedAt: Date.now(),
+                ...(e.error !== undefined ? { error: e.error } : {}),
+              });
+            }
+            break;
           }
-          break;
-        }
-        case "tool_result": {
-          if (pendingIdRef.current) {
-            addPart(pendingIdRef.current, {
-              type: "tool-result",
-              id: e.id,
-              toolName: e.name,
-              result: e.result,
-              source: e.source,
-              arrivedAt: Date.now(),
-              ...(e.error !== undefined ? { error: e.error } : {}),
-            });
-          }
-          break;
-        }
-        case "delegation": {
-          if (pendingIdRef.current) {
-            // aborted/timeout 事件变体：子任务中止或超时，不再创建 delegation part，
-            // 而是把对应 agent 标记为 error + 记录失败原因到 summary。
-            if (e.event === "aborted" || e.event === "timeout") {
+          case "delegation": {
+            if (pid) {
+              // aborted/timeout 事件变体：子任务中止或超时，不再创建 delegation part，
+              // 而是把对应 agent 标记为 error + 记录失败原因到 summary。
+              if (e.event === "aborted" || e.event === "timeout") {
+                if (e.source === "team") {
+                  upsertTeamNode(pid, {
+                    agentUpdate: {
+                      agent: e.target,
+                      taskId: e.task_id,
+                      patch: {
+                        status: "error",
+                        finishedAt: Date.now(),
+                        summary: e.event === "aborted" ? "用户中止" : `执行超时${e.timeout ? `（${e.timeout}s）` : ""}`,
+                      },
+                    },
+                    createIfMissing: false,
+                  });
+                }
+                break;
+              }
+              addPart(pid, {
+                type: "delegation",
+                id: crypto.randomUUID(),
+                target: e.target,
+                source: e.source,
+                message: e.message,
+                ...(e.task_id ? { taskId: e.task_id } : {}),
+              });
+              // Team 路径的 delegation 事件（source="team"）：同步更新 TeamNodeCard 中
+              // 对应 agent 的状态为 running，让用户看到子代理正在执行。
               if (e.source === "team") {
-                upsertTeamNode(pendingIdRef.current, {
+                upsertTeamNode(pid, {
                   agentUpdate: {
                     agent: e.target,
                     taskId: e.task_id,
-                    patch: {
-                      status: "error",
-                      finishedAt: Date.now(),
-                      summary: e.event === "aborted" ? "用户中止" : `执行超时${e.timeout ? `（${e.timeout}s）` : ""}`,
-                    },
+                    patch: { status: "running", startedAt: Date.now() },
                   },
                   createIfMissing: false,
                 });
               }
-              break;
             }
-            addPart(pendingIdRef.current, {
-              type: "delegation",
-              id: crypto.randomUUID(),
-              target: e.target,
-              source: e.source,
-              message: e.message,
-              ...(e.task_id ? { taskId: e.task_id } : {}),
-            });
-            // Team 路径的 delegation 事件（source="team"）：同步更新 TeamNodeCard 中
-            // 对应 agent 的状态为 running，让用户看到子代理正在执行。
-            if (e.source === "team") {
-              upsertTeamNode(pendingIdRef.current, {
-                agentUpdate: {
-                  agent: e.target,
-                  taskId: e.task_id,
-                  patch: { status: "running", startedAt: Date.now() },
-                },
-                createIfMissing: false,
+            break;
+          }
+          case "classification": {
+            if (pid) {
+              addPart(pid, {
+                type: "classification",
+                id: crypto.randomUUID(),
+                label: e.label,
+                reason: e.reason,
               });
             }
+            break;
           }
-          break;
-        }
-        case "classification": {
-          if (pendingIdRef.current) {
-            addPart(pendingIdRef.current, {
-              type: "classification",
-              id: crypto.randomUUID(),
-              label: e.label,
-              reason: e.reason,
-            });
-          }
-          break;
-        }
-        case "paused": {
-          callbacksRef.current.setPaused?.(true);
-          // 方案C：后端已结束 SSE 流，前端模拟 done 事件完成当前消息
-          if (pendingIdRef.current) {
-            markReasoningDone(pendingIdRef.current);
-            markRunningToolCallsComplete(pendingIdRef.current);
-          }
-          if (threadId) {
-            setSessionRunning(threadId, false);
-          }
-          pendingIdRef.current = null;
-          // 任务保持 running 状态（恢复后会继续更新）
-          break;
-        }
-        case "done": {
-          // 清除 done 看门狗：done 已正常到达，无需兜底
-          if (doneWatchdogRef.current) {
-            clearTimeout(doneWatchdogRef.current);
-            doneWatchdogRef.current = null;
-          }
-          // 标记 reasoning parts 完成（触发自动收缩）
-          if (pendingIdRef.current) {
-            markReasoningDone(pendingIdRef.current);
-            // 兜底：流结束时仍有 status=running 的 tool-call（通常是 tool_result 事件
-            // 因连接中断等原因未送达），强制 close 为 complete，让 UI 不再卡在「运行中」
-            markRunningToolCallsComplete(pendingIdRef.current);
-            // 后端 done 事件可能携带真实 token_count（JSON 对象）
-            // 兼容两种 payload 格式：
-            // 1. data 字段为对象：{ data: { token_count: N } }
-            // 2. payload 展开到顶层：{ token_count: N }（e.data 为 undefined）
-            const doneData =
-              typeof e.data === "object" && e.data !== null
-                ? (e.data as Record<string, unknown>)
-                : null;
-            const tc = doneData?.token_count ?? (e as Record<string, unknown>).token_count;
-            if (typeof tc === "number" && Number.isFinite(tc)) {
-              setMessageTokenCount(pendingIdRef.current, tc);
+          case "paused": {
+            if (isForegroundSession(tid)) {
+              callbacksRef.current.setPaused?.(true);
             }
-          }
-          // 只清理当前 threadId 的 streaming 状态
-          if (threadId) {
-            setSessionRunning(threadId, false);
-          }
-          // 清理 pending message id
-          pendingIdRef.current = null;
-          // 标记当前任务完成 + 收尾 Team 子任务
-          const tid = currentTaskIdRef.current;
-          if (tid) {
-            updateTask(tid, { status: "done" });
-            currentTaskIdRef.current = null;
-            // 父任务完成时，所有 parentTaskId === tid 的 running 子任务也标记完成
-            const childTasks = useTasksStore
-              .getState()
-              .tasks.filter(
-                (t) => t.parentTaskId === tid && t.status === "running",
-              );
-            for (const child of childTasks) {
-              updateTask(child.id, { status: "done" });
+            // 方案C：后端已结束 SSE 流，前端模拟 done 事件完成当前消息
+            if (pid) {
+              markReasoningDone(pid);
+              markRunningToolCallsComplete(pid);
             }
+            setSessionRunning(tid, false);
+            clearStreamState(tid);
+            // 任务保持 running 状态（恢复后会继续更新）
+            break;
           }
-          callbacksRef.current.setPaused?.(false);
+          case "done": {
+            // REQ-SSE-4 / REQ-SSE-6 / REQ-CHAT-3: done 是 transport 终态，不再默认等价于成功。
+            // - reason="aborted" → 用户中止，任务标记为 failed
+            // - reason="error" → 异常中断，任务标记为 failed
+            // - reason="recovered" → 断连恢复路径补发，按 team_done outcome 决定任务终态
+            // - reason="completed" 或缺失 → 正常完成
+            //
+            // REQ-SSE-4: 不覆盖 team_done 业务终态。
+            // - 若 team_done 已是 error/aborted，done 不再把 TeamNodeCard 状态翻转为 done
+            //   （TeamNodeCard 状态由 team_done 维护，done 不直接触碰 team part）
+            // - 任务状态（tasksStore）也根据 reason + team_done outcome 决定
+            const doneReason: DoneReason | undefined = e.reason;
+            // 清除 done 看门狗：done 已正常到达，无需兜底
+            if (doneWatchdogRef.current) {
+              clearTimeout(doneWatchdogRef.current);
+              doneWatchdogRef.current = null;
+            }
+            // 标记 reasoning parts 完成（触发自动收缩）
+            if (pid) {
+              markReasoningDone(pid);
+              // 兜底：流结束时仍有 status=running 的 tool-call（通常是 tool_result 事件
+              // 因连接中断等原因未送达），强制 close 为 complete，让 UI 不再卡在「运行中」
+              markRunningToolCallsComplete(pid);
+              // 后端 done 事件可能携带真实 token_count（JSON 对象）
+              // 兼容两种 payload 格式：
+              // 1. data 字段为对象：{ data: { token_count: N } }
+              // 2. payload 展开到顶层：{ token_count: N }（e.data 为 undefined）
+              const doneData =
+                typeof e.data === "object" && e.data !== null
+                  ? (e.data as Record<string, unknown>)
+                  : null;
+              const tc = doneData?.token_count ?? (e as Record<string, unknown>).token_count;
+              if (typeof tc === "number" && Number.isFinite(tc)) {
+                setMessageTokenCount(pid, tc);
+              }
+            }
+            // 清理当前 threadId 的 streaming 状态
+            setSessionRunning(tid, false);
+            // 清理 pending message id（Map + ref）
+            clearStreamState(tid);
 
-          // 首条有效对话（任一 agent 模式）完成后异步收敛 .agentx/ 生成（fire-and-forget）。
-          // generatedAgentx 标记 + getProjectConfig 真实存在性构成双层防护；
-          // 详见 stores/chat/index.ts::ensureAgentxGenerated 注释。
-          // 强制使用 activeThreadIdRef（发送时固定），避免用户在 done 期间切到
-          // 新会话时把 .agentx 触发错配到非流式所在会话。
-          const activeTid = activeThreadIdRef?.current ?? currentIdRef.current;
-          if (activeTid) {
-            void useChatStore.getState().ensureAgentxGenerated(activeTid);
-          }
-          break;
-        }
-        case "error": {
-          if (threadId) {
-            setSessionRunning(threadId, false);
-          }
-          if (pendingIdRef.current) {
-            markReasoningDone(pendingIdRef.current);
-            // 兜底：error 时也清理残留的 running tool-call
-            markRunningToolCallsComplete(pendingIdRef.current);
-            // error 时清理空 pending assistant 消息，避免留下空白气泡
-            deleteMessage(pendingIdRef.current);
-            pendingIdRef.current = null;
-          }
-          const errData = e.data ?? e.error ?? e.message;
-          // 错误消息附 trace_id：方便用户报告"任务卡死/中断"问题时直接复制
-          // 提交给开发者，开发者即可 grep data/logs/backend.log 定位整条链路。
-          // 优先用事件自身的 trace_id（后端注入），缺失时回退到 chat.ts 对应 threadId 的值。
-          // 兼容三种 error payload 格式：
-          // 1. chat.py 手工构造：{event:"error", data:"内部错误..."} → e.data 是字符串
-          // 2. make_sse_event("error", {message: "..."}) → e.message 是字符串（最常见）
-          // 3. 极少见：payload 里直接写 {error: "..."} → e.error 是字符串
-          const baseMsg = typeof errData === "string" && errData.length > 0 ? errData : "请求出错";
-          const traceId = e.trace_id ?? getCurrentTraceId(threadId) ?? null;
-          const msgWithTrace = traceId ? `${baseMsg}（trace=${traceId}）` : baseMsg;
-          callbacksRef.current.setErrorMsg(msgWithTrace);
-          // 标记当前任务失败 + 收尾 Team 子任务
-          const tid = currentTaskIdRef.current;
-          if (tid) {
-            updateTask(tid, { status: "failed" });
-            currentTaskIdRef.current = null;
-            // 父任务失败时，所有 parentTaskId === tid 的 running 子任务也标记失败
-            const childTasks = useTasksStore
-              .getState()
-              .tasks.filter(
-                (t) => t.parentTaskId === tid && t.status === "running",
-              );
-            for (const child of childTasks) {
-              updateTask(child.id, { status: "failed" });
+            // REQ-SSE-4: 检查 team_done 是否已收到 error/aborted outcome
+            // - 若是，任务终态应映射为 failed 而非 done
+            // - 否则按 done.reason 决定（aborted/error → failed, 其他 → done）
+            const teamOutcome = teamDoneOutcomeByThreadRef.current.get(tid);
+            const isTeamFailed =
+              teamOutcome === "error" || teamOutcome === "aborted";
+            const isDoneReasonFailed =
+              doneReason === "aborted" || doneReason === "error";
+            const taskFinalStatus: "done" | "failed" =
+              isTeamFailed || isDoneReasonFailed ? "failed" : "done";
+
+            // 标记当前任务完成 + 收尾 Team 子任务
+            const currentTaskId = effectiveCurrentTaskId(tid);
+            if (currentTaskId) {
+              updateTask(currentTaskId, { status: taskFinalStatus });
+              setCurrentTaskId(tid, null);
+              if (isForegroundSession(tid)) {
+                currentTaskIdRef.current = null;
+              }
+              // 父任务完成时，所有 parentTaskId === currentTaskId 的 running 子任务也标记终态
+              const childTasks = useTasksStore
+                .getState()
+                .tasks.filter(
+                  (t) => t.parentTaskId === currentTaskId && t.status === "running",
+                );
+              for (const child of childTasks) {
+                updateTask(child.id, { status: taskFinalStatus });
+              }
             }
-          }
-          callbacksRef.current.setPaused?.(false);
-          break;
-        }
-        case "todo_update": {
-          const taskId =
-            typeof e.task_id === "string" && e.task_id.length > 0
-              ? e.task_id
-              : undefined;
-          const parentTaskId =
-            typeof e.parent_task_id === "string" && e.parent_task_id.length > 0
-              ? e.parent_task_id
-              : undefined;
-          const source =
-            typeof e.source === "string" && e.source.length > 0
-              ? e.source
-              : undefined;
-          const incoming = normalizeTodos(e.todos, taskId);
-          if (parentTaskId && source) {
-            // Team 子任务路径：创建/更新子任务。
-            // M14 修复：优先使用 currentTaskIdRef.current（前端主任务 UUID）作为
-            // parentTaskId，确保父子链接与前端任务 ID 一致。若主任务尚未创建
-            //（ref 为 null），回退到事件 parent_task_id（后端 thread_id），
-            // 避免丢失子任务数据。
-            const effectiveParentId = currentTaskIdRef.current ?? parentTaskId;
-            // FE-005 修复：优先用后端 task_id（子任务 thread_id），避免同角色多 wave
-            // 子任务 todos 互相覆盖（旧逻辑 `${effectiveParentId}-child-${source}`
-            // 同角色多 wave 会生成相同 id → 后到的 todos 覆盖前者）
-            const childTaskId = taskId ?? `${effectiveParentId}-child-${source}`;
-            const sessionId = activeThreadIdRef?.current ?? currentIdRef.current ?? "";
-            const existing = useTasksStore.getState().tasks.find((t) => t.id === childTaskId);
-            if (existing) {
-              updateTask(childTaskId, { todos: incoming, status: "running" });
-            } else {
-              addTask({
-                id: childTaskId,
-                title: source,
-                status: "running",
-                todos: incoming,
-                createdAt: Date.now(),
-                sessionId,
-                parentTaskId: effectiveParentId,
-                taskSource: "team",
-                agentRole: source,
-              });
+            if (isForegroundSession(tid)) {
+              callbacksRef.current.setPaused?.(false);
             }
-          } else {
-            // 主任务路径：DeepAgent / Supervisor / Expert / Team 全局 todos
-            const tid = currentTaskIdRef.current;
+
+            // 清理 team_done outcome tracking（避免下一次会话误读旧终态）
+            teamDoneOutcomeByThreadRef.current.delete(tid);
+
+            // 首条有效对话（任一 agent 模式）完成后异步收敛 .agentx/ 生成（fire-and-forget）。
+            // generatedAgentx 标记 + getProjectConfig 真实存在性构成双层防护；
+            // 详见 stores/chat/index.ts::ensureAgentxGenerated 注释。
+            // REQ-CHAT-5: 使用事件归属的 tid，而非 singleton activeThreadIdRef。
             if (tid) {
-              updateTask(tid, { todos: incoming });
-            } else if (incoming.length > 0) {
-              // 优先使用事件携带的 task_id（后端 thread_id）作为任务 ID，
-              // 建立 Team 子任务父子链接（子任务 parentTaskId = thread_id = 主任务 id）。
-              // 若该 ID 已存在（同一会话第二次对话），复用并重置为 running。
-              const existingByEventId = taskId
-                ? useTasksStore.getState().tasks.find((t) => t.id === taskId)
+              void useChatStore.getState().ensureAgentxGenerated(tid);
+            }
+            break;
+          }
+          case "error": {
+            setSessionRunning(tid, false);
+            if (pid) {
+              markReasoningDone(pid);
+              // 兜底：error 时也清理残留的 running tool-call
+              markRunningToolCallsComplete(pid);
+              // error 时清理空 pending assistant 消息，避免留下空白气泡
+              deleteMessage(pid);
+            }
+            clearStreamState(tid);
+            const errData = e.data ?? e.error ?? e.message;
+            // 错误消息附 trace_id：方便用户报告"任务卡死/中断"问题时直接复制
+            // 提交给开发者，开发者即可 grep data/logs/backend.log 定位整条链路。
+            // 优先用事件自身的 trace_id（后端注入），缺失时回退到 chat.ts 对应 threadId 的值。
+            // 兼容三种 error payload 格式：
+            // 1. chat.py 手工构造：{event:"error", data:"内部错误..."} → e.data 是字符串
+            // 2. make_sse_event("error", {message: "..."}) → e.message 是字符串（最常见）
+            // 3. 极少见：payload 里直接写 {error: "..."} → e.error 是字符串
+            const baseMsg = typeof errData === "string" && errData.length > 0 ? errData : "请求出错";
+            const traceId = e.trace_id ?? getCurrentTraceId(tid) ?? null;
+            const msgWithTrace = traceId ? `${baseMsg}（trace=${traceId}）` : baseMsg;
+            // REQ-CHAT-5: 后台会话错误不覆盖前台 setErrorMsg
+            if (isForegroundSession(tid)) {
+              callbacksRef.current.setErrorMsg(msgWithTrace);
+            }
+            // 标记当前任务失败 + 收尾 Team 子任务
+            const currentTaskId = effectiveCurrentTaskId(tid);
+            if (currentTaskId) {
+              updateTask(currentTaskId, { status: "failed" });
+              setCurrentTaskId(tid, null);
+              if (isForegroundSession(tid)) {
+                currentTaskIdRef.current = null;
+              }
+              // 父任务失败时，所有 parentTaskId === currentTaskId 的 running 子任务也标记失败
+              const childTasks = useTasksStore
+                .getState()
+                .tasks.filter(
+                  (t) => t.parentTaskId === currentTaskId && t.status === "running",
+                );
+              for (const child of childTasks) {
+                updateTask(child.id, { status: "failed" });
+              }
+            }
+            if (isForegroundSession(tid)) {
+              callbacksRef.current.setPaused?.(false);
+            }
+            break;
+          }
+          case "todo_update": {
+            const taskId =
+              typeof e.task_id === "string" && e.task_id.length > 0
+                ? e.task_id
                 : undefined;
-              if (existingByEventId) {
-                updateTask(existingByEventId.id, {
-                  todos: incoming,
-                  status: "running",
-                });
-                currentTaskIdRef.current = existingByEventId.id;
+            const parentTaskId =
+              typeof e.parent_task_id === "string" && e.parent_task_id.length > 0
+                ? e.parent_task_id
+                : undefined;
+            const source =
+              typeof e.source === "string" && e.source.length > 0
+                ? e.source
+                : undefined;
+            const incoming = normalizeTodos(e.todos, taskId);
+            if (parentTaskId && source) {
+              // Team 子任务路径：创建/更新子任务。
+              // M14 修复：优先使用 effectiveCurrentTaskId(tid)（前端主任务 UUID）作为
+              // parentTaskId，确保父子链接与前端任务 ID 一致。若主任务尚未创建
+              //（Map/ref 为 null），回退到事件 parent_task_id（后端 thread_id），
+              // 避免丢失子任务数据。
+              const effectiveParentId = effectiveCurrentTaskId(tid) ?? parentTaskId;
+              // FE-005 修复：优先用后端 task_id（子任务 thread_id），避免同角色多 wave
+              // 子任务 todos 互相覆盖（旧逻辑 `${effectiveParentId}-child-${source}`
+              // 同角色多 wave 会生成相同 id → 后到的 todos 覆盖前者）
+              const childTaskId = taskId ?? `${effectiveParentId}-child-${source}`;
+              // REQ-CHAT-5: sessionId 使用事件归属的 tid
+              const sessionId = tid;
+              const existing = useTasksStore.getState().tasks.find((t) => t.id === childTaskId);
+              if (existing) {
+                updateTask(childTaskId, { todos: incoming, status: "running" });
               } else {
-                const newId = taskId ?? `task-${crypto.randomUUID()}`;
-                currentTaskIdRef.current = newId;
-                const rawQuery = lastUserQueryRef.current
-                  .replace(/<workspace>.*?<\/workspace>\s?/g, "")
-                  .replace(/<file>.*?<\/file>\s?/g, "")
-                  .trim();
-                // 任务名隐藏 /skill:<name> 激活标记，只展示用户实际输入；
-                // 剥离后为空时回退到首个技能名 → 兜底"深度任务"。
-                const { text: skillStripped, fallbackSkillName } = stripSkillTag(rawQuery);
-                const titleBase = skillStripped || fallbackSkillName || "";
-                const title = titleBase.slice(0, 40) || "深度任务";
-                // 使用当前会话 ID 作为任务归属；切换会话后任务列表自动隔离。
-                // 走 currentIdRef 而非闭包 currentId —— 否则 SSE handler 永远拿到首次渲染的
-                // 会话 ID,流结束后到达的延迟 todo_update 会落到 stale 闭包或 ""。
-                const sessionId =
-                  activeThreadIdRef?.current ?? currentIdRef.current ?? "";
-                // 根据 source 推断 taskSource: "coding" 场景识别，其他默认 "work"
-                const taskSource: "work" | "coding" =
-                  source === "coding" ? "coding" : "work";
                 addTask({
-                  id: newId,
-                  title,
+                  id: childTaskId,
+                  title: source,
                   status: "running",
                   todos: incoming,
                   createdAt: Date.now(),
                   sessionId,
-                  taskSource,
+                  parentTaskId: effectiveParentId,
+                  taskSource: "team",
+                  agentRole: source,
                 });
               }
+            } else {
+              // 主任务路径：DeepAgent / Supervisor / Expert / Team 全局 todos
+              const currentTaskId = effectiveCurrentTaskId(tid);
+              if (currentTaskId) {
+                updateTask(currentTaskId, { todos: incoming });
+              } else if (incoming.length > 0) {
+                // 优先使用事件携带的 task_id（后端 thread_id）作为任务 ID，
+                // 建立 Team 子任务父子链接（子任务 parentTaskId = thread_id = 主任务 id）。
+                // 若该 ID 已存在（同一会话第二次对话），复用并重置为 running。
+                const existingByEventId = taskId
+                  ? useTasksStore.getState().tasks.find((t) => t.id === taskId)
+                  : undefined;
+                if (existingByEventId) {
+                  updateTask(existingByEventId.id, {
+                    todos: incoming,
+                    status: "running",
+                  });
+                  setCurrentTaskId(tid, existingByEventId.id);
+                  if (isForegroundSession(tid)) {
+                    currentTaskIdRef.current = existingByEventId.id;
+                  }
+                } else {
+                  const newId = taskId ?? `task-${crypto.randomUUID()}`;
+                  setCurrentTaskId(tid, newId);
+                  if (isForegroundSession(tid)) {
+                    currentTaskIdRef.current = newId;
+                  }
+                  const rawQuery = effectiveLastUserQuery(tid)
+                    .replace(/<workspace>.*?<\/workspace>\s?/g, "")
+                    .replace(/<file>.*?<\/file>\s?/g, "")
+                    .trim();
+                  // 任务名隐藏 /skill:<name> 激活标记，只展示用户实际输入；
+                  // 剥离后为空时回退到首个技能名 → 兜底"深度任务"。
+                  const { text: skillStripped, fallbackSkillName } = stripSkillTag(rawQuery);
+                  const titleBase = skillStripped || fallbackSkillName || "";
+                  const title = titleBase.slice(0, 40) || "深度任务";
+                  // REQ-CHAT-5: sessionId 使用事件归属的 tid
+                  const sessionId = tid;
+                  // 根据 source 推断 taskSource: "coding" 场景识别，其他默认 "work"
+                  const taskSource: "work" | "coding" =
+                    source === "coding" ? "coding" : "work";
+                  addTask({
+                    id: newId,
+                    title,
+                    status: "running",
+                    todos: incoming,
+                    createdAt: Date.now(),
+                    sessionId,
+                    taskSource,
+                  });
+                }
+              }
             }
-          }
-          break;
-        }
-        case "team_init": {
-          // team_init 事件：_plan_node 成功后发射，携带 plan + agents + summary。
-          // plan 项含 {agent, description, id, depends_on}，映射为 TeamAgentState。
-          if (pendingIdRef.current) {
-            // 把 plan 项映射为 TeamAgentState（含 description/taskId/dependsOn）
-            const initialAgents: TeamAgentState[] = e.plan.map((p) => ({
-              agent: p.agent,
-              description: p.description,
-              taskId: p.id,
-              dependsOn: p.depends_on,
-              status: "pending",
-            }));
-            upsertTeamNode(pendingIdRef.current, {
-              reasoning: e.summary,
-              initialAgents,
-              status: "running",
-            });
-          }
-          if (threadId) {
-            chat.setTeamMode(threadId, true);
-          }
-          break;
-        }
-        case "team_done": {
-          // team_done 事件：AgentTeam 整体执行结束。
-          // 仅更新已存在的 team part（由 team_init 创建）；若 team part 不存在
-          //（降级路径 / plan 失败），则不创建空 team part。
-          // status 语义：
-          //   - "error"      → 终止态：TeamNodeCard 显示失败 + finalizeAgents
-          //   - "done"       → 终止态：TeamNodeCard 显示已完成 + finalizeAgents
-          //   - "replanning" → 过渡态：质量门失败但无 error，团队正在重新规划；
-          //                     TeamNodeCard 保持 running，避免 finalizeAgents 把 agent
-          //                     全部标记为 done 导致后续新一轮 delegation 到达时
-          //                     agent 状态在 done ↔ running 间来回翻转（UI 闪烁）。
-          if (!pendingIdRef.current) break;
-          const agentMessages = Array.isArray(e.agents)
-            ? e.agents
-                .filter(
-                  (a): a is { agent: string; task_id?: string; message?: string; summary?: string } =>
-                    typeof a === "object" && a !== null && typeof (a as Record<string, unknown>).agent === "string",
-                )
-                .map((a) => ({
-                  agent: a.agent,
-                  ...(a.task_id !== undefined ? { taskId: a.task_id } : {}),
-                  ...(a.message !== undefined ? { message: a.message } : {}),
-                  ...(a.summary !== undefined ? { summary: a.summary } : {}),
-                }))
-            : [];
-          // 后端 team_done 事件可选携带 blackboard 快照（含 task_id / wave_index /
-          // retries / error 等富信息）。前端 BlackboardPanel 优先消费此快照，
-          // 缺失时回退到档位 A 的 agents 聚合。ChatEvent 类型暂未声明 blackboard
-          // 字段（避免 api-types.ts 跨层修改），这里防御性读取。
-          const blackboardRaw = (e as Record<string, unknown>).blackboard;
-          const blackboard = isBlackboardSnapshot(blackboardRaw) ? blackboardRaw : undefined;
-          const isReplanning = e.status === "replanning";
-          const teamStatus = e.status === "error"
-            ? "error"
-            : isReplanning
-              ? "running"
-              : "done";
-          upsertTeamNode(pendingIdRef.current, {
-            status: teamStatus,
-            finalizeAgents: e.status === "done" || e.status === "error",
-            createIfMissing: false,
-            agentMessages,
-            ...(blackboard ? { blackboard } : {}),
-          });
-
-          // FE-001 修复：replanning 不启动看门狗，只清理当前 wave 残留
-          markReasoningDone(pendingIdRef.current);
-          markRunningToolCallsComplete(pendingIdRef.current);
-
-          if (isReplanning) {
-            // replanning 是过渡态：不启动 done 看门狗，等待 replan 事件 + 新 delegation
-            // 后续 wave 的 reasoning/tool_call 会作为新 part 创建，不受 markReasoningDone 影响
             break;
           }
+          case "team_init": {
+            // team_init 事件：_plan_node 成功后发射，携带 plan + agents + summary。
+            // plan 项含 {agent, description, id, depends_on}，映射为 TeamAgentState。
+            if (pid) {
+              // 把 plan 项映射为 TeamAgentState（含 description/taskId/dependsOn）
+              const initialAgents: TeamAgentState[] = e.plan.map((p) => ({
+                agent: p.agent,
+                description: p.description,
+                taskId: p.id,
+                dependsOn: p.depends_on,
+                status: "pending",
+              }));
+              upsertTeamNode(pid, {
+                reasoning: e.summary,
+                initialAgents,
+                status: "running",
+              });
+            }
+            chat.setTeamMode(tid, true);
+            break;
+          }
+          case "team_done": {
+            // team_done 事件：AgentTeam 整体执行结束（业务终态，D3）。
+            // 仅更新已存在的 team part（由 team_init 创建）；若 team part 不存在
+            //（降级路径 / plan 失败），则不创建空 team part。
+            //
+            // REQ-SSE-4 / D4 typed outcome:
+            // - outcome（权威字段）：success | partial | error | aborted
+            // - status（兼容字段）：error | done | replanning
+            // 前端 reducer 优先消费 outcome，fallback 到 status。
+            //
+            // outcome 语义：
+            //   - "error" / "aborted" → 终止态：TeamNodeCard 显示失败 + finalizeAgents
+            //   - "success" / "partial" → 终止态：TeamNodeCard 显示已完成（partial 带警告色）+ finalizeAgents
+            //   - 缺失 + status="replanning" → 过渡态：质量门失败但无 error，团队正在重新规划；
+            //                                    TeamNodeCard 保持 running，避免 finalizeAgents 把 agent
+            //                                    全部标记为 done 导致后续新一轮 delegation 到达时
+            //                                    agent 状态在 done ↔ running 间来回翻转（UI 闪烁）。
+            if (!pid) break;
 
-          // 终态（done/error）：启动 done 看门狗
-          // 安全兜底：team_done 后若 done 事件因故未到达，仍需收尾 reasoning / tool-call，
-          // 避免消息卡在「运行中」状态。启动 2s done 看门狗：若 done 事件未在 2s 内
-          // 到达，看门狗将强制 finishRunning(false) 收尾流式状态。
-          // 防竞态：回调内检查当前会话是否仍在运行，已停止则跳过（避免误杀新消息 streaming）。
-          const watchdogThreadId = targetThreadId();
-          if (doneWatchdogRef.current) clearTimeout(doneWatchdogRef.current);
-          doneWatchdogRef.current = setTimeout(() => {
-            const cid = targetThreadId();
-            // 会话已切换或已停止 → 跳过（done 已到达或用户已发新消息）
-            if (!cid || cid !== watchdogThreadId) return;
-            const state = useChatStore.getState();
-            const session = state.sessions[cid];
-            if (!session?.isRunning) return;
-            finishRunning(false);
-            // team_done 丢失兜底（2026-07-13 修复）：
-            // 若 team_done 因网络中断未到达，TeamNodeCard 内 agent.status
-            // 会永久卡在 running spinner。强制 finalize 该消息的 team part，
-            // 把所有 running agent 收敛为 done，并标记 team 整体完成。
-            if (pendingIdRef.current) {
-              const message = session.messages.find(
-                (m: ChatMessage) => m.id === pendingIdRef.current,
-              );
-              const teamPart = message?.parts.find(
-                (p: MessagePart): p is Extract<MessagePart, { type: "team" }> => p.type === "team",
-              );
-              if (teamPart && teamPart.status === "running") {
-                upsertTeamNode(pendingIdRef.current, {
-                  status: "done",
-                  finalizeAgents: true,
+            // REQ-SSE-3: 提取 agents[]（含 task_id / success / retries 关联键）
+            const agentSummaries: TeamAgentSummary[] = Array.isArray(e.agents)
+              ? e.agents.filter(
+                  (a): a is TeamAgentSummary =>
+                    typeof a === "object" && a !== null && typeof a.agent === "string",
+                )
+              : [];
+            const agentMessages = agentSummaries.map((a) => ({
+              agent: a.agent,
+              ...(a.task_id !== undefined ? { taskId: a.task_id } : {}),
+              ...(a.message !== undefined ? { message: a.message } : {}),
+              ...(a.summary !== undefined ? { summary: a.summary } : {}),
+            }));
+
+            // 后端 team_done 事件可选携带 blackboard 快照（含 task_id / wave_index /
+            // retries / error 等富信息）。前端 BlackboardPanel 优先消费此快照，
+            // 缺失时回退到档位 A 的 agents 聚合。
+            // blackboard 字段已在 ChatEvent 类型中声明（REQ-SSE-5）。
+            const blackboardRaw = (e as Record<string, unknown>).blackboard;
+            const blackboard = isBlackboardSnapshot(blackboardRaw) ? blackboardRaw : undefined;
+
+            // REQ-SSE-4 / D4: 优先消费 outcome，fallback 到 status
+            const outcome: TeamOutcome | undefined = e.outcome;
+            // 记录 team_done 已收到 + outcome（按 threadId 隔离），供 done case 校验
+            if (outcome) {
+              teamDoneOutcomeByThreadRef.current.set(tid, outcome);
+            } else if (e.status === "error") {
+              teamDoneOutcomeByThreadRef.current.set(tid, "error");
+            } else if (e.status === "done") {
+              teamDoneOutcomeByThreadRef.current.set(tid, "success");
+            }
+            const isReplanning =
+              outcome === undefined && e.status === "replanning";
+            // 映射到 TeamNodeCard 内部 status（"running" | "done" | "error"）
+            const teamStatus: "running" | "done" | "error" =
+              outcome === "error" || outcome === "aborted"
+                ? "error"
+                : isReplanning
+                  ? "running"
+                  : "done";
+            const shouldFinalize =
+              outcome === "success" ||
+              outcome === "partial" ||
+              outcome === "error" ||
+              outcome === "aborted" ||
+              (!outcome && (e.status === "done" || e.status === "error"));
+            upsertTeamNode(pid, {
+              status: teamStatus,
+              ...(outcome ? { outcome } : {}),
+              finalizeAgents: shouldFinalize,
+              createIfMissing: false,
+              agentMessages,
+              ...(blackboard ? { blackboard } : {}),
+            });
+
+            // FE-001 修复：replanning 不启动看门狗，只清理当前 wave 残留
+            markReasoningDone(pid);
+            markRunningToolCallsComplete(pid);
+
+            if (isReplanning) {
+              // replanning 是过渡态：不启动 done 看门狗，等待 replan 事件 + 新 delegation
+              // 后续 wave 的 reasoning/tool_call 会作为新 part 创建，不受 markReasoningDone 影响
+              break;
+            }
+
+            // 终态（success/partial/error/aborted 或旧 status done/error）：启动 done 看门狗
+            // 安全兜底：team_done 后若 done 事件因故未到达，仍需收尾 reasoning / tool-call，
+            // 避免消息卡在「运行中」状态。启动 2s done 看门狗：若 done 事件未在 2s 内
+            // 到达，看门狗将强制 finishRunning(false) 收尾流式状态。
+            // 防竞态：回调内检查当前会话是否仍在运行，已停止则跳过（避免误杀新消息 streaming）。
+            // REQ-CHAT-5: 看门狗绑定 tid（事件归属），而非 singleton targetThreadId()。
+            const watchdogThreadId = tid;
+            if (doneWatchdogRef.current) clearTimeout(doneWatchdogRef.current);
+            doneWatchdogRef.current = setTimeout(() => {
+              // 会话已切换或已停止 → 跳过（done 已到达或用户已发新消息）
+              if (!watchdogThreadId) return;
+              const state = useChatStore.getState();
+              const session = state.sessions[watchdogThreadId];
+              if (!session?.isRunning) return;
+              finishRunning(false, watchdogThreadId);
+              // team_done 丢失兜底（2026-07-13 修复）：
+              // 若 team_done 因网络中断未到达，TeamNodeCard 内 agent.status
+              // 会永久卡在 running spinner。强制 finalize 该消息的 team part，
+              // 把所有 running agent 收敛为 done，并标记 team 整体完成。
+              const watchdogPid = effectivePendingId(watchdogThreadId);
+              if (watchdogPid) {
+                const message = session.messages.find(
+                  (m: ChatMessage) => m.id === watchdogPid,
+                );
+                const teamPart = message?.parts.find(
+                  (p: MessagePart): p is Extract<MessagePart, { type: "team" }> => p.type === "team",
+                );
+                if (teamPart && teamPart.status === "running") {
+                  upsertTeamNode(watchdogPid, {
+                    status: "done",
+                    finalizeAgents: true,
+                    createIfMissing: false,
+                  });
+                }
+              }
+            }, 2000);
+            break;
+          }
+          case "replan": {
+            // replan 事件：质量门失败后触发重规划，携带新增任务列表。
+            // 追加到 TeamNodeCard 的 replanHistory + 新增 agent 行。
+            if (pid) {
+              upsertTeamNode(pid, {
+                replan: {
+                  newTasks: e.new_tasks.map((t) => ({
+                    id: t.id,
+                    agent: t.agent,
+                    description: t.description,
+                    dependsOn: t.depends_on,
+                  })),
+                  replanCount: e.replan_count,
+                  reason: e.reason,
+                },
+                createIfMissing: false,
+              });
+            }
+            break;
+          }
+          case "warning": {
+            // 后端 warning 事件：未知 agent fallback / team_role 缺 system_prompt 等
+            // 追加到 TeamNodeCard 的 warnings 列表，同时 console.warn 便于开发排查。
+            if (e.message) {
+              console.warn("[AgentTeam warning]", e.message);
+              if (pid) {
+                upsertTeamNode(pid, {
+                  addWarning: e.message,
                   createIfMissing: false,
                 });
               }
             }
-          }, 2000);
-          break;
-        }
-        case "replan": {
-          // replan 事件：质量门失败后触发重规划，携带新增任务列表。
-          // 追加到 TeamNodeCard 的 replanHistory + 新增 agent 行。
-          if (pendingIdRef.current) {
-            upsertTeamNode(pendingIdRef.current, {
-              replan: {
-                newTasks: e.new_tasks.map((t) => ({
-                  id: t.id,
-                  agent: t.agent,
-                  description: t.description,
-                  dependsOn: t.depends_on,
-                })),
-                replanCount: e.replan_count,
-                reason: e.reason,
-              },
-              createIfMissing: false,
-            });
+            break;
           }
-          break;
-        }
-        case "warning": {
-          // 后端 warning 事件：未知 agent fallback / team_role 缺 system_prompt 等
-          // 追加到 TeamNodeCard 的 warnings 列表，同时 console.warn 便于开发排查。
-          if (e.message) {
-            console.warn("[AgentTeam warning]", e.message);
-            if (pendingIdRef.current) {
-              upsertTeamNode(pendingIdRef.current, {
-                addWarning: e.message,
-                createIfMissing: false,
-              });
-            }
+          default: {
+            // 未知事件类型：忽略（兜底分支，避免破坏流式）
+            break;
           }
-          break;
         }
-        default: {
-          // 未知事件类型：忽略（兜底分支，避免破坏流式）
-          break;
-        }
-      }
-    });
+      });
+      unsubs.push(unsubEvents);
 
-    const unsubApproval = chat.onApprovalRequest(threadId, (req) => {
-      // 内联授权：若 approval_request 携带 toolCallId，关联到对应 tool-call part
-      if (req.toolCallId && pendingIdRef.current) {
-        attachApprovalToToolCall(pendingIdRef.current, req.toolCallId, req);
-      }
-      // 只有无法关联到具体 tool-call 时（无 toolCallId），才入队走弹窗兜底
-      if (!req.toolCallId) {
-        enqueueApprovalRequest(req);
-      }
-    });
+      const unsubApproval = chat.onApprovalRequest(tid, (req) => {
+        // 内联授权：若 approval_request 携带 toolCallId，关联到对应 tool-call part
+        const approvalPid = effectivePendingId(tid);
+        if (req.toolCallId && approvalPid) {
+          attachApprovalToToolCall(approvalPid, req.toolCallId, req);
+        }
+        // 只有无法关联到具体 tool-call 时（无 toolCallId），才入队走弹窗兜底
+        if (!req.toolCallId) {
+          enqueueApprovalRequest(req);
+        }
+      });
+      unsubs.push(unsubApproval);
+    }
 
     return () => {
-      // 切换会话 / 卸载前，对当前 pending 消息执行终态收尾，
+      // 切换会话 / 卸载前，对所有已订阅 threadId 的 pending 消息执行终态收尾，
       // 避免留下 reasoning 未 done / tool-call 卡 running 的不完整消息状态
-      if (pendingIdRef.current) {
-        markReasoningDone(pendingIdRef.current);
-        markRunningToolCallsComplete(pendingIdRef.current);
+      for (const tid of targetIds) {
+        const cleanupPid = effectivePendingId(tid);
+        if (cleanupPid) {
+          markReasoningDone(cleanupPid);
+          markRunningToolCallsComplete(cleanupPid);
+        }
       }
       // 清除 done 看门狗，避免卸载后误触发
       if (doneWatchdogRef.current) {
         clearTimeout(doneWatchdogRef.current);
         doneWatchdogRef.current = null;
       }
-      unsubEvents();
-      unsubApproval();
+      unsubs.forEach((u) => u());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId]);
+  }, [threadId, runningSessionKey]);
 }
