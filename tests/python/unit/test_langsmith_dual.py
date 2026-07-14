@@ -22,10 +22,7 @@ from app.observability.observation import SqliteObservationSink, reset_observati
 def tmp_sink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SqliteObservationSink:
     """临时 sink + patch get_observation_sink 返回它。"""
     sink = SqliteObservationSink(db_path=tmp_path / "dual_test.db")
-    # patch 模块级 get_observation_sink，使 dual_trace 用临时 sink
-    import app.observability.langsmith as mod
-
-    monkeypatch.setattr(mod, "get_observation_sink", lambda: sink)
+    # dual_trace 内部局部导入 observation.get_observation_sink，patch observation 模块即可
     monkeypatch.setattr(
         "app.observability.observation.get_observation_sink", lambda: sink
     )

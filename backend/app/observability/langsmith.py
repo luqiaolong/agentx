@@ -159,12 +159,6 @@ def mark_redacted() -> str:
 # 原 langsmith_dual 模块合并至此（P1 命名重构）
 # ============================================================
 
-# 延迟导入 get_observation_sink 以打破与 observation.py 的循环依赖
-#（observation.py 顶部 from app.observability.langsmith import redact，
-# 若本文件顶部导入 observation 会形成循环；此处 redact 已定义，安全导入）
-from app.observability.observation import get_observation_sink  # noqa: E402
-
-
 @dataclass
 class DualTraceContext:
     """``dual_trace`` 产出的上下文，供 T3 五维度串联使用。"""
@@ -229,6 +223,12 @@ def dual_trace(
         )
 
     # 1. 本地 SQLite：start_run（必写）
+    # 局部导入打破与 observation.py 的循环依赖：observation.py 顶部导入本模块的 redact，
+    # 若本模块在模块级导入 get_observation_sink 会形成循环（observation 先加载时
+    # get_observation_sink 尚未定义）。dual_trace 是唯一使用点，运行时 observation
+    # 已完成初始化。
+    from app.observability.observation import get_observation_sink
+
     sink = get_observation_sink()
     try:
         sink.start_run_sync(
