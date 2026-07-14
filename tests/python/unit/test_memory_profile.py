@@ -212,7 +212,7 @@ def test_build_profile_prompt_empty_when_no_file(tmp_path: Path) -> None:
 async def test_upsert_from_llm_creates_new(tmp_path: Path) -> None:
     """LLM 抽取条目新建。"""
     entries = [
-        {"key": "uses_typescript", "category": "project", "content": "用户用 TypeScript"}
+        {"key": "uses_typescript", "category": "fact", "content": "用户用 TypeScript"}
     ]
     written = await upsert_from_llm(entries)
     assert written == 1
@@ -226,7 +226,7 @@ async def test_upsert_from_llm_updates_existing(tmp_path: Path) -> None:
     """key 重复时更新 content 与 source=llm_extracted。"""
     await add(_make_entry(key="uses_ts", content="old", source="manual"))
     entries = [
-        {"key": "uses_ts", "category": "project", "content": "new TS usage"}
+        {"key": "uses_ts", "category": "fact", "content": "new TS usage"}
     ]
     written = await upsert_from_llm(entries)
     assert written == 1
@@ -285,12 +285,12 @@ async def test_upsert_from_llm_truncates_over_limit(tmp_path: Path) -> None:
 async def test_build_profile_prompt_format(tmp_path: Path) -> None:
     """画像注入 prompt 格式正确。"""
     await add(_make_entry(key="pref1", category="preference", content="简洁回复"))
-    await add(_make_entry(key="proj1", category="project", content="用 FastAPI"))
+    await add(_make_entry(key="proj1", category="fact", content="用 FastAPI"))
 
     prompt = build_profile_prompt()
     assert "用户画像（请遵循以下偏好与约定）:" in prompt
     assert "- [preference] 简洁回复" in prompt
-    assert "- [project] 用 FastAPI" in prompt
+    assert "- [fact] 用 FastAPI" in prompt
 
 
 async def test_build_profile_prompt_truncates_to_30(tmp_path: Path) -> None:

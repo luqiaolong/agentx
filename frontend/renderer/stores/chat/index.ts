@@ -1207,19 +1207,33 @@ export const useChatStore = create<ChatState>()(
               .join("");
           }
 
-          // Phase 2: await 后端 rewind 成功后才删除前端消息
-          // T1.8: rewind 失败时禁止 resend，且不修改前端消息列表
-          // （保持 UI 与后端 checkpoint 一致，调用方显示可恢复错误）
-          if (keepMessagesCount > 0) {
-            try {
-              const result = await memory.rewindThread(cid, keepMessagesCount);
-              if (!result.ok) {
+          // Phase 2: 用真实 checkpoint_id 回退后端状态
+          // T2.3: 不再用 keep_messages_count * 2 + 1 猜测，改为先 list_checkpoints
+          //       获取真实列表，再按消息数量选出 checkpoint_id 传给 rewind
+          // T2.6: 首条消息（keepMessagesCount=0）也走 rewind 流程，
+          //       保留初始 checkpoint（checkpoints[0]），删除之后的所有
+          try {
+            const { checkpoints } = await memory.listCheckpoints(cid);
+            if (checkpoints.length > 0) {
+              // 选出要保留到的 checkpoint：
+              // keepMessagesCount=0 → checkpoints[0]（初始状态）
+              // keepMessagesCount=N → checkpoints[N]（保留 N 条消息后的状态）
+              const targetIdx = Math.min(keepMessagesCount, checkpoints.length - 1);
+              const targetCheckpoint = checkpoints[targetIdx];
+              if (!targetCheckpoint) {
                 return { success: false, lastUserContent };
               }
-            } catch {
-              // rewind 失败（网络错误 / HTTP 4xx/5xx / preload API 不可用）
-              return { success: false, lastUserContent };
+              // 若选中的已是最后一个 checkpoint，无需 rewind
+              if (targetIdx < checkpoints.length - 1) {
+                const result = await memory.rewindThread(cid, targetCheckpoint.checkpoint_id);
+                if (!result.ok) {
+                  return { success: false, lastUserContent };
+                }
+              }
             }
+          } catch {
+            // rewind 失败（网络错误 / HTTP 4xx/5xx / checkpoint 不存在）
+            return { success: false, lastUserContent };
           }
 
           // Phase 3: rewind 成功，删除前端消息

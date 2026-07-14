@@ -37,12 +37,13 @@ export function useProfileCrud(
   contentMax: number,
   defaultCategory?: string,
   workspacePath?: string | null,
+  threadId?: string | null,
 ) {
   const cats = Array.isArray(category) ? category : [category];
   const defaultCat = defaultCategory ?? (Array.isArray(category) ? (category[0] ?? "custom") : category);
   return useCrudList<ProfileEntry>({
     fetcher: async () => {
-      const results = await Promise.all(cats.map((c) => memory.getProfile(c, workspacePath)));
+      const results = await Promise.all(cats.map((c) => memory.getProfile(c, workspacePath, undefined, threadId)));
       const all = results.flatMap((r) => r.entries ?? []);
       if (cats.length > 1) {
         all.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -58,10 +59,10 @@ export function useProfileCrud(
         keywords: i.keywords,
         scenarios: i.scenarios,
       };
-      await memory.saveProfile(req, workspacePath);
+      await memory.saveProfile(req, workspacePath, threadId);
     },
-    updater: async (i) => { await memory.updateProfile(i.key, i.content, i.category, i.title, i.keywords, i.scenarios, workspacePath); },
-    deleter: (k) => memory.deleteProfile(k, workspacePath),
+    updater: async (i) => { await memory.updateProfile(i.key, i.content, i.category, i.title, i.keywords, i.scenarios, workspacePath, threadId); },
+    deleter: (k) => memory.deleteProfile(k, workspacePath, threadId),
     initialItem: () => ({
       key: "", category: defaultCat, content: "", source: "manual", created_at: "", updated_at: "",
       title: "", keywords: [], scenarios: [],
@@ -159,6 +160,8 @@ export interface MemoryListConfig<T> {
 interface MemoryListProps<T> {
   crud: UseCrudListReturn<T>;
   config: MemoryListConfig<T>;
+  /** 禁用「新建」按钮（如 project 记忆在无工作区时禁止创建）。 */
+  disableCreate?: boolean;
 }
 
 /**
@@ -261,7 +264,7 @@ function TagInput({
   );
 }
 
-export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
+export function MemoryList<T>({ crud, config, disableCreate }: MemoryListProps<T>) {
   const {
     items,
     loaded,
@@ -318,7 +321,13 @@ export function MemoryList<T>({ crud, config }: MemoryListProps<T>) {
           >
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
-          <button type="button" className="btn-primary" onClick={startNew}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={startNew}
+            disabled={disableCreate}
+            title={disableCreate ? "请先选择工作区" : undefined}
+          >
             <Plus className="h-3.5 w-3.5" />
             {newItemLabel}
           </button>

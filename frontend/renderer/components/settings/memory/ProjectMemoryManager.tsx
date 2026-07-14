@@ -15,11 +15,13 @@ export function ProjectMemoryManager() {
   const homeWorkspacePath = useChatStore((s) => s.homeWorkspacePath);
   const workspacePath = sessionWorkspacePath ?? homeWorkspacePath ?? null;
 
-  const crud = useProfileCrud(CATEGORY, CONTENT_MAX, undefined, workspacePath);
+  // T5.1: 传 threadId 让后端做沙箱授权校验；T5.6: 无工作区时禁用创建按钮
+  const crud = useProfileCrud(CATEGORY, CONTENT_MAX, undefined, workspacePath, sessionId);
 
   return (
     <MemoryList
       crud={crud}
+      disableCreate={!workspacePath}
       config={profileListConfig(
         Briefcase,
         workspacePath

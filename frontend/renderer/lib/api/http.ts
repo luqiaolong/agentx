@@ -20,6 +20,7 @@ import type {
   McpTestResult,
   SkillFileInfo,
   ThreadInfo,
+  CheckpointInfo,
   ProfileCategory,
   ProfileEntry,
   ProfileEntryRequest,
@@ -313,12 +314,21 @@ export const memory = {
     await assertOk(r);
     return (await r.json()) as { deleted: number };
   },
+  listCheckpoints: async (
+    threadId: string,
+  ): Promise<{ checkpoints: CheckpointInfo[] }> => {
+    const r = await fetch(
+      `${API_BASE}/api/memory/checkpointer/${encodeURIComponent(threadId)}/checkpoints`,
+    );
+    await assertOk(r);
+    return (await r.json()) as { checkpoints: CheckpointInfo[] };
+  },
   rewindThread: async (
     threadId: string,
-    keepMessagesCount: number,
+    checkpointId: string,
   ): Promise<{ ok: boolean; deleted: number; kept: number; cutoff_checkpoint_id: string | null }> => {
     const r = await fetch(
-      `${API_BASE}/api/memory/checkpointer/${encodeURIComponent(threadId)}/rewind?keep_messages_count=${keepMessagesCount}`,
+      `${API_BASE}/api/memory/checkpointer/${encodeURIComponent(threadId)}/rewind?checkpoint_id=${encodeURIComponent(checkpointId)}`,
       {
         method: "POST",
       },
@@ -330,11 +340,13 @@ export const memory = {
     category?: ProfileCategory | string,
     workspacePath?: string | null,
     scope?: "workspace" | null,
+    threadId?: string | null,
   ): Promise<{ entries: ProfileEntry[] }> => {
     const params = new URLSearchParams();
     if (category) params.set("category", category);
     if (workspacePath) params.set("workspace_path", workspacePath);
     if (scope) params.set("scope", scope);
+    if (threadId) params.set("thread_id", threadId);
     const qs = params.toString();
     const url = qs
       ? `${API_BASE}/api/memory/profile?${qs}`
@@ -346,11 +358,13 @@ export const memory = {
   saveProfile: async (
     entry: ProfileEntryRequest,
     workspacePath?: string | null,
+    threadId?: string | null,
   ): Promise<unknown> => {
-    const qs = workspacePath
-      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
-      : "";
-    const r = await fetch(`${API_BASE}/api/memory/profile${qs}`, {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set("workspace_path", workspacePath);
+    if (threadId) params.set("thread_id", threadId);
+    const qs = params.toString();
+    const r = await fetch(`${API_BASE}/api/memory/profile${qs ? `?${qs}` : ""}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(entry),
@@ -366,11 +380,13 @@ export const memory = {
     keywords?: string[],
     scenarios?: string[],
     workspacePath?: string | null,
+    threadId?: string | null,
   ): Promise<unknown> => {
-    const qs = workspacePath
-      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
-      : "";
-    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs}`, {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set("workspace_path", workspacePath);
+    if (threadId) params.set("thread_id", threadId);
+    const qs = params.toString();
+    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs ? `?${qs}` : ""}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content, category, title, keywords, scenarios }),
@@ -381,11 +397,13 @@ export const memory = {
   deleteProfile: async (
     key: string,
     workspacePath?: string | null,
+    threadId?: string | null,
   ): Promise<unknown> => {
-    const qs = workspacePath
-      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
-      : "";
-    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs}`, {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set("workspace_path", workspacePath);
+    if (threadId) params.set("thread_id", threadId);
+    const qs = params.toString();
+    const r = await fetch(`${API_BASE}/api/memory/profile/${encodeURIComponent(key)}${qs ? `?${qs}` : ""}`, {
       method: "DELETE",
     });
     await assertOk(r);
@@ -395,8 +413,13 @@ export const memory = {
     threadId: string,
     message: string,
     reply: string,
+    workspacePath?: string | null,
   ): Promise<{ extracted: number }> => {
-    const r = await fetch(`${API_BASE}/api/memory/profile/extract`, {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set("workspace_path", workspacePath);
+    if (threadId) params.set("thread_id", threadId);
+    const qs = params.toString();
+    const r = await fetch(`${API_BASE}/api/memory/profile/extract${qs ? `?${qs}` : ""}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -410,11 +433,13 @@ export const memory = {
   },
   dream: async (
     workspacePath?: string,
+    threadId?: string | null,
   ): Promise<{ ok: boolean; applied: number; rolled_back: number; summary: string }> => {
-    const qs = workspacePath
-      ? `?workspace_path=${encodeURIComponent(workspacePath)}`
-      : "";
-    const r = await fetch(`${API_BASE}/api/memory/dream${qs}`, {
+    const params = new URLSearchParams();
+    if (workspacePath) params.set("workspace_path", workspacePath);
+    if (threadId) params.set("thread_id", threadId);
+    const qs = params.toString();
+    const r = await fetch(`${API_BASE}/api/memory/dream${qs ? `?${qs}` : ""}`, {
       method: "POST",
     });
     await assertOk(r);

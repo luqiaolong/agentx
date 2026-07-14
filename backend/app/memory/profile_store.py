@@ -73,6 +73,51 @@ _MAX_LLM_EXTRACT_ENTRIES = 20
 _VALID_CATEGORIES = {"preference", "project", "fact", "custom"}
 _VALID_SOURCES = {"manual", "llm_extracted"}
 
+# 合法 sensitivity 取值
+_VALID_SENSITIVITIES = {"public", "private"}
+
+# T5.2：密钥/凭证检测模式（高置信度密钥 → 拒绝入库）
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[\"']?([a-zA-Z0-9]{20,})"),
+        "API key",
+    ),
+    (
+        re.compile(r"(?i)(password|passwd|pwd)\s*[=:]\s*[\"']?(?!(?:enabled|disabled|true|false|yes|no|on|off)\b)(\S{6,})"),
+        "Password",
+    ),
+    (
+        re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----"),
+        "Private key",
+    ),
+    (
+        re.compile(r"(?i)(token|bearer)\s*[=:]\s*[\"']?([a-zA-Z0-9._-]{20,})"),
+        "Token",
+    ),
+    (
+        re.compile(r"(?i)(mongodb|postgres|mysql|redis)://\S+:\S+@"),
+        "Connection string with credentials",
+    ),
+    (
+        re.compile(r"(?i)sk-[a-zA-Z0-9]{20,}"),
+        "OpenAI-style key",
+    ),
+]
+
+
+def detect_secret(content: str) -> str | None:
+    """检测 content 中是否包含密钥/凭证。
+
+    Returns:
+        检测到的密钥类型字符串（如 ``"API key"``）；未检测到返回 ``None``。
+    """
+    if not isinstance(content, str):
+        return None
+    for pattern, name in _SECRET_PATTERNS:
+        if pattern.search(content):
+            return name
+    return None
+
 # 全局异步锁：保护 _load → modify → _save 事务（防并发 lost-update）
 # 单例锁覆盖全局画像；工作区画像各用独立锁（见 _workspace_locks）
 _PROFILE_LOCK: asyncio.Lock = asyncio.Lock()
@@ -100,6 +145,7 @@ class ProfileEntry(BaseModel):
     title: str | None = None
     keywords: list[str] = Field(default_factory=list)
     scenarios: list[str] = Field(default_factory=list)
+    sensitivity: str = "public"  # public | private（T5.3: private 不注入 prompt）
 
 
 class ProfileStore(BaseModel):
@@ -118,6 +164,14 @@ class ProfileContentTooLong(ValueError):
 
 class ProfileCategoryInvalid(ValueError):
     """画像 category 取值非法。"""
+
+
+class ProfileSecretDetected(ValueError):
+    """content 中检测到密钥/凭证，拒绝入库（T5.2）。"""
+
+
+class ProjectMemoryWithoutWorkspace(ValueError):
+    """project 类记忆必须挂载在工作区下，全局画像不允许写入 category=project。"""
 
 
 def _now_iso() -> str:
@@ -148,6 +202,15 @@ def _validate_category(category: str) -> str:
             f"category 必须为 {sorted(_VALID_CATEGORIES)} 之一"
         )
     return category
+
+
+def _validate_sensitivity(sensitivity: str) -> str:
+    """校验 sensitivity 取值（T5.2/T5.3）。"""
+    if sensitivity not in _VALID_SENSITIVITIES:
+        raise ValueError(
+            f"sensitivity 必须为 {sorted(_VALID_SENSITIVITIES)} 之一"
+        )
+    return sensitivity
 
 
 def _workspace_profile_path(workspace_path: str | None) -> Path | None:
@@ -306,6 +369,7 @@ async def add(
         ProfileKeyInvalid: key 非法。
         ProfileContentTooLong: content 越界。
         ProfileCategoryInvalid: category 非法。
+        ProfileSecretDetected: content 中检测到密钥/凭证（T5.2）。
         ValueError: key 已存在（用 409 上报前端）。
     """
     _validate_key(entry.key)
@@ -313,6 +377,19 @@ async def add(
     _validate_category(entry.category)
     if entry.source not in _VALID_SOURCES:
         raise ValueError(f"source 必须为 {sorted(_VALID_SOURCES)} 之一")
+    # T5.2：密钥/凭证检测 → 拒绝入库
+    secret_type = detect_secret(entry.content)
+    if secret_type:
+        raise ProfileSecretDetected(
+            f"content 中检测到 {secret_type}，拒绝入库以防止密钥泄露"
+        )
+    # T5.2/T5.3：sensitivity 校验
+    sensitivity = _validate_sensitivity(entry.sensitivity)
+    # T5.6: project 类记忆必须挂载在工作区下，全局画像不允许写入
+    if not workspace_path and entry.category == "project":
+        raise ProjectMemoryWithoutWorkspace(
+            "project 类记忆必须挂载在工作区下，请先选择工作区再添加"
+        )
 
     scope = "workspace" if workspace_path else "global"
     lock = _get_workspace_lock(workspace_path) if workspace_path else _PROFILE_LOCK
@@ -340,6 +417,7 @@ async def add(
             title=entry.title,
             keywords=list(entry.keywords),
             scenarios=list(entry.scenarios),
+            sensitivity=sensitivity,
         )
         store.entries.append(new_entry)
         save_fn(store)
@@ -348,6 +426,7 @@ async def add(
             key=new_entry.key,
             category=new_entry.category,
             scope=scope,
+            sensitivity=sensitivity,
         )
         return new_entry
 
@@ -520,6 +599,30 @@ async def upsert_from_llm(
             except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
                 logger.warning("LLM 抽取条目非法，跳过", entry=raw, error=str(exc))
                 continue
+            # T5.2：密钥/凭证检测 → 跳过（批量操作不抛异常，仅记日志）
+            secret_type = detect_secret(content)
+            if secret_type:
+                logger.warning(
+                    "LLM 抽取条目检测到密钥/凭证，跳过",
+                    key=key,
+                    secret_type=secret_type,
+                )
+                continue
+            # T5.2/T5.3：读取 sensitivity（LLM 返回的 dict 可能包含此字段）
+            try:
+                sensitivity = _validate_sensitivity(
+                    str(raw.get("sensitivity", "public"))
+                )
+            except ValueError as exc:
+                logger.warning("LLM 抽取条目 sensitivity 非法，默认 public", key=key, error=str(exc))
+                sensitivity = "public"
+            # T5.6: 全局画像不允许写入 project 类记忆，跳过
+            if not workspace_path and category == "project":
+                logger.warning(
+                    "LLM 抽取 project 类记忆被拒绝（无工作区），跳过",
+                    key=key,
+                )
+                continue
 
             existing_idx: int | None = None
             for idx, e in enumerate(store.entries):
@@ -538,6 +641,7 @@ async def upsert_from_llm(
                     "title": raw.get("title", old.title),
                     "keywords": raw.get("keywords", old.keywords),
                     "scenarios": raw.get("scenarios", old.scenarios),
+                    "sensitivity": sensitivity,
                 })
             else:
                 store.entries.append(ProfileEntry(
@@ -551,6 +655,7 @@ async def upsert_from_llm(
                     title=raw.get("title"),
                     keywords=raw.get("keywords", []),
                     scenarios=raw.get("scenarios", []),
+                    sensitivity=sensitivity,
                 ))
             written += 1
 
@@ -583,8 +688,20 @@ def build_profile_prompt(workspace_path: str | None = None) -> str:
     entries = get_all(workspace_path=workspace_path)
     if not entries:
         return ""
+    # T5.3：跳过 sensitivity="private" 的条目（不注入 prompt，仅存储）
+    # 原因：private 条目可能含个人敏感信息，注入到 LLM prompt 有泄露风险
+    injectable = [e for e in entries if getattr(e, "sensitivity", "public") != "private"]
+    skipped_private = len(entries) - len(injectable)
+    if skipped_private > 0:
+        logger.info(
+            "build_profile_prompt skipped private entries",
+            skipped=skipped_private,
+            total=len(entries),
+        )
+    if not injectable:
+        return ""
     sorted_entries = sorted(
-        entries,
+        injectable,
         key=lambda e: e.updated_at,
         reverse=True,
     )[:_PROFILE_MAX_INJECT]
@@ -605,10 +722,13 @@ __all__ = [
     "ProfileContentTooLong",
     "ProfileEntry",
     "ProfileKeyInvalid",
+    "ProfileSecretDetected",
     "ProfileStore",
+    "ProjectMemoryWithoutWorkspace",
     "add",
     "build_profile_prompt",
     "delete",
+    "detect_secret",
     "get",
     "get_all",
     "update",

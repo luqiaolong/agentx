@@ -498,6 +498,13 @@ export interface ThreadInfo {
   size_bytes: number;
 }
 
+/** 单个 checkpoint 的摘要信息（list_checkpoints 返回）。 */
+export interface CheckpointInfo {
+  checkpoint_id: string;
+  parent_checkpoint_id: string | null;
+  rowid: number;
+}
+
 export type ProfileCategory = "preference" | "project" | "fact" | "custom";
 
 export interface ProfileEntry {

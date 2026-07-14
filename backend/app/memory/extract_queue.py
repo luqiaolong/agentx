@@ -35,6 +35,9 @@ MAX_ATTEMPTS = 3
 # lease 有效期（秒）；worker crash 后任务在此时间内不会被其他 worker 重复领取
 _LEASE_DURATION_SECONDS = 60
 
+# T3.5：置信度阈值；低于此值的抽取条目不会被自动写入
+_CONFIDENCE_THRESHOLD = 0.6
+
 
 @dataclass
 class ExtractJob:
@@ -239,7 +242,10 @@ async def _process_job(job: ExtractJob) -> None:
 
     - FAILED → 抛异常，由 ``_run_worker`` 捕获并调用 ``_handle_job_failure``
     - SUCCESS_EMPTY → 正常返回（任务完成，无内容可写）
-    - SUCCESS_WRITTEN → 写入画像后正常返回
+    - SUCCESS_WRITTEN → 过滤低置信度条目后写入画像
+
+    T3.5：低置信度（confidence < 0.6）的条目不会被自动写入，
+    仅记录日志后跳过。
     """
     from app.memory.profile_extractor import ExtractStatus, extract_profile_via_llm
     from app.memory.profile_store import upsert_from_llm
@@ -253,23 +259,53 @@ async def _process_job(job: ExtractJob) -> None:
         logger.info("profile extract job success_empty", job_id=job.id)
         return
 
-    # SUCCESS_WRITTEN：写入画像
+    # T3.5：过滤低置信度条目（confidence < 0.6 不自动写入）
     entries = result.entries
+    qualified = []
+    skipped = []
+    for entry in entries:
+        confidence = float(entry.get("confidence", 0.8))
+        if confidence < _CONFIDENCE_THRESHOLD:
+            skipped.append(entry)
+        else:
+            qualified.append(entry)
+
+    if skipped:
+        for entry in skipped:
+            logger.info(
+                "profile extract entry skipped (low confidence)",
+                job_id=job.id,
+                key=entry.get("key"),
+                confidence=entry.get("confidence"),
+            )
+
+    if not qualified:
+        logger.info(
+            "profile extract job completed with no qualified entries",
+            job_id=job.id,
+            total=len(entries),
+            skipped=len(skipped),
+        )
+        return
+
+    # SUCCESS_WRITTEN：写入过滤后的条目
     if job.workspace_path:
         from app.workspace.memory_store import upsert_from_llm as workspace_upsert_from_llm
 
-        written = await workspace_upsert_from_llm(job.workspace_path, entries)
+        written = await workspace_upsert_from_llm(job.workspace_path, qualified)
         logger.info(
             "workspace_memory.auto_extracted",
             count=written,
             workspace=job.workspace_path,
+            skipped_low_confidence=len(skipped),
         )
     else:
-        await upsert_from_llm(entries, workspace_path=None)
+        await upsert_from_llm(qualified, workspace_path=None)
         logger.info(
             "profile auto extracted",
-            count=len(entries),
+            count=len(qualified),
             scope="global",
+            skipped_low_confidence=len(skipped),
         )
 
 

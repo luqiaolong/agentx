@@ -5,11 +5,18 @@
 - 为空 → 操作全局级记忆（``data/``）
 
 读取端点（GET）合并工作区 + 全局，工作区优先。
+
+安全约束（T5.1）：
+- 所有接受 ``workspace_path`` 的端点可选传 ``thread_id`` 查询参数
+- 若同时传 ``workspace_path`` 和 ``thread_id``，通过 ``SessionSandbox`` 校验路径授权
+- 若只传 ``workspace_path`` 不传 ``thread_id``，做基础路径安全校验
+  （非空 / 非 ``.`` / ``..`` / 非系统关键目录）
 """
 
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -25,6 +32,8 @@ from app.memory import (
     ProfileContentTooLong,
     ProfileEntry,
     ProfileKeyInvalid,
+    ProfileSecretDetected,
+    ProjectMemoryWithoutWorkspace,
     SkillNameInvalid,
     SkillPathEscape,
     ThreadIdInvalid,
@@ -32,6 +41,7 @@ from app.memory import (
     delete_thread,
     get_db_size,
     get_skill_file,
+    list_checkpoints,
     list_skills_files,
     list_threads,
     rewind_thread,
@@ -39,7 +49,54 @@ from app.memory import (
 from app.sandbox.store import get_sandbox_store
 from app.memory.skills_store import save_skill_file
 from app.observability.logger import logger
-from app.sandbox import get_sandbox
+from app.sandbox import get_sandbox, is_critical
+
+
+async def _validate_memory_workspace_path(
+    workspace_path: str | None,
+    thread_id: str | None = None,
+) -> None:
+    """校验 memory API 的 workspace_path 安全性（T5.1）。
+
+    - ``workspace_path`` 为空 → 直接通过（操作全局记忆）
+    - 非空但为 ``.`` / ``..`` / 系统关键目录 → 400
+    - 同时提供 ``thread_id`` → 通过 ``SessionSandbox.check_read`` 校验授权
+    - 只提供 ``workspace_path`` → 仅基础路径安全校验（不查沙箱授权）
+
+    Raises:
+        HTTPException 400: 路径非法或为系统关键目录。
+        HTTPException 403: 路径未通过沙箱授权校验。
+    """
+    if not workspace_path:
+        return
+    path_str = workspace_path.strip()
+    if not path_str or path_str in (".", ".."):
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_path 不能为空且不能是 . 或 ..",
+        )
+    try:
+        resolved = Path(workspace_path).resolve()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"workspace_path 非法: {exc}",
+        )
+    if is_critical(resolved):
+        raise HTTPException(
+            status_code=400,
+            detail=f"workspace_path 是系统关键目录: {resolved}",
+        )
+    # 若提供 thread_id，通过沙箱校验完整授权
+    if thread_id:
+        sandbox = get_sandbox()
+        try:
+            await sandbox.check_read(thread_id, resolved)
+        except Exception as exc:  # noqa: BLE001 — 沙箱校验失败统一报 403
+            raise HTTPException(
+                status_code=403,
+                detail=f"workspace_path 未授权，请先选择工作区授权: {exc}",
+            )
 
 
 def register_memory_routes(app: FastAPI) -> None:
@@ -52,11 +109,13 @@ def register_memory_routes(app: FastAPI) -> None:
     @app.get("/api/memory/skills")
     async def memory_skills_list(
         workspace_path: str | None = Query(None, description="工作区路径；非空则合并工作区技能"),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """返回技能文件列表（合并工作区 + 全局，不含完整 content）。
 
         每项含 ``name`` / ``size`` / ``mtime`` / ``content_preview`` / ``path`` / ``scope``。
         """
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         files = list_skills_files(workspace_path=workspace_path)
         return {
             "skills": [
@@ -76,8 +135,10 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_skills_get(
         name: str,
         workspace_path: str | None = Query(None),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, str]:
         """返回单个技能文件完整内容（工作区优先查找）。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         try:
             content = get_skill_file(name, workspace_path=workspace_path)
         except (SkillNameInvalid, SkillPathEscape) as exc:
@@ -90,8 +151,10 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_skills_save(
         req: SkillSaveRequest,
         workspace_path: str | None = Query(None, description="工作区路径；非空则写入工作区级"),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """新建/覆盖技能文件。``workspace_path`` 非空 → 写入工作区级。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         try:
             save_skill_file(req.name, req.content, workspace_path=workspace_path)
         except (SkillNameInvalid, SkillPathEscape) as exc:
@@ -102,8 +165,10 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_skills_delete(
         name: str,
         workspace_path: str | None = Query(None),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """删除技能文件（优先工作区，回退全局）。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         try:
             deleted = delete_skill_file(name, workspace_path=workspace_path)
         except (SkillNameInvalid, SkillPathEscape) as exc:
@@ -124,13 +189,30 @@ def register_memory_routes(app: FastAPI) -> None:
             None,
             description="限定来源：workspace=只读工作区级；默认合并工作区+全局",
         ),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """返回画像条目；可选按 category / scope 过滤。
 
         - ``scope=workspace``：只读工作区 profile.json + ``.agentx/memory/*.md``，
           不掺全局条目；``workspace_path`` 为空时返回空列表。
         - 默认：合并工作区 + 全局（工作区优先）。
+
+        T5.4: 首次访问工作区画像时，自动迁移旧 ``profile.json`` 到新 ``.md`` 格式。
         """
+        await _validate_memory_workspace_path(workspace_path, thread_id)
+
+        # T5.4: 旧格式 profile.json → 新格式 .md 迁移（幂等，已迁移则跳过）
+        if workspace_path:
+            try:
+                from app.workspace.memory_store import migrate_legacy_profile
+                await migrate_legacy_profile(workspace_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "legacy_profile_migration_failed",
+                    workspace=workspace_path,
+                    error=str(exc),
+                )
+
         from app.memory.profile_store import get_all as get_all_profile
 
         # profile.json 层（按 scope 决定是否合并全局）
@@ -167,8 +249,16 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_profile_add(
         req: ProfileEntryRequest,
         workspace_path: str | None = Query(None, description="工作区路径；非空则写入工作区级"),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """新建画像条目；key 重复 → 409。``workspace_path`` 非空 → 写入工作区级 ``.agentx/memory/*.md``。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
+        # T5.6: project 类记忆必须挂载在工作区下
+        if not workspace_path and req.category == "project":
+            raise HTTPException(
+                status_code=400,
+                detail="project 类记忆必须挂载在工作区下，请先选择工作区再添加",
+            )
         if workspace_path:
             from app.workspace.memory_store import get_entry, save_entry
 
@@ -206,7 +296,13 @@ def register_memory_routes(app: FastAPI) -> None:
         )
         try:
             new_entry = await add(entry, workspace_path=None)
-        except (ProfileKeyInvalid, ProfileContentTooLong, ProfileCategoryInvalid) as exc:
+        except (
+            ProfileKeyInvalid,
+            ProfileContentTooLong,
+            ProfileCategoryInvalid,
+            ProfileSecretDetected,
+            ProjectMemoryWithoutWorkspace,
+        ) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
@@ -217,8 +313,16 @@ def register_memory_routes(app: FastAPI) -> None:
         key: str,
         req: ProfileUpdateRequest,
         workspace_path: str | None = Query(None),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """更新画像条目（优先工作区，回退全局）；不存在 → 404。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
+        # T5.6: 全局画像不允许写入 project 类记忆
+        if not workspace_path and req.category == "project":
+            raise HTTPException(
+                status_code=400,
+                detail="project 类记忆必须挂载在工作区下，请先选择工作区再添加",
+            )
         if workspace_path:
             from app.workspace.memory_store import get_entry, save_entry
 
@@ -262,8 +366,10 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_profile_delete(
         key: str,
         workspace_path: str | None = Query(None),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """删除画像条目（优先工作区，回退全局）。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         if workspace_path:
             from app.workspace.memory_store import delete_entry
 
@@ -287,8 +393,10 @@ def register_memory_routes(app: FastAPI) -> None:
     async def memory_profile_extract(
         req: ExtractRequest,
         workspace_path: str | None = Query(None, description="工作区路径；非空则写入工作区级"),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """LLM 抽取画像条目并写入。``workspace_path`` 非空 → 写入工作区级 ``.agentx/memory/*.md``。"""
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         from app.memory.profile_extractor import ExtractStatus, extract_profile_via_llm
 
         try:
@@ -333,6 +441,7 @@ def register_memory_routes(app: FastAPI) -> None:
     @app.post("/api/memory/dream")
     async def memory_dream(
         workspace_path: str | None = Query(None, description="工作区路径（可选，提供时同时整理工作区记忆）"),
+        thread_id: str | None = Query(None, description="会话 ID，用于沙箱授权校验"),
     ) -> dict[str, Any]:
         """整理全部记忆：全局画像 + 工作区记忆。
 
@@ -344,6 +453,7 @@ def register_memory_routes(app: FastAPI) -> None:
           - rollback_errors → 回滚过程中遇到的错误数（0 表示干净回滚；仅在触发回滚时可能 > 0）
           - summary → 整理总结
         """
+        await _validate_memory_workspace_path(workspace_path, thread_id)
         from app.memory.dream import dream_all_memory
         from app.config import get_settings
 
@@ -382,25 +492,42 @@ def register_memory_routes(app: FastAPI) -> None:
             logger.warning("sandbox cleanup failed for thread {}: {}", thread_id, exc)
         return {"ok": True, "deleted": deleted}
 
+    @app.get("/api/memory/checkpointer/{thread_id}/checkpoints")
+    async def memory_checkpointer_list_checkpoints(thread_id: str) -> dict[str, Any]:
+        """返回指定 thread 的 checkpoint 列表（按插入顺序升序）。
+
+        前端「编辑历史消息」时先调用此端点获取 checkpoint_id 列表，
+        再根据消息数量选出要保留到的 checkpoint_id，传给 rewind 端点。
+        """
+        try:
+            checkpoints = await list_checkpoints(thread_id)
+        except ThreadIdInvalid as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"checkpoints": checkpoints}
+
     @app.post("/api/memory/checkpointer/{thread_id}/rewind")
     async def memory_checkpointer_rewind(
         thread_id: str,
-        keep_messages_count: int = Query(..., ge=0, description="保留前多少条消息对应的状态"),
+        checkpoint_id: str = Query(..., description="回退到的 checkpoint ID（保留该 checkpoint 及之前的所有）"),
     ) -> dict[str, Any]:
-        """回退指定 thread 的 checkpoint，保留编辑点之前的状态。
+        """回退指定 thread 的 checkpoint 到 ``checkpoint_id``（含）。
 
         用于「编辑历史消息」场景：用户编辑第 N 条消息后重新发送，
-        需要回退到第 N 条消息之前的状态（保留前 N-1 条消息的上下文）。
+        需要回退到编辑点之前的状态。调用方应先通过
+        ``GET /api/memory/checkpointer/{thread_id}/checkpoints`` 获取
+        checkpoint 列表，选出要保留到的 checkpoint_id。
         """
         try:
-            result = await rewind_thread(thread_id, keep_messages_count)
+            result = await rewind_thread(thread_id, checkpoint_id)
         except ThreadIdInvalid as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
         except sqlite3.Error as exc:
             logger.warning(
                 "rewind endpoint failed",
                 thread_id=thread_id,
-                keep_messages_count=keep_messages_count,
+                checkpoint_id=checkpoint_id,
                 error=str(exc),
             )
             raise HTTPException(status_code=500, detail=f"回退 checkpoint 失败: {exc}")
