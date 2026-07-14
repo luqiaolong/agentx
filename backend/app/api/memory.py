@@ -289,14 +289,23 @@ def register_memory_routes(app: FastAPI) -> None:
         workspace_path: str | None = Query(None, description="工作区路径；非空则写入工作区级"),
     ) -> dict[str, Any]:
         """LLM 抽取画像条目并写入。``workspace_path`` 非空 → 写入工作区级 ``.agentx/memory/*.md``。"""
-        from app.memory.profile_extractor import extract_profile_via_llm
+        from app.memory.profile_extractor import ExtractStatus, extract_profile_via_llm
 
         try:
-            entries = await extract_profile_via_llm(req.message, req.assistant_reply)
+            result = await extract_profile_via_llm(req.message, req.assistant_reply)
         except Exception as exc:  # noqa: BLE001
             logger.warning("profile extract via llm failed", error=str(exc))
             return {"extracted": 0}
 
+        if result.status == ExtractStatus.FAILED:
+            logger.warning("profile extract via llm failed", error=result.error)
+            return {"extracted": 0}
+
+        if result.status == ExtractStatus.SUCCESS_EMPTY:
+            return {"extracted": 0}
+
+        # SUCCESS_WRITTEN：写入画像
+        entries = result.entries
         if workspace_path:
             from app.workspace.memory_store import upsert_from_llm
 
@@ -329,10 +338,11 @@ def register_memory_routes(app: FastAPI) -> None:
 
         - 读取全局 ``data/config/profile.json`` 全部条目
         - 若提供 workspace_path，同时读取 ``<workspace>/.agentx/memory/*.md``
-        - LLM 分析后输出整理结果：
-          - promoted → 提炼/移动到全局长期记忆
-          - compressed → 压缩/合并后写回原位置
-          - removed → 删除冗余/重复条目
+        - LLM 分析后输出变更补丁（patches），校验后应用：
+          - applied → 成功应用的 patch 数
+          - rolled_back → 因异常回滚的 patch 数
+          - rollback_errors → 回滚过程中遇到的错误数（0 表示干净回滚；仅在触发回滚时可能 > 0）
+          - summary → 整理总结
         """
         from app.memory.dream import dream_all_memory
         from app.config import get_settings

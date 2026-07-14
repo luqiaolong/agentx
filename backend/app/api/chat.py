@@ -758,14 +758,21 @@ def register_chat_routes(app: FastAPI) -> None:
                 "run_id": active_run.run_id,
             }
 
-        from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+        from langchain_core.messages import SystemMessage
 
         from app.memory import summarize_messages
+        from app.memory.compact_utils import split_messages_for_compact
         # 延迟 import：测试通过 monkeypatch app.main.get_async_checkpointer
         from app.main import get_async_checkpointer
 
         checkpointer = await get_async_checkpointer()
-        config = {"configurable": {"thread_id": req.thread_id}}
+        # T1.7: fail-fast — 若 checkpointer 不支持写回，立即返回错误，
+        # 避免无谓的 summarize 后才发现无法写回
+        if not (hasattr(checkpointer, "aput") or hasattr(checkpointer, "put")):
+            return {"ok": False, "error": "checkpointer 不支持写回（缺少 aput/put 方法）"}
+
+        # T1.5: checkpoint_ns 是 LangGraph saver 必需字段（主线程命名空间为空字符串）
+        config = {"configurable": {"thread_id": req.thread_id, "checkpoint_ns": ""}}
 
         # 1. 读取历史 messages
         try:
@@ -793,18 +800,7 @@ def register_chat_routes(app: FastAPI) -> None:
         # 必须把发起对应 tool_call 的 AIMessage 也移入 keep_recent，
         # 否则压缩后会留下孤立的 ToolMessage，破坏配对（ToolMessage 必须紧跟
         # 在发起 tool_call 的 AIMessage 之后，否则 LangGraph 还原状态会报错）。
-        keep_recent = messages[-2:]
-        to_compress = messages[:-2]
-        if keep_recent and isinstance(keep_recent[0], ToolMessage):
-            tool_call_id = keep_recent[0].tool_call_id
-            # 向前找对应的 AIMessage（含匹配的 tool_call id）
-            for i in range(len(to_compress) - 1, -1, -1):
-                msg = to_compress[i]
-                if isinstance(msg, AIMessage) and msg.tool_calls:
-                    if any(tc.get("id") == tool_call_id for tc in msg.tool_calls):
-                        keep_recent = [msg] + keep_recent
-                        to_compress = to_compress[:i] + to_compress[i + 1 :]
-                        break
+        to_compress, keep_recent = split_messages_for_compact(messages)
         try:
             summary = await summarize_messages(to_compress)
         except Exception as exc:  # noqa: BLE001
@@ -829,17 +825,25 @@ def register_chat_routes(app: FastAPI) -> None:
             "configurable": {
                 **config.get("configurable", {}),
                 "checkpoint_id": new_checkpoint_id,
+                "checkpoint_ns": "",
             },
+        }
+
+        # T1.5: new_versions 必须是 dict（channel -> version），标识本次写回
+        # 更新的 channel。为 messages channel 生成新 version，保留其他 channel 原版本。
+        new_versions = {
+            **(checkpoint.get("channel_versions") or {}),
+            "messages": str(uuid.uuid4()),
         }
 
         try:
             if hasattr(checkpointer, "aput"):
                 # M1: 第四个参数 new_versions 应为 dict 而非 list
-                await checkpointer.aput(new_config, new_checkpoint, {"messages": "any"}, {})
+                await checkpointer.aput(new_config, new_checkpoint, {}, new_versions)
             elif hasattr(checkpointer, "put"):
                 # H2: 同步 SqliteSaver.put() 用 asyncio.to_thread 避免阻塞事件循环
                 await asyncio.to_thread(
-                    checkpointer.put, new_config, new_checkpoint, {"messages": "any"}, {}
+                    checkpointer.put, new_config, new_checkpoint, {}, new_versions
                 )
             else:
                 return {"ok": False, "error": "checkpointer 不支持写回"}

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,6 +16,34 @@ from app.observability.logger import logger
 
 # T10：异步画像抽取任务引用集合，防止被 GC 回收（asyncio 已知坑）
 _extract_tasks: set[asyncio.Task] = set()
+
+
+class ExtractStatus(str, Enum):
+    """画像抽取结果状态。
+
+    - SUCCESS_EMPTY: LLM 调用成功但无可抽取记忆
+    - SUCCESS_WRITTEN: LLM 调用成功且抽取到条目
+    - FAILED: LLM 调用失败（超时/异常/解析错误）
+    """
+
+    SUCCESS_EMPTY = "success_empty"
+    SUCCESS_WRITTEN = "success_written"
+    FAILED = "failed"
+
+
+@dataclass
+class ExtractResult:
+    """画像抽取结果，区分失败与空成功。
+
+    Attributes:
+        status: 抽取状态
+        entries: 抽取到的条目（FAILED 或 SUCCESS_EMPTY 时为空列表）
+        error: 失败时的错误信息（成功时为 None）
+    """
+
+    status: ExtractStatus
+    entries: list[dict] = field(default_factory=list)
+    error: str | None = None
 
 
 class ProfileEntry(BaseModel):
@@ -79,14 +109,18 @@ async def extract_last_assistant_reply(agent: Any, config: dict) -> str:
     return ""
 
 
-async def extract_profile_via_llm(message: str, assistant_reply: str) -> list[dict]:
+async def extract_profile_via_llm(message: str, assistant_reply: str) -> ExtractResult:
     """调 LLM 抽取画像条目（结构化输出）。
 
     使用 ``llm.with_structured_output(ProfileResult)`` 让模型直接返回结构化对象，
-    避免手写 JSON 解析与 markdown 剥离。返回 ``list[dict]`` 以兼容
-    ``upsert_from_llm(entries: list[dict])`` 契约。
+    避免手写 JSON 解析与 markdown 剥离。返回 ``ExtractResult`` 以区分：
 
-    失败时返回空列表（调用方按"无可抽取"处理，不报错）。
+    - ``SUCCESS_EMPTY``: LLM 调用成功但无可抽取记忆（entries 为空）
+    - ``SUCCESS_WRITTEN``: LLM 调用成功且抽取到条目
+    - ``FAILED``: LLM 调用失败（超时/异常/解析错误）
+
+    调用方（队列 worker / API 端点）必须根据 ``status`` 决定后续行为，
+    不得将 ``FAILED`` 当作"无可抽取"处理。
     """
     llm = get_chat_model(temperature=get_settings().llm_temperature_extraction)
     structured_llm = make_structured_llm(llm, ProfileResult)
@@ -97,8 +131,17 @@ async def extract_profile_via_llm(message: str, assistant_reply: str) -> list[di
         logger.warning(
             f"profile extract via llm failed: {type(exc).__name__}: {exc}"
         )
-        return []
-    return [entry.model_dump() for entry in result.entries]
+        return ExtractResult(status=ExtractStatus.FAILED, entries=[], error=str(exc))
+
+    entries = [entry.model_dump() for entry in result.entries]
+    if not entries:
+        return ExtractResult(status=ExtractStatus.SUCCESS_EMPTY, entries=[])
+    return ExtractResult(status=ExtractStatus.SUCCESS_WRITTEN, entries=entries)
 
 
-__all__ = ["extract_profile_via_llm", "extract_last_assistant_reply"]
+__all__ = [
+    "ExtractResult",
+    "ExtractStatus",
+    "extract_last_assistant_reply",
+    "extract_profile_via_llm",
+]

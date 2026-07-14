@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     # AGENTX_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
     profile_auto_extract: bool = True
     # AGENTX_DREAM_ENABLED: 是否启用 Dream 记忆整理功能
-    dream_enabled: bool = True
+    dream_enabled: bool = False
     # AGENTX_MCP_SERVERS_CONFIG: JSON 字符串，MCP server 配置数组
     # 见 app.mcp.config.McpServerConfig，由 Electron Main 从 electron-store 注入
     mcp_servers_config: list[Any] = Field(default_factory=list)

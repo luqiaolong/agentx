@@ -330,6 +330,7 @@ async def test_extract_profile_via_llm_returns_entries(
 ) -> None:
     """LLM 抽取：mock with_structured_output 返回 ProfileResult。"""
     from app.memory.profile_extractor import (
+        ExtractStatus,
         ProfileEntry,
         ProfileResult,
         extract_profile_via_llm,
@@ -350,17 +351,22 @@ async def test_extract_profile_via_llm_returns_entries(
     fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await extract_profile_via_llm("我用 TypeScript", "好的")
-    assert len(entries) == 1
-    assert entries[0]["key"] == "uses_ts"
-    assert entries[0]["category"] == "project"
+    extract_result = await extract_profile_via_llm("我用 TypeScript", "好的")
+    assert extract_result.status == ExtractStatus.SUCCESS_WRITTEN
+    assert len(extract_result.entries) == 1
+    assert extract_result.entries[0]["key"] == "uses_ts"
+    assert extract_result.entries[0]["category"] == "project"
 
 
 async def test_extract_profile_via_llm_no_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LLM 返回空 entries。"""
-    from app.memory.profile_extractor import ProfileResult, extract_profile_via_llm
+    """LLM 返回空 entries → SUCCESS_EMPTY。"""
+    from app.memory.profile_extractor import (
+        ExtractStatus,
+        ProfileResult,
+        extract_profile_via_llm,
+    )
 
     result = ProfileResult(entries=[])
     structured_llm = MagicMock()
@@ -369,15 +375,19 @@ async def test_extract_profile_via_llm_no_entries(
     fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await extract_profile_via_llm("你好", "你好")
-    assert entries == []
+    extract_result = await extract_profile_via_llm("你好", "你好")
+    assert extract_result.status == ExtractStatus.SUCCESS_EMPTY
+    assert extract_result.entries == []
 
 
 async def test_extract_profile_via_llm_handles_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LLM 调用抛异常时返回空列表（不报错）。"""
-    from app.memory.profile_extractor import extract_profile_via_llm
+    """LLM 调用抛异常时返回 FAILED 状态（不报错，但区分失败与空成功）。"""
+    from app.memory.profile_extractor import (
+        ExtractStatus,
+        extract_profile_via_llm,
+    )
 
     structured_llm = MagicMock()
     structured_llm.ainvoke = AsyncMock(side_effect=RuntimeError("LLM 不可用"))
@@ -385,8 +395,11 @@ async def test_extract_profile_via_llm_handles_exception(
     fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await extract_profile_via_llm("msg", "reply")
-    assert entries == []
+    extract_result = await extract_profile_via_llm("msg", "reply")
+    assert extract_result.status == ExtractStatus.FAILED
+    assert extract_result.entries == []
+    assert extract_result.error is not None
+    assert "LLM 不可用" in extract_result.error
 
 
 async def test_extract_profile_via_llm_multiple_entries(
@@ -394,6 +407,7 @@ async def test_extract_profile_via_llm_multiple_entries(
 ) -> None:
     """LLM 返回多条目时全部转换为 dict。"""
     from app.memory.profile_extractor import (
+        ExtractStatus,
         ProfileEntry,
         ProfileResult,
         extract_profile_via_llm,
@@ -411,10 +425,11 @@ async def test_extract_profile_via_llm_multiple_entries(
     fake_llm.with_structured_output = MagicMock(return_value=structured_llm)
     monkeypatch.setattr("app.memory.profile_extractor.get_chat_model", lambda **kw: fake_llm)
 
-    entries = await extract_profile_via_llm("msg", "reply")
-    assert len(entries) == 2
-    assert entries[0]["key"] == "k1"
-    assert entries[1]["key"] == "k2"
+    extract_result = await extract_profile_via_llm("msg", "reply")
+    assert extract_result.status == ExtractStatus.SUCCESS_WRITTEN
+    assert len(extract_result.entries) == 2
+    assert extract_result.entries[0]["key"] == "k1"
+    assert extract_result.entries[1]["key"] == "k2"
 
 
 # ============================================================
