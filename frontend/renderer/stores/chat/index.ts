@@ -4,6 +4,7 @@ import type { ApprovalRequest, PermissionMode } from "../../../shared/api-types"
 import { sandbox, memory } from "@/lib/api/http";
 import { initProjectConfig, getProjectConfig } from "@/lib/api/projectConfig";
 import { logger } from "@/lib/logger";
+import type { BlackboardSnapshot } from "@/lib/api/blackboard";
 import {
   DEFAULT_TITLE,
   migrateV0toV1,
@@ -108,6 +109,14 @@ export type MessagePart =
       /** 团队规划摘要（来自 team_init.summary） */
       reasoning: string;
       agents: TeamAgentState[];
+      /** 后端黑板快照（来自 team_done SSE），含 task_id/retries/error */
+      blackboard?: BlackboardSnapshot;
+      /**
+       * 完整计划（含 input / purpose），由 upsertTeamNode.plan 透传写入。
+       * 与 agents 互补：plan 描述编排意图（"让 coder 写代码"），agents 描述执行态。
+       * 可选字段：v2 重构后保留供前端展示与测试断言使用。
+       */
+      plan?: { agent: string; input: string; purpose: string }[];
       status: "running" | "done" | "error";
       doneAt?: number;
       /** 重规划历史记录 */
@@ -309,6 +318,14 @@ export interface ChatState {
       reasoning?: string;
       agentUpdate?: { agent: string; taskId?: string; patch: Partial<TeamAgentState> };
       status?: "running" | "done" | "error";
+      /** 后端黑板快照（来自 team_done SSE） */
+      blackboard?: BlackboardSnapshot;
+      /**
+       * 首次创建 team part 时传入的完整 plan（含 input / purpose），
+       * 与 initialAgents 配合：plan 描述编排意图，agents 描述执行态。
+       * v2 改造后保留为可选字段，供前端展示"团队计划"区使用。
+       */
+      plan?: { agent: string; input: string; purpose: string }[];
       /**
        * 首次创建 team part 时一次性写入的 agent 列表（调用方单次 upsert）。
        * 仅在 team part 不存在时生效；已存在时按 agentUpdate 增量更新。
@@ -896,6 +913,8 @@ export const useChatStore = create<ChatState>()(
                   id: crypto.randomUUID(),
                   reasoning: updaters.reasoning ?? "",
                   agents,
+                  ...(updaters.blackboard ? { blackboard: updaters.blackboard } : {}),
+                  ...(updaters.plan ? { plan: updaters.plan } : {}),
                   status: updaters.status ?? ("running" as const),
                 };
                 // 插入到 parts 数组开头，让 TeamNodeCard 出现在消息顶部
@@ -992,6 +1011,7 @@ export const useChatStore = create<ChatState>()(
                   status: newStatus,
                   doneAt,
                   ...(updaters.reasoning !== undefined ? { reasoning: updaters.reasoning } : {}),
+                  ...(updaters.blackboard ? { blackboard: updaters.blackboard } : {}),
                   ...(newReplanHistory !== undefined ? { replanHistory: newReplanHistory } : {}),
                   ...(newWarnings !== undefined ? { warnings: newWarnings } : {}),
                 };

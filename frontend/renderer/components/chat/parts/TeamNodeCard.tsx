@@ -1,6 +1,7 @@
 import { memo, useState, useMemo } from "react";
-import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronDown, AlertTriangle, GitBranch, RotateCw } from "lucide-react";
+import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronDown, AlertTriangle, GitBranch, RotateCw, StickyNote } from "lucide-react";
 import type { TeamAgentState } from "@/stores/chat";
+import type { BlackboardSnapshot, Finding } from "@/lib/api/blackboard";
 import { TraceCardHeader } from "./TraceCardHeader";
 import { TraceItems } from "./TraceItems";
 import { SUBAGENT_META } from "./DelegationCard";
@@ -19,6 +20,8 @@ interface TeamNodeCardProps {
   agents: TeamAgentState[];
   status: "running" | "done" | "error";
   doneAt?: number;
+  /** 后端黑板快照（来自 team_done SSE），含 task_id/retries/error；缺省走 agents 聚合 */
+  blackboard?: BlackboardSnapshot;
   /** 重规划历史记录 */
   replanHistory?: { newTasks: { id: string; agent: string; description: string; dependsOn: string[] }[]; replanCount: number; reason: string }[];
   /** 累积告警消息列表 */
@@ -53,6 +56,314 @@ function buildTaskLabelMap(agents: TeamAgentState[]): Map<string, string> {
     map.set(a.taskId, label);
   }
   return map;
+}
+
+/**
+ * 黑板面板行：findings（成功写入）或 errors（失败）。
+ *
+ * 数据源：纯前端从 `TeamAgentState[]` 聚合而成，不依赖后端新增字段。
+ * - finding = status==='done' 的 agent 的 summary / message
+ * - error   = status==='error' 的 agent（无具体 payload，沿用 message）
+ *
+ * 故意不显示 pending / running 行：未完成的任务尚未"写入"黑板，
+ * 归入面板反而会污染语义。展开面板时只显示已下笔的条目。
+ */
+interface BlackboardRow {
+  agentKey: string;
+  agentLabel: string;
+  /** 作者 agent 的状态，决定是 findings 还是 errors 段 */
+  kind: "finding" | "error";
+  content: string;
+  finishedAt?: number;
+}
+
+function buildBlackboardRows(agents: TeamAgentState[]): BlackboardRow[] {
+  const rows: BlackboardRow[] = [];
+  for (const a of agents) {
+    const meta = SUBAGENT_META[a.agent];
+    const label = meta?.label ?? a.agent;
+    const key = a.taskId || a.agent;
+    if (a.status === "done") {
+      const content = (a.summary || a.message || "").trim();
+      rows.push({
+        agentKey: key,
+        agentLabel: label,
+        kind: "finding",
+        content,
+        finishedAt: a.finishedAt,
+      });
+    } else if (a.status === "error") {
+      const content = (a.message || a.summary || "子任务失败，未返回错误描述").trim();
+      rows.push({
+        agentKey: key,
+        agentLabel: label,
+        kind: "error",
+        content,
+        finishedAt: a.finishedAt,
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * 团队黑板汇总面板。
+ *
+ * 数据源优先级：
+ * 1. **blackboardSnapshot**（来自 team_done SSE 的 blackboard payload）：
+ *    含 task_id / wave_index / retries / error 等富信息，由后端聚合后推送。
+ * 2. **agents 聚合**（档位 A fallback）：当后端未推送 blackboard 时，前端从
+ *    `TeamAgentState[]` 聚合（done→finding, error→error），等价于后端黑板的视图。
+ *
+ * 展示内容：
+ * - 黑板标题 + finding 数 / error 数 角标
+ * - 展开后按 findings / errors 两段渲染：
+ *   - snapshot 路径：每行显示 task_id 全文 + agent label + wave N 角标 +
+ *     retries 角标（>0 时）+ error 描述（success=false 时）
+ *   - fallback 路径：每行显示作者 label + 时间 + 内容
+ *   - 内容过长时折叠（限 240 字符，> 240 显示「展开 ▾」）
+ */
+export interface BlackboardPanelProps {
+  agents: TeamAgentState[];
+  /** 后端黑板快照（来自 team_done SSE）；存在时优先于 agents 聚合 */
+  blackboardSnapshot?: BlackboardSnapshot;
+}
+
+export function BlackboardPanel({ agents, blackboardSnapshot }: BlackboardPanelProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [unfoldedKeys, setUnfoldedKeys] = useState<Set<string>>(new Set());
+
+  // fallback 路径：从 agents 聚合（档位 A 逻辑，保留作为兜底）
+  const fallbackRows = useMemo(() => buildBlackboardRows(agents), [agents]);
+  const fallbackFindings = fallbackRows.filter((r) => r.kind === "finding");
+  const fallbackErrors = fallbackRows.filter((r) => r.kind === "error");
+
+  // snapshot 路径：直接使用后端推送的 findings / errors
+  const useSnapshot = !!blackboardSnapshot;
+  const snapshotFindings: Finding[] = blackboardSnapshot?.findings ?? [];
+  const snapshotErrors: string[] = blackboardSnapshot?.errors ?? [];
+
+  const findingsCount = useSnapshot ? snapshotFindings.length : fallbackFindings.length;
+  const errorsCount = useSnapshot ? snapshotErrors.length : fallbackErrors.length;
+  const totalRows = findingsCount + errorsCount;
+
+  if (totalRows === 0) return null;
+
+  const totalLabel = `${findingsCount} findings${errorsCount > 0 ? ` · ${errorsCount} errors` : ""}`;
+
+  const toggleUnfold = (key: string) => {
+    setUnfoldedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const renderRow = (row: BlackboardRow) => {
+    const unfolded = unfoldedKeys.has(row.agentKey);
+    const overflow = row.content.length > 240;
+    const display = !overflow || unfolded ? row.content : `${row.content.slice(0, 240)}…`;
+    const isError = row.kind === "error";
+    return (
+      <div
+        key={row.agentKey}
+        className="flex flex-col gap-0.5"
+        style={{ fontSize: "var(--fs-msg-tool)" }}
+      >
+        <div className="flex items-center gap-1 text-muted-c/60">
+          <span
+            className={
+              isError
+                ? "font-medium text-red-600 dark:text-red-400"
+                : "font-medium text-emerald-700 dark:text-emerald-400"
+            }
+          >
+            {row.agentLabel}
+          </span>
+          <span className="text-muted-c/40">·</span>
+          <span className="text-muted-c/50">
+            {row.finishedAt
+              ? new Date(row.finishedAt).toLocaleTimeString()
+              : "已完成"}
+          </span>
+        </div>
+        <div
+          className={
+            "whitespace-pre-wrap break-words rounded-md px-2 py-1 " +
+            (isError
+              ? "bg-red-500/5 text-red-700 dark:text-red-300"
+              : "bg-muted-c/5 text-muted-c/80")
+          }
+        >
+          {display}
+          {overflow && (
+            <button
+              type="button"
+              onClick={() => toggleUnfold(row.agentKey)}
+              className="ml-1 text-muted-c/50 underline-offset-2 hover:underline"
+            >
+              {unfolded ? "收起" : "展开"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  /**
+   * snapshot 路径的 finding 行渲染：
+   * - 顶部：task_id 全文 + " · " + agent label + 右侧 wave N 灰色角标
+   * - retries > 0 时显示 "↻ N 次" 角标
+   * - success=false 时整行红色 + 底部追加 error 描述
+   * - 内容过长时折叠（同 fallback 路径）
+   */
+  const renderSnapshotRow = (finding: Finding) => {
+    const rowKey = finding.task_id || `${finding.agent}-${finding.wave_index}`;
+    const unfolded = unfoldedKeys.has(rowKey);
+    const overflow = finding.content.length > 240;
+    const display = !overflow || unfolded ? finding.content : `${finding.content.slice(0, 240)}…`;
+    const isError = !finding.success;
+    const meta = SUBAGENT_META[finding.agent];
+    const agentLabel = meta?.label ?? finding.agent;
+    return (
+      <div
+        key={rowKey}
+        className="flex flex-col gap-0.5"
+        style={{ fontSize: "var(--fs-msg-tool)" }}
+        data-testid="blackboard-snapshot-row"
+      >
+        <div className="flex items-center gap-1 text-muted-c/60">
+          <span
+            className={
+              isError
+                ? "font-medium text-red-600 dark:text-red-400"
+                : "font-medium text-emerald-700 dark:text-emerald-400"
+            }
+          >
+            {finding.task_id}
+          </span>
+          <span className="text-muted-c/40">·</span>
+          <span className="text-muted-c/50">{agentLabel}</span>
+          {finding.retries > 0 && (
+            <span
+              className="ml-1 rounded bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+              data-testid="blackboard-retries-badge"
+            >
+              ↻ {finding.retries} 次
+            </span>
+          )}
+          <span
+            className="ml-auto shrink-0 rounded bg-muted-c/10 px-1 py-0.5 text-[10px] text-muted-c/50"
+            data-testid="blackboard-wave-tag"
+          >
+            wave {finding.wave_index}
+          </span>
+        </div>
+        <div
+          className={
+            "whitespace-pre-wrap break-words rounded-md px-2 py-1 " +
+            (isError
+              ? "bg-red-500/5 text-red-700 dark:text-red-300"
+              : "bg-muted-c/5 text-muted-c/80")
+          }
+        >
+          {display}
+          {overflow && (
+            <button
+              type="button"
+              onClick={() => toggleUnfold(rowKey)}
+              className="ml-1 text-muted-c/50 underline-offset-2 hover:underline"
+            >
+              {unfolded ? "收起" : "展开"}
+            </button>
+          )}
+        </div>
+        {isError && finding.error && (
+          <div
+            className="rounded-md bg-red-500/5 px-2 py-1 text-xs text-red-700 dark:text-red-300"
+            data-testid="blackboard-error-desc"
+          >
+            {finding.error}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * snapshot 路径的 error 字符串行渲染（团队级聚合错误列表）。
+   */
+  const renderSnapshotError = (err: string, idx: number) => (
+    <div
+      key={`snapshot-err-${idx}`}
+      className="flex flex-col gap-0.5"
+      style={{ fontSize: "var(--fs-msg-tool)" }}
+      data-testid="blackboard-snapshot-error-row"
+    >
+      <div
+        className="whitespace-pre-wrap break-words rounded-md bg-red-500/5 px-2 py-1 text-red-700 dark:text-red-300"
+      >
+        {err}
+      </div>
+    </div>
+  );
+
+  return (
+    <div
+      className="mb-1.5 rounded-md border border-border-default/60 bg-surface/40 px-2 py-1.5"
+      style={{ fontSize: "var(--fs-msg-tool)" }}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-1 text-left"
+        aria-expanded={expanded}
+      >
+        <StickyNote className="h-3 w-3 shrink-0 text-muted-c/60" />
+        <span className="font-medium text-muted-c/70">团队黑板</span>
+        <span className="text-muted-c/40">· {totalLabel}</span>
+        <ChevronDown
+          className={`ml-auto h-3 w-3 shrink-0 text-muted-c/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border-default/40 pt-1.5">
+          {useSnapshot ? (
+            <>
+              {snapshotFindings.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <div className="text-muted-c/50">findings</div>
+                  {snapshotFindings.map(renderSnapshotRow)}
+                </div>
+              )}
+              {snapshotErrors.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <div className="text-red-600/70 dark:text-red-400/70">errors</div>
+                  {snapshotErrors.map((err, i) => renderSnapshotError(err, i))}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {fallbackFindings.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <div className="text-muted-c/50">findings</div>
+                  {fallbackFindings.map(renderRow)}
+                </div>
+              )}
+              {fallbackErrors.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <div className="text-red-600/70 dark:text-red-400/70">errors</div>
+                  {fallbackErrors.map(renderRow)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -123,7 +434,7 @@ function ExpandableAgentRow({
       >
         {icon}
         {Icon && <Icon className="h-3 w-3 text-muted-c/60" />}
-        <span className="font-medium text-primary-c">{agentLabel}</span>
+        <span className="shrink-0 whitespace-nowrap font-medium text-primary-c">{agentLabel}</span>
         <ChevronRight className="h-2.5 w-2.5 opacity-40" />
         <span className="text-muted-c truncate">{agent.description}</span>
         {canExpand && (
@@ -180,6 +491,7 @@ function TeamNodeCardImpl({
   agents,
   status,
   doneAt,
+  blackboard,
   replanHistory = [],
   warnings = [],
   subAgentGroups = [],
@@ -264,6 +576,8 @@ function TeamNodeCardImpl({
               {reasoning}
             </div>
           )}
+          {/* 团队黑板：纯前端聚合各 agent 写入的 finding/error */}
+          <BlackboardPanel agents={agents} blackboardSnapshot={blackboard} />
           {/* 告警消息 */}
           {warnings.length > 0 && (
             <div
@@ -365,6 +679,7 @@ function areEqual(prev: TeamNodeCardProps, next: TeamNodeCardProps): boolean {
     prev.agents === next.agents &&
     prev.status === next.status &&
     prev.doneAt === next.doneAt &&
+    prev.blackboard === next.blackboard &&
     prev.subAgentGroups === next.subAgentGroups &&
     prev.standaloneItems === next.standaloneItems &&
     prev.replanHistory === next.replanHistory &&

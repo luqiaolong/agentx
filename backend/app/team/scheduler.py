@@ -837,6 +837,10 @@ async def _run_team_role_subtask(
     inputs = {"messages": [*history_msgs, {"role": "user", "content": task.input}]}
     config = {
         "configurable": {"thread_id": child_thread_id},
+        # astream_events 不继承 create_deep_agent 的 .with_config({"recursion_limit": 9999})，
+        # 不显式传入时会使用 LangGraph 默认值 25，导致复杂子任务提前触发 GraphRecursionError。
+        # ReadonlyLoopGuardMiddleware 已在模型调用前拦截只读工具死循环，此处仅需硬安全网。
+        "recursion_limit": 9_999,
     }
     # trace_id 透传：build_custom_agent 内部走 astream_events v2，
     # 回调中创建新协程，ContextVar 不会自动跨协程传播。

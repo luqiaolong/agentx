@@ -6,11 +6,36 @@ import { useTasksStore } from "@/stores/tasks";
 import type { ChatEvent, TodoStatus } from "@/lib/utils";
 import { chat, getCurrentTraceId } from "@/lib/api/chat";
 import { stripSkillTag } from "@/lib/skillTag";
+import type { BlackboardSnapshot } from "@/lib/api/blackboard";
 
 export interface TodoItem {
   content: string;
   status: TodoStatus;
   taskId?: string;
+}
+
+/**
+ * 类型守卫：判断 team_done 事件携带的 blackboard 字段是否符合 BlackboardSnapshot 结构。
+ *
+ * ChatEvent 类型暂未声明 blackboard 字段（避免跨层修改 api-types.ts），
+ * 此守卫让 useChatStream 在运行时安全地提取并下传给 store。
+ */
+function isBlackboardSnapshot(value: unknown): value is BlackboardSnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.findings)) return false;
+  if (!Array.isArray(v.errors)) return false;
+  for (const f of v.findings) {
+    if (typeof f !== "object" || f === null) return false;
+    const ff = f as Record<string, unknown>;
+    if (typeof ff.agent !== "string") return false;
+    if (typeof ff.task_id !== "string") return false;
+    if (typeof ff.wave_index !== "number") return false;
+    if (typeof ff.content !== "string") return false;
+    if (typeof ff.success !== "boolean") return false;
+    if (typeof ff.retries !== "number") return false;
+  }
+  return true;
 }
 
 /**
@@ -525,6 +550,12 @@ export function useChatStream(args: UseChatStreamArgs) {
                   ...(a.summary !== undefined ? { summary: a.summary } : {}),
                 }))
             : [];
+          // 后端 team_done 事件可选携带 blackboard 快照（含 task_id / wave_index /
+          // retries / error 等富信息）。前端 BlackboardPanel 优先消费此快照，
+          // 缺失时回退到档位 A 的 agents 聚合。ChatEvent 类型暂未声明 blackboard
+          // 字段（避免 api-types.ts 跨层修改），这里防御性读取。
+          const blackboardRaw = (e as Record<string, unknown>).blackboard;
+          const blackboard = isBlackboardSnapshot(blackboardRaw) ? blackboardRaw : undefined;
           const isReplanning = e.status === "replanning";
           const teamStatus = e.status === "error"
             ? "error"
@@ -536,6 +567,7 @@ export function useChatStream(args: UseChatStreamArgs) {
             finalizeAgents: e.status === "done" || e.status === "error",
             createIfMissing: false,
             agentMessages,
+            ...(blackboard ? { blackboard } : {}),
           });
 
           // FE-001 修复：replanning 不启动看门狗，只清理当前 wave 残留

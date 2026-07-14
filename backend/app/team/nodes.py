@@ -33,7 +33,11 @@ from app.observability.logger import logger
 from app.security.approval import get_abort_event
 from app.sse.events import make_sse_event
 from app.team.aggregator import _quality_gate, _run_aggregator
-from app.team.blackboard import TeamPlanTask, TeamSubtaskResult
+from app.team.blackboard import (
+    TeamPlanTask,
+    TeamSubtaskResult,
+    _serialize_findings_for_sse,
+)
 from app.team.dispatcher import _compose_input_with_upstream, resolve_waves
 from app.team.planner import Planner
 from app.team.scheduler import (
@@ -527,7 +531,10 @@ async def aggregate_node(state: TeamState) -> dict:
 
     # BE-C 修复：findings 为空时直接终止，不进入 replan
     if not findings:
-        writer(make_sse_event("team_done", {"status": "error"}))
+        writer(make_sse_event("team_done", {
+            "status": "error",
+            "blackboard": {"findings": [], "errors": list(errors)},
+        }))
         return {
             "quality_gate_passed": False,
             "team_done_emitted": True,
@@ -541,7 +548,14 @@ async def aggregate_node(state: TeamState) -> dict:
     if abort_event.is_set():
         writer(
             make_sse_event(
-                "team_done", {"status": "error", "error": "用户中止"}
+                "team_done", {
+                    "status": "error",
+                    "error": "用户中止",
+                    "blackboard": {
+                        "findings": _serialize_findings_for_sse(findings),
+                        "errors": list(errors),
+                    },
+                }
             )
         )
         return {
@@ -613,6 +627,10 @@ async def aggregate_node(state: TeamState) -> dict:
             {
                 "status": status,
                 "agents": agent_summaries,
+                "blackboard": {
+                    "findings": _serialize_findings_for_sse(findings),
+                    "errors": list(errors),
+                },
             },
         )
     )

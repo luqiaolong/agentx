@@ -70,15 +70,16 @@ describe("侧边栏开发模式开关", () => {
     await waitFor(() => {
       expect(mockGetDevMode).toHaveBeenCalled();
     });
-    const toggle = screen.getByRole("button", { name: "开启开发模式" });
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // 开发模式开关使用 role="switch"（无障碍语义）
+    const toggle = screen.getByRole("switch", { name: "开启开发模式" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
   it("点击后调用 setDevMode(true) 再调用 restartBackend()", async () => {
     render(<SessionList />);
     await waitFor(() => expect(mockGetDevMode).toHaveBeenCalled());
 
-    const toggle = screen.getByRole("button", { name: "开启开发模式" });
+    const toggle = screen.getByRole("switch", { name: "开启开发模式" });
     fireEvent.click(toggle);
 
     // setDevMode 先被调用
@@ -88,7 +89,7 @@ describe("侧边栏开发模式开关", () => {
 
     // 乐观更新后标记为开
     await waitFor(() =>
-      expect(toggle).toHaveAttribute("aria-pressed", "true"),
+      expect(toggle).toHaveAttribute("aria-checked", "true"),
     );
   });
 
@@ -98,14 +99,14 @@ describe("侧边栏开发模式开关", () => {
     render(<SessionList />);
     await waitFor(() => expect(mockGetDevMode).toHaveBeenCalled());
 
-    const toggle = screen.getByRole("button", { name: "开启开发模式" });
+    const toggle = screen.getByRole("switch", { name: "开启开发模式" });
     fireEvent.click(toggle);
 
     // 最终回滚：setDevMode 被调用两次（先 true，回滚 false）
     await waitFor(() => expect(mockSetDevMode).toHaveBeenNthCalledWith(2, false));
     // 本地态回滚为 false
     await waitFor(() =>
-      expect(toggle).toHaveAttribute("aria-pressed", "false"),
+      expect(toggle).toHaveAttribute("aria-checked", "false"),
     );
   });
 });

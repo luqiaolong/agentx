@@ -738,7 +738,7 @@ describe("AssistantUIThread 配对逻辑", () => {
       delegationBtn.click();
     });
 
-    const reasoning = screen.getByText(/已思考/);
+    const reasoning = screen.getByText("分析中");
     const toolCall = screen.getByText("read_file");
     const text = screen.getByText("最终回答");
 

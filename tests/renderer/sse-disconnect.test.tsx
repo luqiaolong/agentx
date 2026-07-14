@@ -53,7 +53,7 @@ describe("chat.send SSE 断开感知", () => {
   it("流在未收到 done 事件时结束，触发 onError", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      // H5 恢复端点返回 404，让 tryRecoverResult 快速失败后触发 onError
+      // 恢复端点返回 404，让 tryRecoverResult 持续轮询失败
       if (url.includes("/api/chat/result/") || url.includes("/api/observation/runs/")) {
         return Promise.resolve({
           ok: false,
@@ -72,8 +72,10 @@ describe("chat.send SSE 断开感知", () => {
 
     const onError = vi.fn();
     const sendPromise = chat.send({ role: "user", content: "hi" }, { onError });
-    // 快进 120s 轮询周期，让 tryRecoverResult 跑完所有重试后返回 false
-    await vi.advanceTimersByTimeAsync(130_000);
+    // chat.send 的 tryRecoverResult 内部 MAX_WAIT_MS = 300_000。
+    // 流提前关闭（未收到 done）会进入恢复轮询，轮询 300s 后 tryRecoverResult
+    // 返回 false，chat.send 走 onError("未收到完成事件") 分支。
+    await vi.advanceTimersByTimeAsync(310_000);
     await sendPromise;
 
     expect(onError).toHaveBeenCalledTimes(1);
@@ -135,7 +137,7 @@ describe("chat.send SSE 断开感知", () => {
       releaseLock: () => {},
     };
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      // H5 恢复端点返回 404，让 tryRecoverResult 快速失败后触发 onError
+      // 恢复端点返回 404，让 tryRecoverResult 持续轮询失败
       if (url.includes("/api/chat/result/") || url.includes("/api/observation/runs/")) {
         return Promise.resolve({
           ok: false,
@@ -155,8 +157,9 @@ describe("chat.send SSE 断开感知", () => {
 
     const onError = vi.fn();
     const sendPromise = chat.send({ role: "user", content: "hi" }, { onError });
-    // 快进 120s 轮询周期，让 tryRecoverResult 跑完所有重试后返回 false
-    await vi.advanceTimersByTimeAsync(130_000);
+    // reader.read() reject 进入 chat.send catch → tryRecoverResult(MAX_WAIT_MS=300_000)
+    // 轮询 300s 失败后返回 false → onError("SSE 连接中断：stream broken")
+    await vi.advanceTimersByTimeAsync(310_000);
     await sendPromise;
 
     expect(onError).toHaveBeenCalledTimes(1);

@@ -519,6 +519,7 @@ export const AssistantMessageParts = memo(function AssistantMessageParts({
                 agents={teamData.teamPart.agents}
                 status={teamData.teamPart.status}
                 doneAt={teamData.teamPart.doneAt}
+                blackboard={teamData.teamPart.blackboard}
                 replanHistory={teamData.teamPart.replanHistory}
                 warnings={teamData.teamPart.warnings}
                 subAgentGroups={teamData.subAgentGroups}

@@ -28,6 +28,7 @@ __all__ = [
     "_merge_completed_task_ids",
     "_merge_team_done_emitted",
     "_serialize_blackboard",
+    "_serialize_findings_for_sse",
 ]
 
 
@@ -157,3 +158,35 @@ def _serialize_blackboard(blackboard: Mapping) -> str:
         lines.append(f"--- {agent_name} [失败] ---")
         lines.append(error)
     return "\n\n".join(lines)
+
+
+def _serialize_findings_for_sse(findings: dict) -> list[dict]:
+    """把 state["findings"] 序列化为 SSE payload 用的 list[dict]。
+
+    findings 值可能是 Finding 或 list[Finding]（_merge_findings 的 BE-N 修复），
+    统一展平为单层 list。
+
+    使用 duck typing（hasattr 检查 ``agent`` 属性）识别 Finding 对象，
+    避免从 state.py 反向 import 造成循环依赖。
+
+    error 字段仅在 finding.error 不为 None 时加入 dict（避免传 null）。
+    """
+    result: list[dict] = []
+    for val in findings.values():
+        items = val if isinstance(val, list) else [val]
+        for f in items:
+            if not hasattr(f, "agent"):
+                continue
+            item: dict = {
+                "agent": f.agent,
+                "task_id": f.task_id,
+                "wave_index": f.wave_index,
+                "content": f.content,
+                "success": f.success,
+                "retries": f.retries,
+            }
+            error = getattr(f, "error", None)
+            if error is not None:
+                item["error"] = error
+            result.append(item)
+    return result

@@ -84,13 +84,14 @@ describe("buildCommandList", () => {
     expect(skillEntries[0].title).toBe("translate");
   });
 
-  it("内置命令 insert 含 / 前缀，技能 insert 不含", () => {
+  it("内置命令 insert 含 / 前缀，技能 insert 也含 / 前缀（统一走 /skill: 命名空间）", () => {
     const list = buildCommandList("", [{ name: "translate", description: "" }]);
     const builtin = list.find((e) => e.kind === "builtin");
     const skill = list.find((e) => e.kind === "skill");
     expect(builtin?.insert.startsWith("/")).toBe(true);
-    expect(skill?.insert.startsWith("/")).toBe(false);
-    expect(skill?.insert).toBe("translate ");
+    // 技能走 /skill:<name> 命名空间（与内置命令风格统一）
+    expect(skill?.insert.startsWith("/")).toBe(true);
+    expect(skill?.insert).toBe("/skill:translate ");
   });
 
   it("查询无匹配时返回空数组", () => {

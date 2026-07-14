@@ -53,7 +53,7 @@ function TraceCardHeaderImpl({
       aria-expanded={expanded}
     >
       <span className="shrink-0 text-muted-c/60">{icon}</span>
-      <span className={`font-medium text-muted-c/60 ${titleClassName}`}>
+      <span className={`shrink-0 whitespace-nowrap font-medium text-muted-c/60 ${titleClassName}`}>
         {title}
       </span>
       {subtitle && (
