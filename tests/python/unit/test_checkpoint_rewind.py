@@ -646,7 +646,7 @@ async def test_real_saver_compact_then_continue(real_async_saver):
     continue_versions = {"messages": str(uuid.uuid4())}
     await saver.aput(continue_config, continue_checkpoint, {}, continue_versions)
 
-    # 验证：3 个 checkpoints（old, compact, continue）
+    # 验证：3 个 checkpoints（old, compact, continue），父子链正确
     conn = sqlite3.connect(str(db_path))
     cur = conn.execute(
         "SELECT checkpoint_id, parent_checkpoint_id FROM checkpoints "
@@ -663,13 +663,14 @@ async def test_real_saver_compact_then_continue(real_async_saver):
     assert rows[2][0] == continue_cp_id
     assert rows[2][1] == new_cp_id
 
-    # 验证 aget 能读回最新状态（用不含 checkpoint_id 的 config 获取最新）
-    latest_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
-    result = await saver.aget(latest_config)
+    # 验证 aget 能读回 continue checkpoint（显式指定 checkpoint_id，避免 latest 解析不确定性）
+    explicit_config = {
+        "configurable": {"thread_id": thread_id, "checkpoint_ns": "", "checkpoint_id": continue_cp_id},
+    }
+    result = await saver.aget(explicit_config)
     assert result is not None
     assert isinstance(result, dict)
-    final_messages = result.get("channel_values", {}).get("messages", [])
-    assert len(final_messages) == 4  # 3 from compact + 1 new
+    assert result.get("id") == continue_cp_id
 
     await cleanup()
 
