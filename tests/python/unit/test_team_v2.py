@@ -194,7 +194,7 @@ class TestClassificationResultSchema:
 
 
 class TestMergeFindings:
-    """``_merge_findings`` reducer：right 覆盖 left。"""
+    """``_merge_findings`` reducer：同 key 收集为 list（BE-N 修复）。"""
 
     def test_merge_empty(self) -> None:
         """空 dict 合并。"""
@@ -207,12 +207,16 @@ class TestMergeFindings:
         merged = _merge_findings(left, right)
         assert set(merged.keys()) == {"code:t1:0", "rag:t2:1"}
 
-    def test_merge_override(self) -> None:
-        """相同 key 时 right 覆盖 left。"""
+    def test_merge_same_key_collects_to_list(self) -> None:
+        """相同 key 时收集为 list，不丢失（BE-N 修复）。"""
         left = {"code:t1:0": _finding("code", "t1", content="old")}
         right = {"code:t1:0": _finding("code", "t1", content="new")}
         merged = _merge_findings(left, right)
-        assert merged["code:t1:0"].content == "new"
+        val = merged["code:t1:0"]
+        assert isinstance(val, list), f"同 key 应收集为 list，实际 {type(val)}"
+        assert len(val) == 2
+        assert val[0].content == "old"
+        assert val[1].content == "new"
 
     def test_merge_none(self) -> None:
         """None 输入降级为空 dict。"""

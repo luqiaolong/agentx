@@ -36,7 +36,7 @@
 | `approval_request` | JSON `{"thread_id","tool_name","args","preview","kind?","requestedPath?","writable?"}` | 危险工具 / 目录越界 / 沙箱权限升级审批请求。`kind` 取值：`"dangerous_tool"`（危险工具）、`"directory_extension"`（目录越界）、`"sandbox_escalation"`（沙箱权限升级）。`sandbox_escalation` 额外字段：`command`、`exit_code`、`reason`、`suggested_action`、`suggested_path`。 |
 | `paused` | `"{}"` | 用户暂停，SSE 流在下一轮迭代退出并保留状态，等待 `resume` |
 | `team_init` | JSON `{"plan","agents","reasoning"}` | AgentTeam 计划生成完成，前端据此在消息顶部创建 TeamNodeCard（在 `team_done` 之前发出） |
-| `team_done` | JSON `{"status": "done"|"error"}` | AgentTeam 整体执行结束（在 `done` 之前发出） |
+| `team_done` | JSON `{"status": "done"|"error"|"replanning", "agents"?}` | AgentTeam 整体执行结束或过渡态。`status` 枚举：`"done"` 终态（团队完成）；`"error"` 终态（团队失败）；`"replanning"` 过渡态（质量门失败，正在重规划，前端不应 finalize）。`agents` 为可选的子代理摘要列表（终态时携带）。在 `done` 之前发出。 |
 | `done` | `"{}"` | 流结束 |
 | `error` | 错误消息字符串 | 错误 |
 
