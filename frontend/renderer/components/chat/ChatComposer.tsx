@@ -72,6 +72,10 @@ export function ChatComposer({
   const permissionMode = currentSession?.permissionMode ?? "standard";
   const showWorkspaceChip = Boolean(workspacePath);
   const { textareaRef, textareaHeight } = useFixedTextarea();
+  // T1.8: ArrowUp 编辑上一条消息时触发的后端 rewind Promise。
+  // handleSubmit 会 await 此 Promise，确保 rewind 完成后才 resend。
+  // rewind 失败时阻止 resend 并显示错误。
+  const pendingRewindRef = useRef<Promise<{ success: boolean; lastUserContent: string | null }> | null>(null);
 
   // 切会话时重置本地输入与全局 picker 状态，并把焦点拉回 textarea。
   //
@@ -353,9 +357,11 @@ export function ChatComposer({
           .trim();
         setInput(text);
         // 删除上一条用户消息及之后的所有消息（因为即将重新发送）
+        // T1.8: 记录 rewind Promise，handleSubmit 会 await 它确保 rewind
+        // 完成后才 resend；rewind 失败时阻止 resend。
         const idx = msgs.findIndex((m) => m.id === lastUser.id);
         if (idx !== -1) {
-          useChatStore.getState().deleteMessagesAfter(lastUser.id);
+          pendingRewindRef.current = useChatStore.getState().deleteMessagesAfter(lastUser.id);
         }
         setTimeout(() => {
           textareaRef.current?.focus();
@@ -369,9 +375,25 @@ export function ChatComposer({
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const content = input.trim();
     if (!content || isStreaming) return;
+    // T1.8: 如果有 pending rewind（ArrowUp 编辑触发的），必须 await 完成。
+    // rewind 失败时禁止 resend，显示可恢复错误。
+    const pendingRewind = pendingRewindRef.current;
+    if (pendingRewind) {
+      pendingRewindRef.current = null;
+      try {
+        const result = await pendingRewind;
+        if (!result.success) {
+          setDropError("回退后端检查点失败，未重新发送。请重试。");
+          return;
+        }
+      } catch {
+        setDropError("回退后端检查点失败，未重新发送。请重试。");
+        return;
+      }
+    }
     onSend(content);
     setInput("");
     handleClosePicker();

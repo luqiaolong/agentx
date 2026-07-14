@@ -85,7 +85,7 @@ export function MemorySettings() {
     try {
       const res = await memory.dream(workspacePath ?? undefined);
       setDreamResult(
-        `整理完成：提炼/移动 ${res.promoted} 条，压缩 ${res.compressed} 条，删除 ${res.removed} 条冗余。${res.summary ? ` ${res.summary}` : ""}`,
+        `整理完成：应用 ${res.applied} 条变更，回滚 ${res.rolled_back} 条。${res.summary ? ` ${res.summary}` : ""}`,
       );
     } catch (e) {
       setDreamErr(humanizeError(e));
