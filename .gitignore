@@ -95,3 +95,13 @@ tests/python/crud_demo/
 
 # Local Python learning sandbox
 backend/pythonlearning/
+
+# Scratch / temp files (never commit)
+.scratch/
+.git-commit-msg.txt
+scratch_*.txt
+*.bak.t8
+*.bak
+
+# Duplicate skill dirs (.claude/skills is canonical, gitignored above)
+.agents/

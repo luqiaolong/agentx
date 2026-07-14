@@ -1,1 +1,0 @@
-D:\java\agentprojects\agentx\.agentx\skills\spring-ai-mcp-server-patterns\references\templates\tool-template.java
