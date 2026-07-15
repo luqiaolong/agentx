@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NotRequired
 from loguru import logger
 from deepagents.middleware.memory import MemoryMiddleware, MemoryState, MemoryStateUpdate
 from langchain.agents.middleware.types import AgentMiddleware, PrivateStateAttr
-from langchain_core.messages import AnyMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
 
 from app.security.approval.flow import _READONLY_TOOLS
 
@@ -49,14 +49,20 @@ class ReadonlyLoopGuardMiddleware(AgentMiddleware[Any, Any, Any]):
         self._readonly_tools: frozenset[str] = _READONLY_TOOLS
 
     def _count_readonly_streak(self, messages: list[AnyMessage]) -> int:
-        """从消息列表末尾统计连续只读 ToolMessage 数量。
+        """从消息列表末尾统计连续只读 ReAct 轮次。
 
-        ReAct 循环消息序列示例：
-        ``[user, AIMessage(tc), ToolMessage, AIMessage(tc), ToolMessage, ...]``
+        一个完整的 ReAct 轮次 = ``AIMessage(tool_calls=[...])`` 后跟
+        对应的 ``ToolMessage(s)``。从末尾向前遍历已完成的只读轮次：
 
-        从末尾向前遍历，遇到只读 ToolMessage 则 streak++，
-        遇到非只读 ToolMessage 或非 ToolMessage 则停止。
+        - 只读 ToolMessage → streak++
+        - 发起只读轮次的 ``AIMessage(tool_calls)`` → 跳过（不中断 streak）
+        - 非只读 ToolMessage / 含非只读工具的 AIMessage / 无 tool_calls 的
+          AIMessage / 其他消息类型 → 停止
+
+        末尾消息不是 ``ToolMessage`` 时返回 0（无已完成的轮次）。
         """
+        if not messages or not isinstance(messages[-1], ToolMessage):
+            return 0
         streak = 0
         for msg in reversed(messages):
             if isinstance(msg, ToolMessage):
@@ -65,6 +71,13 @@ class ReadonlyLoopGuardMiddleware(AgentMiddleware[Any, Any, Any]):
                     streak += 1
                 else:
                     break
+            elif isinstance(msg, AIMessage):
+                tool_calls = getattr(msg, "tool_calls", None) or []
+                if not tool_calls:
+                    break
+                if all(tc.get("name", "") in self._readonly_tools for tc in tool_calls):
+                    continue
+                break
             else:
                 break
         return streak
