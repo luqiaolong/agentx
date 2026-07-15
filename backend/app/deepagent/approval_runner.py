@@ -275,27 +275,48 @@ async def _run_approval_loop(
     # 只读工具循环保护由 ReadonlyLoopGuardMiddleware 在模型调用前拦截，
     # 此处不再覆盖 recursion_limit，避免将 9999 降至 100 导致复杂任务提前终止。
 
-    # 跨 stream 调用共享的"已 yield 消息签名"集合（避免 astream resume
-    # 时重发历史消息被重复 yield，root cause: trace=64851677fced422c）。
-    # 包装器自动向支持 seen_signatures 关键字参数的 stream_fn 注入；
-    # 不支持的自定义 stream_fn（测试桩）自动降级为不带参数调用。
-    _seen_signatures: set[str] = set()
+    # 跨 stream 调用共享的 StreamRunState（Decision 4）：持有 seen_message_keys
+    # （消息去重）、last_todos（todo diff）、processed_message_count、
+    # observation_sequence（单调递增）。一个实例贯穿初始流 + 所有 resume 流，
+    # 确保 astream resume 时不重发历史消息、不重复 yield todo_update、
+    # observation seq 跨 resume 严格递增（root cause: trace=64851677fced422c）。
+    from app.deepagent.stream_events import StreamRunState
+
+    _stream_state = StreamRunState()
     _base_stream = stream_fn or _stream_default
 
     async def _stream(agent: Any, inputs: Any, config: dict, source: str) -> AsyncIterator[dict[str, str]]:
-        """包装原 stream_fn 注入共享 seen_signatures。
+        """包装原 stream_fn 注入共享 stream_run_state + seen_signatures。
 
-        TypeError 仅在函数调用阶段捕获：async generator function 被传入不支持的
-        kwarg 时会在调用时（而非迭代时）抛 TypeError。若把整个 ``async for``
-        包进 try，迭代期间的 TypeError 会被误捕获并重新迭代，导致重复事件。
+        同时传递 ``seen_signatures``（兼容旧 stream_fn 签名）和
+        ``stream_run_state``（新生产路径）。TypeError 仅在函数调用阶段捕获：
+        async generator function 被传入不支持的 kwarg 时会在调用时（而非迭代时）
+        抛 TypeError。若把整个 ``async for`` 包进 try，迭代期间的 TypeError 会被
+        误捕获并重新迭代，导致重复事件。
+
+        回退链：both kwargs → seen_signatures only → no kwargs.
         """
         try:
             gen = _base_stream(
-                agent, inputs, config, source, seen_signatures=_seen_signatures
+                agent,
+                inputs,
+                config,
+                source,
+                seen_signatures=_stream_state.seen_message_keys,
+                stream_run_state=_stream_state,
             )
         except TypeError:
-            # 自定义 stream_fn（测试桩）不支持 seen_signatures kwarg，降级调用
-            gen = _base_stream(agent, inputs, config, source)
+            try:
+                gen = _base_stream(
+                    agent,
+                    inputs,
+                    config,
+                    source,
+                    seen_signatures=_stream_state.seen_message_keys,
+                )
+            except TypeError:
+                # 自定义 stream_fn（测试桩）不支持任何 kwarg，降级调用
+                gen = _base_stream(agent, inputs, config, source)
         async for sse in gen:
             yield sse
 
