@@ -142,6 +142,97 @@ async def run_agent_with_approval(
 ) -> AsyncIterator[dict[str, str]]:
     """统一的 agent 审批执行循环。
 
+    外层 wrapper 职责（tasks 4.3 + 4.4）：
+    - 通过 ``with bind_trace(trace_id)`` 正确进入 trace 上下文（修复原 no-op bare call）
+    - token-based 设置 ``current_parent_thread_id`` 并在 ``finally`` 中恢复
+    - ``finally`` 中执行 ``sandbox.clear_temp(thread_id)``，覆盖正常退出、异常、
+      暂停、中止、取消和 async-generator ``aclose()`` 全部路径
+
+    实际审批循环逻辑委托给内部 ``_run_approval_loop``。
+
+    Args:
+        agent: 已编译的 LangGraph / deep agent。
+        config: 含 ``configurable.thread_id`` 的运行配置。
+        thread_id: 会话 ID。
+        workspace_path: 当前工作区绝对路径。
+        permission_mode: ``"standard"`` 或 ``"full_trust"``。
+        runtime_dangerous: 运行时危险工具名集合。
+        source: SSE 事件 source 标识。
+        inputs: 初始输入，形如 ``{"messages": [...]}``。
+        sandbox: ``SessionSandbox`` 实例。None 时自动 ``get_sandbox()``。
+        parent_thread_id: 父 thread_id（Team 模式授权继承）。
+        stream_fn: 流式事件生成函数，默认 ``stream_agent_events``。
+        is_interrupted_fn: 中断检测函数。
+        get_pending_calls_fn: 提取 pending tool_calls 函数。
+        inject_tool_error_for_call_fn: 单条 tool_call 错误注入函数。
+        inject_tool_error_messages_fn: 批量错误注入函数。
+        yield_event: 可选的异步回调，每 yield 一个事件时同步调用（用于日志/观察）。
+        max_iterations: 最大迭代次数。
+
+    Yields:
+        SSE 事件 dict: ``{event: str, data: str}``
+    """
+    from contextlib import nullcontext
+    from app.sandbox import get_sandbox
+    from app.observability.trace import bind_trace, current_trace_id
+    from app.deepagent.context import current_parent_thread_id
+
+    _trace_id = current_trace_id() or ""
+    _token_parent = current_parent_thread_id.set(parent_thread_id)
+    _sandbox = sandbox or get_sandbox()
+
+    try:
+        with bind_trace(_trace_id) if _trace_id else nullcontext():
+            async for sse in _run_approval_loop(
+                agent,
+                config,
+                thread_id=thread_id,
+                workspace_path=workspace_path,
+                permission_mode=permission_mode,
+                runtime_dangerous=runtime_dangerous,
+                source=source,
+                inputs=inputs,
+                sandbox=_sandbox,
+                parent_thread_id=parent_thread_id,
+                stream_fn=stream_fn,
+                is_interrupted_fn=is_interrupted_fn,
+                get_pending_calls_fn=get_pending_calls_fn,
+                inject_tool_error_for_call_fn=inject_tool_error_for_call_fn,
+                inject_tool_error_messages_fn=inject_tool_error_messages_fn,
+                yield_event=yield_event,
+                max_iterations=max_iterations,
+            ):
+                yield sse
+    finally:
+        current_parent_thread_id.reset(_token_parent)
+        try:
+            await _sandbox.clear_temp(thread_id)
+        except Exception as exc:  # noqa: BLE001 — cleanup 失败不应阻塞主流程
+            logger.warning(f"clear_temp cleanup failed: {exc!r}")
+
+
+async def _run_approval_loop(
+    agent: Any,
+    config: dict,
+    *,
+    thread_id: str,
+    workspace_path: str | None,
+    permission_mode: str,
+    runtime_dangerous: set[str],
+    source: str,
+    inputs: dict,
+    sandbox: Any | None = None,
+    parent_thread_id: str | None = None,
+    stream_fn: Callable[..., AsyncIterator[dict[str, str]]] | None = None,
+    is_interrupted_fn: Callable[[Any, dict], Awaitable[bool]] | None = None,
+    get_pending_calls_fn: Callable[[Any, dict], Awaitable[list[dict]]] | None = None,
+    inject_tool_error_for_call_fn: Callable[[Any, dict, dict, str], Awaitable[None]] | None = None,
+    inject_tool_error_messages_fn: Callable[[Any, dict, str], Awaitable[None]] | None = None,
+    yield_event: Callable[[dict], Awaitable[None]] | None = None,
+    max_iterations: int = 100,
+) -> AsyncIterator[dict[str, str]]:
+    """统一的 agent 审批执行循环。
+
     流程:
     1. 初始流式执行，产出 token/tool_call/tool_result 事件
     2. while 循环检测中断（interrupt_on）
@@ -174,18 +265,11 @@ async def run_agent_with_approval(
         SSE 事件 dict: ``{event: str, data: str}``
     """
     from app.sandbox import get_sandbox
-    from app.observability.trace import bind_trace, current_trace_id
-    from app.deepagent.context import current_parent_thread_id
+    from app.observability.trace import current_trace_id
 
-    # 显式绑定 trace_id：LangGraph 内部节点/子协程不会自动继承外层 ContextVar
+    # trace_id 由外层 run_agent_with_approval 通过 bind_trace 绑定到 ContextVar；
+    # 此处读取绑定的值供 register_approval_request 使用。
     _trace_id = current_trace_id() or ""
-    if _trace_id:
-        bind_trace(_trace_id)  # 设置当前协程的 ContextVar
-
-    # 设置 parent_thread_id contextvar，供 AuthorizedLocalShellBackend._check_auth
-    # 读取（Team 子代理通过 AuthorizedLocalShellBackend 执行 fs 操作时继承父线程授权）。
-    # 与 bind_trace 同样在入口处设置；每次调用都会覆盖上一次的值。
-    current_parent_thread_id.set(parent_thread_id)
 
     # recursion_limit 由 deepagents create_deep_agent 默认设为 9999（硬安全网），
     # 只读工具循环保护由 ReadonlyLoopGuardMiddleware 在模型调用前拦截，
@@ -418,7 +502,6 @@ async def run_agent_with_approval(
 
         # full_trust 模式：直接恢复
         if is_full_trust:
-            await _sandbox.clear_temp(thread_id)
             pre_resume_msg_count = await _state_msg_count()
             try:
                 async for sse in _stream(
@@ -630,7 +713,6 @@ async def run_agent_with_approval(
                 return
             # 刷新已 yield 基线，回到循环顶部等待 LLM 下一轮 tool_call
             _yielded_msg_count = await _state_msg_count()
-            await _sandbox.clear_temp(thread_id)
             continue
 
         # standard 模式：危险工具判定
@@ -872,8 +954,6 @@ async def run_agent_with_approval(
             )
         else:
             _stalled_count = 0
-
-        await _sandbox.clear_temp(thread_id)
 
     if iteration >= max_iterations:
         logger.warning("agent hit max iterations", thread_id=thread_id)

@@ -30,7 +30,7 @@ def test_tools_enabled_default_all_true() -> None:
     """不设 env，tools_enabled 返回全部工具全 true。"""
     settings = get_settings()
     tools = settings.tools_enabled
-    assert len(tools) == 9
+    assert len(tools) == 10
     assert all(tools.values())
 
 
@@ -42,6 +42,7 @@ def test_tools_enabled_field_names() -> None:
         "read_file", "ls", "glob", "grep",
         "write_file", "edit_file", "delete_file",
         "web_search", "rag_retrieve",
+        "request_permission",
     }
     assert set(tools.keys()) == expected
 
@@ -89,7 +90,7 @@ def test_tools_enabled_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     assert settings.tools_config == {}
 
     tools = settings.tools_enabled
-    assert len(tools) == 9
+    assert len(tools) == 10
     assert all(tools.values())
 
 

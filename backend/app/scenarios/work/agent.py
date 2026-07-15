@@ -29,9 +29,10 @@ from app.scenarios.work.mention import parse_mention
 from app.config import get_settings
 from app.deepagent.approval_runner import run_agent_with_approval
 from app.deepagent.agent import trigger_profile_auto_extract
-from app.deepagent.context import current_thread_id
+from app.deepagent.context import bind_agent_context, current_thread_id
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
+    assemble_agent_toolset,
     compute_runtime_dangerous,
     load_mcp_tools,
     make_deep_tools,
@@ -256,6 +257,8 @@ async def build_work_supervisor(
     rubric: str | None = None,
     grader_model: Any | None = None,
     permission_mode: str = "standard",
+    excluded_tools: frozenset[str] | None = None,
+    interrupt_on: dict[str, bool] | None = None,
 ) -> Any:
     """构造 work 场景 Supervisor agent。
 
@@ -274,6 +277,8 @@ async def build_work_supervisor(
             None 时调用 ``get_chat_model()`` 获取真实 LLM。
         permission_mode: 权限模式，"standard" 或 "full_trust"。tools is None 时透传给
             ``make_expert_delegation_tool``，确保内部 delegate_to_expert 与 Supervisor 权限一致。
+        excluded_tools: 可选，调用方排除的内置工具名集合。透传给 ``create_agent``。
+        interrupt_on: 可选，``AgentToolset.interrupt_on`` 派生的中断配置。透传给 ``create_agent``。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -324,6 +329,8 @@ async def build_work_supervisor(
         subagents=subagents,
         rubric=rubric,
         grader_model=grader_model,
+        excluded_tools=excluded_tools,
+        interrupt_on=interrupt_on,
     )
 
 
@@ -360,148 +367,154 @@ async def run_work_supervisor(
         SSE 事件 dict: {event: str, data: str}
     """
     config: dict = {"configurable": {"thread_id": thread_id or "work-default"}}
-    # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
-    current_thread_id.set(thread_id)
-    sandbox = get_sandbox()
-    is_full_trust = permission_mode == "full_trust"
+    with bind_agent_context(thread_id, None):
+        sandbox = get_sandbox()
+        is_full_trust = permission_mode == "full_trust"
 
-    # ---- 1. @mention 解析 ----
-    cleaned_message, mention_target = parse_mention(message)
+        # ---- 1. @mention 解析 ----
+        cleaned_message, mention_target = parse_mention(message)
 
-    # @mention 命中 Expert：直接运行 Expert，bypass Supervisor
-    if mention_target and mention_target[0] == "expert":
-        expert_name = mention_target[1]
-        logger.info(
-            "supervisor.mention_force_expert",
-            thread_id=thread_id,
-            expert=expert_name,
-        )
-        yield make_sse_event("delegation", {
-            "target": expert_name,
-            "source": expert_name,
-            "message": f"@mention 强制委派给 {expert_name} Expert",
-        })
-        from app.scenarios.coding.agent import run_coding_expert
-
-        async for sse in run_coding_expert(
-            cleaned_message,
-            thread_id,
-            profile_prompt=profile_prompt,
-            workspace_path=workspace_path,
-            permission_mode=permission_mode,
-            chat_model=chat_model,
-            checkpointer=checkpointer,
-        ):
-            yield sse
-        return
-
-    # @mention 命中子代理：运行子代理，结果回注 Supervisor 合成
-    if mention_target and mention_target[0] == "subagent":
-        agent_name = mention_target[1]
-        logger.info(
-            "supervisor.mention_force_subagent",
-            thread_id=thread_id,
-            agent=agent_name,
-        )
-        yield make_sse_event("delegation", {
-            "target": agent_name,
-            "source": agent_name,
-            "message": f"@mention 强制委派给 {agent_name} 子代理",
-        })
-
-        subagent_result = await _run_subagent_for_mention(
-            agent_name, cleaned_message, thread_id, workspace_path, chat_model=chat_model
-        )
-
-        # 将子代理结果作为上下文注入 Supervisor
-        cleaned_message = (
-            f"用户通过 @{agent_name} 委派了子代理，子代理返回结果如下：\n\n"
-            f"{subagent_result}\n\n"
-            f"请基于以上结果为用户综合回复。原始用户消息：{cleaned_message}"
-        )
-
-    # ---- 2. 构建 Supervisor agent + 运行审批执行层 ----
-    try:
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, True)
-            logger.info("supervisor full_trust mode enabled", thread_id=thread_id)
-
-        # 加载 supervisor 配置（rubric / grader_model 在此读取）
-        supervisor_cfg = get_settings().agents.supervisor
-
-        # inputs 只含当前 user message；历史 messages 由 LangGraph astream 从
-        # checkpointer 自动加载（thread_id 匹配时），避免双重写入。
-        inputs = {"messages": [{"role": "user", "content": cleaned_message}]}
-
-        try:
-            agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
-            mcp_tools, mcp_untrusted_names = await load_mcp_tools()
-            if mcp_tools:
-                agent_tools.extend(mcp_tools)
-                logger.info(
-                    "MCP tools merged into Supervisor",
-                    thread_id=thread_id,
-                    count=len(mcp_tools),
-                    untrusted=len(mcp_untrusted_names),
-                )
-            expert_tool = make_expert_delegation_tool(
-                thread_id,
-                workspace_path,
-                profile_prompt=profile_prompt,
-                permission_mode=permission_mode,
-                chat_model=chat_model,
+        # @mention 命中 Expert：直接运行 Expert，bypass Supervisor
+        if mention_target and mention_target[0] == "expert":
+            expert_name = mention_target[1]
+            logger.info(
+                "supervisor.mention_force_expert",
+                thread_id=thread_id,
+                expert=expert_name,
             )
-            all_tools = [*agent_tools, expert_tool]
+            yield make_sse_event("delegation", {
+                "target": expert_name,
+                "source": expert_name,
+                "message": f"@mention 强制委派给 {expert_name} Expert",
+            })
+            from app.scenarios.coding.agent import run_coding_expert
 
-            subagents = _build_subagent_runnables(thread_id, workspace_path, chat_model=chat_model)
-
-            agent = await build_work_supervisor(
+            async for sse in run_coding_expert(
+                cleaned_message,
                 thread_id,
-                tools=all_tools,
-                subagents=subagents,
                 profile_prompt=profile_prompt,
                 workspace_path=workspace_path,
+                permission_mode=permission_mode,
                 chat_model=chat_model,
                 checkpointer=checkpointer,
-                rubric=supervisor_cfg.rubric or None,
-                grader_model=supervisor_cfg.grader_model,
+            ):
+                yield sse
+            return
+
+        # @mention 命中子代理：运行子代理，结果回注 Supervisor 合成
+        if mention_target and mention_target[0] == "subagent":
+            agent_name = mention_target[1]
+            logger.info(
+                "supervisor.mention_force_subagent",
+                thread_id=thread_id,
+                agent=agent_name,
             )
-        except ValueError as exc:
-            yield make_error_event(f"LLM 不可用: {exc}")
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("build_work_supervisor failed", thread_id=thread_id)
-            yield make_error_event(f"Supervisor 初始化失败: {exc}")
-            return
+            yield make_sse_event("delegation", {
+                "target": agent_name,
+                "source": agent_name,
+                "message": f"@mention 强制委派给 {agent_name} 子代理",
+            })
 
-        # 运行时危险工具集合 = DANGEROUS_TOOLS 与已启用工具的交集 + MCP untrusted
-        runtime_dangerous = compute_runtime_dangerous(
-            agent_tools, mcp_untrusted_names, workspace_path
-        )
-        # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
-        # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
+            subagent_result = await _run_subagent_for_mention(
+                agent_name, cleaned_message, thread_id, workspace_path, chat_model=chat_model
+            )
 
-        # ---- 3. 公共审批执行层（app.deepagent.approval_runner.run_agent_with_approval）----
-        # 由统一执行层负责 _is_interrupted、中断循环、危险工具判定等逻辑，
-        # work_supervisor 不再重复实现。
-        async for sse in run_agent_with_approval(
-            agent,
-            config,
-            thread_id=thread_id,
-            workspace_path=workspace_path,
-            permission_mode=permission_mode,
-            runtime_dangerous=runtime_dangerous,
-            source="work",
-            inputs=inputs,
-            sandbox=sandbox,
-        ):
-            yield sse
-    finally:
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, False)
+            # 将子代理结果作为上下文注入 Supervisor
+            cleaned_message = (
+                f"用户通过 @{agent_name} 委派了子代理，子代理返回结果如下：\n\n"
+                f"{subagent_result}\n\n"
+                f"请基于以上结果为用户综合回复。原始用户消息：{cleaned_message}"
+            )
 
-    # 异步触发画像提取（与 deep/coding 路径一致）
-    await trigger_profile_auto_extract(agent, config, cleaned_message, workspace_path=workspace_path)
+        # ---- 2. 构建 Supervisor agent + 运行审批执行层 ----
+        try:
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, True)
+                logger.info("supervisor full_trust mode enabled", thread_id=thread_id)
+
+            # 加载 supervisor 配置（rubric / grader_model 在此读取）
+            supervisor_cfg = get_settings().agents.supervisor
+
+            # inputs 只含当前 user message；历史 messages 由 LangGraph astream 从
+            # checkpointer 自动加载（thread_id 匹配时），避免双重写入。
+            inputs = {"messages": [{"role": "user", "content": cleaned_message}]}
+
+            try:
+                agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
+                mcp_tools, mcp_untrusted_names = await load_mcp_tools()
+                if mcp_tools:
+                    agent_tools.extend(mcp_tools)
+                    logger.info(
+                        "MCP tools merged into Supervisor",
+                        thread_id=thread_id,
+                        count=len(mcp_tools),
+                        untrusted=len(mcp_untrusted_names),
+                    )
+                expert_tool = make_expert_delegation_tool(
+                    thread_id,
+                    workspace_path,
+                    profile_prompt=profile_prompt,
+                    permission_mode=permission_mode,
+                    chat_model=chat_model,
+                )
+                all_tools = [*agent_tools, expert_tool]
+
+                # 单次装配 AgentToolset：统一 tool surface / excluded builtins / interrupt_on
+                toolset = assemble_agent_toolset(
+                    project_tools=all_tools,
+                    mcp_untrusted_names=mcp_untrusted_names,
+                    workspace_path=workspace_path,
+                )
+
+                subagents = _build_subagent_runnables(thread_id, workspace_path, chat_model=chat_model)
+
+                agent = await build_work_supervisor(
+                    thread_id,
+                    tools=list(toolset.tools),
+                    subagents=subagents,
+                    profile_prompt=profile_prompt,
+                    workspace_path=workspace_path,
+                    chat_model=chat_model,
+                    checkpointer=checkpointer,
+                    rubric=supervisor_cfg.rubric or None,
+                    grader_model=supervisor_cfg.grader_model,
+                    excluded_tools=toolset.excluded_builtin_tools,
+                    interrupt_on=toolset.interrupt_on,
+                )
+            except ValueError as exc:
+                yield make_error_event(f"LLM 不可用: {exc}")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("build_work_supervisor failed", thread_id=thread_id)
+                yield make_error_event(f"Supervisor 初始化失败: {exc}")
+                return
+
+            # 审批运行时使用同一份 approval_required_tools（OpenSpec Decision 1）
+            runtime_dangerous = set(toolset.approval_required_tools)
+            # execute 不再属于 DANGEROUS_TOOLS；其审批通过 directory_extension 机制处理
+            # （workspace 之外未授权时触发审批），由 run_agent_with_approval 统一处理。
+
+            # ---- 3. 公共审批执行层（app.deepagent.approval_runner.run_agent_with_approval）----
+            # 由统一执行层负责 _is_interrupted、中断循环、危险工具判定等逻辑，
+            # work_supervisor 不再重复实现。
+            async for sse in run_agent_with_approval(
+                agent,
+                config,
+                thread_id=thread_id,
+                workspace_path=workspace_path,
+                permission_mode=permission_mode,
+                runtime_dangerous=runtime_dangerous,
+                source="work",
+                inputs=inputs,
+                sandbox=sandbox,
+            ):
+                yield sse
+        finally:
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, False)
+
+        # 异步触发画像提取（与 deep/coding 路径一致）
+        await trigger_profile_auto_extract(agent, config, cleaned_message, workspace_path=workspace_path)
 
 
 async def _run_subagent_for_mention(

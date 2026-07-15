@@ -7,6 +7,8 @@
 - ``compute_runtime_dangerous``：计算运行时危险工具集合（DANGEROUS_TOOLS + MCP untrusted + workspace fs 写工具）
 - ``make_deep_tools``：构建 DeepAgent 工具集（delete_file + rag + web）
 - ``load_mcp_tools``：异步加载 MCP 工具并标记非可信工具
+- ``AgentToolset``：不可变运行时工具集描述（工具列表 + 排除的内置工具 + 需审批工具名）
+- ``assemble_agent_toolset``：单次装配 ``AgentToolset``，统一 tool surface / excluded / interrupt_on
 
 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
 自动注入，不在 ``make_deep_tools`` 返回的工具列表中。CLI 执行（含 Git 操作）由 backend 提供的
@@ -19,7 +21,9 @@ deepagents 内置 ``execute`` 工具承担；Git 写操作在 ``SafeLocalShellBa
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.config import UPLOADS_DIR, WORKSPACE_DIR, get_settings
 from app.observability.logger import logger
@@ -28,12 +32,113 @@ from app.sandbox.path_guard import PathNotAuthorized
 from app.security.dangerous_tools import DANGEROUS_TOOLS
 from app.tools.subagent_tools import make_rag_tools, make_web_tools
 
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+
 __all__ = [
+    "AgentToolset",
     "DANGEROUS_TOOLS",
+    "assemble_agent_toolset",
     "compute_runtime_dangerous",
     "make_deep_tools",
     "load_mcp_tools",
 ]
+
+# DeepAgents 内置 fs 工具名（由 ``AuthorizedLocalShellBackend`` 注入）。
+# 用于 ``assemble_agent_toolset`` 计算 ``tools_enabled`` 禁用时应排除的内置工具。
+_BUILTIN_FS_TOOLS: frozenset[str] = frozenset(
+    {"read_file", "ls", "glob", "grep", "write_file", "edit_file"}
+)
+
+
+@dataclass(frozen=True)
+class AgentToolset:
+    """不可变运行时工具集描述，统一 tool surface、excluded built-ins、approval-required。
+
+    一个实例同时供给 ``create_agent(interrupt_on=...)`` 与
+    ``run_agent_with_approval(runtime_dangerous=...)``，确保图编译时的
+    ``HumanInTheLoopMiddleware.interrupt_on`` 与审批运行时的 ``runtime_dangerous``
+    集合源自同一份计算结果（OpenSpec Decision 1）。
+    """
+
+    tools: tuple["BaseTool", ...]
+    excluded_builtin_tools: frozenset[str]
+    approval_required_tools: frozenset[str]
+
+    @property
+    def interrupt_on(self) -> dict[str, bool]:
+        """``{tool_name: True}`` 字典，供 ``create_deep_agent(interrupt_on=...)`` 使用。"""
+        return {name: True for name in self.approval_required_tools}
+
+
+def assemble_agent_toolset(
+    project_tools: list,
+    mcp_untrusted_names: set[str],
+    workspace_path: str | None,
+    subagent_exclusions: frozenset[str] | None = None,
+) -> AgentToolset:
+    """单次装配 ``AgentToolset``，统一 tool surface / excluded built-ins / interrupt_on。
+
+    装配步骤（OpenSpec Decision 1 + 3.2）：
+    1. 应用 ``tools_enabled`` 过滤项目工具（与 ``make_deep_tools`` 内部过滤一致，
+       已过滤的工具再次过滤是幂等的）。
+    2. 计算被禁用的 DeepAgents 内置 fs 工具名集合（``_BUILTIN_FS_TOOLS`` 中
+       ``tools_enabled[name] is False`` 的条目）。
+    3. 将禁用内置工具与 ``subagent_exclusions``（如 ``FORBIDDEN_SUBAGENT_TOOLS``）
+       取并集，得到有效 ``excluded_builtin_tools``。
+    4. 计算需审批工具名集合：``compute_runtime_dangerous(enabled_tool_names, mcp_untrusted_names)``
+       + ``workspace_path`` 非空时追加内置 fs 写工具 ``write_file`` / ``edit_file``
+       （由 backend 注入，不在 ``project_tools`` 列表中），除非已被排除。
+    5. 返回不可变 ``AgentToolset``。
+
+    Args:
+        project_tools: 已构建的项目工具列表（含 ``.name`` 属性）。MCP 失败降级时
+            调用方传入不含 MCP 工具的列表。
+        mcp_untrusted_names: 来自 ``trusted=False`` MCP server 的工具名集合，
+            调用方通过 ``load_mcp_tools`` 获取。
+        workspace_path: 当前工作区路径。非空时内置 fs 写工具纳入 approval_required。
+        subagent_exclusions: 可选，子代理禁止绑定的工具名集合（如
+            ``FORBIDDEN_SUBAGENT_TOOLS``）。与禁用内置工具取并集。
+
+    Returns:
+        不可变 ``AgentToolset`` 实例。
+    """
+    tools_enabled = get_settings().tools_enabled
+
+    # 1. 应用 tools_enabled 过滤项目工具（幂等：make_deep_tools 已过滤过一次）
+    enabled_project_tools = [
+        t for t in project_tools if tools_enabled.get(t.name, True)
+    ]
+
+    # 2. 计算被禁用的 DeepAgents 内置 fs 工具
+    disabled_builtins = frozenset(
+        name for name in _BUILTIN_FS_TOOLS if not tools_enabled.get(name, True)
+    )
+
+    # 3. 并集 subagent_exclusions
+    if subagent_exclusions:
+        excluded_builtin_tools = disabled_builtins | frozenset(subagent_exclusions)
+    else:
+        excluded_builtin_tools = disabled_builtins
+
+    # 4. 计算需审批工具名（canonical 公式在 app.security.dangerous_tools）
+    from app.security.dangerous_tools import compute_runtime_dangerous as _canonical
+
+    enabled_tool_names = {t.name for t in enabled_project_tools}
+    approval_required = set(_canonical(enabled_tool_names, set(mcp_untrusted_names)))
+
+    # workspace_path 非空时，内置 fs 写工具（write_file/edit_file）由 backend 注入，
+    # 不在 project_tools 中，需显式追加到 approval_required（除非已被排除）
+    if workspace_path:
+        for name in ("write_file", "edit_file"):
+            if name not in excluded_builtin_tools:
+                approval_required.add(name)
+
+    return AgentToolset(
+        tools=tuple(enabled_project_tools),
+        excluded_builtin_tools=excluded_builtin_tools,
+        approval_required_tools=frozenset(approval_required),
+    )
 
 # 沙箱根目录保护：禁止删除这两个目录本身（允许删除其下的子项）。
 # 用 resolve() 后的 Path 做路径级比较，避免字符串后缀匹配失效（C4-b 修复）。
@@ -45,11 +150,16 @@ def compute_runtime_dangerous(
     mcp_untrusted_names: set[str],
     workspace_path: str | None = None,
 ) -> set[str]:
-    """计算运行时危险工具集合。
+    """计算运行时危险工具集合（兼容委托）。
+
+    Canonical 公式由 ``app.security.dangerous_tools.compute_runtime_dangerous`` 持有。
+    本函数保留原签名（接受工具列表 + 可选 workspace_path），内部委托 canonical 公式
+    并在 ``workspace_path`` 非空时追加内置 fs 写工具（由 backend 注入，不在
+    ``agent_tools`` 列表中）。
 
     集合来源：
-    1. ``DANGEROUS_TOOLS`` 与 agent_tools 工具名的交集
-    2. MCP untrusted 工具名（来自 ``trusted=False`` server）
+    1. ``DANGEROUS_TOOLS`` 与 agent_tools 工具名的交集（canonical 公式）
+    2. MCP untrusted 工具名（来自 ``trusted=False`` server，canonical 公式）
     3. workspace_path 非空时追加内置 fs 写工具 ``write_file`` / ``edit_file``
        （由 AuthorizedLocalShellBackend 注入，不在 agent_tools 列表中）
 
@@ -58,8 +168,10 @@ def compute_runtime_dangerous(
         mcp_untrusted_names: MCP 非可信工具名集合。
         workspace_path: 当前工作区路径，非空时纳入内置 fs 写工具。
     """
+    from app.security.dangerous_tools import compute_runtime_dangerous as _canonical
+
     enabled_tool_names = {t.name for t in agent_tools}
-    dangerous = (DANGEROUS_TOOLS & enabled_tool_names) | mcp_untrusted_names
+    dangerous = set(_canonical(enabled_tool_names, set(mcp_untrusted_names)))
     if workspace_path:
         dangerous = dangerous | {"write_file", "edit_file"}
     return dangerous

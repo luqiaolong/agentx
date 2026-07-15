@@ -14,10 +14,11 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from app.config import get_settings
 from app.deepagent.approval_runner import run_agent_with_approval
-from app.deepagent.context import current_thread_id
+from app.deepagent.context import bind_agent_context
 from app.deepagent.factory import create_agent
 from app.deepagent.tool_assembly import (
     DANGEROUS_TOOLS,
+    assemble_agent_toolset,
     compute_runtime_dangerous,
     load_mcp_tools,
     make_deep_tools,
@@ -65,8 +66,17 @@ async def build_deep_agent(
     rubric: str | None = None,
     grader_model: Any | None = None,
     subagents: list | None = None,
+    excluded_tools: frozenset[str] | None = None,
+    interrupt_on: dict[str, bool] | None = None,
 ) -> Any:
-    """构造真实 DeepAgent 图。"""
+    """构造真实 DeepAgent 图。
+
+    Args:
+        excluded_tools: 可选，调用方排除的内置工具名集合（如 ``FORBIDDEN_SUBAGENT_TOOLS``）。
+            传入时与 ``tools_enabled`` 禁用的内置工具取并集后注册 HarnessProfile。
+        interrupt_on: 可选，``AgentToolset.interrupt_on`` 派生的中断配置。非空时覆盖
+            默认 ``build_interrupt_config()``，使图编译时与审批运行时使用同一份计算。
+    """
     if chat_model is not None:
         model = chat_model
     else:
@@ -93,6 +103,8 @@ async def build_deep_agent(
         rubric=rubric,
         grader_model=grader_model,
         subagents=subagents,
+        excluded_tools=excluded_tools,
+        interrupt_on=interrupt_on,
     )
 
 
@@ -148,70 +160,76 @@ async def run_deep_path(
 ) -> AsyncIterator[dict]:
     """DeepAgent 路径 SSE 生成器。"""
     thread_id = state.get("thread_id", "")
-    # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
-    current_thread_id.set(thread_id)
-    config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
-    sandbox = get_sandbox()
-    is_full_trust = permission_mode == "full_trust"
+    with bind_agent_context(thread_id, parent_thread_id):
+        config: dict = {"configurable": {"thread_id": thread_id or "deep-default"}}
+        sandbox = get_sandbox()
+        is_full_trust = permission_mode == "full_trust"
 
-    if is_full_trust:
-        await sandbox.set_full_trust(thread_id, True)
-        logger.info("deep agent full_trust mode enabled", thread_id=thread_id)
+        if is_full_trust:
+            await sandbox.set_full_trust(thread_id, True)
+            logger.info("deep agent full_trust mode enabled", thread_id=thread_id)
 
-    history_msgs = list(history) if history else []
-    inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
+        history_msgs = list(history) if history else []
+        inputs = {"messages": [*history_msgs, {"role": "user", "content": message}]}
 
-    try:
-        agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
-        mcp_tools, mcp_untrusted_names = await load_mcp_tools()
-        if mcp_tools:
-            agent_tools.extend(mcp_tools)
-            logger.info(
-                "MCP tools merged into DeepAgent",
-                thread_id=thread_id,
-                count=len(mcp_tools),
-                untrusted=len(mcp_untrusted_names),
+        try:
+            agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
+            mcp_tools, mcp_untrusted_names = await load_mcp_tools()
+            if mcp_tools:
+                agent_tools.extend(mcp_tools)
+                logger.info(
+                    "MCP tools merged into DeepAgent",
+                    thread_id=thread_id,
+                    count=len(mcp_tools),
+                    untrusted=len(mcp_untrusted_names),
+                )
+            # 单次装配 AgentToolset：统一 tool surface / excluded builtins / interrupt_on
+            toolset = assemble_agent_toolset(
+                project_tools=agent_tools,
+                mcp_untrusted_names=mcp_untrusted_names,
+                workspace_path=workspace_path,
             )
-        agent = await build_deep_agent(
-            thread_id,
-            tools=agent_tools,
-            profile_prompt=profile_prompt,
-            scene_prompt=scene_prompt,
-            workspace_path=workspace_path,
-            chat_model=chat_model,
-        )
-    except ValueError as exc:
-        yield make_error_event(f"LLM 不可用: {exc}")
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, False)
-        return
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("build_deep_agent failed", thread_id=thread_id)
-        yield make_error_event(f"DeepAgent 初始化失败: {exc}")
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, False)
-        return
+            agent = await build_deep_agent(
+                thread_id,
+                tools=list(toolset.tools),
+                profile_prompt=profile_prompt,
+                scene_prompt=scene_prompt,
+                workspace_path=workspace_path,
+                chat_model=chat_model,
+                excluded_tools=toolset.excluded_builtin_tools,
+                interrupt_on=toolset.interrupt_on,
+            )
+        except ValueError as exc:
+            yield make_error_event(f"LLM 不可用: {exc}")
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, False)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("build_deep_agent failed", thread_id=thread_id)
+            yield make_error_event(f"DeepAgent 初始化失败: {exc}")
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, False)
+            return
 
-    runtime_dangerous = compute_runtime_dangerous(
-        agent_tools, mcp_untrusted_names, workspace_path
-    )
+        # 审批运行时使用同一份 approval_required_tools（OpenSpec Decision 1）
+        runtime_dangerous = set(toolset.approval_required_tools)
 
-    try:
-        async for sse in run_agent_with_approval(
-            agent,
-            config,
-            thread_id=thread_id,
-            workspace_path=workspace_path,
-            permission_mode=permission_mode,
-            runtime_dangerous=runtime_dangerous,
-            source="deep",
-            inputs=inputs,
-            sandbox=sandbox,
-            parent_thread_id=parent_thread_id,
-        ):
-            yield sse
-    finally:
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, False)
+        try:
+            async for sse in run_agent_with_approval(
+                agent,
+                config,
+                thread_id=thread_id,
+                workspace_path=workspace_path,
+                permission_mode=permission_mode,
+                runtime_dangerous=runtime_dangerous,
+                source="deep",
+                inputs=inputs,
+                sandbox=sandbox,
+                parent_thread_id=parent_thread_id,
+            ):
+                yield sse
+        finally:
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, False)
 
-    await trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)
+        await trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)

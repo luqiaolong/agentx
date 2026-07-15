@@ -22,9 +22,10 @@ from deepagents import SubAgent
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
 from app.deepagent.agent import build_deep_agent, trigger_profile_auto_extract
 from app.deepagent.approval_runner import run_agent_with_approval
-from app.deepagent.context import current_thread_id
+from app.deepagent.context import bind_agent_context, current_thread_id
 from app.deepagent.streaming import stream_agent_events
 from app.deepagent.tool_assembly import (
+    assemble_agent_toolset,
     compute_runtime_dangerous,
     load_mcp_tools,
     make_deep_tools,
@@ -125,6 +126,8 @@ async def build_coding_expert(
     checkpointer: Any = None,
     workspace_path: str | None = None,
     chat_model: BaseChatModel | None = None,
+    excluded_tools: frozenset[str] | None = None,
+    interrupt_on: dict[str, bool] | None = None,
 ) -> Any:
     """构造 coding 场景 Expert agent。
 
@@ -145,6 +148,8 @@ async def build_coding_expert(
         workspace_path: 可选当前工作区路径。
         chat_model: 可选注入的 ChatModel。非 None 时直接使用（评测框架注入 MockChatModel）；
             None 时调用 ``get_chat_model()`` 获取真实 LLM。
+        excluded_tools: 可选，调用方排除的内置工具名集合。透传给 ``build_deep_agent``。
+        interrupt_on: 可选，``AgentToolset.interrupt_on`` 派生的中断配置。透传给 ``build_deep_agent``。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -180,6 +185,8 @@ async def build_coding_expert(
         chat_model=chat_model,
         subagents=subagents,
         rubric=expert_cfg.rubric or None,
+        excluded_tools=excluded_tools,
+        interrupt_on=interrupt_on,
     )
 
 
@@ -222,76 +229,81 @@ async def run_coding_expert(
         SSE 事件 dict: {event: str, data: str}
     """
     config: dict = {"configurable": {"thread_id": thread_id or "coding-default"}}
-    # 设置 contextvar，供 AuthorizedLocalShellBackend 读取 thread_id 做沙箱授权
-    current_thread_id.set(thread_id)
-    sandbox = get_sandbox()
-    is_full_trust = permission_mode == "full_trust"
+    with bind_agent_context(thread_id, parent_thread_id):
+        sandbox = get_sandbox()
+        is_full_trust = permission_mode == "full_trust"
 
-    try:
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, True)
-            logger.info("coding_expert full_trust mode enabled", thread_id=thread_id)
-
-        # inputs 只含当前 user message；历史 messages 由 LangGraph astream 从
-        # checkpointer 自动加载（thread_id 匹配时），避免双重写入。
-        inputs = {"messages": [{"role": "user", "content": message}]}
-
-        # 构建 agent 工具集（标准工具 + MCP）并构造 agent
         try:
-            agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
-            mcp_tools, mcp_untrusted_names = await load_mcp_tools()
-            if mcp_tools:
-                agent_tools.extend(mcp_tools)
-                logger.info(
-                    "MCP tools merged into coding Expert",
-                    thread_id=thread_id,
-                    count=len(mcp_tools),
-                    untrusted=len(mcp_untrusted_names),
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, True)
+                logger.info("coding_expert full_trust mode enabled", thread_id=thread_id)
+
+            # inputs 只含当前 user message；历史 messages 由 LangGraph astream 从
+            # checkpointer 自动加载（thread_id 匹配时），避免双重写入。
+            inputs = {"messages": [{"role": "user", "content": message}]}
+
+            # 构建 agent 工具集（标准工具 + MCP）并构造 agent
+            try:
+                agent_tools = make_deep_tools(thread_id, workspace_path=workspace_path)
+                mcp_tools, mcp_untrusted_names = await load_mcp_tools()
+                if mcp_tools:
+                    agent_tools.extend(mcp_tools)
+                    logger.info(
+                        "MCP tools merged into coding Expert",
+                        thread_id=thread_id,
+                        count=len(mcp_tools),
+                        untrusted=len(mcp_untrusted_names),
+                    )
+                # 单次装配 AgentToolset：统一 tool surface / excluded builtins / interrupt_on
+                toolset = assemble_agent_toolset(
+                    project_tools=agent_tools,
+                    mcp_untrusted_names=mcp_untrusted_names,
+                    workspace_path=workspace_path,
                 )
 
-            agent = await build_coding_expert(
-                thread_id,
-                tools=agent_tools,
-                profile_prompt=profile_prompt,
-                checkpointer=checkpointer,
+                agent = await build_coding_expert(
+                    thread_id,
+                    tools=list(toolset.tools),
+                    profile_prompt=profile_prompt,
+                    checkpointer=checkpointer,
+                    workspace_path=workspace_path,
+                    chat_model=chat_model,
+                    excluded_tools=toolset.excluded_builtin_tools,
+                    interrupt_on=toolset.interrupt_on,
+                )
+            except ValueError as exc:
+                yield make_error_event(f"LLM 不可用: {exc}")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("build_coding_expert failed", thread_id=thread_id)
+                yield make_error_event(f"Coding Expert 初始化失败: {exc}")
+                return
+
+            # 审批运行时使用同一份 approval_required_tools（OpenSpec Decision 1）
+            runtime_dangerous = set(toolset.approval_required_tools)
+
+            # 统一审批执行循环（deep.execution.run_agent_with_approval）
+            # stream_fn 传入模块级引用，以便测试通过
+            # patch("app.scenarios.coding.agent.stream_agent_events") 替换。
+            # is_interrupted_fn 使用 execution 默认值（app.deepagent.approval_runner._is_interrupted）。
+            async for sse in run_agent_with_approval(
+                agent,
+                config,
+                thread_id=thread_id,
                 workspace_path=workspace_path,
-                chat_model=chat_model,
-            )
-        except ValueError as exc:
-            yield make_error_event(f"LLM 不可用: {exc}")
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("build_coding_expert failed", thread_id=thread_id)
-            yield make_error_event(f"Coding Expert 初始化失败: {exc}")
-            return
+                permission_mode=permission_mode,
+                runtime_dangerous=runtime_dangerous,
+                source="coding",
+                inputs=inputs,
+                sandbox=sandbox,
+                parent_thread_id=parent_thread_id,
+                stream_fn=stream_agent_events,
+                yield_event=yield_event,
+            ):
+                yield sse
+        finally:
+            if is_full_trust:
+                await sandbox.set_full_trust(thread_id, False)
 
-        # 运行时危险工具集合
-        runtime_dangerous = compute_runtime_dangerous(
-            agent_tools, mcp_untrusted_names, workspace_path
-        )
-
-        # 统一审批执行循环（deep.execution.run_agent_with_approval）
-        # stream_fn 传入模块级引用，以便测试通过
-        # patch("app.scenarios.coding.agent.stream_agent_events") 替换。
-        # is_interrupted_fn 使用 execution 默认值（app.deepagent.approval_runner._is_interrupted）。
-        async for sse in run_agent_with_approval(
-            agent,
-            config,
-            thread_id=thread_id,
-            workspace_path=workspace_path,
-            permission_mode=permission_mode,
-            runtime_dangerous=runtime_dangerous,
-            source="coding",
-            inputs=inputs,
-            sandbox=sandbox,
-            parent_thread_id=parent_thread_id,
-            stream_fn=stream_agent_events,
-            yield_event=yield_event,
-        ):
-            yield sse
-    finally:
-        if is_full_trust:
-            await sandbox.set_full_trust(thread_id, False)
-
-    # 异步触发画像提取（与 deep 路径一致）
-    await trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)
+        # 异步触发画像提取（与 deep 路径一致）
+        await trigger_profile_auto_extract(agent, config, message, workspace_path=workspace_path)
