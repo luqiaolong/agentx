@@ -18,12 +18,13 @@ deepagents 的 ``LocalShellBackend`` 提供 ``execute`` 工具用 ``subprocess.r
 from __future__ import annotations
 
 import os
+import subprocess
 
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 
 from app.deepagent.context import current_thread_id
-from app.sandbox.session_sandbox import get_sandbox
+from app.sandbox.session_sandbox import _is_sandbox_off, get_sandbox
 from app.security.command_filter import is_destructive_target_in_scratch
 from app.security.context import build_shell_backend_context
 from app.security.reporter import aggregate as aggregate_risk
@@ -171,6 +172,39 @@ class SafeLocalShellBackend(LocalShellBackend):
         if _SANDBOX_ESCALATION_ENABLED and result.exit_code != 0:
             analysis = analyze_sandbox_failure(command, result.exit_code, result.output)
             if analysis.is_sandbox_limit:
+                # sandbox_mode == "off"：绕过沙箱直接重试（subprocess.run）
+                if _is_sandbox_off():
+                    try:
+                        proc = subprocess.run(
+                            command,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            cwd=kwargs.get("cwd"),
+                            env=getattr(self, "_env", None) or _build_safe_env(),
+                            timeout=getattr(self, "_default_timeout", None),
+                        )
+                    except subprocess.TimeoutExpired:
+                        return ExecuteResponse(
+                            output=f"命令执行超时（{getattr(self, '_default_timeout', '?')}s）",
+                            exit_code=124,
+                            truncated=False,
+                        )
+                    output = proc.stdout or ""
+                    if proc.stderr:
+                        output += f"\n{proc.stderr}"
+                    max_bytes = getattr(self, "_max_output_bytes", None)
+                    truncated = False
+                    if max_bytes and len(output) > max_bytes:
+                        output = output[:max_bytes]
+                        truncated = True
+                    return ExecuteResponse(
+                        output=output,
+                        exit_code=proc.returncode,
+                        truncated=truncated,
+                    )
+                # sandbox_mode != "off"：附加 [SANDBOX_ESCALATION] hint
+                # 并提示可调用 request_permission 工具申请路径授权
                 upgrade_hint = (
                     f"\n\n[SANDBOX_ESCALATION]"
                     f"\nreason: {analysis.reason}"
@@ -178,6 +212,10 @@ class SafeLocalShellBackend(LocalShellBackend):
                 )
                 if analysis.suggested_path:
                     upgrade_hint += f"\nsuggested_path: {analysis.suggested_path}"
+                upgrade_hint += (
+                    "\n提示: 可调用 request_permission(path, writable, reason) "
+                    "工具申请路径授权后重试。"
+                )
                 return ExecuteResponse(
                     output=result.output + upgrade_hint,
                     exit_code=result.exit_code,

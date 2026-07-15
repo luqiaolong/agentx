@@ -118,13 +118,14 @@ def testmake_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def testmake_deep_tools_all_enabled() -> None:
-    """默认全启用，返回 delete_file + rag + web（内置 fs 工具由 backend 注入）。"""
+    """默认全启用，返回 delete_file + request_permission + rag + web（内置 fs 工具由 backend 注入）。"""
     tools = make_deep_tools("t1")
-    # delete_file(1) + rag(1) + web(1) = 3
-    assert len(tools) == 3
+    # delete_file(1) + request_permission(1) + rag(1) + web(1) = 4
+    assert len(tools) == 4
     tool_names = {t.name for t in tools}
     expected = {
         "delete_file",
+        "request_permission",
         "rag_retrieve",
         "web_search",
     }
@@ -148,6 +149,7 @@ def testmake_deep_tools_all_disabled_returns_empty(
                 "delete_file": False,
                 "web_search": False,
                 "rag_retrieve": False,
+                "request_permission": False,
             }
         ),
     )
@@ -163,11 +165,12 @@ def testmake_deep_tools_all_disabled_returns_empty(
 
 
 def test_dangerous_tools_constant_unchanged() -> None:
-    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/delete_file。
+    """DANGEROUS_TOOLS 常量始终包含 edit_file/write_file/delete_file/request_permission。
 
     execute 已移除，审批改为 directory_extension 机制。
     git_* 已移除，Git 写操作由 ``SafeLocalShellBackend.execute`` 通过
     ``is_git_write_command`` 拦截（Phase B.2）。
+    request_permission 新增（运行时权限申请，触发 interrupt_on 审批流）。
     常量是模块级 frozenset，不随 tools_enabled 变化。
     即使工具被禁用，常量本身不变（运行时危险集合通过交集计算）。
     """
@@ -175,6 +178,7 @@ def test_dangerous_tools_constant_unchanged() -> None:
         "edit_file",
         "write_file",
         "delete_file",
+        "request_permission",
     }
 
 
@@ -186,6 +190,7 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
 
     注意：write_file/edit_file 由 backend 注入，不在 make_deep_tools 输出中，
     故无 workspace_path 时 runtime_dangerous 不含它们（交集运算自动排除）。
+    request_permission 默认启用且在 make_deep_tools 输出中，故会出现在 runtime_dangerous。
     """
     monkeypatch.setenv(
         "AGENTX_TOOLS_CONFIG",
@@ -198,7 +203,8 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
     runtime_dangerous = compute_runtime_dangerous(agent_tools, set(), None)
 
     assert "delete_file" not in runtime_dangerous
-    assert runtime_dangerous == set()  # delete_file 是唯一在 make_deep_tools 中的危险工具
+    # request_permission 默认启用，仍在 runtime_dangerous 中
+    assert runtime_dangerous == {"request_permission"}
 
 
 def test_runtime_dangerous_all_enabled() -> None:
@@ -208,13 +214,15 @@ def test_runtime_dangerous_all_enabled() -> None:
     故无 workspace_path 时 runtime_dangerous 不含它们（交集运算自动排除）。
     有 workspace_path 时由 run_deep_path 显式补充（见 agent.py）。
     git_* 工具已删除（Phase B.1），不再出现在 runtime_dangerous 中。
+    request_permission 新增（在 make_deep_tools 输出中，默认启用）。
     """
     agent_tools = make_deep_tools("t1")
     runtime_dangerous = compute_runtime_dangerous(agent_tools, set(), None)
 
-    # make_deep_tools 仅含 delete_file（write_file/edit_file 由 backend 注入）
+    # make_deep_tools 含 delete_file + request_permission（write_file/edit_file 由 backend 注入）
     assert runtime_dangerous == {
         "delete_file",
+        "request_permission",
     }
     assert "execute" not in runtime_dangerous
     assert "write_file" not in runtime_dangerous

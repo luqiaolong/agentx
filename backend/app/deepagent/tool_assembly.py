@@ -158,8 +158,31 @@ def make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
             return f"删除文件失败: {path} ({exc})"
         return f"已删除: {path}"
 
+    # 运行时权限申请工具：LLM 在工具执行因权限不足失败后主动申请路径授权。
+    # 实际授权在 approval_runner 层完成（审批通过后调用 sandbox.authorize_temp/
+    # authorize），工具执行体只返回确认消息。
+    @tool
+    async def request_permission(path: str, writable: bool = False, reason: str = "") -> str:
+        """当工具因权限不足失败时，调用此工具申请路径授权。
+
+        触发条件：工具执行返回 Permission denied / EACCES / PathNotAuthorized /
+        [SANDBOX_ESCALATION] 等权限错误时调用此工具申请路径授权，用户审批后
+        可重新调用原失败的工具。
+
+        Args:
+            path: 需要授权的文件/目录绝对路径。
+            writable: True 申请写权限，False 只读权限。
+            reason: 申请原因（如 "npm install 需要写入 node_modules"）。
+
+        Returns:
+            授权结果消息（approval_runner 在 resume 前已授权路径）。
+        """
+        # 执行体在 approval_runner 拦截后由 Command(resume=approve) 恢复执行。
+        # 授权已在 approval_runner 层完成，此处只返回确认消息。
+        return f"路径已授权: {path} (writable={writable})"
+
     # CLI 执行由 AuthorizedLocalShellBackend 的内置 execute 工具提供
-    all_tools = [delete_file, *rag_tools, *web_tools]
+    all_tools = [delete_file, request_permission, *rag_tools, *web_tools]
 
     # 根据 settings.tools_enabled 过滤；未配置的工具默认启用
     enabled = get_settings().tools_enabled

@@ -28,13 +28,15 @@ def test_dangerous_tools_is_frozenset() -> None:
 
 
 def test_dangerous_tools_contains_expected_tools() -> None:
-    """包含写操作 + delete_file。execute 已移除（审批改为 directory_extension 机制）；
+    """包含写操作 + delete_file + request_permission。execute 已移除（审批改为 directory_extension 机制）；
     git_* 已移除（Git 写操作由 SafeLocalShellBackend.execute 通过 is_git_write_command 拦截）。
+    request_permission 新增（运行时权限申请，触发 interrupt_on 审批流）。
     """
     expected = {
         "edit_file",
         "write_file",
         "delete_file",
+        "request_permission",
     }
     assert DANGEROUS_TOOLS == frozenset(expected)
 

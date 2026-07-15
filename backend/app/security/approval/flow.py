@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -37,9 +38,11 @@ from app.security.approval import (
     ApprovalDecision,
     is_aborted,
     pop_approval,
+    register_approval_request,
 )
 from app.config import get_settings
 from app.observability.logger import logger
+from app.observability.trace import current_trace_id
 from app.sandbox import SessionSandbox
 from app.security.command_filter import redact_args
 from app.sse.events import make_approval_event
@@ -172,6 +175,32 @@ def _extract_paths_from_tool_call(
     return []
 
 
+# Reason 字段脱敏：避免 LLM 在 sandbox_escalation 的 reason 中泄露凭证
+# （如 ``sk-xxx`` / ``api_key=xxx`` / ``Bearer xxx``）。与 command_filter.redact_args
+# 不同，此处针对单字符串做轻量脱敏 + 长度截断，专用于 _make_approval_event。
+_REASON_MAX_LENGTH = 200
+_REASON_REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"sk-[a-zA-Z0-9]+"),
+    re.compile(r"(?i)api[_-]?key\s*[=:]\s*\S+"),
+    re.compile(r"(?i)Bearer\s+[a-zA-Z0-9._-]+"),
+)
+
+
+def _redact_reason(reason: str) -> str:
+    """脱敏 ``reason`` 字段，避免 LLM 泄露的凭证出现在 SSE 事件中。
+
+    - 截断到 ``_REASON_MAX_LENGTH`` 字符（防止超长 reason 撑爆 SSE 事件）。
+    - 屏蔽常见凭证模式：``sk-xxx`` / ``api[_-]?key=xxx`` / ``Bearer xxx`` →
+      ``***REDACTED***``。
+    """
+    if not reason:
+        return reason
+    truncated = reason[:_REASON_MAX_LENGTH]
+    for pattern in _REASON_REDACT_PATTERNS:
+        truncated = pattern.sub("***REDACTED***", truncated)
+    return truncated
+
+
 def _make_approval_event(
     tool_call: dict,
     thread_id: str,
@@ -180,6 +209,7 @@ def _make_approval_event(
     writable: bool = False,
     approval_id: str | None = None,
     run_id: str | None = None,
+    reason: str | None = None,
 ) -> dict[str, str]:
     """构造 approval_request SSE 事件。
 
@@ -191,6 +221,10 @@ def _make_approval_event(
 
     使用 ``app.security.command_filter.redact_args`` 做参数脱敏（支持
     write_file / edit_file 内容隐藏 + cli_execute 命令凭证脱敏）。
+
+    Args:
+        reason: 可选申请原因，``kind == "sandbox_escalation"`` 时附加到事件
+            data（来自 ``request_permission`` 工具调用的 ``reason`` 参数）。
     """
     name = tool_call.get("name", "unknown")
     args = tool_call.get("args", {})
@@ -233,6 +267,8 @@ def _make_approval_event(
     if kind == "directory_extension":
         data["requestedPath"] = requested_path or ""
         data["writable"] = writable
+    if kind == "sandbox_escalation" and reason:
+        data["reason"] = _redact_reason(reason)
 
     return make_approval_event(data)
 
@@ -389,6 +425,14 @@ async def _handle_directory_extension(
             {},
         )
         needs_writable = _path_needs_writable(pending_calls, path, workspace_path)
+        # D7 修复：发 approval_request 事件前必须 register approval_request，
+        # 生成 approval_id + run_id 供前端回传到 /api/chat/approve 消费。
+        approval_req = await register_approval_request(
+            thread_id,
+            current_trace_id() or "",
+            "directory_extension",
+            representative_tc.get("id"),
+        )
         events.append(
             _make_approval_event(
                 representative_tc,
@@ -396,6 +440,8 @@ async def _handle_directory_extension(
                 kind="directory_extension",
                 requested_path=path,
                 writable=needs_writable,
+                approval_id=approval_req.approval_id,
+                run_id=approval_req.run_id,
             )
         )
 

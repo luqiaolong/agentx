@@ -17,8 +17,10 @@ from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from app.security.approval import (
+    ApprovalDecision,
     is_aborted,
     is_paused,
+    register_approval_request,
 )
 from app.security.approval.flow import (
     _APPROVAL_POLL_INTERVAL,
@@ -490,6 +492,147 @@ async def run_agent_with_approval(
                 return
             continue
 
+        # standard 模式：request_permission 工具调用检测（LLM 主动申请路径授权）
+        # 必须在 dangerous_calls 之前处理：审批通过后 _stream(resume=approve) 让工具执行
+        # 返回"已授权"，然后 continue 回到循环顶部等待 LLM 下一轮（通常是重新调用原
+        # 失败的工具）。不 return，让 agent 继续执行。
+        permission_calls = [tc for tc in pending_calls if tc.get("name") == "request_permission"]
+        if permission_calls:
+            for tc in permission_calls:
+                raw_args = tc.get("args", {}) or {}
+                args = raw_args if isinstance(raw_args, dict) else {}
+                path = args.get("path", "") or ""
+                writable = bool(args.get("writable", False))
+                reason = args.get("reason", "") or ""
+                # kind 判断：有 path → directory_extension；纯命令权限 → sandbox_escalation
+                kind = "directory_extension" if path else "sandbox_escalation"
+                # D7: 注册活跃审批请求，生成 approval_id + run_id
+                approval_req = await register_approval_request(
+                    thread_id,
+                    _trace_id,
+                    kind,
+                    tc.get("id"),
+                )
+                yield await _forward(
+                    _make_approval_event(
+                        tc,
+                        thread_id,
+                        kind=kind,
+                        requested_path=path or None,
+                        writable=writable,
+                        reason=reason,
+                        approval_id=approval_req.approval_id,
+                        run_id=approval_req.run_id,
+                    )
+                )
+
+            decision = await _await_approval(
+                thread_id,
+                poll_interval=_APPROVAL_POLL_INTERVAL,
+                max_wait=_resolve_max_wait(),
+            )
+
+            if decision is None or not decision.approved:
+                # 用户拒绝或超时：注入 error ToolMessage + Command(resume=reject)
+                for tc in permission_calls:
+                    raw_args = tc.get("args", {}) or {}
+                    args = raw_args if isinstance(raw_args, dict) else {}
+                    denied_path = args.get("path", "") or ""
+                    await _inject_call(
+                        agent, config, tc, f"用户拒绝授权路径: {denied_path}"
+                    )
+                yield await _forward(make_error_event("用户拒绝授权路径"))
+                # 消费 HITL interrupt，避免 stuck state
+                try:
+                    async for _ in agent.astream(
+                        _make_hitl_resume_decisions(
+                            pending_calls,
+                            decision_type="reject",
+                            message="用户拒绝授权路径",
+                        ),
+                        config=config,
+                        stream_mode="values",
+                    ):
+                        pass
+                except GraphInterrupt:
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"unexpected resume exception: {exc!r}")
+                return
+
+            # 审批通过：对有 path 的调用执行 sandbox 授权
+            # Major 1: 跟踪授权失败，避免异常被吞后工具仍返回"已授权"导致 LLM 陷入重试
+            auth_failures: list[tuple[dict, str]] = []
+            for tc in permission_calls:
+                raw_args = tc.get("args", {}) or {}
+                args = raw_args if isinstance(raw_args, dict) else {}
+                path = args.get("path", "") or ""
+                writable = bool(args.get("writable", False))
+                if not path:
+                    continue
+                try:
+                    if decision.decision in (
+                        ApprovalDecision.ONCE,
+                        ApprovalDecision.APPROVE,
+                    ):
+                        await _sandbox.authorize_temp(thread_id, path, writable=writable)
+                    elif decision.decision == ApprovalDecision.SESSION:
+                        await _sandbox.authorize(thread_id, path, writable=writable)
+                    elif decision.decision == ApprovalDecision.FULL_TRUST:
+                        await _sandbox.authorize(thread_id, path, writable=True)
+                        if hasattr(_sandbox, "set_full_trust"):
+                            await _sandbox.set_full_trust(thread_id, True)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"request_permission authorize failed: {exc!r}")
+                    auth_failures.append((tc, f"路径授权失败: {exc}"))
+
+            # 注入授权失败的 error ToolMessage（在 resume 之前），让 LLM 看到真实失败
+            for tc, err_msg in auth_failures:
+                await _inject_call(agent, config, tc, err_msg)
+
+            # resume approve：_stream 恢复执行，request_permission 工具返回"已授权"
+            # LLM 看到结果后重新调用原工具
+            # Critical 3: 必须用 pending_calls（而非 permission_calls）生成 resume
+            # decisions，LangGraph HITL 要求每个 pending tool call 对应一个 decision，
+            # 否则同轮中 request_permission + write_file 的 write_file 会被丢弃
+            try:
+                async for sse in _stream(
+                    agent,
+                    _make_hitl_resume_decisions(pending_calls, decision_type="approve"),
+                    config,
+                    source,
+                ):
+                    yield await _forward(sse)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "agent resume failed (request_permission)",
+                    thread_id=thread_id,
+                )
+                await _inject_msgs(agent, config, f"恢复失败: {exc}")
+                yield await _forward(make_error_event( f"恢复失败: {exc}"))
+                # 消费残留 HITL interrupt，避免下次调用 stuck
+                try:
+                    if await _is_int(agent, config):
+                        async for _ in agent.astream(
+                            _make_hitl_resume_decisions(
+                                pending_calls,
+                                decision_type="reject",
+                                message="执行异常",
+                            ),
+                            config=config,
+                            stream_mode="values",
+                        ):
+                            pass
+                except GraphInterrupt:
+                    pass
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning(f"unexpected resume exception: {exc2!r}")
+                return
+            # 刷新已 yield 基线，回到循环顶部等待 LLM 下一轮 tool_call
+            _yielded_msg_count = await _state_msg_count()
+            await _sandbox.clear_temp(thread_id)
+            continue
+
         # standard 模式：危险工具判定
         decision = None
         dangerous_calls: list[dict] = []
@@ -529,7 +672,23 @@ async def run_agent_with_approval(
 
         if dangerous_calls:
             for tc in dangerous_calls:
-                yield await _forward(_make_approval_event(tc, thread_id, kind="dangerous_tool"))
+                # D7 修复：发 approval_request 事件前必须 register approval_request，
+                # 生成 approval_id + run_id 供前端回传到 /api/chat/approve 消费。
+                approval_req = await register_approval_request(
+                    thread_id,
+                    _trace_id,
+                    "dangerous_tool",
+                    tc.get("id"),
+                )
+                yield await _forward(
+                    _make_approval_event(
+                        tc,
+                        thread_id,
+                        kind="dangerous_tool",
+                        approval_id=approval_req.approval_id,
+                        run_id=approval_req.run_id,
+                    )
+                )
 
             decision = await _await_approval(
                 thread_id,

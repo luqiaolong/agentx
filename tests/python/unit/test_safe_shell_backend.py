@@ -5,13 +5,17 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.config import Settings
 from app.deepagent.safe_shell_backend import SafeLocalShellBackend
+from app.security.sandbox_escalation import SandboxFailureAnalysis
+from deepagents.backends import LocalShellBackend
+from deepagents.backends.protocol import ExecuteResponse
 
 
 class TestSafeShellBackendDefaults:
@@ -136,3 +140,168 @@ class TestSafeShellBackendExecution:
         result = backend.execute("python -c \"print('A' * 100)\"")
         assert result.truncated is True
         assert "truncated" in result.output.lower() or "截断" in result.output
+
+
+class TestSafeShellBackendSandboxEscalation:
+    """沙箱权限升级分支：sandbox_mode off/非off 行为验证。"""
+
+    def test_sandbox_off_bypasses_to_subprocess(self, tmp_path, monkeypatch) -> None:
+        """sandbox_mode == 'off' + 沙箱失败 + is_sandbox_limit → subprocess.run 被调用。"""
+        # mock _is_sandbox_off → True（绕过沙箱）
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend._is_sandbox_off", lambda: True
+        )
+        # mock analyze_sandbox_failure → 确认沙箱限制
+        fake_analysis = SandboxFailureAnalysis(
+            is_sandbox_limit=True,
+            reason="沙箱限制：权限不足",
+            suggested_action="retry_with_auth",
+            suggested_path="/tmp/test",
+        )
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend.analyze_sandbox_failure",
+            lambda *args: fake_analysis,
+        )
+        # mock 父类 execute → 返回失败结果（模拟沙箱拦截）
+        failed_result = ExecuteResponse(
+            output="Permission denied", exit_code=1, truncated=False
+        )
+        monkeypatch.setattr(
+            LocalShellBackend, "execute", lambda self, cmd, **kw: failed_result
+        )
+        # mock subprocess.run → 模拟绕过沙箱后的成功执行
+        mock_proc = MagicMock(stdout="success output", stderr="", returncode=0)
+        mock_run = MagicMock(return_value=mock_proc)
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
+        result = backend.execute("echo test")
+
+        # subprocess.run 被调用（绕过沙箱直接执行）
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["shell"] is True
+        assert mock_run.call_args.kwargs["capture_output"] is True
+        assert mock_run.call_args.kwargs["text"] is True
+        # env 不能为 None（避免泄漏父进程敏感环境变量）
+        assert mock_run.call_args.kwargs["env"] is not None
+        # timeout 不能为 None（避免命令永久挂起）
+        assert mock_run.call_args.kwargs["timeout"] is not None
+        # 返回 subprocess.run 的结果
+        assert result.exit_code == 0
+        assert "success output" in result.output
+
+    def test_sandbox_off_timeout_returns_124(self, tmp_path, monkeypatch) -> None:
+        """sandbox off + subprocess.run 抛 TimeoutExpired → exit_code=124。"""
+        # mock _is_sandbox_off → True（绕过沙箱）
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend._is_sandbox_off", lambda: True
+        )
+        # mock analyze_sandbox_failure → 确认沙箱限制
+        fake_analysis = SandboxFailureAnalysis(
+            is_sandbox_limit=True,
+            reason="沙箱限制：权限不足",
+            suggested_action="retry_with_auth",
+            suggested_path="/tmp/test",
+        )
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend.analyze_sandbox_failure",
+            lambda *args: fake_analysis,
+        )
+        # mock 父类 execute → 返回失败结果（模拟沙箱拦截）
+        failed_result = ExecuteResponse(
+            output="Permission denied", exit_code=1, truncated=False
+        )
+        monkeypatch.setattr(
+            LocalShellBackend, "execute", lambda self, cmd, **kw: failed_result
+        )
+        # mock subprocess.run → 抛 TimeoutExpired
+        mock_run = MagicMock(
+            side_effect=subprocess.TimeoutExpired(cmd="echo test", timeout=1)
+        )
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
+        result = backend.execute("echo test")
+
+        # 超时返回 124（与父类约定一致）
+        assert result.exit_code == 124
+        assert "超时" in result.output
+        mock_run.assert_called_once()
+
+    def test_sandbox_off_truncates_large_output(self, tmp_path, monkeypatch) -> None:
+        """sandbox off + 输出超过 max_output_bytes → truncated=True 且输出被截断。"""
+        # mock _is_sandbox_off → True（绕过沙箱）
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend._is_sandbox_off", lambda: True
+        )
+        # mock analyze_sandbox_failure → 确认沙箱限制
+        fake_analysis = SandboxFailureAnalysis(
+            is_sandbox_limit=True,
+            reason="沙箱限制：权限不足",
+            suggested_action="retry_with_auth",
+            suggested_path="/tmp/test",
+        )
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend.analyze_sandbox_failure",
+            lambda *args: fake_analysis,
+        )
+        # mock 父类 execute → 返回失败结果（模拟沙箱拦截）
+        failed_result = ExecuteResponse(
+            output="Permission denied", exit_code=1, truncated=False
+        )
+        monkeypatch.setattr(
+            LocalShellBackend, "execute", lambda self, cmd, **kw: failed_result
+        )
+        # mock subprocess.run → 返回超大 stdout
+        mock_proc = MagicMock(stdout="A" * 1000, stderr="", returncode=0)
+        mock_run = MagicMock(return_value=mock_proc)
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        backend = SafeLocalShellBackend(
+            root_dir=tmp_path, virtual_mode=False, max_output_bytes=20
+        )
+        result = backend.execute("echo test")
+
+        # 输出被截断到 max_output_bytes，truncated=True
+        assert result.truncated is True
+        assert len(result.output) <= 20
+        mock_run.assert_called_once()
+
+    def test_sandbox_not_off_appends_request_permission_hint(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """sandbox_mode != 'off' + 沙箱失败 + is_sandbox_limit → hint 含 request_permission 提示。"""
+        # mock _is_sandbox_off → False（不绕过沙箱）
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend._is_sandbox_off", lambda: False
+        )
+        # mock analyze_sandbox_failure → 确认沙箱限制
+        fake_analysis = SandboxFailureAnalysis(
+            is_sandbox_limit=True,
+            reason="沙箱限制：权限不足",
+            suggested_action="retry_with_auth",
+            suggested_path="/tmp/project",
+        )
+        monkeypatch.setattr(
+            "app.deepagent.safe_shell_backend.analyze_sandbox_failure",
+            lambda *args: fake_analysis,
+        )
+        # mock 父类 execute → 返回失败结果（模拟沙箱拦截）
+        failed_result = ExecuteResponse(
+            output="Permission denied", exit_code=1, truncated=False
+        )
+        monkeypatch.setattr(
+            LocalShellBackend, "execute", lambda self, cmd, **kw: failed_result
+        )
+
+        backend = SafeLocalShellBackend(root_dir=tmp_path, virtual_mode=False)
+        result = backend.execute("echo test")
+
+        # 输出含 [SANDBOX_ESCALATION] 标记和 request_permission 提示
+        assert "[SANDBOX_ESCALATION]" in result.output
+        assert "request_permission" in result.output
+        assert "path" in result.output.lower() or "路径" in result.output
+        # 保持原 exit_code（不绕过沙箱）
+        assert result.exit_code == 1
+        # 原始输出仍保留
+        assert "Permission denied" in result.output
