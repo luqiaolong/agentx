@@ -50,7 +50,7 @@ async def is_interrupted(agent: Any, config: dict) -> bool:
     return False
 
 
-async def get_pending_tool_calls(agent: Any, config: dict) -> list[dict]:
+async def get_pending_tool_calls(agent: Any, config: dict) -> list[dict[str, Any]]:
     """Extract pending tool calls from the agent's interrupted state."""
     state = await agent.aget_state(config)
     if not state or not state.values:
@@ -74,7 +74,7 @@ def make_resume_command(decisions: list[dict[str, Any]]) -> Command:
 
 
 def make_uniform_resume_command(
-    pending_calls: list[dict],
+    pending_calls: list[dict[str, Any]],
     decision_type: str = "approve",
     message: str = "",
 ) -> Command:

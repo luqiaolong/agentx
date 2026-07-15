@@ -72,7 +72,7 @@ class AgentToolset:
 
 
 def assemble_agent_toolset(
-    project_tools: list,
+    project_tools: list[BaseTool],
     mcp_untrusted_names: set[str],
     workspace_path: str | None,
     subagent_exclusions: frozenset[str] | None = None,
@@ -146,7 +146,7 @@ _GUARDED_ROOT_PATHS = [WORKSPACE_DIR.resolve(), UPLOADS_DIR.resolve()]
 
 
 def compute_runtime_dangerous(
-    agent_tools: list,
+    agent_tools: list[BaseTool],
     mcp_untrusted_names: set[str],
     workspace_path: str | None = None,
 ) -> set[str]:
@@ -177,7 +177,7 @@ def compute_runtime_dangerous(
     return dangerous
 
 
-def make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
+def make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list[BaseTool]:
     """构建 DeepAgent 工具集：delete_file + rag + web。
 
     内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
@@ -301,7 +301,7 @@ def make_deep_tools(thread_id: str, workspace_path: str | None = None) -> list:
     return [t for t in all_tools if enabled.get(t.name, True)]
 
 
-async def load_mcp_tools() -> tuple[list, set[str]]:
+async def load_mcp_tools() -> tuple[list[BaseTool], set[str]]:
     """加载 MCP 工具，返回 (tools, untrusted_tool_names)。
 
     - ``tools``: MCP 工具列表（LangChain BaseTool），失败时为空列表。

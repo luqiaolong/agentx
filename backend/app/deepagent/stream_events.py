@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, TYPE_CHECKING
 from uuid import uuid4
 
 from loguru import logger
@@ -54,6 +54,9 @@ from app.utils.text import (
     strip_think,
     strip_tool_call_xml,
 )
+
+if TYPE_CHECKING:
+    from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 __all__ = [
     "StreamRunState",
@@ -85,7 +88,7 @@ class StreamRunState:
     """
 
     seen_message_keys: set[str] = field(default_factory=set)
-    last_todos: tuple[Any, ...] = ()
+    last_todos: tuple[dict[str, Any], ...] = ()
     processed_message_count: int = 0
     observation_sequence: int = 0
 
@@ -115,7 +118,7 @@ def normalize_message_content(content: Any) -> str:
     return str(content)
 
 
-def make_message_key(msg: Any) -> str:
+def make_message_key(msg: BaseMessage) -> str:
     """Deterministic dedup key for a message (replaces ``_msg_signature``).
 
     Key parts (per Decision 4):
@@ -454,7 +457,7 @@ class StreamEventMapper:
                 self._reset_per_aimessage()
 
     async def _process_tool_message(
-        self, msg: Any
+        self, msg: ToolMessage
     ) -> AsyncIterator[dict[str, str]]:
         """Emit ``tool_result`` SSE for a ``ToolMessage``."""
         tool_name = getattr(msg, "name", "") or ""
@@ -490,7 +493,7 @@ class StreamEventMapper:
         )
 
     async def _process_ai_message(
-        self, msg: Any
+        self, msg: AIMessage
     ) -> AsyncIterator[dict[str, str]]:
         """Emit ``reasoning`` + ``tool_call`` (if tool_calls) OR ``token`` (final answer)."""
         tc_count = len(getattr(msg, "tool_calls", []) or [])

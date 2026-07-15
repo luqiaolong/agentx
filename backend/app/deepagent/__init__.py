@@ -4,6 +4,25 @@
 稳定复用的符号；实现细节（``_DEEP_SYSTEM_PROMPT`` 常量、``_is_interrupted`` 检测、
 backend 类、middleware 类）保留在各自子模块，外部按需从子模块 import。
 
+内部模块归属（maintainability-refactor 后）:
+- ``agent.py``: 路径 C 入口（``build_deep_agent`` / ``run_deep_path``）+ profile 抽取
+- ``factory.py``: ``create_agent`` 封装 ``deepagents.create_deep_agent``，注册 HarnessProfile
+- ``tool_assembly.py``: ``AgentToolset`` 不可变装配 + 工具集构建（``make_deep_tools`` /
+  ``load_mcp_tools`` / ``compute_runtime_dangerous`` 兼容委托，canonical 在 ``app.security``）
+- ``context.py``: thread_id / parent_thread_id contextvar + ``bind_agent_context``
+- ``streaming.py``: 公共 SSE 驱动 ``stream_agent_events``（薄壳，持有 astream 循环）
+- ``stream_events.py``: ``StreamRunState`` + ``StreamEventMapper`` + dedup helpers
+- ``hitl.py``: LangGraph HITL interrupt/resume 纯函数（``is_interrupted`` 等）
+- ``approval_session.py``: ``ApprovalSession`` 状态机 + ``LoopExitReason`` / ``ExitState``
+- ``approval_runner.py``: 公共 facade ``run_agent_with_approval``（依赖归一化 + 委托循环）
+- ``middleware.py``: ``ReadonlyLoopGuardMiddleware`` + ``WorkspaceMemoryMiddleware``
+- ``safe_shell_backend.py``: ``SafeLocalShellBackend``（RiskClassifier 集成）
+- ``authorized_backend.py``: ``AuthorizedLocalShellBackend``（SessionSandbox 动态授权）
+
+导入方向（无循环）：``agent.py`` → ``approval_runner`` / ``factory`` / ``tool_assembly`` /
+``context``；``approval_runner`` → ``hitl`` / ``approval_session`` / ``streaming``；
+``streaming`` → ``stream_events``。
+
 公共符号分组:
 - 入口: ``build_deep_agent`` / ``run_deep_path`` / ``trigger_profile_auto_extract``
 - 工厂: ``create_agent``

@@ -23,7 +23,6 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 from loguru import logger
 from langgraph.errors import GraphInterrupt
-from langgraph.types import Command
 
 from app.security.approval import (
     ApprovalDecision,
@@ -56,21 +55,6 @@ from app.deepagent.hitl import (
 from app.deepagent.approval_session import ApprovalSession, LoopExitReason
 
 __all__ = ["run_agent_with_approval"]
-
-
-def _make_hitl_resume_decisions(
-    pending_calls: list[dict], decision_type: str = "approve", message: str = ""
-) -> Command:
-    """生成 HumanInTheLoopMiddleware 期望的 resume Command。
-
-    Wrapper around ``hitl.make_uniform_resume_command`` for backward
-    compatibility with existing call sites.
-
-    LangGraph 1.x 的 ``interrupt()`` 必须用 ``Command(resume=...)`` 恢复，
-    传 ``None`` 不会消费 interrupt，导致 ``state.interrupts`` 一直存在，
-    触发 stuck state 检测（root cause: 执行流程中断状态未正常解除）。
-    """
-    return _make_uniform_resume_command(pending_calls, decision_type, message)
 
 
 async def _stream_default(
@@ -110,7 +94,7 @@ async def run_agent_with_approval(
     parent_thread_id: str | None = None,
     stream_fn: Callable[..., AsyncIterator[dict[str, str]]] | None = None,
     is_interrupted_fn: Callable[[Any, dict], Awaitable[bool]] | None = None,
-    get_pending_calls_fn: Callable[[Any, dict], Awaitable[list[dict]]] | None = None,
+    get_pending_calls_fn: Callable[[Any, dict], Awaitable[list[dict[str, Any]]]] | None = None,
     inject_tool_error_for_call_fn: Callable[[Any, dict, dict, str], Awaitable[None]] | None = None,
     inject_tool_error_messages_fn: Callable[[Any, dict, str], Awaitable[None]] | None = None,
     yield_event: Callable[[dict], Awaitable[None]] | None = None,
@@ -199,7 +183,7 @@ async def _run_approval_loop(
     parent_thread_id: str | None = None,
     stream_fn: Callable[..., AsyncIterator[dict[str, str]]] | None = None,
     is_interrupted_fn: Callable[[Any, dict], Awaitable[bool]] | None = None,
-    get_pending_calls_fn: Callable[[Any, dict], Awaitable[list[dict]]] | None = None,
+    get_pending_calls_fn: Callable[[Any, dict], Awaitable[list[dict[str, Any]]]] | None = None,
     inject_tool_error_for_call_fn: Callable[[Any, dict, dict, str], Awaitable[None]] | None = None,
     inject_tool_error_messages_fn: Callable[[Any, dict, str], Awaitable[None]] | None = None,
     yield_event: Callable[[dict], Awaitable[None]] | None = None,
@@ -301,7 +285,7 @@ async def _run_approval_loop(
                 pending = await _get_calls(agent, config)
                 if pending:
                     async for _ in agent.astream(
-                        _make_hitl_resume_decisions(
+                        _make_uniform_resume_command(
                             pending, decision_type="reject", message="执行失败"
                         ),
                         config=config,
@@ -336,7 +320,7 @@ async def _run_approval_loop(
                     pending = await _get_calls(agent, config)
                     if pending:
                         async for _ in agent.astream(
-                            _make_hitl_resume_decisions(
+                            _make_uniform_resume_command(
                                 pending, decision_type="reject", message=""
                             ),
                             config=config,
@@ -424,7 +408,7 @@ async def _run_approval_loop(
             try:
                 async for sse in _stream(
                     agent,
-                    _make_hitl_resume_decisions(pending_calls, decision_type="approve"),
+                    _make_uniform_resume_command(pending_calls, decision_type="approve"),
                     config,
                     source,
                 ):
@@ -435,7 +419,7 @@ async def _run_approval_loop(
                 # 异常后尝试消费可能残留的 interrupt，避免 stuck state
                 try:
                     async for _ in agent.astream(
-                        _make_hitl_resume_decisions(
+                        _make_uniform_resume_command(
                             pending_calls, decision_type="reject", message=f"恢复失败: {exc}"
                         ),
                         config=config,
@@ -474,7 +458,7 @@ async def _run_approval_loop(
                 # 消费可能残留的 interrupt
                 try:
                     async for _ in agent.astream(
-                        _make_hitl_resume_decisions(
+                        _make_uniform_resume_command(
                             pending_calls, decision_type="reject", message="状态未推进，强制终止"
                         ),
                         config=config,
@@ -547,7 +531,7 @@ async def _run_approval_loop(
                 # 消费 HITL interrupt，避免 stuck state
                 try:
                     async for _ in agent.astream(
-                        _make_hitl_resume_decisions(
+                        _make_uniform_resume_command(
                             pending_calls,
                             decision_type="reject",
                             message="用户拒绝授权路径",
@@ -565,7 +549,7 @@ async def _run_approval_loop(
 
             # 审批通过：对有 path 的调用执行 sandbox 授权
             # Major 1: 跟踪授权失败，避免异常被吞后工具仍返回"已授权"导致 LLM 陷入重试
-            auth_failures: list[tuple[dict, str]] = []
+            auth_failures: list[tuple[dict[str, Any], str]] = []
             for tc in permission_calls:
                 raw_args = tc.get("args", {}) or {}
                 args = raw_args if isinstance(raw_args, dict) else {}
@@ -655,7 +639,7 @@ async def _run_approval_loop(
                 try:
                     if await _is_int(agent, config):
                         async for _ in agent.astream(
-                            _make_hitl_resume_decisions(
+                            _make_uniform_resume_command(
                                 pending_calls,
                                 decision_type="reject",
                                 message="执行异常",
@@ -676,7 +660,7 @@ async def _run_approval_loop(
 
         # standard 模式：危险工具判定
         decision = None
-        dangerous_calls: list[dict] = []
+        dangerous_calls: list[dict[str, Any]] = []
         for tc in pending_calls:
             name = tc.get("name", "")
             if name not in runtime_dangerous:
@@ -749,7 +733,7 @@ async def _run_approval_loop(
                 # 否则非危险工具的 HITL interrupt 不会被消费，导致下次调用 stuck
                 try:
                     async for _ in agent.astream(
-                        _make_hitl_resume_decisions(
+                        _make_uniform_resume_command(
                             pending_calls, decision_type="reject", message="用户拒绝执行危险操作"
                         ),
                         config=config,
@@ -789,7 +773,7 @@ async def _run_approval_loop(
             # 消费 HITL interrupt，避免 stuck state
             try:
                 async for _ in agent.astream(
-                    _make_hitl_resume_decisions(
+                    _make_uniform_resume_command(
                         pending_calls, decision_type="reject", message="用户拒绝访问该目录"
                     ),
                     config=config,
@@ -808,7 +792,7 @@ async def _run_approval_loop(
             # 消费 HITL interrupt，避免 stuck state
             try:
                 async for _ in agent.astream(
-                    _make_hitl_resume_decisions(
+                    _make_uniform_resume_command(
                         pending_calls, decision_type="reject", message="目录授权等待被中断，操作未执行"
                     ),
                     config=config,
@@ -832,7 +816,7 @@ async def _run_approval_loop(
         try:
             async for sse in _stream(
                 agent,
-                _make_hitl_resume_decisions(pending_calls, decision_type="approve"),
+                _make_uniform_resume_command(pending_calls, decision_type="approve"),
                 config,
                 source,
             ):
@@ -845,7 +829,7 @@ async def _run_approval_loop(
             try:
                 if await _is_int(agent, config):
                     async for _ in agent.astream(
-                        _make_hitl_resume_decisions(
+                        _make_uniform_resume_command(
                             pending_calls,
                             decision_type="reject",
                             message="执行异常",

@@ -33,7 +33,7 @@ Skills 加载:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from deepagents import (
     GeneralPurposeSubagentProfile,
@@ -51,6 +51,13 @@ from app.deepagent.middleware import ReadonlyLoopGuardMiddleware, WorkspaceMemor
 from app.deepagent.tool_assembly import DANGEROUS_TOOLS, _BUILTIN_FS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
+
+if TYPE_CHECKING:
+    from deepagents import SubAgent
+    from langchain_core.language_models import BaseChatModel
+    from langchain_core.tools import BaseTool
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph
 
 __all__ = [
     "build_interrupt_config",
@@ -228,20 +235,20 @@ def resolve_backend(workspace_path: str | None) -> AuthorizedLocalShellBackend |
 
 
 def create_agent(
-    model: Any,
-    tools: list,
+    model: BaseChatModel,
+    tools: list[BaseTool],
     *,
-    checkpointer: Any = None,
+    checkpointer: BaseCheckpointSaver | None = None,
     system_prompt: str | None = None,
     thread_id: str | None = None,
     workspace_path: str | None = None,
     name: str | None = None,
-    subagents: list | None = None,
+    subagents: list[SubAgent] | None = None,
     rubric: str | None = None,
-    grader_model: Any | None = None,
+    grader_model: BaseChatModel | None = None,
     excluded_tools: frozenset[str] | None = None,
     interrupt_on: dict[str, bool] | None = None,
-) -> Any:
+) -> CompiledStateGraph:
     """主入口：封装 create_deep_agent。
 
     组装 HarnessProfile、interrupt_on、memory、backend、subagents 等配置，

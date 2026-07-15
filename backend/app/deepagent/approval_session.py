@@ -23,6 +23,7 @@ LangGraph HITL mechanics live in ``hitl.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.deepagent.stream_events import StreamRunState
 
@@ -101,7 +102,7 @@ class ApprovalSession:
     """
 
     stream_state: StreamRunState = field(default_factory=StreamRunState)
-    recent_calls_history: list[list[dict]] = field(default_factory=list)
+    recent_calls_history: list[list[dict[str, Any]]] = field(default_factory=list)
     stalled_count: int = 0
     yielded_msg_count: int = -1
     exit_state: ExitState = field(default_factory=ExitState)
@@ -111,7 +112,7 @@ class ApprovalSession:
     REPEAT_THRESHOLD: int = 2
     STALL_THRESHOLD: int = 2
 
-    def record_pending_calls(self, pending_calls: list[dict]) -> None:
+    def record_pending_calls(self, pending_calls: list[dict[str, Any]]) -> None:
         """Record pending calls in the repeat-history window.
 
         Trims the window to ``REPEAT_DETECTION_WINDOW`` entries.
@@ -129,7 +130,7 @@ class ApprovalSession:
         if len(self.recent_calls_history) < self.REPEAT_DETECTION_WINDOW:
             return False
 
-        def _call_signature(calls: list[dict]) -> str:
+        def _call_signature(calls: list[dict[str, Any]]) -> str:
             import json
 
             return "|".join(
