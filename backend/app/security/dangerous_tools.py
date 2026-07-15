@@ -41,6 +41,7 @@ DANGEROUS_TOOLS: frozenset[str] = frozenset(
         "edit_file",
         "write_file",
         "delete_file",
+        "request_permission",  # 运行时权限申请：触发 interrupt_on 审批
     }
 )
 
