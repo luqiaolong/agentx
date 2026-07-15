@@ -415,32 +415,32 @@ class RubricJudge:
         except ValueError as exc:
             return _skipped(case, f"get_chat_model error: {exc}")
 
-        # 3. 构建 grader agent（用 langchain.agents.create_agent + GraderResponse）
-        # system_prompt 由 ``_resolve_system_prompt`` 解析（注入优先，None → deepagents 默认）
-        from deepagents.middleware.rubric import GraderResponse
-        from langchain.agents import create_agent
-
-        grader = create_agent(
-            model=model,
-            system_prompt=self._resolve_system_prompt(),
-            tools=[],
-            response_format=GraderResponse,
-        )
-
-        # 4. 构建 grader payload（rubric + transcript）
-        transcript = _build_grader_transcript_from_events(events)
-        payload = _build_grader_payload(case.expect.rubric, transcript)
-
-        # 5. 调用 grader（用 .get() 避免 KeyError，与 RubricMiddleware._extract_graded 一致）
+        # 3-5. 构建 grader agent + payload + 调用 grader。
+        # 任一步失败都降级为 skipped（layer=L2），避免被 JudgeChain 误标为 L1。
         from langchain_core.messages import HumanMessage
 
         try:
+            from deepagents.middleware.rubric import GraderResponse
+            from langchain.agents import create_agent
+
+            grader = create_agent(
+                model=model,
+                system_prompt=self._resolve_system_prompt(),
+                tools=[],
+                response_format=GraderResponse,
+            )
+
+            # 4. 构建 grader payload（rubric + transcript）
+            transcript = _build_grader_transcript_from_events(events)
+            payload = _build_grader_payload(case.expect.rubric, transcript)
+
+            # 5. 调用 grader（用 .get() 避免 KeyError，与 RubricMiddleware._extract_graded 一致）
             result = await grader.ainvoke({"messages": [HumanMessage(content=payload)]})
             structured = result.get("structured_response") if isinstance(result, dict) else None
             if structured is None:
                 return _skipped(case, "grader returned no structured_response")
             graded = GraderResponse.model_validate(structured)
-        except Exception as exc:  # noqa: BLE001 - grader 调用失败降级为 skipped
+        except Exception as exc:  # noqa: BLE001 - grader 构造/调用/解析失败均降级为 skipped
             return _skipped(case, f"grader error: {exc}")
 
         # 6. 映射 GraderResponse → JudgeResult

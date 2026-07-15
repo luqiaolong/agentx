@@ -496,15 +496,19 @@ async def test_run_case_l3_branch_calls_self_correction(
         agent_mode="coding",
         expect=CaseExpect(rubric="test rubric", self_correct=True),
     )
-    expected_result = CaseResult(
+    # SelfCorrectionRunner 内部产出（无 L1）；EvalRunner 会补跑 L1 AssertJudge
+    # 并合并到 judge_results 前部。这里 mock 返回空 judge_results，
+    # 验证 L1 被补充加入。
+    sc_result = CaseResult(
         case=case,
         events=[],
+        judge_results=[],
         passed=True,
         avg_score=5.0,
     )
 
     mock_instance = MagicMock()
-    mock_instance.run_case = AsyncMock(return_value=expected_result)
+    mock_instance.run_case = AsyncMock(return_value=sc_result)
     mock_class = MagicMock(return_value=mock_instance)
     monkeypatch.setattr("app.eval.judges.self_correction.SelfCorrectionRunner", mock_class)
 
@@ -512,7 +516,12 @@ async def test_run_case_l3_branch_calls_self_correction(
     result = await runner.run_case(case)
 
     assert mock_class.called
-    assert result == expected_result
+    # L1 AssertJudge 被补充加入 judge_results
+    assert len(result.judge_results) == 1
+    assert result.judge_results[0].layer == "L1"
+    assert result.judge_results[0].passed is True
+    # passed 需同时满足 L1 与 L3
+    assert result.passed is True
 
 
 async def test_run_case_no_rubric_skips_l3(
@@ -551,21 +560,24 @@ async def test_run_case_no_rubric_skips_l3(
 async def test_run_case_l3_branch_passes_grader_model_and_checkpointer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """L3 分支：SelfCorrectionRunner 接收 chat_model/grader_model/max_iterations/checkpointer。"""
+    """L3 分支：SelfCorrectionRunner 接收 chat_model/grader_model/max_iterations/checkpointer/workspace_path。"""
     case = EvalCase(
         id="c-l3-args",
         user_message="hi",
         agent_mode="coding",
+        workspace_path="/custom/ws",
         expect=CaseExpect(
             rubric="test rubric",
             self_correct=True,
             self_correct_max_iterations=5,
         ),
     )
-    expected_result = CaseResult(case=case, events=[], passed=True, avg_score=5.0)
+    sc_result = CaseResult(
+        case=case, events=[], judge_results=[], passed=True, avg_score=5.0
+    )
 
     mock_instance = MagicMock()
-    mock_instance.run_case = AsyncMock(return_value=expected_result)
+    mock_instance.run_case = AsyncMock(return_value=sc_result)
     mock_class = MagicMock(return_value=mock_instance)
     monkeypatch.setattr("app.eval.judges.self_correction.SelfCorrectionRunner", mock_class)
 
@@ -585,3 +597,65 @@ async def test_run_case_l3_branch_passes_grader_model_and_checkpointer(
     assert kwargs["grader_model"] is sentinel_grader
     assert kwargs["max_iterations"] == 5
     assert kwargs["checkpointer"] is sentinel_checkpointer
+    # B2 修复：workspace_path 从 case 透传到 SelfCorrectionRunner
+    assert kwargs["workspace_path"] == "/custom/ws"
+
+
+async def test_run_case_l3_branch_falls_back_to_runner_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B2: case.workspace_path 为 None 时，用 runner.workspace_path。"""
+    case = EvalCase(
+        id="c-l3-ws",
+        user_message="hi",
+        agent_mode="coding",
+        workspace_path=None,
+        expect=CaseExpect(rubric="test rubric", self_correct=True),
+    )
+    sc_result = CaseResult(
+        case=case, events=[], judge_results=[], passed=True, avg_score=5.0
+    )
+
+    mock_instance = MagicMock()
+    mock_instance.run_case = AsyncMock(return_value=sc_result)
+    mock_class = MagicMock(return_value=mock_instance)
+    monkeypatch.setattr("app.eval.judges.self_correction.SelfCorrectionRunner", mock_class)
+
+    runner = EvalRunner(workspace_path="/runner/ws")
+    await runner.run_case(case)
+
+    _, kwargs = mock_class.call_args
+    assert kwargs["workspace_path"] == "/runner/ws"
+
+
+async def test_run_case_l3_branch_l1_failure_makes_passed_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3: L3 分支补跑 L1，L1 失败时 passed=False（即使 L3 passed）。"""
+    case = EvalCase(
+        id="c-l3-l1fail",
+        user_message="hi",
+        agent_mode="coding",
+        expect=CaseExpect(
+            rubric="test rubric",
+            self_correct=True,
+            tools_called=["read_file"],  # L1 期望 read_file 被调用，但 events 为空 → 失败
+        ),
+    )
+    sc_result = CaseResult(
+        case=case, events=[], judge_results=[], passed=True, avg_score=5.0
+    )
+
+    mock_instance = MagicMock()
+    mock_instance.run_case = AsyncMock(return_value=sc_result)
+    mock_class = MagicMock(return_value=mock_instance)
+    monkeypatch.setattr("app.eval.judges.self_correction.SelfCorrectionRunner", mock_class)
+
+    runner = EvalRunner()
+    result = await runner.run_case(case)
+
+    # L1 失败 → passed=False
+    assert result.passed is False
+    assert len(result.judge_results) == 1
+    assert result.judge_results[0].layer == "L1"
+    assert result.judge_results[0].passed is False

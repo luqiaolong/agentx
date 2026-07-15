@@ -182,3 +182,77 @@ def test_format_duration_formats_correctly() -> None:
     assert format_duration(1200) == "1.2s"
     assert format_duration(1500) == "1.5s"
     assert format_duration(1000) == "1.0s"
+
+
+def test_markdown_reporter_escapes_pipe_and_newline_in_table() -> None:
+    """B5: 表格单元格中的 | 与换行符被转义，避免破坏表格结构。"""
+    case = EvalCase(id="c-pipe|x", user_message="hi", agent_mode="work")
+    cr = CaseResult(
+        case=case,
+        events=[],
+        judge_results=[
+            JudgeResult(
+                case_id="c-pipe|x",
+                passed=False,
+                score=0.0,
+                reason="line1\nline2|pipe",
+                details={"key": "val|ue"},
+                layer="L1",
+            )
+        ],
+        passed=False,
+        avg_score=0.0,
+        duration_ms=10,
+        error="err|msg",
+    )
+    result = EvalResult(
+        suite_id="s1",
+        started_at=datetime(2026, 7, 15),
+        duration_ms=10,
+        case_results=[cr],
+    )
+    md = MarkdownReporter().render(result)
+
+    # case 详情表行：单元格内的 | 应被转义为 \|
+    # 找到 case 详情表所在行
+    detail_lines = [ln for ln in md.splitlines() if "c-pipe" in ln]
+    assert detail_lines, "case 详情表行应存在"
+    detail_line = detail_lines[0]
+    # 原始 | 应被转义为 \|（不破坏表格列分隔）
+    assert "\\|" in detail_line
+    # 换行符应被替换为空格
+    assert "\n" not in detail_line
+
+
+def test_markdown_reporter_renders_details_value_as_json() -> None:
+    """B5: details 中 list/dict 值用 JSON 渲染，而非 Python repr。"""
+    case = EvalCase(id="c-obj", user_message="hi", agent_mode="work")
+    cr = CaseResult(
+        case=case,
+        events=[],
+        judge_results=[
+            JudgeResult(
+                case_id="c-obj",
+                passed=False,
+                score=0.0,
+                reason="fail",
+                details={"criteria": [{"name": "c1", "passed": False}]},
+                layer="L2",
+            )
+        ],
+        passed=False,
+        avg_score=0.0,
+        duration_ms=10,
+    )
+    result = EvalResult(
+        suite_id="s1",
+        started_at=datetime(2026, 7, 15),
+        duration_ms=10,
+        case_results=[cr],
+    )
+    md = MarkdownReporter().render(result)
+
+    # list 值应渲染为 JSON（含双引号），而非 Python repr（含单引号）
+    assert '"name": "c1"' in md or '"name":"c1"' in md
+    # 不应出现 Python dict repr 的单引号风格
+    assert "{'name': 'c1'}" not in md

@@ -244,7 +244,7 @@ def _cmd_export_feedback(args: argparse.Namespace) -> int:
 
     cases: list[EvalCase] = []
     for row in rows:
-        feedback_id = row.get("feedback_id")
+        feedback_id = row.get("feedback_id") or "unknown"
         run_id = row.get("run_id", "unknown")
         user_message = row.get("user_message") or ""
         agent_mode = row.get("agent_mode") or "work"

@@ -131,8 +131,9 @@ class EvalRunner:
             ``CaseResult``：含收集到的 events 列表与（可选的）judge_results。
             失败时 ``error`` 非空。
         """
-        # L3 自纠模式：走 SelfCorrectionRunner（内部已完成打分）
+        # L3 自纠模式：走 SelfCorrectionRunner（内部已完成 L3 打分）
         if case.expect.self_correct and case.expect.rubric and not self.no_rubric:
+            from app.eval.judges.assert_judge import AssertJudge
             from app.eval.judges.self_correction import SelfCorrectionRunner
 
             sc_runner = SelfCorrectionRunner(
@@ -140,8 +141,23 @@ class EvalRunner:
                 grader_model=self.grader_model,
                 max_iterations=case.expect.self_correct_max_iterations,
                 checkpointer=self.checkpointer,
+                workspace_path=case.workspace_path or self.workspace_path,
             )
-            return await sc_runner.run_case(case)
+            result = await sc_runner.run_case(case)
+
+            # L3 分支补充跑 L1 AssertJudge（基于收集到的 events），
+            # 避免静默跳过 events/tools_called/tools_not_called/assertions 断言。
+            # L1 失败不影响 L3 已有结果，仅追加到 judge_results 前部。
+            if not result.error:
+                l1_result = await AssertJudge().evaluate(result.events, case)
+                result = result.model_copy(
+                    update={
+                        "judge_results": [l1_result, *result.judge_results],
+                        # passed 需同时满足 L1 与 L3
+                        "passed": result.passed and l1_result.passed,
+                    }
+                )
+            return result
 
         result = await self._run_case_via_router(case)
 
@@ -231,9 +247,7 @@ class EvalRunner:
         Returns:
             ``CaseResult``：events 来自 trace_events，judge_results 由 judges 填充。
         """
-        import time as _time
-
-        start = _time.perf_counter()
+        start = time.perf_counter()
         events = case.trace_events or []
 
         if not events:
@@ -247,7 +261,7 @@ class EvalRunner:
         result = CaseResult(
             case=case,
             events=events,
-            duration_ms=int((_time.perf_counter() - start) * 1000),
+            duration_ms=int((time.perf_counter() - start) * 1000),
         )
 
         if judges:

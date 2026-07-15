@@ -81,6 +81,8 @@ def _normalize_event(event: Any) -> dict[str, Any]:
     - 含 ``messages`` 且最后一条有 ``tool_calls`` → ``{"event": "tool_call", ...}``
     - 其他 → ``{"event": "state", "data": str(event)}``
     """
+    from langchain_core.messages import ToolMessage
+
     if isinstance(event, dict):
         messages = event.get("messages")
         if messages:
@@ -88,8 +90,7 @@ def _normalize_event(event: Any) -> dict[str, Any]:
             content = getattr(last, "content", "")
             tool_calls = getattr(last, "tool_calls", None) or []
             # 区分 AIMessage / ToolMessage
-            msg_type = type(last).__name__
-            if msg_type == "ToolMessage":
+            if isinstance(last, ToolMessage):
                 return {
                     "event": "tool_result",
                     "tool_call_id": getattr(last, "tool_call_id", ""),
@@ -210,6 +211,9 @@ class SelfCorrectionRunner:
         max_iterations: 自纠最大迭代次数（``RubricMiddleware`` hard cap 20）。
         checkpointer: 可选的 LangGraph checkpointer，透传到 ``create_deep_agent``。
             None 时用 ``MemorySaver()``（L3 需要读 ``_rubric_status``，必须传 checkpointer）。
+        workspace_path: 可选的工作区路径，注入到 agent system_prompt 让其知晓上下文。
+            L3 走 ``create_deep_agent`` 而非 ``run_router``，``permission_mode`` 不直接适用
+            （当前 ``tools=[]`` 为空，agent 不调危险工具，故无需审批参数）。
     """
 
     def __init__(
@@ -218,12 +222,14 @@ class SelfCorrectionRunner:
         grader_model: "BaseChatModel | None" = None,
         max_iterations: int = 3,
         checkpointer: Any = None,
+        workspace_path: str | None = None,
     ) -> None:
         self.chat_model = chat_model
         self.grader_model = grader_model
         # RubricMiddleware hard cap 20
         self.max_iterations = min(max(1, max_iterations), 20)
         self.checkpointer = checkpointer
+        self.workspace_path = workspace_path
 
     async def run_case(self, case: EvalCase, tools: list | None = None) -> CaseResult:
         """执行 L3 自纠评测。
@@ -266,21 +272,20 @@ class SelfCorrectionRunner:
         # checkpointer 必须传入（L3 需要读 _rubric_status）
         checkpointer = self.checkpointer
         if checkpointer is None:
-            try:
-                from langgraph.checkpoint.memory import MemorySaver
-            except ImportError:
-                from langgraph.checkpoint.memory import (
-                    MemorySaver as _MemorySaver,
-                )
+            from langgraph.checkpoint.memory import MemorySaver
 
-                MemorySaver = _MemorySaver  # type: ignore[assignment]
             checkpointer = MemorySaver()
+
+        # workspace_path 注入 system_prompt，让 agent 知晓工作目录上下文
+        system_prompt = "你是 AgentX 评测目标 agent。请根据用户请求完成任务。"
+        if self.workspace_path:
+            system_prompt += f"\n\n工作目录：{self.workspace_path}"
 
         agent = create_deep_agent(
             model=model,
             tools=tools or [],
             middleware=[rubric_middleware],
-            system_prompt="你是 AgentX 评测目标 agent。请根据用户请求完成任务。",
+            system_prompt=system_prompt,
             checkpointer=checkpointer,
         )
 

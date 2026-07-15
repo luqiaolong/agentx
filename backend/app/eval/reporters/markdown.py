@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 from app.eval.models import CaseResult, EvalResult
 from app.eval.reporters.base import (
     avg_score,
@@ -13,6 +15,17 @@ from app.eval.reporters.base import (
     has_l2,
     l2_avg_score,
 )
+
+
+def _escape_md_cell(text: str) -> str:
+    """转义 Markdown 表格单元格中的特殊字符。
+
+    - ``|`` → ``\\|``（避免破坏表格列分隔）
+    - 换行符 → 空格（避免破坏表格行结构）
+    """
+    if not text:
+        return ""
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").replace("\r", "")
 
 
 def _reasons(cr: CaseResult) -> str:
@@ -62,10 +75,11 @@ class MarkdownReporter:
         lines.append("|---|---|---|---|---|---|")
         for cr in result.case_results:
             mark = "✓" if cr.passed else "✗"
-            err = cr.error or "-"
+            err = _escape_md_cell(cr.error or "-")
+            reasons = _escape_md_cell(_reasons(cr))
             lines.append(
-                f"| {cr.case.id} | {mark} | {cr.avg_score:.1f} | "
-                f"{format_duration(cr.duration_ms)} | {err} | {_reasons(cr)} |"
+                f"| {_escape_md_cell(cr.case.id)} | {mark} | {cr.avg_score:.1f} | "
+                f"{format_duration(cr.duration_ms)} | {err} | {reasons} |"
             )
         lines.append("")
 
@@ -87,7 +101,12 @@ class MarkdownReporter:
                     )
                     if jr.details:
                         for key, value in jr.details.items():
-                            lines.append(f"  - {key}: {value}")
+                            # 用 JSON 渲染复杂值（list/dict），避免 Python repr 污染 Markdown
+                            if isinstance(value, (dict, list)):
+                                value_str = json.dumps(value, ensure_ascii=False)
+                            else:
+                                value_str = str(value)
+                            lines.append(f"  - {key}: {value_str}")
                 lines.append("")
 
         return "\n".join(lines)

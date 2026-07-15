@@ -407,13 +407,17 @@ class ClaudeCliRunner:
                     trace_id,
                 )
                 stderr_data = b""
-            if proc.returncode != 0 and final_result is None:
+            # 进程退出但流中未出现 result/done 事件 → 补发 error+done，避免前端挂起。
+            # final_result is None 即说明流中无 done 事件（done 会触发 _extract_result_from_done）。
+            if final_result is None:
                 stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
-                err_msg = f"Claude CLI 退出码 {proc.returncode}"
+                err_msg = "Claude CLI 未返回 result 事件"
+                if proc.returncode not in (None, 0):
+                    err_msg += f"（退出码 {proc.returncode}）"
                 if stderr_text:
                     err_msg += f"：{stderr_text[:500]}"
                 logger.error(
-                    "claude cli failed",
+                    "claude cli no done event",
                     returncode=proc.returncode,
                     stderr=stderr_text[:500],
                     trace_id=trace_id,

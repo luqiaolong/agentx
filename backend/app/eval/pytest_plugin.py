@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from app.eval.judges import AssertJudge, JudgeChain, RubricJudge
+from app.eval.judges import AssertJudge, RubricJudge
 from app.eval.mocks.llm import MockChatModel
 from app.eval.models import EvalCase, EvalSuite
 from app.eval.runner import EvalRunner
@@ -116,15 +116,10 @@ class EvalItem(pytest.Item):
             chat_model = MockChatModel.from_fixtures(fixtures_dir)
             judges = [AssertJudge(), RubricJudge(no_rubric=True)]
             runner = EvalRunner(chat_model=chat_model, no_rubric=True)
-        composite = JudgeChain(judges)
 
-        async def _run() -> tuple:
-            case_result = await runner.run_case(self.case)
-            judge_results = await composite.evaluate(case_result.events, self.case)
-            return case_result, judge_results
-
-        case_result, judge_results = await _run()
-        case_result = EvalRunner.apply_judge_results(case_result, judge_results)
+        # judges 透传给 run_case，由 EvalRunner 内部 _adapt_judges_for_agent_mode
+        # 按 case.agent_mode 把 RubricJudge 替换为 CodingRubricJudge（coding/coding_team）。
+        case_result = await runner.run_case(self.case, judges=judges)
 
         if not case_result.passed:
             details = []
