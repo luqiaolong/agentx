@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import uuid
 from enum import Enum
@@ -229,7 +230,7 @@ async def acquire_and_run(
     执行流程：
 
     1. ``semaphore.acquire()`` 限流（``finally`` 块释放，I3 不泄漏）
-    2. ``asyncio.ensure_future(runner_coro)`` 创建 ``asyncio.Task``
+    2. ``asyncio.create_task(runner_coro, context=_ctx)`` 创建 ``asyncio.Task``（带 ContextVar 传播）
     3. ``register_running_task(thread_id, task_obj)`` 注册到全局 registry
     4. ``abort_event`` 监听：若 ``is_set()`` 立即 cancel task
     5. ``await task_obj`` 等待结果
@@ -251,8 +252,9 @@ async def acquire_and_run(
     # BE-I 修复：ensure_future 移入 try 块，失败时 finally 释放 semaphore
     await semaphore.acquire()
     task_obj = None
+    _ctx = contextvars.copy_context()
     try:
-        task_obj = asyncio.ensure_future(runner_coro)
+        task_obj = asyncio.create_task(runner_coro, context=_ctx)
         register_running_task(thread_id, task_obj)
         # 若 abort 已触发，立即 cancel
         if abort_event is not None and abort_event.is_set():
@@ -260,7 +262,7 @@ async def acquire_and_run(
         else:
             # 监听 abort_event 与 task_obj 竞速（事件驱动，无 timeout 轮询）
             if abort_event is not None:
-                abort_wait = asyncio.ensure_future(abort_event.wait())
+                abort_wait = asyncio.create_task(abort_event.wait(), context=_ctx)
                 try:
                     done, _pending = await asyncio.wait(
                         {task_obj, abort_wait},
@@ -668,8 +670,9 @@ async def _run_subtask_stream(
                 """
                 nonlocal last_result
                 stream_iter = stream.__aiter__()
-                abort_task = asyncio.ensure_future(abort_event.wait())
-                next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                _ctx = contextvars.copy_context()
+                abort_task = asyncio.create_task(abort_event.wait(), context=_ctx)
+                next_event_task = asyncio.create_task(stream_iter.__anext__(), context=_ctx)
                 try:
                     while True:
                         done, _pending = await asyncio.wait(
@@ -692,7 +695,7 @@ async def _run_subtask_stream(
                             if result is not None:
                                 last_result = result
                                 return IterResult.SUBTASK_DONE
-                            next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                            next_event_task = asyncio.create_task(stream_iter.__anext__(), context=_ctx)
                 finally:
                     for _t in (next_event_task, abort_task):
                         if not _t.done():
@@ -879,11 +882,12 @@ async def _run_team_role_subtask(
                 # 理论支持 v3）。v3 事件 schema 可能与 v2 不同，当前 _iterate 的事件
                 # 处理（on_chat_model_stream / on_tool_start / on_tool_end）按 v2 schema
                 # 编写。保持 v2 直至 v3 schema 稳定且事件处理代码完成适配验证。
+                _ctx = contextvars.copy_context()
                 stream_iter = agent_obj.astream_events(
                     inputs, version="v2", config=config
                 ).__aiter__()
-                abort_task = asyncio.ensure_future(abort_event.wait())
-                next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                abort_task = asyncio.create_task(abort_event.wait(), context=_ctx)
+                next_event_task = asyncio.create_task(stream_iter.__anext__(), context=_ctx)
                 try:
                     while True:
                         done, _pending = await asyncio.wait(
@@ -952,7 +956,7 @@ async def _run_team_role_subtask(
                                             },
                                         )
                                     )
-                            next_event_task = asyncio.ensure_future(stream_iter.__anext__())
+                            next_event_task = asyncio.create_task(stream_iter.__anext__(), context=_ctx)
                 finally:
                     for _t in (next_event_task, abort_task):
                         if not _t.done():

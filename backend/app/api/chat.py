@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import sqlite3
 import uuid
@@ -188,10 +189,11 @@ async def _run_with_heartbeat(
     下一轮继续等待同一个 task，长任务得以保留。
     """
     _next_task: asyncio.Task | None = None
+    _ctx = contextvars.copy_context()
     try:
         while True:
             if _next_task is None:
-                _next_task = asyncio.ensure_future(source.__anext__())
+                _next_task = asyncio.create_task(source.__anext__(), context=_ctx)
             done, _pending = await asyncio.wait(
                 {_next_task},
                 timeout=timeout,
