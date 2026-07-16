@@ -50,6 +50,7 @@ from app.deepagent.hitl import (
     make_resume_command as _make_resume_command,
     make_uniform_resume_command as _make_uniform_resume_command,
     state_message_count as _state_message_count_helper,
+    _tool_call_name,
 )
 # Approval session state machine (Decision 6 & 7).
 from app.deepagent.approval_session import ApprovalSession, LoopExitReason
@@ -482,7 +483,7 @@ async def _run_approval_loop(
         # 必须在 dangerous_calls 之前处理：审批通过后 _stream(resume=approve) 让工具执行
         # 返回"已授权"，然后 continue 回到循环顶部等待 LLM 下一轮（通常是重新调用原
         # 失败的工具）。不 return，让 agent 继续执行。
-        permission_calls = [tc for tc in pending_calls if tc.get("name") == "request_permission"]
+        permission_calls = [tc for tc in pending_calls if _tool_call_name(tc) == "request_permission"]
         if permission_calls:
             for tc in permission_calls:
                 raw_args = tc.get("args", {}) or {}
@@ -595,7 +596,7 @@ async def _run_approval_loop(
             sibling_retry_msg = "危险工具调用需单独审批，请在授权后重试"
             per_call_decisions: list[dict[str, Any]] = []
             for tc in pending_calls:
-                name = tc.get("name", "")
+                name = _tool_call_name(tc)
                 if name == "request_permission":
                     if id(tc) in auth_failure_ids:
                         # Auth failed → reject to prevent tool body returning 路径已授权
@@ -662,7 +663,7 @@ async def _run_approval_loop(
         decision = None
         dangerous_calls: list[dict[str, Any]] = []
         for tc in pending_calls:
-            name = tc.get("name", "")
+            name = _tool_call_name(tc)
             if name not in runtime_dangerous:
                 continue
 
@@ -751,7 +752,7 @@ async def _run_approval_loop(
                 "agent approval granted",
                 thread_id=thread_id,
                 tool_count=len(dangerous_calls),
-                tools=[tc.get("name") for tc in dangerous_calls],
+                tools=[_tool_call_name(tc) for tc in dangerous_calls],
                 source=source,
             )
 
@@ -811,7 +812,7 @@ async def _run_approval_loop(
             "agent resume execution",
             thread_id=thread_id,
             source=source,
-            pending_tools=[tc.get("name") for tc in pending_calls],
+            pending_tools=[_tool_call_name(tc) for tc in pending_calls],
         )
         try:
             async for sse in _stream(

@@ -154,6 +154,12 @@ def make_message_key(msg: BaseMessage) -> str:
         digest = hashlib.sha256(content_str.encode("utf-8")).hexdigest()[:16]
         parts.append(f"c:{digest}")
 
+    # Fallback: if no deterministic unique component exists (empty msg_id,
+    # no tool_call_id, no tool_calls, no content), use object identity so
+    # distinct degenerate messages do not collapse to the same key.
+    if len(parts) <= 2 and not msg_id:
+        parts.append(str(id(msg)))
+
     return ":".join(parts)
 
 
@@ -170,7 +176,11 @@ def make_message_key(msg: BaseMessage) -> str:
 # In production, ``approval_runner`` passes ``stream_run_state`` explicitly,
 # so this cache is unused.
 # The cache holds a reference to the set (via ``state.seen_message_keys``),
-# preventing GC and id reuse while the entry exists.
+# preventing GC and id reuse while the entry exists. A size cap (128) prevents
+# unbounded growth in long-running test suites: when exceeded, the cache is
+# cleared before adding the new entry (stale entries from dropped sets are
+# evicted; active entries are rare in practice).
+_SEEN_SIGNATURES_CACHE_MAX = 128
 _seen_signatures_state_cache: dict[int, StreamRunState] = {}
 
 
@@ -197,6 +207,8 @@ def adapt_seen_signatures(
         cached = _seen_signatures_state_cache.get(key)
         if cached is not None:
             return cached
+        if len(_seen_signatures_state_cache) >= _SEEN_SIGNATURES_CACHE_MAX:
+            _seen_signatures_state_cache.clear()
         state = StreamRunState(seen_message_keys=seen_signatures)
         _seen_signatures_state_cache[key] = state
         return state

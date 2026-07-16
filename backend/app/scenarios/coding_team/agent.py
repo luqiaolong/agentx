@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator
 
-from app.deepagent.context import bind_agent_context, current_thread_id
+from app.deepagent.context import bind_agent_context
 from app.observability.logger import logger
 from app.sse.events import make_error_event, make_sse_event
 from app.team.runner import run_team_path

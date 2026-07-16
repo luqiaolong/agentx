@@ -21,6 +21,7 @@ from langchain.agents.middleware.types import AgentMiddleware, PrivateStateAttr
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
 
 from app.security.approval.flow import _READONLY_TOOLS
+from app.deepagent.hitl import _tool_call_name
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -75,7 +76,7 @@ class ReadonlyLoopGuardMiddleware(AgentMiddleware[Any, Any, Any]):
                 tool_calls = getattr(msg, "tool_calls", None) or []
                 if not tool_calls:
                     break
-                if all(tc.get("name", "") in self._readonly_tools for tc in tool_calls):
+                if all(_tool_call_name(tc) in self._readonly_tools for tc in tool_calls):
                     continue
                 break
             else:

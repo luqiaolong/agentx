@@ -21,6 +21,20 @@ from app.deepagent.agent import (
 from app.deepagent.tool_assembly import compute_runtime_dangerous
 
 
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """Clear get_settings lru_cache before and after each test to prevent pollution.
+
+    Several tests below call ``monkeypatch.setenv("AGENTX_TOOLS_CONFIG", ...)``
+    then ``get_settings.cache_clear()`` to force re-read. monkeypatch auto-undoes
+    the env var, but NOT the lru_cache — so a polluted ``Settings`` instance could
+    leak into subsequent tests. This fixture clears before+after each test.
+    """
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 # ============================================================
 # 1. tools_enabled 数据结构 (R1)
 # ============================================================
@@ -58,7 +72,6 @@ def test_tools_enabled_partial_override(monkeypatch: pytest.MonkeyPatch) -> None
         "AGENTX_TOOLS_CONFIG",
         json.dumps({"web_search": False}),
     )
-    get_settings.cache_clear()
 
     tools = get_settings().tools_enabled
     assert tools["web_search"] is False
@@ -83,7 +96,6 @@ def test_tools_enabled_invalid_json_fallback(monkeypatch: pytest.MonkeyPatch) ->
     实际行为：pydantic-settings 在 validator 之前抛 SettingsError（xfail）。
     """
     monkeypatch.setenv("AGENTX_TOOLS_CONFIG", "invalid-json{{{")
-    get_settings.cache_clear()
 
     settings = get_settings()
     # 无效 JSON → _parse_json_env 应返回空 dict
@@ -105,7 +117,6 @@ def testmake_deep_tools_filters_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
         "AGENTX_TOOLS_CONFIG",
         json.dumps({"web_search": False}),
     )
-    get_settings.cache_clear()
 
     tools = make_deep_tools("t1")
     tool_names = {t.name for t in tools}
@@ -154,7 +165,6 @@ def testmake_deep_tools_all_disabled_returns_empty(
             }
         ),
     )
-    get_settings.cache_clear()
 
     tools = make_deep_tools("t1")
     assert len(tools) == 0
@@ -197,7 +207,6 @@ def test_runtime_dangerous_excludes_disabled(monkeypatch: pytest.MonkeyPatch) ->
         "AGENTX_TOOLS_CONFIG",
         json.dumps({"delete_file": False}),
     )
-    get_settings.cache_clear()
 
     # 模拟 run_deep_path 中的 runtime_dangerous 计算
     agent_tools = make_deep_tools("t1")

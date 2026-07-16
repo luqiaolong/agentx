@@ -22,11 +22,10 @@ from deepagents import SubAgent
 from app.config import BUILTIN_SUBAGENT_KEYS, get_settings
 from app.deepagent.agent import build_deep_agent, trigger_profile_auto_extract
 from app.deepagent.approval_runner import run_agent_with_approval
-from app.deepagent.context import bind_agent_context, current_thread_id
+from app.deepagent.context import bind_agent_context
 from app.deepagent.streaming import stream_agent_events
 from app.deepagent.tool_assembly import (
     assemble_agent_toolset,
-    compute_runtime_dangerous,
     load_mcp_tools,
     make_deep_tools,
 )

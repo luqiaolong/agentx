@@ -19,6 +19,7 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from loguru import logger
 from langgraph.types import Command
 
 __all__ = [
@@ -109,4 +110,17 @@ async def state_message_count(agent: Any, config: dict) -> int:
             messages = await messages
         return len(messages or [])
     except Exception:  # noqa: BLE001 — read failure must not block main flow
+        logger.warning("state_message_count read failed", exc_info=True)
         return -1
+
+
+def _tool_call_name(tc: dict | object) -> str:
+    """Extract tool name from a tool call, handling both dict and object forms.
+
+    LangChain ToolCall runtime type may be either ``dict`` (legacy) or an
+    object with attributes (e.g. ``langchain_core.messages.ToolCall``). This
+    mirrors the defensive handling already present in ``stream_events.py``.
+    """
+    if isinstance(tc, dict):
+        return tc.get("name", tc.get("tool", ""))
+    return getattr(tc, "name", "")
