@@ -170,7 +170,14 @@ class Settings(BaseSettings):
     # 形如 {"my_agent":{"key":"my_agent","name":"我的代理","description":"...","enabled":true,...}}
     custom_subagents_config: dict[str, Any] = Field(default_factory=dict)
     # AGENTX_TOOLS_CONFIG: JSON 字符串，如 {"web_search": false}
-    tools_config: dict[str, bool] = Field(default_factory=dict)
+    # 内部 backing field（``tools_config_raw``）+ 只读 ``tools_config`` property，
+    # 使 ``tools_config`` 成为类级描述符（property descriptor），允许测试在类级
+    # monkeypatch（``monkeypatch.setattr(type(settings), "tools_config", ...)``）。
+    # ``validation_alias`` 保留原 env var 名 ``AGENTX_TOOLS_CONFIG``（alias 不应用 env_prefix）。
+    tools_config_raw: dict[str, bool] = Field(
+        default_factory=dict,
+        validation_alias="AGENTX_TOOLS_CONFIG",
+    )
     # AGENTX_PROFILE_AUTO_EXTRACT: 路径 C 结束后是否自动抽取用户画像
     profile_auto_extract: bool = True
     # AGENTX_DREAM_ENABLED: 是否启用 Dream 记忆整理功能
@@ -224,7 +231,7 @@ class Settings(BaseSettings):
     @field_validator(
         "subagents_config",
         "custom_subagents_config",
-        "tools_config",
+        "tools_config_raw",
         "team_subagents_config",
         "agents_config",
         mode="before",
@@ -317,6 +324,15 @@ class Settings(BaseSettings):
         供 UI 展示。每次调用都重新解析，确保 env 变化即时生效。
         """
         return _parse_custom_subagents(self.custom_subagents_config)
+
+    @property
+    def tools_config(self) -> dict[str, bool]:
+        """工具启用覆盖配置（来自 ``AGENTX_TOOLS_CONFIG`` env var）。
+
+        作为类级 property descriptor，允许测试通过
+        ``monkeypatch.setattr(type(settings), "tools_config", ...)`` 替换。
+        """
+        return self.tools_config_raw
 
     @property
     def tools_enabled(self) -> dict[str, bool]:

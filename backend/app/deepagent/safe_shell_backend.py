@@ -174,13 +174,14 @@ class SafeLocalShellBackend(LocalShellBackend):
             if analysis.is_sandbox_limit:
                 # sandbox_mode == "off"：绕过沙箱直接重试（subprocess.run）
                 if _is_sandbox_off():
+                    explicit_cwd = kwargs.get("cwd")
                     try:
                         proc = subprocess.run(
                             command,
                             shell=True,
                             capture_output=True,
                             text=True,
-                            cwd=kwargs.get("cwd"),
+                            cwd=explicit_cwd if explicit_cwd is not None else self.cwd,
                             env=getattr(self, "_env", None) or _build_safe_env(),
                             timeout=getattr(self, "_default_timeout", None),
                         )

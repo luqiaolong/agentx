@@ -58,12 +58,15 @@ __all__ = [
 # 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 AuthorizedLocalShellBackend
 # 自动注入，此处保留 key 用于配置可见性；``execute`` 由 backend 提供，不在此列表中。
 # ``delete_file`` 是项目自研工具，可通过 tools_enabled 禁用。
+# ``request_permission`` 是项目自研运行时权限申请工具，显式列入以提供配置可见性
+# 和显式默认启用状态（避免依赖 ``.get(name, True)`` 未知 key 回退）。
 # Git 操作（status/diff/log/commit/push 等）由 deepagents 内置 ``execute`` 工具承担，
 # 不再有独立 git_* 工具（Phase B.1 已删除 make_git_tools）。
 _ALL_TOOLS = [
     "read_file", "ls", "glob", "grep",
     "write_file", "edit_file", "delete_file",
     "web_search", "rag_retrieve",
+    "request_permission",
 ]
 
 

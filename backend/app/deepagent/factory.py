@@ -33,7 +33,7 @@ Skills 加载:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from deepagents import (
     GeneralPurposeSubagentProfile,
@@ -48,9 +48,16 @@ from deepagents.middleware.skills import SkillsMiddleware
 from app.config import DATA_DIR, get_settings
 from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
 from app.deepagent.middleware import ReadonlyLoopGuardMiddleware, WorkspaceMemoryMiddleware
-from app.deepagent.tool_assembly import DANGEROUS_TOOLS
+from app.deepagent.tool_assembly import DANGEROUS_TOOLS, _BUILTIN_FS_TOOLS
 from app.llm import get_chat_model
 from app.observability.logger import logger
+
+if TYPE_CHECKING:
+    from deepagents import SubAgent
+    from langchain_core.language_models import BaseChatModel
+    from langchain_core.tools import BaseTool
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph
 
 __all__ = [
     "build_interrupt_config",
@@ -228,19 +235,20 @@ def resolve_backend(workspace_path: str | None) -> AuthorizedLocalShellBackend |
 
 
 def create_agent(
-    model: Any,
-    tools: list,
+    model: BaseChatModel,
+    tools: list[BaseTool],
     *,
-    checkpointer: Any = None,
+    checkpointer: BaseCheckpointSaver | None = None,
     system_prompt: str | None = None,
     thread_id: str | None = None,
     workspace_path: str | None = None,
     name: str | None = None,
-    subagents: list | None = None,
+    subagents: list[SubAgent] | None = None,
     rubric: str | None = None,
-    grader_model: Any | None = None,
+    grader_model: BaseChatModel | None = None,
     excluded_tools: frozenset[str] | None = None,
-) -> Any:
+    interrupt_on: dict[str, bool] | None = None,
+) -> CompiledStateGraph:
     """主入口：封装 create_deep_agent。
 
     组装 HarnessProfile、interrupt_on、memory、backend、subagents 等配置，
@@ -250,6 +258,10 @@ def create_agent(
     自动注入，无需在 ``tools`` 列表中声明。``excluded_tools`` 参数控制哪些内置工具被隐藏：
     - None 或空：全部内置 fs 工具启用（主 agent 路径）
     - FORBIDDEN_SUBAGENT_TOOLS：隐藏写工具（子代理只读路径）
+
+    有效 ``excluded_tools`` 始终是调用方排除集合与 ``tools_enabled`` 禁用的 DeepAgents
+    内置工具的并集（OpenSpec Decision 2）。这确保用户禁用的内置 fs 工具在图编译时
+    被排除，即使调用方未通过 ``AgentToolset`` 装配。
 
     Args:
         model: ChatOpenAI 实例（已配置 temperature/streaming）。
@@ -264,13 +276,27 @@ def create_agent(
         rubric: 可选 rubric 文本；非空时注入 RubricMiddleware 启用运行时自纠。
         grader_model: 可选 grader 模型；为空时调用 get_chat_model(temperature=0)。
         excluded_tools: 可选，排除的内置工具名集合。None 或空时启用全部内置 fs 工具；
-            子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具。
+            子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具。与 ``tools_enabled`` 禁用
+            的内置工具取并集后注册 HarnessProfile。
+        interrupt_on: 可选，``{tool_name: True}`` 中断配置。非空时覆盖默认的
+            ``build_interrupt_config()``，使图编译时的 ``HumanInTheLoopMiddleware``
+            与审批运行时的 ``runtime_dangerous`` 源自同一份 ``AgentToolset`` 计算。
+            为 None 时回退到 ``DANGEROUS_TOOLS`` 派生的默认配置（向后兼容）。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
     """
-    ensure_harness_profile(excluded_tools)
-    interrupt_on = build_interrupt_config()
+    # 有效 excluded_tools = 调用方排除 ∪ tools_enabled 禁用的内置工具
+    tools_enabled = get_settings().tools_enabled
+    disabled_builtins = frozenset(
+        name for name in _BUILTIN_FS_TOOLS if not tools_enabled.get(name, True)
+    )
+    effective_excluded = frozenset(excluded_tools or ()) | disabled_builtins
+
+    ensure_harness_profile(effective_excluded)
+    effective_interrupt_on = (
+        interrupt_on if interrupt_on is not None else build_interrupt_config()
+    )
     memory_paths = resolve_memory_paths(workspace_path)
     backend = resolve_backend(workspace_path)
 
@@ -331,7 +357,7 @@ def create_agent(
         model=model,
         tools=tools,
         system_prompt=system_prompt,
-        interrupt_on=interrupt_on,
+        interrupt_on=effective_interrupt_on,
         memory=None,
         backend=backend,
         subagents=subagents,
