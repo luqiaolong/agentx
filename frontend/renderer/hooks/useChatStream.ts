@@ -166,6 +166,8 @@ export function useChatStream(args: UseChatStreamArgs) {
    * - 后台会话也保留独立条目，防止前台会话切换时被覆盖
    * - done 事件据此判断是否覆盖 team_done 业务终态
    *   （若 team_done 已是 error/aborted，done 不再标记任务为 done）
+   * ⚠️ 注意：此 ref 在组件实例级别隔离，多实例（如多个 useChatStream 调用）不共享。
+   *   当前设计下每个会话只有一个活跃实例，故无问题；若未来拆分需改为 module-level Map。
    */
   const teamDoneOutcomeByThreadRef = useRef<Map<string, TeamOutcome>>(new Map());
 
@@ -236,9 +238,7 @@ export function useChatStream(args: UseChatStreamArgs) {
 
   /** REQ-CHAT-5: finishRunning 使用事件归属的 tid，而非 singleton targetThreadId()。 */
   const finishRunning = (running: boolean, tid: string) => {
-    if (tid) {
-      setSessionRunning(tid, running);
-    }
+    setSessionRunning(tid, running);
   };
 
   /**
@@ -256,6 +256,8 @@ export function useChatStream(args: UseChatStreamArgs) {
     // REQ-CHAT-5: 订阅所有正在运行的会话 + 当前前台会话。
     // 后台会话的 SSE 事件必须被处理（写回对应 thread_id 的 pending 消息），
     // 不能因用户切换到前台会话就丢弃后台会话的事件。
+    // 竞态防护：每次 effect 重新执行时，用新的 targetIds 集合，
+    // 避免旧订阅回调在 effect 清理后仍访问已卸载的闭包状态（中优5 修复）。
     const targetIds = new Set<string>();
     if (threadId) targetIds.add(threadId);
     if (runningSessionKey) {
@@ -759,7 +761,6 @@ export function useChatStream(args: UseChatStreamArgs) {
             const watchdogThreadId = tid;
             if (doneWatchdogRef.current) clearTimeout(doneWatchdogRef.current);
             doneWatchdogRef.current = setTimeout(() => {
-              // 会话已切换或已停止 → 跳过（done 已到达或用户已发新消息）
               if (!watchdogThreadId) return;
               const state = useChatStore.getState();
               const session = state.sessions[watchdogThreadId];
@@ -845,7 +846,12 @@ export function useChatStream(args: UseChatStreamArgs) {
     }
 
     return () => {
-      // 切换会话 / 卸载前，对所有已订阅 threadId 的 pending 消息执行终态收尾，
+      // 切换会话 / 卸载前，清理本组件写入的 team_done outcome 条目
+      // 避免组件卸载后残留数据被后续实例误读（高优3 修复）
+      for (const tid of targetIds) {
+        teamDoneOutcomeByThreadRef.current.delete(tid);
+      }
+      // 对所有已订阅 threadId 的 pending 消息执行终态收尾，
       // 避免留下 reasoning 未 done / tool-call 卡 running 的不完整消息状态
       for (const tid of targetIds) {
         const cleanupPid = effectivePendingId(tid);

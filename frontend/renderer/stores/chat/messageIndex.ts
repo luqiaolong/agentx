@@ -32,6 +32,11 @@ export function unindexSession(sessionId: string): void {
   }
 }
 
+/** 中优10 修复：重置整个索引（merge 前清理旧数据，避免持久化数据重建时残留过期索引）。 */
+export function resetMessageIndex(): void {
+  messageIndex.clear();
+}
+
 /** 测试专用：重置索引。生产代码勿调。 */
 export function __resetMessageIndex(): void {
   messageIndex.clear();

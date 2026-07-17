@@ -535,6 +535,8 @@ async function tryRecoverResult(
     if (conn.traceId !== traceId) return false;
 
     // 路径 2：轮询 /api/chat/result/{traceId}（指数退避：5s → 15s）
+    // 中优6 修复：循环内检查 conn 是否仍活跃，避免连接已关闭后仍无意义重试
+    if (!conn.isActive) return false;
     if (Date.now() - lastEndpointPoll >= endpointPollInterval) {
       lastEndpointPoll = Date.now();
       try {
@@ -579,6 +581,8 @@ async function tryRecoverResult(
     }
 
     // 路径 1：轮询 observation DB（指数退避：3s → 10s）
+    // 中优6 修复：循环内检查 conn 是否仍活跃，避免连接已关闭后仍无意义重试
+    if (!conn.isActive) return false;
     try {
       const r = await fetch(`${API_BASE}/api/observation/runs/${traceId}`);
       if (!r.ok) continue;

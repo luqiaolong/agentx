@@ -20,6 +20,7 @@ import {
   indexMessage,
   unindexMessage,
   unindexSession,
+  resetMessageIndex,
 } from "./messageIndex";
 import { createQuotaGuardedStorage, setStreamingActive } from "./quotaStorage";
 
@@ -1411,6 +1412,8 @@ export const useChatStore = create<ChatState>()(
           const sessions = p.sessions ?? currentState.sessions;
           const currentId =
             p.currentId !== undefined ? p.currentId : currentState.currentId;
+          // 中优10 修复：重建 messageIndex 前先清理旧索引，避免残留过期数据
+          resetMessageIndex();
           // 从持久化数据重建 messageIndex 反向索引
           //（module-level Map 在 store 模块加载时为空，需在 merge 时同步填充）
           for (const sid of Object.keys(sessions)) {

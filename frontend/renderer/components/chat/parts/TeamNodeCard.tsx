@@ -733,9 +733,25 @@ function TeamNodeCardImpl({
  * 自定义 areEqual：reasoning/agents/status/outcome/doneAt/subAgentGroups/standaloneItems/replanHistory/warnings 变化时重渲。
  */
 function areEqual(prev: TeamNodeCardProps, next: TeamNodeCardProps): boolean {
+  // 中优8 修复：agents 是数组，浅比较引用会漏掉内部状态变化（如 agent.status 从 running→done）。
+  // 改为深度比较：数组长度 + 每个 agent 的 status/message/summary/finishedAt 字段。
+  const agentsEqual =
+    prev.agents.length === next.agents.length &&
+    prev.agents.every((a, i) => {
+      const b = next.agents[i];
+      // noUncheckedIndexedAccess：length 相等时 b 不可能 undefined，但 TS 不能推断，加显式守卫
+      if (!b) return false;
+      return (
+        a.agent === b.agent &&
+        a.status === b.status &&
+        a.message === b.message &&
+        a.summary === b.summary &&
+        a.finishedAt === b.finishedAt
+      );
+    });
   return (
     prev.reasoning === next.reasoning &&
-    prev.agents === next.agents &&
+    agentsEqual &&
     prev.status === next.status &&
     prev.outcome === next.outcome &&
     prev.doneAt === next.doneAt &&

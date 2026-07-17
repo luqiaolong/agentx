@@ -122,8 +122,13 @@ function buildRenderItems(parts: MessagePart[]): RenderItem[] {
     } else if (p.type === "tool-call") {
       toolCallIds.add(p.id);
       // 去重：相同 id 只保留第一次出现的 tool-call
-      if (!toolCalls.has(p.id)) {
+      // 中优7 修复：若后续重复 tool-call 携带了 approvalRequest（内联授权），
+      // 合并到已保留的 tool-call 中，避免审批请求丢失。
+      const existing = toolCalls.get(p.id);
+      if (!existing) {
         toolCalls.set(p.id, p);
+      } else if (p.approvalRequest && !existing.approvalRequest) {
+        toolCalls.set(p.id, { ...existing, approvalRequest: p.approvalRequest });
       }
     }
   }

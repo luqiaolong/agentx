@@ -127,7 +127,18 @@ export const useTasksStore = create<TasksState>()(
     persist(
       (set, get) => ({
         tasks: [],
-        addTask: (task) => set((s) => ({ tasks: [...s.tasks, task] })),
+        addTask: (task) =>
+          set((s) => {
+            // 中优9 修复：若 task id 已存在，改为 update（避免重复添加同一任务）
+            if (s.tasks.some((t) => t.id === task.id)) {
+              return {
+                tasks: s.tasks.map((t) =>
+                  t.id === task.id ? { ...t, ...task, updatedAt: Date.now() } : t,
+                ),
+              };
+            }
+            return { tasks: [...s.tasks, task] };
+          }),
         updateTask: (id, patch) =>
           set((s) => ({
             tasks: s.tasks.map((t) =>
