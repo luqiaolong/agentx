@@ -48,7 +48,7 @@ class TestBuildSubagentsTeamRoles:
 
         with patch("app.scenarios.coding.agent.make_rag_tools", return_value=[]), \
              patch("app.scenarios.coding.agent.make_web_tools", return_value=[]), \
-             patch("app.subagents.custom_agent._make_custom_tools", return_value=[]):
+             patch("app.deepagent.subagents.custom_agent._make_custom_tools", return_value=[]):
             subagents = _build_subagents("test-thread", include_team_roles=True)
 
         names = {s["name"] for s in subagents}

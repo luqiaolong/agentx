@@ -67,11 +67,11 @@ def test_parse_custom_subagents_propagates_rubric() -> None:
 
 def test_build_custom_agent_passes_rubric_to_create_agent() -> None:
     """build_custom_agent 在 rubric 非空时透传到 create_agent。"""
-    with patch("app.subagents.custom_agent.get_chat_model"), \
+    with patch("app.deepagent.subagents.custom_agent.get_chat_model"), \
          patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
 
-        from app.subagents.custom_agent import build_custom_agent
+        from app.deepagent.subagents.custom_agent import build_custom_agent
 
         build_custom_agent(
             key="researcher",
@@ -86,11 +86,11 @@ def test_build_custom_agent_passes_rubric_to_create_agent() -> None:
 
 def test_build_custom_agent_no_rubric_omits_field() -> None:
     """build_custom_agent 在 rubric 为空时不应传 rubric 字段。"""
-    with patch("app.subagents.custom_agent.get_chat_model"), \
+    with patch("app.deepagent.subagents.custom_agent.get_chat_model"), \
          patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
 
-        from app.subagents.custom_agent import build_custom_agent
+        from app.deepagent.subagents.custom_agent import build_custom_agent
 
         build_custom_agent(
             key="plain",
@@ -105,12 +105,12 @@ def test_build_custom_agent_no_rubric_omits_field() -> None:
 
 def test_build_custom_agent_passes_grader_model() -> None:
     """build_custom_agent 支持 grader_model 透传。"""
-    with patch("app.subagents.custom_agent.get_chat_model"), \
+    with patch("app.deepagent.subagents.custom_agent.get_chat_model"), \
          patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
         fake_grader = MagicMock(name="grader")
 
-        from app.subagents.custom_agent import build_custom_agent
+        from app.deepagent.subagents.custom_agent import build_custom_agent
 
         build_custom_agent(
             key="researcher",

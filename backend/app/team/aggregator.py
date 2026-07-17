@@ -5,7 +5,7 @@
 - ``_build_summary``：单个子任务输出汇总（截断 + 工具痕迹拼接）。
 - ``_quality_gate``：Aggregator 质量门（拒绝全失败 / 全相同 / 全截断的情况）。
 - ``_run_aggregator``：调用 Aggregator LLM，流式输出最终回复。
-- ``_SIMPLE_TASK_KEYWORDS`` / ``_should_downgrade_to_single``：简单任务降级评估。
+
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from app.config import get_settings
 from app.observability.logger import logger
 from app.observability.trace import bind_trace, current_trace_id
 from app.sse.events import make_sse_event
-from app.utils.text import ThinkFilter, compile_keyword_patterns, extract_chunk_text, matches_any
+from app.utils.text import ThinkFilter, extract_chunk_text
 from app.team.blackboard import _serialize_blackboard
 from app.team.state import TeamOutcome
 
@@ -32,8 +32,7 @@ __all__ = [
     "_run_aggregator",
     "_quality_gate",
     "_build_summary",
-    "_should_downgrade_to_single",
-    "_SIMPLE_TASK_KEYWORDS",
+
     "_compute_team_outcome",
     "_flatten_findings",
 ]
@@ -243,34 +242,4 @@ async def _run_aggregator(
             yield make_sse_event("error", {"message": f"Aggregator 流式失败: {exc}"})
 
 
-_SIMPLE_TASK_KEYWORDS = frozenset({
-    # 仅匹配强语义：问候 / 致谢 / 简单命令式翻译
-    # 注意：避免 "解释"/"什么是"/"总结"/"列出" 等普通动词，
-    # 否则复杂任务（"请帮我分析并解释..." / "列出 3 个步骤并总结"）会被误降级
-    "你好", "hello", "hi", "谢谢", "翻译一下",
-})
 
-# 匹配模式：中文 keywords 用子串匹配；英文 keywords 用单词边界匹配
-# 避免 "hi" 子串命中 "this"/"think" 等英文词。
-# D3: 统一使用 app.utils.text.compile_keyword_patterns，与 planner 共享逻辑。
-_KEYWORD_PATTERNS = compile_keyword_patterns(list(_SIMPLE_TASK_KEYWORDS))
-
-
-def _should_downgrade_to_single(message: str) -> tuple[bool, str]:
-    """评估是否应降级到单 agent 路径。
-
-    短消息阈值按字符类型自适应：
-    - 含 ASCII（英文/数字）：< 12 字符视为短（避免英文 10 字符被吞掉）
-    - 全中文/全角：< 6 字符视为短（中文 10 字符信息量已饱和）
-
-    关键词匹配：中文字符用子串；英文字符用 ``\\b\\w+\\b`` 单词边界，
-    避免 ``"hi" in "this"`` 等子串误命中。
-    """
-    lower = message.lower().strip()
-    has_ascii = any(ord(c) < 128 and c.isalnum() for c in lower)
-    threshold = 12 if has_ascii else 6
-    if len(lower) < threshold:
-        return True, "消息过短，无需 team 协作"
-    if matches_any(lower, _KEYWORD_PATTERNS):
-        return True, "命中简单任务关键词"
-    return False, ""

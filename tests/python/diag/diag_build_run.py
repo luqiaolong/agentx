@@ -20,9 +20,9 @@ async def main():
     from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
     from app.llm import get_chat_model
-    from app.subagents.code_agent import _make_fs_tools
-    from app.subagents.rag_agent import _make_rag_tools
-    from app.subagents.web_agent import _make_web_tools
+    from app.deepagent.subagents.code_agent import _make_fs_tools
+    from app.deepagent.subagents.rag_agent import _make_rag_tools
+    from app.deepagent.subagents.web_agent import _make_web_tools
     from app.utils.text import ThinkFilter, extract_chunk_text
 
     thread_id = f"diag-build-{int(time.time())}"

@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator
 from app.config import FORBIDDEN_SUBAGENT_TOOLS, get_settings
 from app.llm import get_chat_model
 from app.observability.logger import logger
-from app.subagents.base import (
+from app.deepagent.subagents.base import (
     THINK_PROMPT_SUFFIX,
     run_react_agent_stream,
 )

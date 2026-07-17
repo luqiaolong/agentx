@@ -466,7 +466,7 @@ def _resolve_subtask_runners(
         # Lazy import 避免模块顶部循环依赖
         from app.scenarios.coding.agent import run_coding_expert
         from app.deepagent.agent import run_deep_path
-        from app.subagents import run_custom_agent, run_rag_agent, run_web_agent
+        from app.deepagent.subagents import run_custom_agent, run_rag_agent, run_web_agent
 
         _default_runners_cache = {
             "code": run_coding_expert,
@@ -825,7 +825,7 @@ async def _run_team_role_subtask(
         )
 
     # 有专属配置：build_custom_agent + astream_events v2
-    from app.subagents.custom_agent import build_custom_agent
+    from app.deepagent.subagents.custom_agent import build_custom_agent
 
     # T5: child_id UUID 化（{parent}-team-{uuid4()}），不再含 agent 名与 idx
     child_thread_id = f"{thread_id}-team-{uuid.uuid4()}"

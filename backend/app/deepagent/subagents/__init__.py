@@ -5,12 +5,12 @@
 供 Supervisor / Expert 通过 deepagents ``SubAgentMiddleware`` 的 ``task`` 工具调用
 （子代理声明由 ``_build_subagent_runnables`` / ``_build_subagents`` 构建）。
 
-实际实现收敛在 ``app.subagents.base.build_builtin_subagent`` /
+实际实现收敛在 ``app.deepagent.subagents.base.build_builtin_subagent`` /
 ``run_builtin_subagent`` 工厂函数；``rag_agent`` / ``web_agent`` 模块为薄 re-export，
 保持向后兼容。
 """
 
-from app.subagents.base import build_builtin_subagent, run_builtin_subagent
+from app.deepagent.subagents.base import build_builtin_subagent, run_builtin_subagent
 from .custom_agent import build_custom_agent, run_custom_agent
 from .rag_agent import build_rag_agent, run_rag_agent
 from .web_agent import build_web_agent, run_web_agent

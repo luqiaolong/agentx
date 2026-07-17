@@ -151,8 +151,8 @@ class TestBuildSubagentRunnables:
         settings.custom_subagents = {}
 
         with patch("app.scenarios.work.agent.get_settings", return_value=settings):
-            with patch("app.subagents.rag_agent.build_rag_agent") as mock_rag:
-                with patch("app.subagents.web_agent.build_web_agent") as mock_web:
+            with patch("app.deepagent.subagents.rag_agent.build_rag_agent") as mock_rag:
+                with patch("app.deepagent.subagents.web_agent.build_web_agent") as mock_web:
                     mock_rag.return_value = MagicMock(name="rag_graph")
                     mock_web.return_value = MagicMock(name="web_graph")
 
@@ -176,7 +176,7 @@ class TestBuildSubagentRunnables:
         settings.custom_subagents = {}
 
         with patch("app.scenarios.work.agent.get_settings", return_value=settings):
-            with patch("app.subagents.web_agent.build_web_agent") as mock_web:
+            with patch("app.deepagent.subagents.web_agent.build_web_agent") as mock_web:
                 mock_web.return_value = MagicMock()
 
                 subagents = _build_subagent_runnables("test-thread")
@@ -193,7 +193,7 @@ class TestBuildSubagentRunnables:
         settings.custom_subagents = {"myagent": custom_cfg}
 
         with patch("app.scenarios.work.agent.get_settings", return_value=settings):
-            with patch("app.subagents.custom_agent.build_custom_agent") as mock_custom:
+            with patch("app.deepagent.subagents.custom_agent.build_custom_agent") as mock_custom:
                 mock_custom.return_value = MagicMock()
 
                 subagents = _build_subagent_runnables("test-thread", workspace_path="/ws")
@@ -351,7 +351,7 @@ class TestMentionRouting:
         async def mock_supervisor_stream(*args, **kwargs):
             yield {"event": "token", "data": "supervisor synthesis"}
 
-        with patch("app.subagents.rag_agent.run_rag_agent", mock_rag_stream):
+        with patch("app.deepagent.subagents.rag_agent.run_rag_agent", mock_rag_stream):
             with patch("app.scenarios.work.agent.make_deep_tools", return_value=[]):
                 with patch(
                     "app.scenarios.work.agent.make_expert_delegation_tool"

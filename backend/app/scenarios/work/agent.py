@@ -78,7 +78,7 @@ def _build_subagent_runnables(
     # rag 子代理
     rag_cfg = subagents_cfg.get("rag")
     if rag_cfg and rag_cfg.enabled:
-        from app.subagents.rag_agent import build_rag_agent
+        from app.deepagent.subagents.rag_agent import build_rag_agent
 
         subagents.append(
             {
@@ -91,7 +91,7 @@ def _build_subagent_runnables(
     # web 子代理
     web_cfg = subagents_cfg.get("web")
     if web_cfg and web_cfg.enabled:
-        from app.subagents.web_agent import build_web_agent
+        from app.deepagent.subagents.web_agent import build_web_agent
 
         subagents.append(
             {
@@ -106,7 +106,7 @@ def _build_subagent_runnables(
         cfg = settings.custom_subagents[key]
         if not cfg.enabled:
             continue
-        from app.subagents.custom_agent import build_custom_agent
+        from app.deepagent.subagents.custom_agent import build_custom_agent
 
         subagents.append(
             {
@@ -561,14 +561,14 @@ async def _run_subagent_for_mention(
 
     try:
         if agent_name == "rag":
-            from app.subagents.rag_agent import run_rag_agent
+            from app.deepagent.subagents.rag_agent import run_rag_agent
 
             kwargs: dict[str, Any] = {"history": None}
             if chat_model is not None and _runner_accepts_chat_model(run_rag_agent):
                 kwargs["chat_model"] = chat_model
             runner = run_rag_agent(thread_id, task, **kwargs)
         elif agent_name == "web":
-            from app.subagents.web_agent import run_web_agent
+            from app.deepagent.subagents.web_agent import run_web_agent
 
             kwargs = {"history": None}
             if chat_model is not None and _runner_accepts_chat_model(run_web_agent):
@@ -576,7 +576,7 @@ async def _run_subagent_for_mention(
             runner = run_web_agent(thread_id, task, **kwargs)
         else:
             # 自定义子代理
-            from app.subagents.custom_agent import run_custom_agent
+            from app.deepagent.subagents.custom_agent import run_custom_agent
 
             kwargs = {"history": None, "workspace_path": workspace_path}
             if chat_model is not None and _runner_accepts_chat_model(run_custom_agent):

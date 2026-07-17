@@ -260,7 +260,7 @@ async def test_run_team_role_subtask_emits_subtask_done_on_normal_end() -> None:
 
     with (
         patch("app.team.scheduler.get_settings", return_value=mock_settings_obj),
-        patch("app.subagents.custom_agent.build_custom_agent", return_value=mock_agent),
+        patch("app.deepagent.subagents.custom_agent.build_custom_agent", return_value=mock_agent),
         patch("app.team.scheduler._inherit_workspace", new=AsyncMock(return_value=None)),
     ):
         result = await _run_team_role_subtask(

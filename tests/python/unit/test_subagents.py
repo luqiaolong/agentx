@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.subagents import rag_agent as rag_agent_mod
-from app.subagents import web_agent as web_agent_mod
+from app.deepagent.subagents import rag_agent as rag_agent_mod
+from app.deepagent.subagents import web_agent as web_agent_mod
 
 
 @pytest.fixture
@@ -22,12 +22,12 @@ def mock_create_agent(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
       避免 ``create_deep_agent`` 处理 MagicMock model spec 时报错
 
     注：``build_rag_agent`` / ``build_web_agent`` 实现已收敛到
-    ``app.subagents.base.build_builtin_subagent``，故 ``get_chat_model``
-    在 ``base`` 模块命名空间中被引用，需 mock ``app.subagents.base`` 而非
+    ``app.deepagent.subagents.base.build_builtin_subagent``，故 ``get_chat_model``
+    在 ``base`` 模块命名空间中被引用，需 mock ``app.deepagent.subagents.base`` 而非
     rag_agent / web_agent 模块。
     """
     fake_model = MagicMock(name="fake_chat_model")
-    from app.subagents import base as base_mod
+    from app.deepagent.subagents import base as base_mod
 
     monkeypatch.setattr(base_mod, "get_chat_model", lambda **kw: fake_model)
 

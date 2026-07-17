@@ -32,7 +32,7 @@ from app.deepagent.tool_assembly import (
 )
 from app.observability.logger import logger
 from app.sandbox import get_sandbox
-from app.subagents.base import THINK_PROMPT_SUFFIX
+from app.deepagent.subagents.base import THINK_PROMPT_SUFFIX
 from app.team.complexity_classifier import ComplexityClassifier, ComplexityResult
 from app.tools.subagent_tools import make_rag_tools, make_web_tools
 from app.sse.events import make_error_event
@@ -108,7 +108,7 @@ def _build_subagents(
         ]
 
         # 延迟导入，避免与 custom_agent 构造路径产生循环引用
-        from app.subagents.custom_agent import _make_custom_tools
+        from app.deepagent.subagents.custom_agent import _make_custom_tools
 
         tools = _make_custom_tools(thread_id or "", safe_tool_names, workspace_path)
         subagents.append(
@@ -150,7 +150,7 @@ def _build_team_role_subagents(
         ``SubAgent`` 声明列表；全局开关关闭或无启用角色时返回空列表。
     """
     # 延迟导入，避免与 custom_agent 构造路径产生循环引用（与 _build_subagents 一致）
-    from app.subagents.custom_agent import _make_custom_tools
+    from app.deepagent.subagents.custom_agent import _make_custom_tools
 
     settings = get_settings()
     if not settings.coding_complexity_team_roles_enabled:

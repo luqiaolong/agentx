@@ -8,7 +8,7 @@
 
 工具工厂（``make_rag_tools`` / ``make_web_tools``）已下沉到
 ``app.tools.subagent_tools``，供 ``app.deepagent.tool_assembly`` 与本模块
-共同复用，消除 ``deepagent ↔ subagents`` 循环依赖。
+共同复用，消除 ``deepagent.tool_assembly ↔ deepagent.subagents`` 循环依赖。
 
 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由 ``AuthorizedLocalShellBackend``
 自动注入，子代理通过 ``create_agent(excluded_tools=FORBIDDEN_SUBAGENT_TOOLS)`` 过滤写工具。

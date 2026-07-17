@@ -6,13 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.subagents.custom_agent import build_custom_agent
+from app.deepagent.subagents.custom_agent import build_custom_agent
 
 
 @pytest.mark.asyncio
 async def test_build_custom_agent_uses_create_deep_agent() -> None:
     """自定义子代理应基于 create_deep_agent 而非 create_react_agent。"""
-    with patch("app.subagents.custom_agent.get_chat_model"), \
+    with patch("app.deepagent.subagents.custom_agent.get_chat_model"), \
          patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()
 
@@ -38,7 +38,7 @@ async def test_build_custom_agent_forbids_dangerous_tools() -> None:
     """
     rag_tool = MagicMock()
     rag_tool.name = "rag_retrieve"
-    with patch("app.subagents.custom_agent.get_chat_model"), \
+    with patch("app.deepagent.subagents.custom_agent.get_chat_model"), \
          patch("app.tools.subagent_tools.make_rag_tools", return_value=[rag_tool]), \
          patch("app.deepagent.factory.create_agent") as mock_create:
         mock_create.return_value = MagicMock()

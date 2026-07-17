@@ -1,10 +1,10 @@
 """子代理工具工厂：rag / web 工具集构建。
 
-从 ``app.subagents.base`` 下沉到 ``app.tools`` 层，消除 ``deepagent.tool_assembly``
-↔ ``subagents.base`` 的循环依赖：
+从 ``app.deepagent.subagents.base`` 下沉到 ``app.tools`` 层，消除 ``deepagent.tool_assembly``
+↔ ``deepagent.subagents.base`` 的循环依赖：
 
-- 旧路径：``deepagent.tool_assembly`` → ``subagents.base._make_rag_tools`` （反向耦合）
-- 新路径：``deepagent.tool_assembly`` → ``app.tools.subagent_tools`` ← ``subagents.base``
+- 旧路径：``deepagent.tool_assembly`` → ``deepagent.subagents.base._make_rag_tools`` （反向耦合）
+- 新路径：``deepagent.tool_assembly`` → ``app.tools.subagent_tools`` ← ``deepagent.subagents.base``
 
 内置 fs 工具（ls/read_file/write_file/edit_file/glob/grep）由
 ``AuthorizedLocalShellBackend`` 自动注入，不在本模块工具列表中。

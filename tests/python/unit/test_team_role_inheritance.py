@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.subagents.custom_agent import build_custom_agent
+from app.deepagent.subagents.custom_agent import build_custom_agent
 
 
 # ============================================================
@@ -73,8 +73,8 @@ class TestBuildCustomAgentInheritsChatModel:
         injected_model = MagicMock(name="injected_model")
         mock_create, mock_modules = _make_mock_factory()
 
-        with patch("app.subagents.custom_agent.get_chat_model") as mock_get_model, \
-             patch("app.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
+        with patch("app.deepagent.subagents.custom_agent.get_chat_model") as mock_get_model, \
+             patch("app.deepagent.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
              patch.dict(sys.modules, mock_modules):
             build_custom_agent(
                 key="frontend_dev",
@@ -94,8 +94,8 @@ class TestBuildCustomAgentInheritsChatModel:
         fallback_model = MagicMock(name="fallback_model")
         mock_create, mock_modules = _make_mock_factory()
 
-        with patch("app.subagents.custom_agent.get_chat_model", return_value=fallback_model) as mock_get_model, \
-             patch("app.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
+        with patch("app.deepagent.subagents.custom_agent.get_chat_model", return_value=fallback_model) as mock_get_model, \
+             patch("app.deepagent.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
              patch.dict(sys.modules, mock_modules):
             build_custom_agent(
                 key="backend_dev",
@@ -121,8 +121,8 @@ class TestBuildCustomAgentExtraSystemPrompt:
         """extra_system_prompt 拼接到 system_prompt 之后。"""
         mock_create, mock_modules = _make_mock_factory()
 
-        with patch("app.subagents.custom_agent.get_chat_model", return_value=MagicMock()), \
-             patch("app.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
+        with patch("app.deepagent.subagents.custom_agent.get_chat_model", return_value=MagicMock()), \
+             patch("app.deepagent.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
              patch.dict(sys.modules, mock_modules):
             build_custom_agent(
                 key="tester",
@@ -142,8 +142,8 @@ class TestBuildCustomAgentExtraSystemPrompt:
         """未传 extra_system_prompt 时正常工作。"""
         mock_create, mock_modules = _make_mock_factory()
 
-        with patch("app.subagents.custom_agent.get_chat_model", return_value=MagicMock()), \
-             patch("app.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
+        with patch("app.deepagent.subagents.custom_agent.get_chat_model", return_value=MagicMock()), \
+             patch("app.deepagent.subagents.custom_agent.get_settings", return_value=_mock_settings()), \
              patch.dict(sys.modules, mock_modules):
             build_custom_agent(
                 key="devops",
@@ -189,7 +189,7 @@ class TestRunTeamRoleSubtaskInheritance:
 
         with patch("app.team.scheduler.get_settings", return_value=settings), \
              patch("app.team.scheduler._inherit_workspace", new=AsyncMock(return_value=None)), \
-             patch("app.subagents.custom_agent.build_custom_agent", return_value=mock_agent) as mock_build:
+             patch("app.deepagent.subagents.custom_agent.build_custom_agent", return_value=mock_agent) as mock_build:
             task = TeamPlanTask(agent="frontend_dev", input="do task", purpose="")
             await _run_team_role_subtask(
                 task=task,
@@ -233,7 +233,7 @@ class TestRunTeamRoleSubtaskInheritance:
 
         with patch("app.team.scheduler.get_settings", return_value=settings), \
              patch("app.team.scheduler._inherit_workspace", new=AsyncMock(return_value=None)), \
-             patch("app.subagents.custom_agent.build_custom_agent", return_value=mock_agent) as mock_build:
+             patch("app.deepagent.subagents.custom_agent.build_custom_agent", return_value=mock_agent) as mock_build:
             task = TeamPlanTask(agent="backend_dev", input="do task", purpose="")
             await _run_team_role_subtask(
                 task=task,

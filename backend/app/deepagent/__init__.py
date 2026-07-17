@@ -1,8 +1,11 @@
 """DeepAgent 包：deepagents 0.6+ harness + 危险工具中断审批 + SSE 流式。
 
-公共 API 边界（``__all__``）覆盖所有被上层 ``scenarios`` / ``team`` / ``subagents``
-稳定复用的符号；实现细节（``_DEEP_SYSTEM_PROMPT`` 常量、``_is_interrupted`` 检测、
+公共 API 边界（``__all__``）覆盖所有被上层 ``scenarios`` / ``team`` 及内部子包
+``subagents`` 稳定复用的符号；实现细节（``_DEEP_SYSTEM_PROMPT`` 常量、``_is_interrupted`` 检测、
 backend 类、middleware 类）保留在各自子模块，外部按需从子模块 import。
+
+子包归属：``app.deepagent.subagents``（rag / web / 自定义子代理工厂）已从原
+``app.subagents`` 迁入本包，作为 ``deepagent`` 的内部子包存在。
 
 内部模块归属（maintainability-refactor 后）:
 - ``agent.py``: 路径 C 入口（``build_deep_agent`` / ``run_deep_path``）+ profile 抽取

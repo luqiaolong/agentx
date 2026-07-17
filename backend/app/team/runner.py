@@ -3,11 +3,10 @@
 ``run_team_path`` 是 Team 路径的统一入口，替代旧 ``orchestrator.run_team_path``。
 
 流程：
-1. 简单任务降级检查（``_should_downgrade_to_single``）
-2. 解析 subtask runners + semaphore + abort_event
-3. 构造 ``TeamState`` 初始状态
-4. ``graph.astream(stream_mode=["custom", "values"])`` 消费事件
-5. yield SSE 事件给调用方
+1. 解析 subtask runners + semaphore + abort_event
+2. 构造 ``TeamState`` 初始状态
+3. ``graph.astream(stream_mode=["custom", "values"])`` 消费事件
+4. yield SSE 事件给调用方
 
 与旧 ``orchestrator.run_team_path`` 的差异：
 - 使用 ``graph_builder.get_team_graph()`` 获取 v2 编译图
@@ -27,7 +26,6 @@ from app.observability.logger import logger
 from app.observability.trace import bind_trace, current_trace_id
 from app.security.approval import get_abort_event
 from app.sse.events import make_sse_event
-from app.team.aggregator import _should_downgrade_to_single
 from app.team.graph_builder import get_team_graph
 from app.team.scheduler import _resolve_subtask_runners
 from app.team.state import TeamState
@@ -70,21 +68,6 @@ async def run_team_path(
     - ``custom`` 模式：节点通过 ``get_stream_writer()`` 写入的 SSE 事件
       （token / delegation / warning / team_init / team_done / error 等）
     """
-    # 简单任务降级
-    downgrade, reason = _should_downgrade_to_single(message)
-    if downgrade:
-        logger.info(
-            "team downgrade suggest switch mode",
-            reason=reason,
-            message_len=len(message),
-        )
-        yield make_sse_event(
-            "token",
-            f"该任务似乎不需要团队协作（{reason}）。建议切换到 work 模式由 Supervisor 直接处理。",
-        )
-        yield make_sse_event("done", {})
-        return
-
     resolved_runners = _resolve_subtask_runners(subtask_runners)
     settings = get_settings()
     subtask_timeout = _resolve_subtask_timeout(settings)

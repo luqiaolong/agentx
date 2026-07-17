@@ -2,9 +2,9 @@
 
 工具集: web_search（Tavily Search API，来自 ``app.tools.subagent_tools.make_web_tools``）
 
-实际逻辑已收敛到 ``app.subagents.base.build_builtin_subagent`` /
+实际逻辑已收敛到 ``app.deepagent.subagents.base.build_builtin_subagent`` /
 ``run_builtin_subagent`` 工厂函数；本文件仅保留薄 re-export 以维持向后兼容
-（``from app.subagents.web_agent import build_web_agent`` 等历史 import 路径
+（``from app.deepagent.subagents.web_agent import build_web_agent`` 等历史 import 路径
 仍可用）。
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from app.subagents.base import (
+from app.deepagent.subagents.base import (
     build_builtin_subagent,
     run_builtin_subagent,
 )

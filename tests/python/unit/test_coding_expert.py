@@ -64,7 +64,7 @@ class TestBuildSubagents:
             mock_settings.return_value.custom_subagents = custom
             with patch("app.scenarios.coding.agent.make_rag_tools", return_value=[]):
                 with patch("app.scenarios.coding.agent.make_web_tools", return_value=[]):
-                    with patch("app.subagents.custom_agent._make_custom_tools", return_value=[]):
+                    with patch("app.deepagent.subagents.custom_agent._make_custom_tools", return_value=[]):
                         subagents = _build_subagents("test-thread")
 
         names = {s["name"] for s in subagents}
@@ -97,7 +97,7 @@ class TestBuildSubagents:
             mock_settings.return_value.custom_subagents = custom
             with patch("app.scenarios.coding.agent.make_rag_tools", return_value=[]):
                 with patch("app.scenarios.coding.agent.make_web_tools", return_value=[]):
-                    with patch("app.subagents.custom_agent._make_custom_tools", side_effect=_capture_tools):
+                    with patch("app.deepagent.subagents.custom_agent._make_custom_tools", side_effect=_capture_tools):
                         _build_subagents("test-thread")
 
         assert len(captured_tool_names) == 1

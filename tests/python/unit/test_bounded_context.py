@@ -201,3 +201,61 @@ async def test_async_generator_aclose_restores_contextvars() -> None:
     assert current_parent_thread_id.get() == "baseline-parent", (
         "previous parent_thread_id must be restored after async generator aclose()"
     )
+
+
+# ============================================================
+# 2.7f — Cross-task async-generator aclose() (regression)
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_async_generator_aclose_in_different_context_no_error() -> None:
+    """Regression: ``aclose()`` invoked from a different ``contextvars.Context``
+    (e.g. Starlette spins a fresh task to close a StreamingResponse generator
+    after client disconnect) MUST NOT raise
+    ``ValueError: <Token ...> was created in a different Context``.
+
+    Previously ``bind_agent_context`` called ``ContextVar.reset(token)``
+    unconditionally in ``finally``; when the token was created in the original
+    task's Context but ``finally`` runs in the closer task's Context, Python
+    raised ``ValueError`` and the error surfaced as 内部错误 to the user.
+
+    After fix: ``_safe_reset`` swallows the ``ValueError``; the closer task's
+    own ContextVars are untouched (the original set was scoped to the original
+    Context and cannot leak across Contexts).
+    """
+    from app.deepagent.context import bind_agent_context
+
+    # Closer task baseline — must remain unchanged after cross-Context aclose.
+    current_thread_id.set("closer-task-thread")
+    current_parent_thread_id.set("closer-task-parent")
+
+    async def _sse_generator() -> str:
+        with bind_agent_context("run-thread", "run-parent"):
+            yield "event1"
+            await asyncio.sleep(10)  # will be aclosed before completing
+
+    gen = _sse_generator()
+
+    async def _producer() -> None:
+        # Runs in its own task → its own Context copy.
+        # ``set`` happens here, creating a token bound to THIS Context.
+        first = await gen.__anext__()
+        assert first == "event1"
+        # Keep generator suspended; do NOT close it here.
+
+    producer_task = asyncio.create_task(_producer())
+    await asyncio.sleep(0.01)
+    await producer_task  # let producer finish stepping; generator still suspended
+
+    # ``aclose`` runs in the current (closer) task's Context — different from
+    # the producer's Context where the token was created. Before the fix this
+    # raised ValueError; after the fix it completes cleanly.
+    await gen.aclose()
+
+    assert current_thread_id.get() == "closer-task-thread", (
+        "closer task's own ContextVar must be untouched by cross-Context aclose"
+    )
+    assert current_parent_thread_id.get() == "closer-task-parent", (
+        "closer task's own parent ContextVar must be untouched by cross-Context aclose"
+    )

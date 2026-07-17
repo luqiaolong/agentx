@@ -17,6 +17,26 @@ current_parent_thread_id: contextvars.ContextVar[str | None] = contextvars.Conte
 )
 
 
+def _safe_reset(var: "contextvars.ContextVar[str]", token: "contextvars.Token[str]") -> None:
+    """Reset a ContextVar token, tolerating cross-Context restore failures.
+
+    ``bind_agent_context`` is used inside async generators (``with ...: yield``).
+    When the consumer drives ``asend``/``aclose`` from a different
+    ``contextvars.Context`` (e.g. FastAPI/Starlette spins a fresh task to
+    ``aclose`` a StreamingResponse generator after client disconnect), the
+    ``finally`` runs in the new Context while the token was created in the
+    original one. Python then raises
+    ``ValueError: <Token ...> was created in a different Context``.
+
+    In that case the original set() is scoped to the original Context and
+    cannot leak into the current one, so skipping ``reset`` is safe.
+    """
+    try:
+        var.reset(token)
+    except ValueError:
+        pass
+
+
 @contextmanager
 def bind_agent_context(
     thread_id: str, parent_thread_id: str | None = None
@@ -26,7 +46,9 @@ def bind_agent_context(
 
     Covers normal completion, exception, ``asyncio.CancelledError``, and
     async-generator ``aclose()`` via a single ``finally`` that resets both
-    tokens to their pre-bind values.
+    tokens to their pre-bind values. When ``aclose`` happens in a different
+    ``contextvars.Context`` (async-generator consumed across tasks), the
+    ``ValueError`` from cross-Context reset is swallowed by ``_safe_reset``.
 
     Args:
         thread_id: The active session/thread ID for this run.
@@ -38,5 +60,5 @@ def bind_agent_context(
     try:
         yield
     finally:
-        current_thread_id.reset(token_t)
-        current_parent_thread_id.reset(token_p)
+        _safe_reset(current_parent_thread_id, token_p)
+        _safe_reset(current_thread_id, token_t)
