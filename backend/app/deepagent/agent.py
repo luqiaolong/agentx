@@ -68,6 +68,7 @@ async def build_deep_agent(
     subagents: list | None = None,
     excluded_tools: frozenset[str] | None = None,
     interrupt_on: dict[str, bool] | None = None,
+    force_todo: bool = False,
 ) -> Any:
     """构造真实 DeepAgent 图。
 
@@ -76,6 +77,9 @@ async def build_deep_agent(
             传入时与 ``tools_enabled`` 禁用的内置工具取并集后注册 HarnessProfile。
         interrupt_on: 可选，``AgentToolset.interrupt_on`` 派生的中断配置。非空时覆盖
             默认 ``build_interrupt_config()``，使图编译时与审批运行时使用同一份计算。
+        force_todo: 可选，是否强制启用 AggressiveTodoMiddleware（coding 自适应规划）。
+            True 时透传到 ``create_agent``，排除 deepagents 默认劝退型 TodoListMiddleware
+            并注入强型版本。False 时保持默认行为不变。
     """
     if chat_model is not None:
         model = chat_model
@@ -105,6 +109,7 @@ async def build_deep_agent(
         subagents=subagents,
         excluded_tools=excluded_tools,
         interrupt_on=interrupt_on,
+        force_todo=force_todo,
     )
 
 

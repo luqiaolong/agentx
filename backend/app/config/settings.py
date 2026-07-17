@@ -202,6 +202,12 @@ class Settings(BaseSettings):
     # T8: 单子任务瞬态错误最大重试次数（共 max_retries+1 次执行）
     team_max_retries: int = Field(default=2, ge=0, le=5)
 
+    # ---- coding 场景复杂度分类配置（启发式 + 团队角色子代理注入）----
+    coding_complexity_enabled: bool = Field(default=True, description="coding 场景复杂度分类总开关")
+    coding_complexity_message_length: int = Field(default=200, ge=1, le=10000, description="启发式消息长度阈值")
+    coding_complexity_history_count: int = Field(default=10, ge=0, le=1000, description="启发式历史长度阈值")
+    coding_complexity_team_roles_enabled: bool = Field(default=True, description="coding 场景团队角色子代理注入开关")
+
     # ---- 场景化智能体配置（Supervisor + Expert + ScenarioTeam）----
     # AGENTX_AGENTS_CONFIG: JSON 字符串，结构见 app.config.agents.AgentsConfig
     # 形如 {"supervisor": {"temperature": 0.3, ...}, "experts": {"coding": {...}}, "teams": {"coding": {...}}}

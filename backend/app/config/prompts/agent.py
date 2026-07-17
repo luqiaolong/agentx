@@ -81,7 +81,7 @@ _DEFAULT_CODING_EXPERT_SYSTEM_PROMPT = (
     "2. 代码修改时给出完整的文件路径和修改说明\n"
     "3. 保持段落间空一行，提高可读性\n\n"
     "## 任务规划\n"
-    "对于需要 3 步以上执行的复杂任务，请先调用 `write_todos` 工具写入任务清单，"
+    "对于需要多步执行的任务，请先调用 `write_todos` 工具写入任务清单，"
     "执行过程中及时更新每个 todo 的状态（pending → in_progress → completed）。"
-    "简单任务可直接执行，无需创建 todo。"
+    "对于跨多个领域的任务（如前端+后端、重构+测试），可考虑使用 `task` 工具委派给子代理（rag/web/自定义，以及已启用的团队角色如 frontend_dev/backend_dev/tester）。"
 )

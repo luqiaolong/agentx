@@ -44,6 +44,7 @@ from deepagents import (
 )
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.middleware.skills import SkillsMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 
 from app.config import DATA_DIR, get_settings
 from app.deepagent.authorized_backend import AuthorizedLocalShellBackend
@@ -88,20 +89,62 @@ When using the task tool, you must specify a subagent_type parameter to select w
 4. The agent's outputs should generally be trusted
 5. Clearly tell the agent whether you expect it to create content, perform analysis, or just do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent"""
 
+_AGGRESSIVE_TODO_SYSTEM_PROMPT = """## 任务规划（强制）
 
-def _profile_key(excluded_tools: frozenset[str] | None) -> str:
-    """根据 excluded_tools 生成唯一 profile key。
+你必须先调用 `write_todos` 工具拆解任务为步骤清单，再开始执行。
+执行过程中及时更新每个 todo 的状态（pending → in_progress → completed）。
+每完成一步立即标记 completed，不要批量更新。
 
-    None 或空集合 → ``"openai"``（默认 profile，启用全部内置 fs 工具）。
-    非空集合 → ``"openai-{hash}"``（per-call profile，排除指定工具）。
+## 子代理委派
+
+对于可委派的子任务，通过 `task` 工具并行调用子代理：
+- 一个 AIMessage 里可以放多个 task tool_calls 实现并行
+- 子代理类型见 task 工具描述的 Available agent types 列表
+- 独立子任务优先并行，有依赖的串行
+- 子代理返回后，汇总结果并更新 todo 状态
+"""
+
+_AGGRESSIVE_TODO_TOOL_DESCRIPTION = """创建或更新任务清单。复杂任务必须先调用此工具拆解步骤。
+
+参数 todos 为完整清单（覆盖式更新），每项含 content 和 status：
+- content: 步骤描述
+- status: pending / in_progress / completed
+
+首次调用时所有 status 应为 pending。执行中动态更新。
+"""
+
+
+def _build_aggressive_todo_middleware() -> TodoListMiddleware:
+    """构建强制型 TodoListMiddleware，覆盖默认劝退型 prompt。"""
+    return TodoListMiddleware(
+        system_prompt=_AGGRESSIVE_TODO_SYSTEM_PROMPT,
+        tool_description=_AGGRESSIVE_TODO_TOOL_DESCRIPTION,
+    )
+
+
+def _profile_key(
+    excluded_tools: frozenset[str] | None,
+    excluded_middleware: frozenset[str] | None = None,
+) -> str:
+    """根据 excluded_tools / excluded_middleware 生成唯一 profile key。
+
+    - 两者均为 None 或空 → ``"openai"``（默认 profile，启用全部内置 fs 工具）
+    - 任一非空 → ``"openai-{parts}"``（per-call profile），其中 parts 按
+      ``tools-{hash}`` / ``mw-{hash}`` 顺序拼接，保证两类排除维度独立区分。
     """
-    if not excluded_tools:
+    if not excluded_tools and not excluded_middleware:
         return "openai"
-    return f"openai-{hash(frozenset(excluded_tools))}"
+    parts: list[str] = []
+    if excluded_tools:
+        parts.append(f"tools-{hash(frozenset(excluded_tools))}")
+    if excluded_middleware:
+        parts.append(f"mw-{hash(frozenset(excluded_middleware))}")
+    return "openai-" + "-".join(parts)
 
 
 def ensure_harness_profile(
     excluded_tools: frozenset[str] | None = None,
+    excluded_middleware: frozenset[str] | None = None,
 ) -> str:
     """注册模型 HarnessProfile（幂等），返回 profile key。
 
@@ -109,6 +152,10 @@ def ensure_harness_profile(
       （ls/read_file/write_file/edit_file/glob/grep 由 backend 注入）。
     - excluded_tools 非空 → per-call profile，排除指定工具
       （子代理传入 FORBIDDEN_SUBAGENT_TOOLS 过滤写工具）。
+    - excluded_middleware: None 或空 → 不排除任何中间件；非空 → 排除指定
+      中间件（按 ``AgentMiddleware.name`` 字符串匹配，例如
+      ``frozenset({"TodoListMiddleware"})`` 用于剥离默认劝退型 todo 中间件，
+      供调用方注入自定义强型 TodoListMiddleware）。
     - general_purpose_subagent: 禁用默认 subagent（项目使用 SubAgentMiddleware
       的 task 工具注入 rag/web/custom 子代理）
     - tool_description_overrides["task"]: 自定义 task 工具描述，去除 deepagents
@@ -120,11 +167,12 @@ def ensure_harness_profile(
     Returns:
         profile key 字符串，供调用方用于日志追踪。
     """
-    key = _profile_key(excluded_tools)
+    key = _profile_key(excluded_tools, excluded_middleware)
     if key in _registered_keys:
         return key
     profile = HarnessProfile(
         excluded_tools=frozenset(excluded_tools) if excluded_tools else frozenset(),
+        excluded_middleware=frozenset(excluded_middleware) if excluded_middleware else frozenset(),
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
         tool_description_overrides={"task": _CUSTOM_TASK_TOOL_DESCRIPTION},
     )
@@ -134,6 +182,7 @@ def ensure_harness_profile(
         "harness profile registered",
         key=key,
         excluded_tools=sorted(excluded_tools) if excluded_tools else [],
+        excluded_middleware=sorted(excluded_middleware) if excluded_middleware else [],
     )
     return key
 
@@ -248,6 +297,7 @@ def create_agent(
     grader_model: BaseChatModel | None = None,
     excluded_tools: frozenset[str] | None = None,
     interrupt_on: dict[str, bool] | None = None,
+    force_todo: bool = False,
 ) -> CompiledStateGraph:
     """主入口：封装 create_deep_agent。
 
@@ -282,6 +332,11 @@ def create_agent(
             ``build_interrupt_config()``，使图编译时的 ``HumanInTheLoopMiddleware``
             与审批运行时的 ``runtime_dangerous`` 源自同一份 ``AgentToolset`` 计算。
             为 None 时回退到 ``DANGEROUS_TOOLS`` 派生的默认配置（向后兼容）。
+        force_todo: 是否强制启用任务规划（coding 场景自适应规划）。为 True 时
+            排除 deepagents 默认的 ``TodoListMiddleware``（其 prompt 会劝退简单任务
+            使用 write_todos），并注入 ``_build_aggressive_todo_middleware()`` 构建
+            的强型版本，强制先调用 ``write_todos`` 拆解步骤并引导通过 ``task`` 工具
+            并行委派子任务。为 False 时保持默认行为不变。
 
     Returns:
         编译后的 CompiledStateGraph 实例。
@@ -293,7 +348,11 @@ def create_agent(
     )
     effective_excluded = frozenset(excluded_tools or ()) | disabled_builtins
 
-    ensure_harness_profile(effective_excluded)
+    # force_todo=True 时排除默认劝退型 TodoListMiddleware，后续注入强型版本；
+    # False 时 excluded_middleware=None，profile key 与历史行为完全一致。
+    excluded_middleware = frozenset({"TodoListMiddleware"}) if force_todo else None
+
+    ensure_harness_profile(effective_excluded, excluded_middleware)
     effective_interrupt_on = (
         interrupt_on if interrupt_on is not None else build_interrupt_config()
     )
@@ -352,6 +411,13 @@ def create_agent(
             "workspace_memory_middleware.enabled",
             sources=memory_paths,
         )
+
+    # force_todo=True 时注入强型 TodoListMiddleware：默认劝退型版本已通过
+    # HarnessProfile.excluded_middleware 在图编译时剥离，此处追加自定义版本，
+    # 覆盖 system_prompt / tool_description 引导 LLM 强制拆解任务并并行委派子代理。
+    if force_todo:
+        middleware.append(_build_aggressive_todo_middleware())
+        logger.info("aggressive_todo_middleware.enabled")
 
     return create_deep_agent(
         model=model,
